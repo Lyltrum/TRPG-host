@@ -7,6 +7,8 @@ name = "trpg-backend"
 version = "0.0.0"
 description = "FastAPI backend scaffold for TRPG-master"
 requires-python = ">=3.12"
+# 运行时依赖：aiosqlite 给本地 SQLite 用、asyncpg 给线上 PostgreSQL 用，
+# 两个驱动都装上，靠 DATABASE_URL 这一个环境变量决定实际连哪个。
 dependencies = [
   "fastapi>=0.115,<1.0",
   "uvicorn[standard]>=0.30,<1.0",
@@ -21,6 +23,9 @@ dependencies = [
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
 
+# 开发期工具依赖（PEP 735 dependency-groups）：`uv sync` 默认会把这个 dev 组
+# 也装进 .venv，不需要额外参数；CI 上用 `uv sync --locked` 保证严格按
+# uv.lock 里锁定的版本安装，不会因为依赖漂移导致"本地能跑、CI 跑不过"。
 [dependency-groups]
 dev = [
   "pytest>=8.0,<9.0",
@@ -32,6 +37,8 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+# 让 async def test_xxx(...) 自动被当成异步测试跑，不需要在每个测试函数上
+# 手动加 @pytest.mark.asyncio。
 asyncio_mode = "auto"
 
 [tool.ruff]
@@ -39,7 +46,12 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
+# E/F：pyflakes 基础规则；I：import 排序；UP：升级到新版 Python 写法（比如
+# 用 X | None 代替 Optional[X]）；B：常见 bug 陷阱；SIM：可简化的写法；C4：
+# 可以用推导式/字面量写得更简洁的地方。
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+# B008：不检查"函数参数默认值里调用函数"（FastAPI 的 Depends(get_db) 就是
+# 这种写法，是框架要求的用法，不是 bug）。
 ignore = ["B008"]
 
 [tool.ruff.lint.isort]

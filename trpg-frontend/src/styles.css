@@ -1,150 +1,97 @@
-:root {
-  color: #e7ebf3;
-  background: #101726;
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+    background: #e8e2d4;
+    color: #3d3628;
+    display: flex;
+    justify-content: center;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  #root {
+    width: 100%;
+    max-width: 390px;
+    height: 100vh;
+    background: #faf7f0;
+    position: relative;
+    /* 不能在这个元素自己身上开 overflow:auto——它同时也是下面 transform
+       建立的 fixed 包含块，如果它自己滚动，position:fixed 的子元素会跟着
+       一起被滚走（亲测过，不是理论）。真正滚动的容器是 <main>（见
+       shared/layouts/PhoneLayout.tsx），这层只负责裁剪成手机屏幕的形状。
+       用 clip 而不是 hidden：hidden 只是不让用户手动滚，程序仍能改它的
+       scrollTop（例如某处 scrollIntoView 顺带滚到了它），一旦被带偏整个
+       页面就会往上顶飞。clip 从根上禁止这个元素被滚动，不管是手动还是
+       程序触发。 */
+    overflow: clip;
+    text-align: left;
+    /* 让 #root（手机屏幕）成为 fixed 定位元素的包含块——否则页面里所有
+       position:fixed 的底部操作栏/弹层/蒙层都会锚定到真实浏览器视口，
+       在桌面预览里手机框是居中的一小块，就会跑到黑边外面去。 */
+    transform: translateZ(0);
+  }
+
+  @media (min-width: 500px) {
+    body {
+      padding: 20px 0;
+    }
+    #root {
+      border-radius: 32px;
+      border: 8px solid #2c2416;
+      height: 820px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+    }
+  }
+
+  ::-webkit-scrollbar {
+    display: none;
+  }
+
+  input:focus,
+  select:focus,
+  textarea:focus {
+    outline: none;
+  }
 }
 
-* {
-  box-sizing: border-box;
-}
+@layer utilities {
+  .animate-screen-in {
+    animation: screenIn 0.3s ease;
+  }
 
-html,
-body,
-#root {
-  min-height: 100%;
-  margin: 0;
+  @keyframes screenIn {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
 }
-
-body {
-  background:
-    linear-gradient(180deg, rgba(16, 23, 38, 0.96), rgba(9, 13, 22, 0.98)),
-    #101726;
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
-
-.shell {
-  min-height: 100vh;
-  padding: 48px 24px;
-  display: grid;
-  gap: 24px;
-  align-content: start;
-  max-width: 960px;
-  margin: 0 auto;
+@keyframes slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
 }
-
-.hero h1 {
-  margin: 6px 0 8px;
-  font-size: 42px;
-  line-height: 1.1;
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
 }
-
-.eyebrow {
-  margin: 0;
-  color: #8fb0ff;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-size: 12px;
-}
-
-.lede {
-  margin: 0;
-  max-width: 48rem;
-  color: #b7c2d9;
-}
-
-.grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-}
-
-.panel {
-  padding: 20px;
-  border: 1px solid rgba(143, 176, 255, 0.16);
-  border-radius: 8px;
-  background: rgba(19, 27, 43, 0.9);
-}
-
-.panel h2 {
-  margin: 0 0 12px;
-  font-size: 18px;
-}
-
-.panel ul {
-  margin: 0;
-  padding-left: 18px;
-  color: #cfd8ea;
-}
-
-.example-form-row,
-.example-edit-form {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: center;
-  width: 100%;
-}
-
-.example-form-row input,
-.example-edit-form input {
-  flex: 1;
-  min-width: 160px;
-  padding: 10px 12px;
-  border-radius: 6px;
-  border: 1px solid rgba(143, 176, 255, 0.24);
-  background: rgba(9, 13, 22, 0.6);
-  color: inherit;
-  font: inherit;
-}
-
-.example-form-row button,
-.example-edit-form button,
-.example-actions button {
-  padding: 10px 16px;
-  border-radius: 6px;
-  border: 1px solid rgba(143, 176, 255, 0.32);
-  background: rgba(143, 176, 255, 0.14);
-  color: #e7ebf3;
-  font: inherit;
-  cursor: pointer;
-}
-
-.example-form-row button:hover,
-.example-actions button:hover {
-  background: rgba(143, 176, 255, 0.26);
-}
-
-.example-error {
-  margin: 12px 0 0;
-  color: #ff9d9d;
-}
-
-.example-list {
-  list-style: none;
-  margin: 12px 0 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-}
-
-.example-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 14px;
-  border-radius: 6px;
-  border: 1px solid rgba(143, 176, 255, 0.16);
-  background: rgba(9, 13, 22, 0.4);
-}
-
-.example-desc {
-  color: #b7c2d9;
-}
-
-.example-actions {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
 }

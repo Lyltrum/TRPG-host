@@ -1,6 +1,8 @@
+"""健康检查接口，给部署平台/监控探活用，不需要鉴权、不碰数据库。"""
+
 from fastapi import APIRouter
 
-from app.schemas.common import ApiResponse
+from app.dto.common import ApiResponse
 
 router = APIRouter(tags=["health"])
 

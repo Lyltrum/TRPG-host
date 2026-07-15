@@ -1,18 +1,27 @@
+"""Controller 层：`/api/v1/examples` 路由，GET(列表/单个)/POST/PUT/DELETE 全套 CRUD 范例。
+
+跟真实业务完全无关，只用来演示这套骨架的完整用法：怎么用 Depends(get_db) 拿
+数据库会话、怎么用 AppException 表达业务错误（404/409）、controller 怎么调用
+service 层、怎么把校验/DTO/响应封装拼起来。以后写真实业务接口时，照这个文件的
+结构抄一份就行。
+"""
+
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.core.errors import AppException, ErrorCode
-from app.crud import example as example_crud
+from app.dto.common import ApiResponse
+from app.dto.example import ExampleCreate, ExampleRead, ExampleUpdate
 from app.models.example import Example
-from app.schemas.common import ApiResponse
-from app.schemas.example import ExampleCreate, ExampleRead, ExampleUpdate
+from app.service import example as example_service
 
 router = APIRouter(prefix="/examples", tags=["examples"])
 
 
 async def _get_example_or_404(db: AsyncSession, example_id: str) -> Example:
-    example = await example_crud.get_example(db, example_id)
+    """查不到就直接抛 404，多个路由函数（get/put/delete）都要做这个判断，抽出来复用。"""
+    example = await example_service.get_example(db, example_id)
     if example is None:
         raise AppException(ErrorCode.NOT_FOUND, "示例不存在", status.HTTP_404_NOT_FOUND)
     return example
@@ -21,14 +30,16 @@ async def _get_example_or_404(db: AsyncSession, example_id: str) -> Example:
 async def _ensure_name_available(
     db: AsyncSession, name: str, *, exclude_id: str | None = None
 ) -> None:
-    existing = await example_crud.get_example_by_name(db, name)
+    """检查名称是否可用（新建时 exclude_id=None；更新时排除自己这一条，允许"改成同一个名字"）。"""
+    existing = await example_service.get_example_by_name(db, name)
     if existing is not None and existing.id != exclude_id:
         raise AppException(ErrorCode.CONFLICT, "同名示例已存在", status.HTTP_409_CONFLICT)
 
 
 @router.get("", response_model=ApiResponse[list[ExampleRead]])
 async def list_examples(db: AsyncSession = Depends(get_db)) -> ApiResponse[list[ExampleRead]]:
-    examples = await example_crud.list_examples(db)
+    """GET /api/v1/examples —— 列出全部记录，200。"""
+    examples = await example_service.list_examples(db)
     return ApiResponse.ok([ExampleRead.model_validate(e) for e in examples])
 
 
@@ -36,6 +47,7 @@ async def list_examples(db: AsyncSession = Depends(get_db)) -> ApiResponse[list[
 async def get_example(
     example_id: str, db: AsyncSession = Depends(get_db)
 ) -> ApiResponse[ExampleRead]:
+    """GET /api/v1/examples/{id} —— 查单条，查不到 404。"""
     example = await _get_example_or_404(db, example_id)
     return ApiResponse.ok(ExampleRead.model_validate(example))
 
@@ -44,8 +56,10 @@ async def get_example(
 async def create_example(
     payload: ExampleCreate, db: AsyncSession = Depends(get_db)
 ) -> ApiResponse[ExampleRead]:
+    """POST /api/v1/examples —— 新建，成功 201；名称重复 409；
+    请求体不合法 422（由 pydantic 自动处理）。"""
     await _ensure_name_available(db, payload.name)
-    example = await example_crud.create_example(db, payload)
+    example = await example_service.create_example(db, payload)
     return ApiResponse.ok(ExampleRead.model_validate(example))
 
 
@@ -53,14 +67,19 @@ async def create_example(
 async def update_example(
     example_id: str, payload: ExampleUpdate, db: AsyncSession = Depends(get_db)
 ) -> ApiResponse[ExampleRead]:
+    """PUT /api/v1/examples/{id} —— 全量更新；记录不存在 404；改成别人的名称 409。"""
     example = await _get_example_or_404(db, example_id)
     await _ensure_name_available(db, payload.name, exclude_id=example_id)
-    example = await example_crud.update_example(db, example, payload)
+    example = await example_service.update_example(db, example, payload)
     return ApiResponse.ok(ExampleRead.model_validate(example))
 
 
 @router.delete("/{example_id}", response_model=ApiResponse[None])
 async def delete_example(example_id: str, db: AsyncSession = Depends(get_db)) -> ApiResponse[None]:
+    """DELETE /api/v1/examples/{id} —— 删除；记录不存在 404；成功返回 data=null，状态码仍是 200
+    （没有用 204 No Content，是为了让所有接口都能返回同一种统一响应信封，不用为
+    "没有响应体"的情况另外特殊处理）。
+    """
     example = await _get_example_or_404(db, example_id)
-    await example_crud.delete_example(db, example)
+    await example_service.delete_example(db, example)
     return ApiResponse.ok(None)

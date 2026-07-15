@@ -1,3 +1,5 @@
+"""健康检查接口的响应形状，顺便验证统一响应信封在最简单的接口上长什么样。"""
+
 from httpx import AsyncClient
 
 

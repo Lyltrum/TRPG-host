@@ -39,12 +39,56 @@ _BUILTIN_MODULES: list[ModuleRead] = [
 ]
 
 
+class RoomNotFoundError(ValueError):
+    """房间或模组不存在。"""
+
+
+class RoomAuthenticationError(PermissionError):
+    """未提供有效的房间身份凭证。"""
+
+
+class RoomAuthorizationError(PermissionError):
+    """当前玩家无权执行房主操作。"""
+
+
+class RoomConflictError(RuntimeError):
+    """房间状态不允许当前操作。"""
+
+
 def _generate_room_code() -> str:
     """生成 6 位大写字母+数字房间码，避免碰撞。"""
     while True:
         code = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
         if code not in _rooms:
             return code
+
+
+def _find_room_by_id(room_id: str) -> dict:
+    for room in _rooms.values():
+        if room["id"] == room_id:
+            return room
+    raise RoomNotFoundError("房间不存在")
+
+
+def _get_player_by_token(reconnect_token: str | None) -> dict:
+    if reconnect_token is None:
+        raise RoomAuthenticationError("缺少重连凭证")
+    for player in _players.values():
+        if player["reconnect_token"] == reconnect_token:
+            return player
+    raise RoomAuthenticationError("重连凭证无效")
+
+
+def _require_host(room: dict, reconnect_token: str | None) -> None:
+    player = _get_player_by_token(reconnect_token)
+    if player["room_id"] != room["id"] or player["id"] != room["host_player_id"]:
+        raise RoomAuthorizationError("仅房主可以执行此操作")
+
+
+def _module_title(module_id: str | None) -> str | None:
+    if module_id is None:
+        return None
+    return next((module.title for module in _BUILTIN_MODULES if module.id == module_id), None)
 
 
 async def create_room(payload: RoomCreate) -> RoomCreateResult:
@@ -92,20 +136,31 @@ async def list_modules() -> list[ModuleRead]:
     return _BUILTIN_MODULES
 
 
-async def select_module(room_id: str, payload: SelectModuleBody) -> None:
+async def select_module(
+    room_id: str, payload: SelectModuleBody, reconnect_token: str | None
+) -> None:
     """房主选定模组。"""
-    for room in _rooms.values():
-        if room["id"] == room_id:
-            room["module_id"] = payload.module_id
-            room["updated_at"] = datetime.now(UTC)
-            return
+    room = _find_room_by_id(room_id)
+    _require_host(room, reconnect_token)
+    if room["phase"] != "Lobby":
+        raise RoomConflictError("只能在大厅阶段选择模组")
+    if not any(module.id == payload.module_id for module in _BUILTIN_MODULES):
+        raise RoomNotFoundError("模组不存在")
+    room["module_id"] = payload.module_id
+    room["updated_at"] = datetime.now(UTC)
 
 
 async def join_room(room_code: str, payload: JoinRoomBody) -> RoomCreateResult:
     """用房间码加入房间。"""
     room = _rooms.get(room_code)
     if room is None:
-        raise ValueError("房间不存在")
+        raise RoomNotFoundError("房间不存在")
+    if room["phase"] != "Lobby":
+        raise RoomConflictError("游戏已开始，无法加入房间")
+
+    player_count = sum(player["room_id"] == room["id"] for player in _players.values())
+    if player_count >= room["max_players"]:
+        raise RoomConflictError("房间人数已满")
 
     player_id = str(uuid.uuid4())
     reconnect_token = str(uuid.uuid4())
@@ -137,17 +192,7 @@ async def get_room_preview(room_code: str) -> RoomPreview | None:
     if room is None:
         return None
 
-    room_players = [
-        p for p in _players.values() if p["room_id"] == room["id"]
-    ]
-
-    # 查找模组标题
-    module_title = None
-    if room["module_id"]:
-        for m in _BUILTIN_MODULES:
-            if m.id == room["module_id"]:
-                module_title = m.title
-                break
+    room_players = [p for p in _players.values() if p["room_id"] == room["id"]]
 
     return RoomPreview(
         room_id=room["id"],
@@ -155,7 +200,7 @@ async def get_room_preview(room_code: str) -> RoomPreview | None:
         room_name=room["room_name"],
         phase=room["phase"],
         story_started=room["phase"] != "Lobby",
-        module_title=module_title,
+        module_title=_module_title(room["module_id"]),
         player_count=len(room_players),
         max_players=room["max_players"],
         players=[
@@ -171,37 +216,33 @@ async def get_room_preview(room_code: str) -> RoomPreview | None:
     )
 
 
-async def start_story(room_id: str) -> None:
+async def start_story(room_id: str, reconnect_token: str | None) -> None:
     """房主开始游戏，将房间阶段推进到 InGame。"""
-    for room in _rooms.values():
-        if room["id"] == room_id:
-            room["phase"] = "InGame"
-            room["updated_at"] = datetime.now(UTC)
-            return
-    raise ValueError("房间不存在")
+    room = _find_room_by_id(room_id)
+    _require_host(room, reconnect_token)
+    if room["phase"] != "Lobby":
+        raise RoomConflictError("只有大厅阶段可以开始游戏")
+    if room["module_id"] is None:
+        raise RoomConflictError("请先选择模组")
+    room["phase"] = "InGame"
+    room["updated_at"] = datetime.now(UTC)
 
 
-async def list_my_rooms(player_id: str | None = None) -> list[MyRoomSummary]:
-    """获取我的房间列表（MS1 stub：返回所有房间）。"""
+async def list_my_rooms(reconnect_token: str | None) -> list[MyRoomSummary]:
+    """根据重连凭证获取当前玩家加入的房间。"""
+    player = _get_player_by_token(reconnect_token)
     summaries: list[MyRoomSummary] = []
     for room in _rooms.values():
-        room_players = [
-            p for p in _players.values() if p["room_id"] == room["id"]
-        ]
-        # 查找模组标题
-        module_title = None
-        if room["module_id"]:
-            for m in _BUILTIN_MODULES:
-                if m.id == room["module_id"]:
-                    module_title = m.title
-                    break
+        if room["id"] != player["room_id"]:
+            continue
+        room_players = [p for p in _players.values() if p["room_id"] == room["id"]]
         summaries.append(
             MyRoomSummary(
                 room_id=room["id"],
                 room_code=room["room_code"],
                 room_name=room["room_name"],
                 phase=room["phase"],
-                module_title=module_title,
+                module_title=_module_title(room["module_id"]),
                 player_count=len(room_players),
                 max_players=room["max_players"],
                 updated_at=room["updated_at"],
@@ -210,11 +251,11 @@ async def list_my_rooms(player_id: str | None = None) -> list[MyRoomSummary]:
     return summaries
 
 
-async def end_game(room_id: str) -> None:
+async def end_game(room_id: str, reconnect_token: str | None) -> None:
     """房主结束游戏，房间状态标记为已完成。"""
-    for room in _rooms.values():
-        if room["id"] == room_id:
-            room["phase"] = "Completed"
-            room["updated_at"] = datetime.now(UTC)
-            return
-    raise ValueError("房间不存在")
+    room = _find_room_by_id(room_id)
+    _require_host(room, reconnect_token)
+    if room["phase"] != "InGame":
+        raise RoomConflictError("只有进行中的游戏可以结束")
+    room["phase"] = "Completed"
+    room["updated_at"] = datetime.now(UTC)

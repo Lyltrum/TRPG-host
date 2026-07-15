@@ -11,7 +11,7 @@
 
 from datetime import datetime
 
-from pydantic import AliasGenerator, BaseModel, ConfigDict, Field
+from pydantic import AliasGenerator, BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -21,6 +21,7 @@ def _to_camel(snake: str) -> str:
 
 class CamelModel(BaseModel):
     """所有 Room DTO 的基类：JSON 层使用 camelCase，Python 层使用 snake_case。"""
+
     model_config = ConfigDict(
         alias_generator=AliasGenerator(alias=_to_camel),
         populate_by_name=True,
@@ -29,28 +30,54 @@ class CamelModel(BaseModel):
 
 # ── 请求体 ──────────────────────────────────────
 
+
 class RoomCreate(CamelModel):
     """POST /api/v1/rooms 请求体"""
+
     nickname: str | None = Field(default=None, max_length=100)
     room_name: str = Field(..., min_length=1, max_length=200)
     max_players: int = Field(default=4, ge=1, le=20)
 
+    @field_validator("nickname", "room_name")
+    @classmethod
+    def strip_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("不能为空")
+        return stripped
+
 
 class SelectModuleBody(CamelModel):
     """POST /api/v1/rooms/{roomId}/module 请求体"""
+
     module_id: str = Field(..., min_length=1)
     attribute_gen_method: str = Field(default="point_buy")
 
 
 class JoinRoomBody(CamelModel):
     """POST /api/v1/rooms/{roomCode}/join 请求体"""
+
     nickname: str | None = Field(default=None, max_length=100)
+
+    @field_validator("nickname")
+    @classmethod
+    def strip_nickname(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("昵称不能为空")
+        return stripped
 
 
 # ── 响应体 ──────────────────────────────────────
 
+
 class RoomCreateResult(CamelModel):
     """POST /api/v1/rooms 返回"""
+
     room_id: str
     room_code: str
     reconnect_token: str
@@ -59,6 +86,7 @@ class RoomCreateResult(CamelModel):
 
 class RoomPlayerRead(CamelModel):
     """房间内玩家摘要"""
+
     model_config = ConfigDict(
         alias_generator=AliasGenerator(alias=_to_camel),
         populate_by_name=True,
@@ -73,6 +101,7 @@ class RoomPlayerRead(CamelModel):
 
 class ModuleRead(CamelModel):
     """模组信息"""
+
     id: str
     title: str
     version: str
@@ -85,6 +114,7 @@ class ModuleRead(CamelModel):
 
 class RoomPreview(CamelModel):
     """GET /api/v1/rooms/{roomCode} 返回"""
+
     room_id: str
     room_code: str
     room_name: str
@@ -98,6 +128,7 @@ class RoomPreview(CamelModel):
 
 class MyRoomSummary(CamelModel):
     """GET /api/v1/me/rooms 返回项"""
+
     room_id: str
     room_code: str
     room_name: str

@@ -15,6 +15,10 @@ import type {
 export class RoomsResource {
   constructor(private readonly client: ApiClient) {}
 
+  private authenticated(reconnectToken: string): RequestInit {
+    return { headers: { 'X-Reconnect-Token': reconnectToken } };
+  }
+
   /** POST /api/v1/rooms — 创建房间，返回 roomId/roomCode/reconnectToken/playerId */
   create(payload: CreateRoomInput): Promise<CreateRoomResult> {
     return this.client.post<CreateRoomResult>('/rooms', payload);
@@ -26,8 +30,16 @@ export class RoomsResource {
   }
 
   /** POST /api/v1/rooms/{roomId}/module — 房主选定模组 */
-  selectModule(roomId: string, payload: SelectModuleInput): Promise<null> {
-    return this.client.post<null>(`/rooms/${roomId}/module`, payload);
+  selectModule(
+    roomId: string,
+    payload: SelectModuleInput,
+    reconnectToken: string
+  ): Promise<null> {
+    return this.client.post<null>(
+      `/rooms/${roomId}/module`,
+      payload,
+      this.authenticated(reconnectToken)
+    );
   }
 
   /** POST /api/v1/rooms/{roomCode}/join — 用房间码加入房间 */
@@ -41,17 +53,28 @@ export class RoomsResource {
   }
 
   /** POST /api/v1/rooms/{roomId}/start-story — 房主开始游戏 */
-  startStory(roomId: string): Promise<null> {
-    return this.client.post<null>(`/rooms/${roomId}/start-story`, null);
+  startStory(roomId: string, reconnectToken: string): Promise<null> {
+    return this.client.post<null>(
+      `/rooms/${roomId}/start-story`,
+      null,
+      this.authenticated(reconnectToken)
+    );
   }
 
   /** GET /api/v1/me/rooms — 获取我的房间列表 */
-  listMyRooms(): Promise<MyRoomSummary[]> {
-    return this.client.get<MyRoomSummary[]>('/me/rooms');
+  listMyRooms(reconnectToken: string): Promise<MyRoomSummary[]> {
+    return this.client.get<MyRoomSummary[]>(
+      '/me/rooms',
+      this.authenticated(reconnectToken)
+    );
   }
 
   /** POST /api/v1/rooms/{roomId}/end — 房主结束游戏 */
-  endGame(roomId: string): Promise<null> {
-    return this.client.post<null>(`/rooms/${roomId}/end`, null);
+  endGame(roomId: string, reconnectToken: string): Promise<null> {
+    return this.client.post<null>(
+      `/rooms/${roomId}/end`,
+      null,
+      this.authenticated(reconnectToken)
+    );
   }
 }

@@ -4,7 +4,9 @@ MS1 使用内存 stub（app/service/room.py），后续接入数据库后照搬 
 的模式改为 SQLAlchemy 异步操作。
 """
 
-from fastapi import APIRouter, status
+from typing import NoReturn
+
+from fastapi import APIRouter, Header, status
 
 from app.core.errors import AppException, ErrorCode
 from app.dto.common import ApiResponse
@@ -20,6 +22,16 @@ from app.service import room as room_service
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
 
+def _raise_service_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, room_service.RoomAuthenticationError):
+        raise AppException(ErrorCode.UNAUTHORIZED, str(exc), status.HTTP_401_UNAUTHORIZED) from exc
+    if isinstance(exc, room_service.RoomAuthorizationError):
+        raise AppException(ErrorCode.FORBIDDEN, str(exc), status.HTTP_403_FORBIDDEN) from exc
+    if isinstance(exc, room_service.RoomConflictError):
+        raise AppException(ErrorCode.CONFLICT, str(exc), status.HTTP_409_CONFLICT) from exc
+    raise AppException(ErrorCode.NOT_FOUND, str(exc), status.HTTP_404_NOT_FOUND) from exc
+
+
 @router.post("", response_model=ApiResponse[RoomCreateResult])
 async def create_room(payload: RoomCreate) -> ApiResponse[RoomCreateResult]:
     """POST /api/v1/rooms —— 创建房间，返回房间身份信息。"""
@@ -29,22 +41,30 @@ async def create_room(payload: RoomCreate) -> ApiResponse[RoomCreateResult]:
 
 @router.post("/{room_id}/module", response_model=ApiResponse[None])
 async def select_room_module(
-    room_id: str, payload: SelectModuleBody
+    room_id: str,
+    payload: SelectModuleBody,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
 ) -> ApiResponse[None]:
     """POST /api/v1/rooms/{roomId}/module —— 房主选定模组。"""
-    await room_service.select_module(room_id, payload)
+    try:
+        await room_service.select_module(room_id, payload, reconnect_token)
+    except (
+        room_service.RoomNotFoundError,
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+        room_service.RoomConflictError,
+    ) as exc:
+        _raise_service_error(exc)
     return ApiResponse.ok(None)
 
 
 @router.post("/{room_code}/join", response_model=ApiResponse[RoomCreateResult])
-async def join_room(
-    room_code: str, payload: JoinRoomBody
-) -> ApiResponse[RoomCreateResult]:
+async def join_room(room_code: str, payload: JoinRoomBody) -> ApiResponse[RoomCreateResult]:
     """POST /api/v1/rooms/{roomCode}/join —— 用房间码加入房间。"""
     try:
         result = await room_service.join_room(room_code, payload)
-    except ValueError as exc:
-        raise AppException(ErrorCode.NOT_FOUND, str(exc), status.HTTP_404_NOT_FOUND) from exc
+    except (room_service.RoomNotFoundError, room_service.RoomConflictError) as exc:
+        _raise_service_error(exc)
     return ApiResponse.ok(result)
 
 
@@ -58,20 +78,36 @@ async def get_room_info(room_code: str) -> ApiResponse[RoomPreview]:
 
 
 @router.post("/{room_id}/start-story", response_model=ApiResponse[None])
-async def start_story(room_id: str) -> ApiResponse[None]:
+async def start_story(
+    room_id: str,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+) -> ApiResponse[None]:
     """POST /api/v1/rooms/{roomId}/start-story —— 房主开始游戏。"""
     try:
-        await room_service.start_story(room_id)
-    except ValueError as exc:
-        raise AppException(ErrorCode.NOT_FOUND, str(exc), status.HTTP_404_NOT_FOUND) from exc
+        await room_service.start_story(room_id, reconnect_token)
+    except (
+        room_service.RoomNotFoundError,
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+        room_service.RoomConflictError,
+    ) as exc:
+        _raise_service_error(exc)
     return ApiResponse.ok(None)
 
 
 @router.post("/{room_id}/end", response_model=ApiResponse[None])
-async def end_game(room_id: str) -> ApiResponse[None]:
+async def end_game(
+    room_id: str,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+) -> ApiResponse[None]:
     """POST /api/v1/rooms/{roomId}/end —— 房主结束游戏。"""
     try:
-        await room_service.end_game(room_id)
-    except ValueError as exc:
-        raise AppException(ErrorCode.NOT_FOUND, str(exc), status.HTTP_404_NOT_FOUND) from exc
+        await room_service.end_game(room_id, reconnect_token)
+    except (
+        room_service.RoomNotFoundError,
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+        room_service.RoomConflictError,
+    ) as exc:
+        _raise_service_error(exc)
     return ApiResponse.ok(None)

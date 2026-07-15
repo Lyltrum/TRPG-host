@@ -19,21 +19,15 @@ class Room(Base):
     id: Mapped[str] = mapped_column(
         Uuid(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    room_code: Mapped[str] = mapped_column(
-        String(6), unique=True, index=True, nullable=False
-    )
+    room_code: Mapped[str] = mapped_column(String(6), unique=True, index=True, nullable=False)
     room_name: Mapped[str] = mapped_column(String(200), nullable=False)
     max_players: Mapped[int] = mapped_column(Integer, nullable=False)
-    phase: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="Lobby"
-    )
+    phase: Mapped[str] = mapped_column(String(20), nullable=False, default="Lobby")
     # 房主 playerId（由 RoomPlayer 的 id 填充，房间创建后通过 RoomPlayer.id 回写）
     host_player_id: Mapped[str | None] = mapped_column(
         Uuid(as_uuid=False), nullable=True, default=None
     )
-    module_id: Mapped[str | None] = mapped_column(
-        Uuid(as_uuid=False), nullable=True, default=None
-    )
+    module_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -60,9 +54,7 @@ class RoomPlayer(Base):
     nickname: Mapped[str] = mapped_column(String(100), nullable=False)
     is_host: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ready: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    has_character: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
+    has_character: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     reconnect_token: Mapped[str] = mapped_column(
         Uuid(as_uuid=False), default=lambda: str(uuid.uuid4()), nullable=False
     )

@@ -72,12 +72,16 @@ export class ApiClient {
     return body.data as T;
   }
 
-  get<T>(path: string): Promise<T> {
-    return this.request<T>(path, { method: 'GET' });
+  get<T>(path: string, init?: RequestInit): Promise<T> {
+    return this.request<T>(path, { ...init, method: 'GET' });
   }
 
-  post<T>(path: string, payload: unknown): Promise<T> {
-    return this.request<T>(path, { method: 'POST', body: JSON.stringify(payload) });
+  post<T>(path: string, payload: unknown, init?: RequestInit): Promise<T> {
+    return this.request<T>(path, {
+      ...init,
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
   }
 
   put<T>(path: string, payload: unknown): Promise<T> {

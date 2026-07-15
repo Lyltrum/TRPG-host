@@ -5,21 +5,24 @@
 
 import { ApiClient, type ApiClientOptions } from './client';
 import { ExamplesResource } from './resources/examples';
+import { RoomsResource } from './resources/rooms';
 
 export * from './types';
 export { ApiClient, ApiError } from './client';
 export type { ApiClientOptions } from './client';
 
 /**
- * SDK 的顶层门面：每种业务资源（目前只有 examples）挂一个只读属性，
- * 调用方用 `sdk.examples.list()` 这样的形式访问，不需要分别 new 各个 Resource。
+ * SDK 的顶层门面：每种业务资源挂一个只读属性，
+ * 调用方用 `sdk.rooms.create(...)` 或 `sdk.examples.list()` 的形式访问。
  */
 export class TrpgSdk {
   readonly examples: ExamplesResource;
+  readonly rooms: RoomsResource;
 
   constructor(options: ApiClientOptions) {
     const client = new ApiClient(options);
     this.examples = new ExamplesResource(client);
+    this.rooms = new RoomsResource(client);
   }
 }
 

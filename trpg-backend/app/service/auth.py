@@ -4,6 +4,8 @@
 存在内存字典里换取用户，不做过期/续期（MS1 范围不包含"多设备会话管理"）。
 """
 
+import asyncio
+import hashlib
 import uuid
 
 import bcrypt
@@ -28,12 +30,21 @@ class AuthenticationError(PermissionError):
     """未提供有效的登录凭证。"""
 
 
+def _prehash(password: str) -> bytes:
+    """bcrypt 只认密码的前 72 字节，超出部分会被静默截断——密码开到 100 字符
+    时，两个仅在 72 字节之后不同的密码会算出同一个哈希，等于变相碰撞（code
+    review 用真实 bcrypt 4.3.0 复现过）。这里先用 sha256 摘要成固定 32 字节
+    再喂给 bcrypt，从根源上避开这个截断限制，而不是缩短密码长度上限。
+    """
+    return hashlib.sha256(password.encode()).digest()
+
+
 def _hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(_prehash(password), bcrypt.gensalt()).decode()
 
 
 def _verify_password(password: str, password_hash: str) -> bool:
-    return bcrypt.checkpw(password.encode(), password_hash.encode())
+    return bcrypt.checkpw(_prehash(password), password_hash.encode())
 
 
 async def register(account: str, password: str, nickname: str) -> AuthResult:
@@ -41,10 +52,13 @@ async def register(account: str, password: str, nickname: str) -> AuthResult:
     if account in _accounts:
         raise AccountExistsError("账号已被注册")
     user_id = str(uuid.uuid4())
+    # bcrypt 是同步、CPU 密集的调用，直接在协程里跑会阻塞事件循环处理其它
+    # 并发请求，丢进线程池执行。
+    password_hash = await asyncio.to_thread(_hash_password, password)
     _users[user_id] = {
         "id": user_id,
         "account": account,
-        "password_hash": _hash_password(password),
+        "password_hash": password_hash,
         "nickname": nickname,
     }
     _accounts[account] = user_id
@@ -57,7 +71,10 @@ async def login(account: str, password: str) -> AuthResult:
     """账号密码登录。"""
     user_id = _accounts.get(account)
     user = _users.get(user_id) if user_id else None
-    if user is None or not _verify_password(password, user["password_hash"]):
+    if user is None:
+        raise InvalidCredentialsError("账号或密码不正确")
+    verified = await asyncio.to_thread(_verify_password, password, user["password_hash"])
+    if not verified:
         raise InvalidCredentialsError("账号或密码不正确")
     token = str(uuid.uuid4())
     _tokens[token] = user["id"]

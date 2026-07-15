@@ -109,3 +109,28 @@ async def test_register_rejects_short_password(client: AsyncClient) -> None:
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+async def test_long_passwords_differing_after_bcrypt_limit_are_not_confused(
+    client: AsyncClient,
+) -> None:
+    # bcrypt 本身只认密码的前 72 字节，两个仅在这之后不同的密码如果直接喂给
+    # bcrypt 会被当成同一个密码——这里用两个前 72 字节相同、只有末尾不同的
+    # 100 字符密码验证不会互相通过登录（回归 service/auth.py 里的 sha256
+    # 预哈希修复）。
+    password_a = "a" * 99 + "A"
+    password_b = "a" * 99 + "B"
+    await client.post(
+        f"{AUTH_BASE}/register",
+        json={"account": "carol", "password": password_a, "nickname": "卡罗尔"},
+    )
+
+    wrong = await client.post(
+        f"{AUTH_BASE}/login", json={"account": "carol", "password": password_b}
+    )
+    correct = await client.post(
+        f"{AUTH_BASE}/login", json={"account": "carol", "password": password_a}
+    )
+
+    assert wrong.status_code == 401
+    assert correct.status_code == 200

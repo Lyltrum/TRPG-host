@@ -33,6 +33,42 @@ export interface ExampleUpdateInput {
 }
 
 // ──────────────────────────────────────────────
+// 认证（Auth）模块 — 与后端 dto/auth.py 手动保持同步
+// ──────────────────────────────────────────────
+
+/** POST /api/v1/auth/register 请求体 */
+export interface RegisterInput {
+  account: string;
+  password: string;
+  nickname: string;
+}
+
+/** POST /api/v1/auth/login 请求体 */
+export interface LoginInput {
+  account: string;
+  password: string;
+}
+
+/** PATCH /api/v1/auth/me 请求体 */
+export interface UpdateNicknameInput {
+  nickname: string;
+}
+
+/** 注册 / 登录成功后的返回：登录凭证 + 用户信息。 */
+export interface AuthResult {
+  token: string;
+  userId: string;
+  nickname: string;
+}
+
+/** GET/PATCH /api/v1/auth/me 返回 */
+export interface Me {
+  userId: string;
+  account: string;
+  nickname: string;
+}
+
+// ──────────────────────────────────────────────
 // 房间（Room）模块 — 与后端 dto/room.py 手动保持同步
 // ──────────────────────────────────────────────
 

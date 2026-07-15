@@ -6,11 +6,12 @@
 
 from fastapi import APIRouter
 
-from app.controller.v1 import examples, health, me, modules, rooms
+from app.controller.v1 import auth, examples, health, me, modules, rooms
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router)
 api_router.include_router(examples.router)
+api_router.include_router(auth.router)
 api_router.include_router(rooms.router)
 api_router.include_router(modules.router)
 api_router.include_router(me.router)

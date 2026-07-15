@@ -369,7 +369,9 @@ export default function RoomPage() {
   const roomCode = useRoomStore((s) => s.roomCode)
   const playerId = useRoomStore((s) => s.playerId)
   const nickname = useAuthStore((s) => s.nickname)
-  const character = useCharacterStore((s) => s.character)
+  // 按房间取角色卡，而不是直接读 s.character——本地缓存不按房间区分的话，
+  // 换房间会把上一个房间的角色数据错误地展示出来（见 PR #67 review）。
+  const character = useCharacterStore((s) => (roomId ? s.getForRoom(roomId) : null))
   const senderName = character?.info.name || nickname || '你'
   const roomInfo = useRoomPlayers(roomCode)
   const isHost = roomInfo?.players.find((p) => p.playerId === playerId)?.isHost ?? false

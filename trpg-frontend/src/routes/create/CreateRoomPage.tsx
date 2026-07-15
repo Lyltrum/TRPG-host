@@ -9,6 +9,10 @@ import { createGameRoom, listModules, selectModule } from '@/services/room'
 import { friendlyErrorMessage } from '@/services/api-client'
 
 const MIN_PLAYERS = 1
+// 后端 RoomCreate.max_players 的校验是 le=20（trpg-backend/app/dto/room.py），
+// 这里的加减号/输入框都要跟着限制到 20，否则提交时只会收到一个 422（见
+// PR #67 review）。
+const MAX_PLAYERS = 20
 
 export default function CreateRoomPage() {
   const navigate = useNavigate()
@@ -116,11 +120,14 @@ export default function CreateRoomPage() {
                     type="number"
                     inputMode="numeric"
                     min={MIN_PLAYERS}
+                    max={MAX_PLAYERS}
                     value={maxPlayersInput}
                     onChange={e => setMaxPlayersInput(e.target.value)}
                     onBlur={() => {
                       const v = parseInt(maxPlayersInput, 10)
-                      const clamped = Number.isNaN(v) ? maxPlayers : Math.max(MIN_PLAYERS, v)
+                      const clamped = Number.isNaN(v)
+                        ? maxPlayers
+                        : Math.min(MAX_PLAYERS, Math.max(MIN_PLAYERS, v))
                       setMaxPlayers(clamped)
                       setMaxPlayersInput(String(clamped))
                     }}
@@ -130,15 +137,16 @@ export default function CreateRoomPage() {
                 </div>
                 <button
                   onClick={() => {
-                    const next = maxPlayers + 1
+                    const next = Math.min(MAX_PLAYERS, maxPlayers + 1)
                     setMaxPlayers(next)
                     setMaxPlayersInput(String(next))
                   }}
-                  className="w-10 h-10 rounded-[6px] bg-input border border-border-light text-text-muted flex items-center justify-center active:bg-panel transition-all">
+                  disabled={maxPlayers >= MAX_PLAYERS}
+                  className="w-10 h-10 rounded-[6px] bg-input border border-border-light text-text-muted flex items-center justify-center active:bg-panel disabled:opacity-40 disabled:cursor-not-allowed transition-all">
                   <Plus className="w-[16px] h-[16px]" />
                 </button>
               </div>
-              <p className="text-[10px] text-text-dim mt-1.5">不设上限，随时可以继续增加</p>
+              <p className="text-[10px] text-text-dim mt-1.5">最多 {MAX_PLAYERS} 人</p>
             </div>
           </div>
         </div>

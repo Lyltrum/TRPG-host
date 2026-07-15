@@ -3,10 +3,11 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, UserPlus, Swords, Eye } from 'lucide-react'
 import { useCharacterStore } from '@/stores/character-store'
 import { useRoomStore } from '@/stores/room-store'
+import { useAuthStore } from '@/stores/auth-store'
 import { ALL_SKILLS, calculateBaseValue } from '@/data/skills'
 import { ATTRIBUTE_LABELS } from '@/data/character-model'
 import { getOccupationById } from '@/data/occupations'
-import { disconnectWebSocket, sendWsMessage } from '@/services/api-client'
+import { connectWebSocket, disconnectWebSocket, sendWsMessage, waitForWsOpen } from '@/services/api-client'
 import { useRoomPlayers } from '@/hooks/useRoomPlayers'
 
 const ATTR_KEY_LIST = ['str', 'con', 'pow', 'dex', 'app', 'siz', 'int', 'edu'] as const
@@ -148,10 +149,15 @@ export default function CharacterReadyPage() {
   const navigate = useNavigate()
   const [showSelfSheet, setShowSelfSheet] = useState(false)
   const [starting, setStarting] = useState(false)
-  const { character } = useCharacterStore()
+  const roomId = useRoomStore((s) => s.roomId)
+  // 按房间取角色卡，而不是直接读 store 顶层的 character——本地缓存不按
+  // 房间区分的话，换房间会把上一个房间的角色数据错误地当成"已建卡"
+  // 展示出来（见 PR #67 review）。
+  const character = useCharacterStore((s) => (roomId ? s.getForRoom(roomId) : null))
   const roomCode = useRoomStore((s) => s.roomCode)
   const isHost = useRoomStore((s) => s.isHost)
   const playerId = useRoomStore((s) => s.playerId)
+  const nickname = useAuthStore((s) => s.nickname)
   const hasCharacter = character !== null
   const info = useRoomPlayers(roomCode)
   const players = info?.players ?? []
@@ -168,10 +174,24 @@ export default function CharacterReadyPage() {
     }
   }, [info?.phase, navigate])
 
-  const handleStartGame = () => {
-    if (!isHost || !playerId) return
+  const handleStartGame = async () => {
+    if (!isHost || !playerId || !roomId) return
     setStarting(true)
-    sendWsMessage('game.start', playerId, {})
+    try {
+      // ★ 这个页面从来没有主动建立过 WS 连接（只有 LobbyPage 会连）——如果
+      // 刷新过页面、或者从没经过 Lobby 直接落到这里，connectWebSocket 拿到
+      // 的连接是关闭的，sendWsMessage 会静默丢弃 game.start，后端 phase
+      // 永远停在 Building，其他玩家会一直卡在轮询里。这里跟 RoomPage 一样，
+      // 发 game.start 前先确保连接是通的、且已经 room.join 过（对已经连过
+      // 的情况是幂等空操作）。
+      const ws = connectWebSocket(roomId)
+      await waitForWsOpen(ws)
+      sendWsMessage('room.join', playerId, { roomCode, nickname: nickname || '玩家' })
+      sendWsMessage('game.start', playerId, {})
+    } catch {
+      setStarting(false)
+      return
+    }
     // ★ 房主要立刻本地跳转，不能也靠轮询 phase 等——AI 生成开场旁白要好几秒，
     // 但如果房主自己还要等下一次轮询（最多 3 秒）才进 RoomPage，RoomPage
     // 还没挂载、没人订阅 onWsMessage，narration.push 广播到达时就直接被

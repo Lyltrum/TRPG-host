@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, LogOut } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
-import { updateProfile, fetchMe } from '@/services/auth'
+import { useRoomStore } from '@/stores/room-store'
+import { useCharacterStore } from '@/stores/character-store'
+import { updateProfile, fetchMe, logout as logoutFromServer } from '@/services/auth'
 import { friendlyErrorMessage } from '@/services/api-client'
 
 export default function ProfilePage() {
@@ -10,7 +12,9 @@ export default function ProfilePage() {
   const [account, setAccount] = useState('')
   const nickname = useAuthStore((s) => s.nickname)
   const setNickname = useAuthStore((s) => s.setNickname)
-  const logout = useAuthStore((s) => s.logout)
+  const clearAuthStore = useAuthStore((s) => s.logout)
+  const resetRoomStore = useRoomStore((s) => s.reset)
+  const clearCharacterStore = useCharacterStore((s) => s.clear)
   const [draft, setDraft] = useState(nickname || '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -36,8 +40,16 @@ export default function ProfilePage() {
     }
   }
 
-  const handleLogout = () => {
-    logout()
+  const handleLogout = async () => {
+    // 之前只清了 auth-store 的内存状态，没调用 services/auth.ts 里真正撤销
+    // 后端会话 + 清掉 localStorage token 的 logout()——退出后刷新页面，
+    // App 的 fetchMe() 会拿着还没失效的 token 把用户自动重新登进去。
+    await logoutFromServer().catch(() => {
+      // 后端调用失败也无所谓，本地状态照样清掉，让用户回到登录页。
+    })
+    clearAuthStore()
+    resetRoomStore()
+    clearCharacterStore()
     navigate('/auth/login')
   }
 

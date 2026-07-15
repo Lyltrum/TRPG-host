@@ -116,8 +116,12 @@ export default function CharacterPage() {
 
   // ★ 从"人物卡准备页"点"编辑"回来时，如果已经建过卡（哪怕只是草稿），
   // 用已有数据预填，不要每次都从空白表单重新开始——之前一编辑就把之前填的
-  // 全部作废，逼用户重填一遍。
-  const existingCharacter = useCharacterStore.getState().character
+  // 全部作废，逼用户重填一遍。用 getForRoom 而不是直接读 character：
+  // 本地缓存不按房间区分的话，换了房间会把上一个房间的角色数据错误地
+  // 当成"已经建过卡"预填进来（见 PR #67 review）。
+  const existingCharacter = useCharacterStore
+    .getState()
+    .getForRoom(useRoomStore.getState().roomId ?? '')
 
   // Investigator info
   const [info, setInfo] = useState<InvestigatorInfo>(() => existingCharacter?.info ?? {
@@ -782,13 +786,16 @@ export default function CharacterPage() {
               })
               await completeCharacter(roomId, characterId)
               setCharacterId(characterId)
-              useCharacterStore.getState().setCharacter({
-                info: { ...info, playerName: info.playerName || info.name },
-                attr: { ...attr },
-                skillAlloc: { ...skillAlloc },
-                equipment, background, notes,
-                derived: { hp: derived.hp, san: derived.san, mp: derived.mp, db: derived.db, move: derived.move },
-              })
+              useCharacterStore.getState().setCharacter(
+                {
+                  info: { ...info, playerName: info.playerName || info.name },
+                  attr: { ...attr },
+                  skillAlloc: { ...skillAlloc },
+                  equipment, background, notes,
+                  derived: { hp: derived.hp, san: derived.san, mp: derived.mp, db: derived.db, move: derived.move },
+                },
+                roomId
+              )
               navigate('/room/ready')
             } catch (err) {
               setSubmitError(friendlyErrorMessage(err, '建卡失败'))

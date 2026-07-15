@@ -14,7 +14,11 @@ export interface CompletedCharacter {
 
 interface CharacterState {
   character: CompletedCharacter | null
-  setCharacter: (c: CompletedCharacter) => void
+  // 这份角色数据属于哪个房间——见下面的 getForRoom，读取时要核对这个字段，
+  // 不能假设 localStorage 里存的就是当前房间的角色。
+  roomId: string | null
+  setCharacter: (c: CompletedCharacter, roomId: string) => void
+  getForRoom: (roomId: string) => CompletedCharacter | null
   clear: () => void
 }
 
@@ -23,12 +27,19 @@ interface CharacterState {
 // 建过卡，是本地状态没了。持久化到 localStorage 解决同浏览器下的这类场景
 // （换浏览器/清缓存仍然会丢，因为这份数据从来没真的存过后端，见 mock-db 里
 // MockCharacter 只存了 draft/complete 状态、没存真实建卡内容）。
+//
+// ★ 只存一份角色、不按房间区分曾经导致真实 bug：同一浏览器加入/恢复另一个
+// 房间时，会展示上一个房间的角色卡；换账号登录也会继承上一个用户的数据
+// （见 PR #67 review）。现在额外存一个 roomId，读取时用 getForRoom 核对，
+// 房间对不上就当作没建过卡，而不是直接把 character 暴露出去。
 export const useCharacterStore = create<CharacterState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       character: null,
-      setCharacter: (character) => set({ character }),
-      clear: () => set({ character: null }),
+      roomId: null,
+      setCharacter: (character, roomId) => set({ character, roomId }),
+      getForRoom: (roomId) => (get().roomId === roomId ? get().character : null),
+      clear: () => set({ character: null, roomId: null }),
     }),
     { name: 'aidm-character', storage: createJSONStorage(() => localStorage) }
   )

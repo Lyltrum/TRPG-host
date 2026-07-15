@@ -1,9 +1,3 @@
-/**
- * 这个文件里的类型要跟后端 trpg-backend 的 pydantic 模型手动保持一致
- * （目前项目规模小，靠人工同步；等接口变多之后可以考虑从后端 OpenAPI
- * schema 自动生成，但现在手写更直接）。
- */
-
 /** 对应后端 ErrorDetail：只在 success=false 时出现。 */
 export interface ErrorDetail {
   code: string;
@@ -36,4 +30,80 @@ export interface ExampleCreateInput {
 export interface ExampleUpdateInput {
   name: string;
   description?: string | null;
+}
+
+// ──────────────────────────────────────────────
+// 房间（Room）模块 — 与后端 dto/room.py 手动保持同步
+// ──────────────────────────────────────────────
+
+/** POST /api/v1/rooms 请求体 */
+export interface CreateRoomInput {
+  nickname?: string;
+  roomName: string;
+  maxPlayers: number;
+}
+
+/** POST /api/v1/rooms 返回（创建者自动获得身份） */
+export interface CreateRoomResult {
+  roomId: string;
+  roomCode: string;
+  reconnectToken: string;
+  playerId: string;
+}
+
+/** GET /api/v1/modules 返回项 */
+export interface ModuleSummary {
+  id: string;
+  title: string;
+  version: string;
+  authors: string[];
+  playersMin: number;
+  playersMax: number;
+  difficulty: number;
+  estimatedDuration: string | null;
+}
+
+/** POST /api/v1/rooms/{roomId}/module 请求体 */
+export interface SelectModuleInput {
+  moduleId: string;
+  attributeGenMethod: string;
+}
+
+/** POST /api/v1/rooms/{roomCode}/join 请求体 */
+export interface JoinRoomInput {
+  nickname?: string;
+}
+
+/** 房间内的玩家摘要 */
+export interface RoomPlayerSummary {
+  playerId: string;
+  nickname: string;
+  isHost: boolean;
+  ready: boolean;
+  hasCharacter: boolean;
+}
+
+/** GET /api/v1/rooms/{roomCode} 返回 */
+export interface RoomPreview {
+  roomId: string;
+  roomCode: string;
+  roomName: string;
+  phase: string;
+  storyStarted: boolean;
+  moduleTitle: string | null;
+  playerCount: number;
+  maxPlayers: number;
+  players: RoomPlayerSummary[];
+}
+
+/** GET /api/v1/me/rooms 返回项 */
+export interface MyRoomSummary {
+  roomId: string;
+  roomCode: string;
+  roomName: string;
+  phase: string;
+  moduleTitle: string | null;
+  playerCount: number;
+  maxPlayers: number;
+  updatedAt: number;
 }

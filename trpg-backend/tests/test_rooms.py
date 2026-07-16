@@ -1,15 +1,6 @@
-import pytest
 from httpx import AsyncClient
 
-from app.service import room as room_service
-
 ROOMS_BASE = "/api/v1/rooms"
-
-
-@pytest.fixture(autouse=True)
-def clear_room_stub() -> None:
-    room_service._rooms.clear()
-    room_service._players.clear()
 
 
 async def create_room(client: AsyncClient, max_players: int = 4) -> dict:
@@ -31,7 +22,8 @@ async def test_join_rejects_full_room(client: AsyncClient) -> None:
     response = await client.post(f"{ROOMS_BASE}/{room['roomCode']}/join", json={"nickname": "玩家"})
 
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "CONFLICT"
+    # 满房间返回更具体的 ROOM_FULL（issue #77 新增的业务错误码），不再是泛化的 CONFLICT。
+    assert response.json()["error"]["code"] == "ROOM_FULL"
 
 
 async def test_join_rejects_room_after_story_starts(client: AsyncClient) -> None:

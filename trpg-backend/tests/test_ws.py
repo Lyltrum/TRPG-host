@@ -3,20 +3,8 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.main import app
-from app.service import auth as auth_service
-from app.service import room as room_service
 
 ROOMS_BASE = "/api/v1/rooms"
-
-
-@pytest.fixture(autouse=True)
-def clear_stubs() -> None:
-    room_service._rooms.clear()
-    room_service._players.clear()
-    room_service._characters.clear()
-    auth_service._users.clear()
-    auth_service._accounts.clear()
-    auth_service._tokens.clear()
 
 
 @pytest.fixture
@@ -172,12 +160,13 @@ def test_game_start_rejects_non_host(sync_client: TestClient) -> None:
         ws.receive_json()  # session.bound
         ws.send_json({"type": "game.start", "playerId": guest["playerId"], "payload": {}})
 
-        # 非房主发起 game.start 会被静默拒绝，不会有 narration.push；房间
-        # 阶段应该维持 Building 不变。
-        ws.send_json({"type": "room.join", "playerId": guest["playerId"], "payload": {}})
+        # 非房主发起 game.start 会被拒绝：收到一条 FORBIDDEN 的 error 事件
+        # （issue #77 起明确告知发起者，不再像旧版那样静默忽略）；房间阶段
+        # 维持 Building 不变，不会有 narration.push。
         envelope = ws.receive_json()
 
-    assert envelope["type"] == "session.bound"
+    assert envelope["type"] == "error"
+    assert envelope["payload"]["code"] == "FORBIDDEN"
     preview = sync_client.get(f"{ROOMS_BASE}/{room['roomCode']}").json()["data"]
     assert preview["phase"] == "Building"
 

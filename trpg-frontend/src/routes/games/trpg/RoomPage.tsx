@@ -455,7 +455,6 @@ export default function RoomPage() {
 
   const handleDiceResult = (result: number, diceType: DiceType) => {
     const typeLabel = diceType.toUpperCase()
-    const isSuccess = diceType === 'd100' ? result <= 65 : true
     const resultLabel = diceType === 'd100' ? (result <= 5 ? '极限成功' : result <= 65 ? '成功' : '失败') : `掷出 ${result}`
     setMessages(prev => [...prev, {
       type: 'dice', sender: senderName, content: `${typeLabel} · ${result}`, time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), isSelf: true,

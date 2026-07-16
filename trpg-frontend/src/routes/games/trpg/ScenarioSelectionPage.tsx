@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from 'react-router-dom'
-import { BookOpen, Clock, Users, ChevronRight, Upload, Shield, Swords } from 'lucide-react'
+import { BookOpen, Clock, Users, ChevronRight, Upload } from 'lucide-react'
 import { getGameById, getScenariosBySystem, SYSTEM_COLORS } from '@/config/games'
 import { useGameStore } from '@/stores/game-store'
 import Badge from '@/shared/components/Badge'
@@ -23,7 +23,6 @@ export default function ScenarioSelectionPage() {
   const returnFromGameSelect = useGameStore((s) => s.returnFromGameSelect)
   const colors = SYSTEM_COLORS[systemId || '']
   const systemName = colors?.name || '未知系统'
-  const IconComp = systemId === 'coc' ? Shield : Swords
 
   const handleSelect = (scenario: Scenario) => {
     setScene(scenario.id)

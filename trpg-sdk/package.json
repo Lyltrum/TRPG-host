@@ -22,7 +22,7 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "codegen": "tsx scripts/generate-types.ts",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test --test-reporter=spec \"src/**/*.test.ts\""
   },
   "devDependencies": {
     "@rollup/plugin-node-resolve": "^15.3.0",

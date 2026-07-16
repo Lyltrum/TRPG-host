@@ -11,9 +11,16 @@
 
 /**
  * action.submit 事件 payload。
+ *
+ * `utterance` 必填，理由同 PlayerReadyPayload.ready：一条不带行动内容的
+ * action.submit 是畸形消息。给默认空串会让 SDK 侧变成 `utterance?: string`，
+ * 于是 `submitAction(playerId, {})` 类型检查通过、运行时静默无操作。
+ *
+ * 注意「必填」只管字段存在，空白内容（`""` / `"   "`）仍由下游的
+ * `strip()` + 空值判断拦掉，两者不冲突。
  */
 export interface ActionSubmitPayload {
-  utterance?: string;
+  utterance: string;
 }
 
 /**
@@ -148,9 +155,15 @@ export interface NarrationPushPayload {
 
 /**
  * player.ready 事件 payload。
+ *
+ * `ready` 必填、不给默认值：协议上「设置准备状态」这个动作必须说清楚要设成
+ * 什么，缺字段是一条畸形消息，应该被丢弃，而不是被悄悄当成 `False` 处理。
+ * 这里给默认值的代价不只在后端——它会顺着 codegen 变成 SDK 的
+ * `ready?: boolean`，让 `setReady(playerId, {})` 也能通过类型检查并静默地把
+ * 玩家设成未准备（见 PR #76 review）。改动前的手写 SDK 类型本来就是必填的。
  */
 export interface PlayerReadyPayload {
-  ready?: boolean;
+  ready: boolean;
 }
 
 /**

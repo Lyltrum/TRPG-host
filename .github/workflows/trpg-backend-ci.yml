@@ -1,10 +1,13 @@
 name: Backend CI
 
-# trpg-backend/ 目录、本工作流文件自身、或者跟 codegen 管线相关的 trpg-sdk
-# 路径（生成产物 + 生成脚本本身）变化时触发。后两个 trpg-sdk 路径是特意加的
-# （见下面 codegen-drift job 的说明）：只在 trpg-backend/** 上加 paths 过滤器
-# 的话，一个只改了 trpg-sdk/scripts/generate-types.ts 或手改了生成产物的 PR
+# trpg-backend/ 目录、本工作流文件自身、或者任何能影响 codegen 产物的
+# trpg-sdk 路径变化时触发。那几条 trpg-sdk 路径是特意加的（见下面
+# codegen-drift job 的说明）：只在 trpg-backend/** 上加 paths 过滤器的话，
+# 一个只改了生成脚本、只手改了生成产物、或者只升级了生成器依赖版本的 PR
 # 完全不会触发这个 workflow，漂移检查也就无从跑起。
+#
+# package.json / package-lock.json 也在列，因为生成器（json-schema-to-typescript）
+# 的实际版本由它们锁定：升级生成器而不重新生成，产物同样会静默过时。
 on:
   push:
     branches: [main]
@@ -12,12 +15,16 @@ on:
       - "trpg-backend/**"
       - "trpg-sdk/scripts/generate-types.ts"
       - "trpg-sdk/src/generated/**"
+      - "trpg-sdk/package.json"
+      - "trpg-sdk/package-lock.json"
       - ".github/workflows/trpg-backend-ci.yml"
   pull_request:
     paths:
       - "trpg-backend/**"
       - "trpg-sdk/scripts/generate-types.ts"
       - "trpg-sdk/src/generated/**"
+      - "trpg-sdk/package.json"
+      - "trpg-sdk/package-lock.json"
       - ".github/workflows/trpg-backend-ci.yml"
 
 jobs:

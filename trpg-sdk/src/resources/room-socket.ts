@@ -7,21 +7,35 @@ import type {
 
 export type RoomSocketHandler = (event: ServerToClientEvent) => void;
 
-/** `ServerToClientEvent` 联合类型里所有已知的 `type` 判别值，用于运行时校验
- * 服务端推来的消息（见 isValidServerEvent）。跟 types.ts 里手写的
- * ServerToClientEvent 字面量保持一致——新增 WS 事件时两边都要加。 */
-const KNOWN_EVENT_TYPES: ReadonlySet<ServerToClientEvent['type']> = new Set([
-  'session.bound',
-  'narration.push',
-]);
+/**
+ * 每个 S→C 事件各自的 payload 校验器。
+ *
+ * 写成以 `ServerToClientEvent['type']` 为键的映射类型（而不是一个事件名数组
+ * 加一段公共校验），是为了让 TypeScript 强制约束这张表的完整性：往
+ * ServerToClientEvent 联合里加一个新事件却忘了在这里加校验器，编译期就会报错。
+ * 这张表同时也是"已知事件类型"的唯一来源，不需要另外维护一份事件名清单。
+ *
+ * 注意这里刻意只做逐字段的类型检查，不做取值范围/格式校验——目的是让下面的
+ * 类型守卫名副其实，而不是复刻一套完整的 schema 校验。SDK 是零运行时依赖的，
+ * 不会为此引入 ajv 之类的校验库（issue #75 决策 5）。事件数量涨上去之后
+ * （骨架那期要加 13 个 S→C 事件），这张表更适合改成从 JSON Schema 生成。
+ */
+const PAYLOAD_VALIDATORS: {
+  [K in ServerToClientEvent['type']]: (payload: Record<string, unknown>) => boolean;
+} = {
+  'session.bound': (p) => typeof p.roomId === 'string' && typeof p.playerId === 'string',
+  'narration.push': (p) => typeof p.text === 'string',
+};
 
 /**
- * 运行时校验服务端推来的消息是不是一个合法的 `ServerToClientEvent`
- * （issue #75 决策 5）：只校验信封形状（有 `type`/`payload`）和 `type` 是
- * 已知判别值，不校验 payload 内部字段——payload 内部字段级的一致性由
- * codegen 的 CI 漂移检查保证，不需要在每条消息的运行时再校验一次。
- * 这不是一个真正的类型守卫（没有对 payload 做逐字段检查），但作为运行时
- * 防线，拦住"未知事件类型"和"结构完全不对"这两类真实会发生的失败模式已经够。
+ * 运行时校验服务端推来的消息是不是一个合法的 `ServerToClientEvent`。
+ *
+ * 校验三层：信封形状（是对象、有 `type`/`payload`）→ `type` 是已知判别值 →
+ * 该判别值对应的 payload 字段类型正确。第三层是必须的：这个函数向 TypeScript
+ * 断言了 `value is ServerToClientEvent`，如果只校验信封就返回 true，
+ * `{ type: 'narration.push', payload: {} }` 会被当成合法事件下发，下游
+ * 读到的 `payload.text` 是 `undefined`，而类型系统还以为它是 string——
+ * 等于用类型守卫的形式对编译器撒谎（PR #76 review 指出）。
  *
  * 导出（而不是模块私有）是为了能在 room-socket.test.ts 里直接单元测试，
  * 不用为了测这段校验逻辑真的起一个 WebSocket 连接。
@@ -29,12 +43,10 @@ const KNOWN_EVENT_TYPES: ReadonlySet<ServerToClientEvent['type']> = new Set([
 export function isValidServerEvent(value: unknown): value is ServerToClientEvent {
   if (typeof value !== 'object' || value === null) return false;
   const { type, payload } = value as { type?: unknown; payload?: unknown };
-  return (
-    typeof type === 'string' &&
-    KNOWN_EVENT_TYPES.has(type as ServerToClientEvent['type']) &&
-    typeof payload === 'object' &&
-    payload !== null
-  );
+  if (typeof type !== 'string' || !(type in PAYLOAD_VALIDATORS)) return false;
+  if (typeof payload !== 'object' || payload === null) return false;
+  const validate = PAYLOAD_VALIDATORS[type as ServerToClientEvent['type']];
+  return validate(payload as Record<string, unknown>);
 }
 
 /**

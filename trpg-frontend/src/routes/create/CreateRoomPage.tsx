@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { ArrowLeft, Plus, Minus } from 'lucide-react'
 import { GAME_REGISTRY, SYSTEM_COLORS, getScenarioById } from '@/config/games'
 import { useGameStore } from '@/stores/game-store'
@@ -57,15 +57,6 @@ export default function CreateRoomPage() {
       setCreating(false)
     }
   }
-
-  useEffect(() => {
-    // 从选游戏页面返回时，清除已恢复的表单状态以免干扰下次创建
-    return () => {
-      if (store.returnFromGameSelect) {
-        setCreateForm({ roomName: '', maxPlayers: 4 })
-      }
-    }
-  }, [])
 
   const canCreate = roomName.trim().length > 0 && hasSelection && !creating
 

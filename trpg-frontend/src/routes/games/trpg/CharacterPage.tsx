@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { useState, useMemo, useEffect } from 'react'
-import { ArrowLeft, Plus, Minus, Search, Check, Shield, Heart, Brain, Zap, Eye, Maximize2, Lightbulb, BookOpen, UserCheck, ChevronDown, X, Info } from 'lucide-react'
+import { ArrowLeft, Plus, Minus, Search, Shield, Heart, Brain, Zap, Eye, Maximize2, Lightbulb, BookOpen, ChevronDown, X, Info } from 'lucide-react'
 import { ALL_OCCUPATIONS, OCCUPATION_GROUPS, getOccupationById } from '@/data/occupations'
 import { ALL_SKILLS, getSkillById, calculateBaseValue } from '@/data/skills'
 import { ATTRIBUTE_LABELS, calculateOccupationSkillPoints, calculateInterestSkillPoints, deriveStats, type Attributes, type InvestigatorInfo } from '@/data/character-model'
@@ -451,7 +451,6 @@ export default function CharacterPage() {
             <div className="grid grid-cols-2 gap-2 max-h-[320px] overflow-y-auto pr-0.5">
               {filteredOccupations.map(occ => {
                 const selected = info.occupationId === occ.id
-                const skillNames = occ.skillIds.map(id => getSkillById(id)?.name).filter(Boolean) as string[]
                 return (
                   <div key={occ.id}
                     className={`group relative px-2.5 py-3 bg-input border rounded-[6px] text-center cursor-pointer active:scale-[0.96] transition-all ${

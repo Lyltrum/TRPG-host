@@ -1,6 +1,5 @@
 import type { SkillDefinition } from './skills'
 import { calculateBaseValue } from './skills'
-import type { OccupationDefinition } from './occupations'
 
 /** 调查员基本信息 */
 export interface InvestigatorInfo {

@@ -41,21 +41,8 @@ export type {
   NarrationPushPayload,
 } from './generated/dto';
 
-/**
- * GET /api/v1/me/rooms 返回项。
- *
- * updatedAt 字段没有直接用生成产物（生成产物如实反映后端：
- * `updated_at: datetime` 序列化成 JSON 后是 ISO-8601 字符串，所以生成出来的
- * 是 `updatedAt: string`）。这是本次 codegen 排查出的一个真实历史遗留问题：
- * trpg-frontend/src/routes/my-rooms/MyRoomsPage.tsx 的 `formatTime(ts: number)`
- * 从写下的第一天起就一直把它当数字时间戳处理（`Date.now() - ts`），跟后端
- * 实际发送的字符串对不上。本期硬约束是 trpg-frontend 零改动仍要能构建，
- * 所以这里没有如实改成 string，而是继续保留前端已经在用的（不正确的）
- * number——这是一个需要单独前端 PR 修的 bug，不在本 issue 范围内。
- */
-export type MyRoomSummary = Omit<GeneratedMyRoomSummary, 'updatedAt'> & {
-  updatedAt: number;
-};
+/** GET /api/v1/me/rooms 返回项。 */
+export type MyRoomSummary = GeneratedMyRoomSummary;
 
 // ──────────────────────────────────────────────
 // SDK 自有类型 —— 不对应任何单一后端 DTO，继续手写（issue #75 决策 2）

@@ -1,15 +1,6 @@
-import pytest
 from httpx import AsyncClient
 
-from app.service import room as room_service
-
 ROOMS_BASE = "/api/v1/rooms"
-
-
-@pytest.fixture(autouse=True)
-def clear_room_stub() -> None:
-    room_service._rooms.clear()
-    room_service._players.clear()
 
 
 async def create_room(client: AsyncClient, max_players: int = 4) -> dict:
@@ -31,7 +22,8 @@ async def test_join_rejects_full_room(client: AsyncClient) -> None:
     response = await client.post(f"{ROOMS_BASE}/{room['roomCode']}/join", json={"nickname": "玩家"})
 
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "CONFLICT"
+    # 满房间返回更具体的 ROOM_FULL（issue #77 新增的业务错误码），不再是泛化的 CONFLICT。
+    assert response.json()["error"]["code"] == "ROOM_FULL"
 
 
 async def test_join_rejects_room_after_story_starts(client: AsyncClient) -> None:
@@ -113,3 +105,25 @@ async def test_room_text_fields_reject_whitespace(client: AsyncClient) -> None:
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+async def test_replay_requires_room_member_token(client: AsyncClient) -> None:
+    """回放是"只有参与者能看"的内容——没有有效的房间成员凭证不能拉（PR #78 review）。"""
+    room = await create_room(client)
+    room_id = room["roomId"]
+
+    # 无凭证 → 401
+    no_token = await client.get(f"{ROOMS_BASE}/{room_id}/replay")
+    assert no_token.status_code == 401
+
+    # 别的房间的成员凭证 → 403（凭证有效但不是这个房间的成员）
+    other = await create_room(client)
+    wrong_room = await client.get(
+        f"{ROOMS_BASE}/{room_id}/replay", headers=auth(other["reconnectToken"])
+    )
+    assert wrong_room.status_code == 403
+
+    # 本房间成员凭证 → 200
+    ok = await client.get(f"{ROOMS_BASE}/{room_id}/replay", headers=auth(room["reconnectToken"]))
+    assert ok.status_code == 200
+    assert ok.json()["data"] == []

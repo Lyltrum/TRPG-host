@@ -1,16 +1,6 @@
-import pytest
 from httpx import AsyncClient
 
-from app.service import auth as auth_service
-
 AUTH_BASE = "/api/v1/auth"
-
-
-@pytest.fixture(autouse=True)
-def clear_auth_stub() -> None:
-    auth_service._users.clear()
-    auth_service._accounts.clear()
-    auth_service._tokens.clear()
 
 
 def bearer(token: str) -> dict[str, str]:

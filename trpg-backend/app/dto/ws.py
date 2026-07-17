@@ -29,6 +29,7 @@ from typing import Any
 from pydantic import Field
 
 from app.dto.common import CamelModel
+from app.dto.room import RoomPlayerRead
 
 # ── 客户端 → 服务端 ──────────────────────────────
 
@@ -36,12 +37,17 @@ from app.dto.common import CamelModel
 class RoomJoinPayload(CamelModel):
     """room.join 事件 payload。
 
-    handler 目前不读取这里的任何字段——房间 ID 来自 URL 路径，玩家身份来自
-    信封的 playerId，roomCode/nickname 是前端沿用 trpg-app 原型习惯发送的
-    冗余字段。两个字段都设默认值，是因为现有测试/部分调用路径会发送空
-    payload（见 tests/test_ws.py），模型必须能校验通过。
+    `reconnect_token` 必填：它是玩家在这个房间里的身份密钥（`players.reconnect_token`，
+    建房/加入时下发给本人）。WS 连接握手只校验了「你是某个登录账号」，但连接
+    时带的 playerId 是任意的、而且被公开房间预览暴露——只认 playerId 会让任何
+    登录用户绑定成别人（冒充房主 game.start / 提交行动，PR #78 review 指出）。
+    绑定时要求出示该玩家的 reconnect_token，才能证明「你就是这个玩家本人」。
+
+    roomCode/nickname 是前端沿用原型习惯发送的冗余字段，服务端不读，保留可选
+    以免影响现有调用方。
     """
 
+    reconnect_token: str = Field(..., min_length=1)
     room_code: str | None = None
     nickname: str | None = None
 
@@ -81,6 +87,36 @@ class ActionSubmitPayload(CamelModel):
     utterance: str
 
 
+class CheckRollPayload(CamelModel):
+    """check.roll 事件 payload（issue #77 新增）——玩家请求做一次技能检定。
+
+    `skill` 必填：说清楚要检定哪个技能是这个动作本身的意义所在。这条链路
+    本期是 NOT_IMPLEMENTED 桩（见 issue"三处原型取舍"表格——真正的服务端
+    权威掷骰依赖规则引擎裁决，归 #48/#68），handler 校验完这个 payload 就
+    直接回 `error` 事件，不会真的掷骰或读写 `check_results` 表。
+    """
+
+    skill: str = Field(..., min_length=1)
+
+
+class SanCheckRollPayload(CamelModel):
+    """san.check.roll 事件 payload（issue #77 新增）。
+
+    定义一个空模型（而不是完全跳过校验）理由同 GameStartPayload：让它也走
+    跟其它事件一致的"接收端过一次模型校验"路径。本期同样是 NOT_IMPLEMENTED 桩。
+    """
+
+
+class RoomRejoinPayload(CamelModel):
+    """room.rejoin 事件 payload（issue #77 新增，仅铺协议，见决策 6）。
+
+    `reconnect_token` 是房间身份体系的重连凭证（`players.reconnect_token`，
+    不是账号登录 token），本期只校验格式、不做真实的断线重连逻辑。
+    """
+
+    reconnect_token: str = Field(..., min_length=1)
+
+
 # ── 服务端 → 客户端 ──────────────────────────────
 
 
@@ -95,6 +131,108 @@ class NarrationPushPayload(CamelModel):
     """narration.push 推送 payload。"""
 
     text: str
+
+
+class RoomStatePayload(CamelModel):
+    """room.state 推送 payload（issue #77 新增，替代 HTTP 轮询伪广播）。
+
+    本期协议槽位已留好（信封类型/校验器/SDK 方法齐全），但 ws.py 里没有任何
+    地方会真的发出这个事件——大厅玩家列表仍然是前端 `GET /rooms/{roomCode}`
+    轮询获取（issue"三处原型取舍"表格，真正切换依赖前端改动，本期不动
+    trpg-frontend）。
+    """
+
+    room_id: str
+    phase: str
+    players: list[RoomPlayerRead]
+
+
+class PlayerJoinedPayload(CamelModel):
+    """player.joined 推送 payload（issue #77 新增，同上，本期不会真的发出）。"""
+
+    player: RoomPlayerRead
+
+
+class TurnBeginPayload(CamelModel):
+    """turn.begin 推送 payload（issue #77 新增，回合制约束，本期不会真的发出）。"""
+
+    player_id: str
+
+
+class GameEndedPayload(CamelModel):
+    """game.ended 推送 payload（issue #77 新增，触发复盘，本期不会真的发出）。"""
+
+    reason: str | None = None
+
+
+class ViewPrivatePayload(CamelModel):
+    """view.private 推送 payload（issue #77 新增，私密视角/不泄底的载体）。
+
+    本期协议槽位已留好，但 `narration.push` 仍然是全房间广播（issue
+    "三处原型取舍"表格），没有任何地方会真的发出这个事件——真正的信息
+    不对称需要规则引擎知道"这条叙事该给谁看"，归 #48/#68。
+    """
+
+    player_id: str
+    text: str
+
+
+class CheckRequestPayload(CamelModel):
+    """check.request 推送 payload（issue #77 新增，本期不会真的发出）。"""
+
+    player_id: str
+    skill: str
+    target_value: int | None = None
+
+
+class CheckResultPayload(CamelModel):
+    """check.result 推送 payload（issue #77 新增）。
+
+    直接返回终值，不做两段式初步结果（issue 决策 4：幸运消耗机制推迟，
+    协议一并简化）。本期不会真的发出。
+    """
+
+    player_id: str
+    skill: str
+    roll_value: int
+    target_value: int | None = None
+    result: str
+
+
+class SanCheckRequestPayload(CamelModel):
+    """san.check.request 推送 payload（issue #77 新增，本期不会真的发出）。"""
+
+    player_id: str
+    current_san: int | None = None
+
+
+class SanCheckResultPayload(CamelModel):
+    """san.check.result 推送 payload（issue #77 新增，同 CheckResultPayload
+    直接返回终值，本期不会真的发出）。"""
+
+    player_id: str
+    roll_value: int
+    san_loss: int
+    result: str
+
+
+class ClueGrantedPayload(CamelModel):
+    """clue.granted 推送 payload（issue #77 新增，线索发现，本期不会真的发出）。"""
+
+    player_id: str
+    clue_name: str
+    description: str | None = None
+
+
+class ErrorPayload(CamelModel):
+    """error 推送 payload（issue #77 新增）——本期唯一会被真的发出的新增
+    S→C 事件：`check.roll`/`san.check.roll`/`room.rejoin` 这三个 NOT_IMPLEMENTED
+    桩、以及原来 game.start 失败时被静默丢弃（`continue`，见 ws.py 旧逻辑）
+    的错误，都改成通过这个事件明确告知发起者，而不是让客户端干等。
+    """
+
+    code: str
+    message: str
 
 
 # ── 信封 ────────────────────────────────────────

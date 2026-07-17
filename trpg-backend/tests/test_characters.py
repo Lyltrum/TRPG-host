@@ -1,7 +1,4 @@
-import pytest
 from httpx import AsyncClient
-
-from app.service import room as room_service
 
 ROOMS_BASE = "/api/v1/rooms"
 
@@ -24,13 +21,6 @@ BUILT_CHARACTER = {
     "background": "曾是警察",
     "notes": "",
 }
-
-
-@pytest.fixture(autouse=True)
-def clear_room_stub() -> None:
-    room_service._rooms.clear()
-    room_service._players.clear()
-    room_service._characters.clear()
 
 
 async def create_room(client: AsyncClient) -> dict:

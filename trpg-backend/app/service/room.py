@@ -6,7 +6,7 @@ issue #77 之前是内存字典 stub，本期切换为对 `rooms`/`players`/`gam
 决策：`auth`/`room`/`character`/`ws` 四个 service 各自独立切换）。
 """
 
-import random
+import secrets
 import string
 from datetime import UTC, datetime
 
@@ -71,7 +71,7 @@ class CharacterIncompleteError(RuntimeError):
 async def _generate_room_code(db: AsyncSession) -> str:
     """生成 6 位大写字母+数字房间码，避免碰撞。"""
     while True:
-        code = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        code = "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
         existing = await db.scalar(select(Room).where(Room.room_code == code))
         if existing is None:
             return code

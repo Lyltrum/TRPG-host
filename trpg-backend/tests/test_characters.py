@@ -1,6 +1,6 @@
 from httpx import AsyncClient
 
-ROOMS_BASE = "/api/v1/rooms"
+from tests.helpers import ROOMS_BASE, create_room, join_room, reconnect, register
 
 BUILT_CHARACTER = {
     "name": "陈探员",
@@ -29,23 +29,11 @@ BUILT_CHARACTER = {
 }
 
 
-async def create_room(client: AsyncClient) -> dict:
-    response = await client.post(
-        ROOMS_BASE, json={"roomName": "测试房间", "nickname": "房主", "maxPlayers": 4}
-    )
-    assert response.status_code == 200
-    return response.json()["data"]
-
-
-def auth(token: str) -> dict[str, str]:
-    return {"X-Reconnect-Token": token}
-
-
 async def test_full_character_build_flow_marks_player_ready(client: AsyncClient) -> None:
     room = await create_room(client)
 
     draft = await client.post(
-        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=auth(room["reconnectToken"])
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
     )
     assert draft.status_code == 201
     character_id = draft.json()["data"]["characterId"]
@@ -54,13 +42,13 @@ async def test_full_character_build_flow_marks_player_ready(client: AsyncClient)
     saved = await client.patch(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
         json=BUILT_CHARACTER,
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
     assert saved.status_code == 200
 
     completed = await client.post(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/complete",
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
     assert completed.status_code == 200
 
@@ -79,18 +67,16 @@ async def test_create_character_requires_token(client: AsyncClient) -> None:
 
 async def test_cannot_edit_another_players_character(client: AsyncClient) -> None:
     room = await create_room(client)
-    joined = (
-        await client.post(f"{ROOMS_BASE}/{room['roomCode']}/join", json={"nickname": "玩家"})
-    ).json()["data"]
+    joined = await join_room(client, room["roomCode"], await register(client))
     draft = await client.post(
-        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=auth(room["reconnectToken"])
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
     )
     character_id = draft.json()["data"]["characterId"]
 
     response = await client.patch(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
         json=BUILT_CHARACTER,
-        headers=auth(joined["reconnectToken"]),
+        headers=reconnect(joined["reconnectToken"]),
     )
 
     assert response.status_code == 403
@@ -101,7 +87,7 @@ async def test_character_not_found_returns_404(client: AsyncClient) -> None:
 
     response = await client.post(
         f"{ROOMS_BASE}/{room['roomId']}/characters/missing/complete",
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
 
     assert response.status_code == 404
@@ -112,7 +98,7 @@ async def test_complete_character_rejects_invalid_card(client: AsyncClient) -> N
     技能点花费远超预算）直接被拒，返回结构化校验报告，而不是被静默放行。"""
     room = await create_room(client)
     draft = await client.post(
-        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=auth(room["reconnectToken"])
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
     )
     character_id = draft.json()["data"]["characterId"]
 
@@ -135,13 +121,13 @@ async def test_complete_character_rejects_invalid_card(client: AsyncClient) -> N
     saved = await client.patch(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
         json=invalid_character,
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
     assert saved.status_code == 200
 
     response = await client.post(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/complete",
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
 
     assert response.status_code == 422
@@ -164,18 +150,18 @@ async def test_get_character_reads_back_saved_card(client: AsyncClient) -> None:
     """
     room = await create_room(client)
     draft = await client.post(
-        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=auth(room["reconnectToken"])
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
     )
     character_id = draft.json()["data"]["characterId"]
     await client.patch(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
         json=BUILT_CHARACTER,
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
 
     response = await client.get(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
 
     assert response.status_code == 200
@@ -196,18 +182,18 @@ async def test_roll_attributes_marks_card_as_rolled(client: AsyncClient) -> None
     """
     room = await create_room(client)
     draft = await client.post(
-        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=auth(room["reconnectToken"])
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
     )
     character_id = draft.json()["data"]["characterId"]
 
     await client.post(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/roll-attributes",
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
 
     read_back = await client.get(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
     assert read_back.json()["data"]["generationMethod"] == "roll"
 
@@ -223,12 +209,12 @@ async def test_replacing_rolled_attributes_falls_back_to_point_buy(client: Async
     """
     room = await create_room(client)
     draft = await client.post(
-        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=auth(room["reconnectToken"])
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
     )
     character_id = draft.json()["data"]["characterId"]
     await client.post(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/roll-attributes",
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
 
     maxed = {
@@ -239,18 +225,18 @@ async def test_replacing_rolled_attributes_falls_back_to_point_buy(client: Async
     await client.patch(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
         json=maxed,
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
 
     read_back = await client.get(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
     assert read_back.json()["data"]["generationMethod"] == "pointbuy"
 
     completed = await client.post(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/complete",
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
     assert completed.status_code == 422
     codes = [issue["code"] for issue in completed.json()["error"]["details"]]
@@ -266,25 +252,25 @@ async def test_saving_a_rolled_card_unchanged_keeps_roll_method(client: AsyncCli
     """
     room = await create_room(client)
     draft = await client.post(
-        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=auth(room["reconnectToken"])
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
     )
     character_id = draft.json()["data"]["characterId"]
     rolled = (
         await client.post(
             f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/roll-attributes",
-            headers=auth(room["reconnectToken"]),
+            headers=reconnect(room["reconnectToken"]),
         )
     ).json()["data"]["attributes"]
 
     await client.patch(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
         json={**BUILT_CHARACTER, "attributes": rolled},
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
 
     read_back = await client.get(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
-        headers=auth(room["reconnectToken"]),
+        headers=reconnect(room["reconnectToken"]),
     )
     assert read_back.json()["data"]["generationMethod"] == "roll"
 
@@ -292,17 +278,15 @@ async def test_saving_a_rolled_card_unchanged_keeps_roll_method(client: AsyncCli
 async def test_cannot_read_another_players_character(client: AsyncClient) -> None:
     """角色卡里有背景故事/装备这类属于该玩家的信息，别人不能直接拉。"""
     room = await create_room(client)
-    joined = (
-        await client.post(f"{ROOMS_BASE}/{room['roomCode']}/join", json={"nickname": "玩家"})
-    ).json()["data"]
+    joined = await join_room(client, room["roomCode"], await register(client))
     draft = await client.post(
-        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=auth(room["reconnectToken"])
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
     )
     character_id = draft.json()["data"]["characterId"]
 
     response = await client.get(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
-        headers=auth(joined["reconnectToken"]),
+        headers=reconnect(joined["reconnectToken"]),
     )
 
     assert response.status_code == 403

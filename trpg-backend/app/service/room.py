@@ -151,13 +151,13 @@ async def _to_room_preview(db: AsyncSession, room: Room) -> RoomPreview:
 # ── 房间 ──────────────────────────────────────
 
 
-async def create_room(db: AsyncSession, payload: RoomCreate, user: User | None) -> RoomCreateResult:
+async def create_room(db: AsyncSession, payload: RoomCreate, user: User) -> RoomCreateResult:
     """创建房间，返回房间身份信息。
 
-    `user` 是可选的当前登录账号（由 controller 从 Authorization 头解析，查不到
-    也不报错）——REST 创建房间接口本期不强制要求登录，带了有效登录态就把
-    `Room.host_user_id`/`Player.user_id` 关联上，没带就留空（详见
-    `models/room.py` 里 `Room.host_user_id` 的注释）。
+    `user` 是**必需**的当前登录账号（issue #106）。此前它是可选的，于是
+    `host_user_id`/`user_id` 永远是 `null`，「我的游戏」只能退而按 reconnect_token
+    查、跨设备找回无从谈起。登录本来就是 2026-07-11 拍板的硬性前提，这里只是让
+    实现跟上那条前提。
     """
     room_code = await _generate_room_code(db)
     now = datetime.now(UTC)
@@ -167,14 +167,14 @@ async def create_room(db: AsyncSession, payload: RoomCreate, user: User | None) 
         room_name=payload.room_name,
         max_players=payload.max_players,
         phase="Lobby",
-        host_user_id=user.id if user else None,
+        host_user_id=user.id,
     )
     db.add(room)
     await db.flush()  # 拿到 room.id
 
     player = Player(
         room_id=room.id,
-        user_id=user.id if user else None,
+        user_id=user.id,
         nickname=payload.nickname or "房主",
         is_host=True,
         joined_at=now,
@@ -194,12 +194,42 @@ async def create_room(db: AsyncSession, payload: RoomCreate, user: User | None) 
 
 
 async def join_room(
-    db: AsyncSession, room_code: str, payload: JoinRoomBody, user: User | None
+    db: AsyncSession, room_code: str, payload: JoinRoomBody, user: User
 ) -> RoomCreateResult:
-    """用房间码加入房间。"""
+    """用房间码加入房间；**已经是成员则幂等返回既有身份**（issue #106）。
+
+    改动前这里有两个各自独立的缺陷：
+
+    1. 开头一律 `if room.phase != "Lobby": raise` —— 把「中途加入」和「掉线重连」
+       当成同一件事拒掉。前者确实该拒（本期不做中途加入），后者是核心能力，
+       结果就是刷新/断线后必现 409、回不到自己那局。
+    2. 全程不检查调用者是不是已经在房间里，无条件新建 `Player` —— 同一个人重复
+       加入会生成重复玩家行、虚增人数直到撞满员。前端注释写的「已是本房间玩家
+       则幂等返回已有身份」是假的。
+
+    幂等键取**账号**而不是 `reconnect_token`：后者存在浏览器会话里，换设备、清缓存
+    就没了，而「换设备也能回到这局」正是账号体系被引入的理由。两者分工不变——
+    账号解决跨设备/跨时间找回，`reconnect_token` 解决同一局内的快速重连。
+    """
     room = await db.scalar(select(Room).where(Room.room_code == room_code))
     if room is None:
         raise RoomNotFoundError("房间不存在")
+
+    # 先看是不是老成员：是的话直接把既有身份还回去，不受阶段和人数上限影响
+    # （重连的人本来就已经占着那个位置，拿满员去拦他没有道理）。
+    existing = await db.scalar(
+        select(Player).where(Player.room_id == room.id, Player.user_id == user.id)
+    )
+    if existing is not None:
+        return RoomCreateResult(
+            room_id=room.id,
+            room_code=room_code,
+            reconnect_token=existing.reconnect_token,
+            player_id=existing.id,
+        )
+
+    # 到这里说明是新人。新人只能在大厅阶段加入：游戏已经开始/结束之后再放人
+    # 进来，等于中途加入，本期不做。
     if room.phase != "Lobby":
         raise RoomConflictError("游戏已开始，无法加入房间")
 
@@ -210,7 +240,7 @@ async def join_room(
 
     player = Player(
         room_id=room.id,
-        user_id=user.id if user else None,
+        user_id=user.id,
         nickname=payload.nickname or "玩家",
         is_host=False,
         joined_at=datetime.now(UTC),
@@ -313,26 +343,38 @@ async def begin_game(db: AsyncSession, room_id: str, player_id: str) -> None:
     await db.commit()
 
 
-async def list_my_rooms(db: AsyncSession, reconnect_token: str | None) -> list[MyRoomSummary]:
-    """根据重连凭证获取当前玩家加入的房间（一个重连凭证只对应一名玩家/一个房间）。"""
-    player = await get_player_by_reconnect_token(db, reconnect_token)
-    room = await db.get(Room, player.room_id)
-    if room is None:
+async def list_my_rooms(db: AsyncSession, user: User) -> list[MyRoomSummary]:
+    """当前**账号**参与过的全部房间，最近活跃的排在前面（issue #106）。
+
+    改动前这里是按 `reconnect_token` 查的，而一个重连凭证只对应一名玩家、一个
+    房间——所以「我的游戏」实际上是「这个浏览器的最后一个房间」，换台设备就什么
+    都看不到。账号体系当初正是为「换设备找回游戏」引入的，这里按 `user_id` 查才
+    兑现了那个目的。
+    """
+    players = await db.scalars(select(Player).where(Player.user_id == user.id))
+    room_ids = [p.room_id for p in players]
+    if not room_ids:
         return []
-    count_result = await db.scalars(select(Player).where(Player.room_id == room.id))
-    player_count = len(list(count_result))
-    return [
-        MyRoomSummary(
-            room_id=room.id,
-            room_code=room.room_code,
-            room_name=room.room_name,
-            phase=room.phase,
-            module_title=await _module_title(db, room.scenario_id),
-            player_count=player_count,
-            max_players=room.max_players,
-            updated_at=room.updated_at,
+
+    rooms = await db.scalars(
+        select(Room).where(Room.id.in_(room_ids)).order_by(Room.updated_at.desc())
+    )
+    summaries: list[MyRoomSummary] = []
+    for room in rooms:
+        count_result = await db.scalars(select(Player).where(Player.room_id == room.id))
+        summaries.append(
+            MyRoomSummary(
+                room_id=room.id,
+                room_code=room.room_code,
+                room_name=room.room_name,
+                phase=room.phase,
+                module_title=await _module_title(db, room.scenario_id),
+                player_count=len(list(count_result)),
+                max_players=room.max_players,
+                updated_at=room.updated_at,
+            )
         )
-    ]
+    return summaries
 
 
 async def end_game(db: AsyncSession, room_id: str, reconnect_token: str | None) -> None:

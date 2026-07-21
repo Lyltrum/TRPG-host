@@ -23,9 +23,28 @@ def register_and_login(client: TestClient, account: str = "host1") -> str:
     return response.json()["data"]["token"]
 
 
-def create_room(client: TestClient) -> dict:
+def create_room(client: TestClient, token: str) -> dict:
+    """建房（issue #106 起要求登录，房间会关联到这个账号）。"""
     response = client.post(
-        ROOMS_BASE, json={"roomName": "WS测试房间", "nickname": "房主", "maxPlayers": 4}
+        ROOMS_BASE,
+        json={"roomName": "WS测试房间", "nickname": "房主", "maxPlayers": 4},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    return response.json()["data"]
+
+
+def join_as(client: TestClient, room_code: str, account: str, nickname: str = "访客") -> dict:
+    """用一个**新账号**加入房间。
+
+    必须是新账号：房间成员的幂等键是账号，拿房主的 token 再 join 会被当成重连、
+    原样返回房主身份，测不出"两个人"。
+    """
+    token = register_and_login(client, account)
+    response = client.post(
+        f"{ROOMS_BASE}/{room_code}/join",
+        json={"nickname": nickname},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     return response.json()["data"]
@@ -74,7 +93,7 @@ def advance_to_building(client: TestClient, room: dict) -> None:
 
 
 def test_connect_without_token_is_rejected(sync_client: TestClient) -> None:
-    room = create_room(sync_client)
+    room = create_room(sync_client, register_and_login(sync_client))
 
     with pytest.raises(WebSocketDisconnect), sync_client.websocket_connect(f"/ws/{room['roomId']}"):
         pass
@@ -82,7 +101,7 @@ def test_connect_without_token_is_rejected(sync_client: TestClient) -> None:
 
 def test_room_join_binds_session(sync_client: TestClient) -> None:
     token = register_and_login(sync_client)
-    room = create_room(sync_client)
+    room = create_room(sync_client, token)
 
     with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
         ws.send_json(
@@ -106,7 +125,7 @@ def test_room_join_binds_session(sync_client: TestClient) -> None:
 
 def test_room_join_with_unknown_player_closes_connection(sync_client: TestClient) -> None:
     token = register_and_login(sync_client)
-    room = create_room(sync_client)
+    room = create_room(sync_client, token)
 
     with (
         pytest.raises(WebSocketDisconnect),
@@ -126,7 +145,7 @@ def test_room_join_rejects_wrong_reconnect_token(sync_client: TestClient) -> Non
     """拿对的 playerId 但错的 reconnect_token 不能绑定——否则任何登录账号都能
     用公开预览里暴露的 playerId 冒充别人（PR #78 review）。"""
     host_token = register_and_login(sync_client, "host_real")
-    room = create_room(sync_client)
+    room = create_room(sync_client, host_token)
     # 一个"攻击者"账号，登录态有效，但没有房主的 reconnect_token。
     attacker_token = register_and_login(sync_client, "attacker")
 
@@ -157,7 +176,7 @@ def test_room_join_rejects_wrong_reconnect_token(sync_client: TestClient) -> Non
 
 def test_player_ready_updates_room_state(sync_client: TestClient) -> None:
     token = register_and_login(sync_client)
-    room = create_room(sync_client)
+    room = create_room(sync_client, token)
 
     with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
         ws.send_json(
@@ -191,7 +210,7 @@ def test_game_start_pushes_opening_narration_and_advances_phase(
     sync_client: TestClient,
 ) -> None:
     token = register_and_login(sync_client)
-    room = create_room(sync_client)
+    room = create_room(sync_client, token)
     advance_to_building(sync_client, room)
     complete_character(sync_client, room["roomId"], room["reconnectToken"])
 
@@ -216,12 +235,10 @@ def test_game_start_pushes_opening_narration_and_advances_phase(
 
 def test_game_start_rejects_non_host(sync_client: TestClient) -> None:
     token = register_and_login(sync_client)
-    room = create_room(sync_client)
+    room = create_room(sync_client, token)
     # 访客必须在 Lobby 阶段加入（join_room 只在这个阶段放行），所以先加入
     # 再推进到 Building，两人都建完卡后再让访客尝试 game.start。
-    guest = sync_client.post(
-        f"{ROOMS_BASE}/{room['roomCode']}/join", json={"nickname": "访客"}
-    ).json()["data"]
+    guest = join_as(sync_client, room["roomCode"], "guest_non_host")
     advance_to_building(sync_client, room)
     complete_character(sync_client, room["roomId"], room["reconnectToken"])
     complete_character(sync_client, room["roomId"], guest["reconnectToken"])
@@ -251,8 +268,8 @@ def test_game_start_rejects_non_host(sync_client: TestClient) -> None:
 def test_action_submit_broadcasts_narration_to_room_only(sync_client: TestClient) -> None:
     token_a = register_and_login(sync_client, "host_a")
     token_b = register_and_login(sync_client, "host_b")
-    room_a = create_room(sync_client)
-    room_b = create_room(sync_client)
+    room_a = create_room(sync_client, token_a)
+    room_b = create_room(sync_client, token_b)
 
     with (
         sync_client.websocket_connect(f"/ws/{room_a['roomId']}?token={token_a}") as ws_a,

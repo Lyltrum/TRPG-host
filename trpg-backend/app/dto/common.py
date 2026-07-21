@@ -6,9 +6,10 @@
 不需要针对每个接口猜它失败时到底返回什么形状。
 """
 
-from typing import Self
+from datetime import UTC, datetime
+from typing import Annotated, Self
 
-from pydantic import AliasGenerator, BaseModel, ConfigDict
+from pydantic import AfterValidator, AliasGenerator, BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
 from app.core.errors import ErrorCode
@@ -16,6 +17,25 @@ from app.core.errors import ErrorCode
 
 def _to_camel(snake: str) -> str:
     return to_camel(snake)
+
+
+def _assume_utc(value: datetime) -> datetime:
+    """给不带时区的时间补上 UTC。
+
+    数据库里所有时间列都是 `DateTime(timezone=True)`、写入的也都是
+    `datetime.now(UTC)`，**但 SQLite 不保存时区信息**，读出来是个 naive
+    datetime，pydantic 于是序列化成 `2026-07-21T09:35:13.095627`——没有任何
+    后缀。客户端拿到这种字符串，按 ECMAScript 的规则会当作**本地时间**解析，
+    于是"4 分钟前"在 UTC+8 的机器上显示成"8 小时前"，偏差正好是时区偏移量。
+
+    这不是客户端该自己猜的事：光看字符串无从判断它是 UTC 还是本地时间。所以
+    在契约层补齐——所有对外暴露的时间一律带时区后缀。
+    """
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+
+
+UtcDatetime = Annotated[datetime, AfterValidator(_assume_utc)]
+"""对外暴露时间字段统一用这个类型，别直接用 `datetime`。"""
 
 
 class CamelModel(BaseModel):

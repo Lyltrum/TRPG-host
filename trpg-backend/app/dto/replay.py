@@ -6,9 +6,7 @@
 少数"服务端真的在写、也真的在读"的完整数据闭环之一。
 """
 
-from datetime import datetime
-
-from app.dto.common import CamelModel
+from app.dto.common import CamelModel, UtcDatetime
 
 
 class RoomSummaryRead(CamelModel):
@@ -27,4 +25,4 @@ class ReplayEventRead(CamelModel):
     player_id: str | None = None
     event_type: str
     payload: dict
-    created_at: datetime
+    created_at: UtcDatetime

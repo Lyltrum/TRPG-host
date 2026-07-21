@@ -28,6 +28,17 @@ function formatTime(ts: string): string {
   return new Date(parsed).toLocaleDateString('zh-CN')
 }
 
+// 房间阶段 → 重新进入时该落到哪个页面。
+//
+// 不含 `Completed`：已完成的房间在下面是单独一个列表、走「查看复盘」按钮
+// （`/home/my-rooms/review/:roomCode`），根本不会调到 `handleResume`。放一条
+// 到不了的映射进来只会误导人——而且一旦写错路由，谁也发现不了。
+const RESUME_ROUTE: Record<string, string> = {
+  Lobby: '/room/lobby',
+  Building: '/room/ready',
+  InGame: '/room/play',
+}
+
 export default function MyRoomsPage() {
   const navigate = useNavigate()
   const nickname = useAuthStore((s) => s.nickname)
@@ -55,7 +66,11 @@ export default function MyRoomsPage() {
       const me = info.players.find((p) => p.playerId === identity.playerId)
       setRoomIdentity(identity)
       setHost(me?.isHost ?? false)
-      navigate(room.phase === 'InGame' ? '/room/play' : '/room/lobby')
+      // 按房间阶段回到对应的页面。原来只区分 InGame / 其它，Building 阶段
+      // （已经过了大厅、正在建卡）会被送回大厅——而大厅的"开始游戏"在这个阶段
+      // 必然被后端 409 拒绝，用户就卡在那儿了。房间状态机是
+      // Lobby → Building → InGame → Completed，这里要一一对上。
+      navigate(RESUME_ROUTE[room.phase] ?? '/room/lobby')
     } catch (err) {
       setError(friendlyErrorMessage(err, '继续游戏失败'))
     } finally {

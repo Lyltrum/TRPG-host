@@ -34,6 +34,15 @@ export function getAuthToken(): string | null {
 export function friendlyErrorMessage(err: unknown, fallback = '操作失败，请稍后重试'): string {
   if (err instanceof ApiError) return err.message || fallback;
   if (err instanceof TypeError) return '网络连接失败，请检查网络后重试';
+  // 前置校验在请求发出**之前**抛的普通 Error（比如「请先登录」「缺少房间重连
+  // 凭证」），它们的 message 本来就是写给用户看的，不该被 fallback 盖掉。
+  //
+  // 盖掉的后果不只是"信息少了"，而是会主动误导：未登录时点加入房间，用户看到
+  // 的是「加入房间失败，请检查房间号」——房间号明明是对的，人会一直去查那个。
+  //
+  // TypeError 那条要留在前面：它是 fetch 的网络失败，message 是 "Failed to
+  // fetch" 这种内部文案，不适合直接展示。
+  if (err instanceof Error && err.message) return err.message;
   return fallback;
 }
 

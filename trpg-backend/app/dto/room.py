@@ -10,11 +10,9 @@
   由 pydantic 自动处理，业务代码无需关心
 """
 
-from datetime import datetime
-
 from pydantic import Field, field_validator
 
-from app.dto.common import CamelModel
+from app.dto.common import CamelModel, UtcDatetime
 
 # ── 请求体 ──────────────────────────────────────
 
@@ -70,6 +68,12 @@ class RoomCreateResult(CamelModel):
     room_code: str
     reconnect_token: str
     player_id: str
+    # 这个房间里属于我的角色卡 id，还没建卡时为 None。
+    #
+    # 加它是为了让**换设备重连**真正可用（PR #110 review [1]）：客户端靠它才知道
+    # 该去拉哪张卡，而在此之前这个 id 只在建卡那一刻由客户端自己存着——换台设备
+    # 就永远拿不回来，已经建完卡的人重连后会显示成"还没建卡"、被引导去建第二张。
+    character_id: str | None = None
 
 
 class RoomPlayerRead(CamelModel):
@@ -131,4 +135,4 @@ class MyRoomSummary(CamelModel):
     module_title: str | None = None
     player_count: int
     max_players: int
-    updated_at: datetime
+    updated_at: UtcDatetime

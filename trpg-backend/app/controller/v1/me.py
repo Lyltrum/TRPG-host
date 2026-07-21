@@ -5,12 +5,13 @@
 from fastapi import APIRouter, Depends, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.controller.dependencies import extract_bearer_token
+from app.controller.dependencies import extract_bearer_token, get_current_user
 from app.core.db import get_db
 from app.core.errors import AppException, ErrorCode
 from app.dto.character import CharacterTemplateCreateBody, CharacterTemplateRead
 from app.dto.common import ApiResponse
 from app.dto.room import MyRoomSummary
+from app.models.user import User
 from app.service import auth as auth_service
 from app.service import character as character_service
 from app.service import room as room_service
@@ -20,14 +21,17 @@ router = APIRouter(prefix="/me", tags=["me"])
 
 @router.get("/rooms", response_model=ApiResponse[list[MyRoomSummary]])
 async def list_my_rooms(
-    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> ApiResponse[list[MyRoomSummary]]:
-    """GET /api/v1/me/rooms —— 获取我的房间列表。"""
-    try:
-        rooms = await room_service.list_my_rooms(db, reconnect_token)
-    except room_service.RoomAuthenticationError as exc:
-        raise AppException(ErrorCode.UNAUTHORIZED, str(exc), status.HTTP_401_UNAUTHORIZED) from exc
+    """GET /api/v1/me/rooms —— 获取我的房间列表。
+
+    issue #106：凭证从房间的 `X-Reconnect-Token` 换成账号 `Authorization`。原来
+    按重连凭证查，一个凭证只对应一名玩家/一个房间，「我的游戏」实际上是「这个
+    浏览器的最后一个房间」——换台设备就什么都看不到，而账号体系当初正是为
+    「换设备找回游戏」引入的。
+    """
+    rooms = await room_service.list_my_rooms(db, user)
     return ApiResponse.ok(rooms)
 
 

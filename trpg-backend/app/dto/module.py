@@ -6,11 +6,9 @@
 （issue 决策 7），这里只定义 DTO 形状占住协议位置。
 """
 
-from datetime import datetime
-
 from pydantic import Field
 
-from app.dto.common import CamelModel
+from app.dto.common import CamelModel, UtcDatetime
 from app.dto.room import ModuleRead
 
 
@@ -43,5 +41,5 @@ class ModuleImportJobRead(CamelModel):
     source_filename: str | None = None
     result_scenario_id: str | None = None
     error_message: str | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime

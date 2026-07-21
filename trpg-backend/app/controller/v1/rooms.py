@@ -11,7 +11,7 @@ from typing import NoReturn
 from fastapi import APIRouter, Body, Depends, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.controller.dependencies import get_optional_user
+from app.controller.dependencies import get_current_user
 from app.core.db import get_db
 from app.core.errors import AppException, ErrorCode
 from app.dto.character import (
@@ -67,9 +67,13 @@ def _raise_service_error(exc: Exception) -> NoReturn:
 async def create_room(
     payload: RoomCreate,
     db: AsyncSession = Depends(get_db),
-    user: User | None = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
 ) -> ApiResponse[RoomCreateResult]:
-    """POST /api/v1/rooms —— 创建房间，返回房间身份信息。"""
+    """POST /api/v1/rooms —— 创建房间，返回房间身份信息。
+
+    issue #106 起要求登录：房间和房主玩家都要关联到真实账号，否则
+    `host_user_id`/`user_id` 永远是空的，「我的游戏」和跨设备找回都无从谈起。
+    """
     result = await room_service.create_room(db, payload, user)
     return ApiResponse.ok(result)
 
@@ -100,9 +104,12 @@ async def join_room(
     room_code: str,
     payload: JoinRoomBody,
     db: AsyncSession = Depends(get_db),
-    user: User | None = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
 ) -> ApiResponse[RoomCreateResult]:
-    """POST /api/v1/rooms/{roomCode}/join —— 用房间码加入房间。"""
+    """POST /api/v1/rooms/{roomCode}/join —— 用房间码加入房间。
+
+    issue #106 起要求登录，且**已是房间成员时幂等返回既有身份**（用于掉线重连）。
+    """
     try:
         result = await room_service.join_room(db, room_code, payload, user)
     except (

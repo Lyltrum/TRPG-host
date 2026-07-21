@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from 'react'
 import { UserPlus, ArrowLeft } from 'lucide-react'
 import { useRoomStore } from '@/stores/room-store'
 import { useAuthStore } from '@/stores/auth-store'
-import { connectWebSocket, sdk, onWsMessage, waitForWsOpen, disconnectWebSocket } from '@/services/api-client'
+import { connectWebSocket, sdk, onWsMessage, waitForWsOpen, disconnectWebSocket, friendlyErrorMessage } from '@/services/api-client'
 import { startStory } from '@/services/room'
 import { useRoomPlayers } from '@/hooks/useRoomPlayers'
 
@@ -64,6 +64,7 @@ export default function LobbyPage() {
   const nonHostPlayers = players.filter((p) => !p.isHost)
   const allReady = players.length > 0 && nonHostPlayers.every((p) => p.ready)
   const [starting, setStarting] = useState(false)
+  const [startError, setStartError] = useState('')
 
   // ★ 全员就绪只是"可以开始"的前提，不代表自动开始——房主必须主动点"开始
   // 游戏"才真正推进（见反馈：不应该默认自动跳转）。访客端没有这个按钮，
@@ -79,9 +80,19 @@ export default function LobbyPage() {
   const handleStartStory = async () => {
     if (!roomId || !allReady) return
     setStarting(true)
-    await startStory(roomId)
-    advancedRef.current = true
-    navigate('/room/story')
+    // 失败必须复位 starting、并且把原因显示出来。原来这里既没有 catch 也没有
+    // finally——后端一旦拒绝（比如房间已经过了大厅阶段会返回 409），按钮就永久
+    // 卡在「开始中…」，用户既走不下去也看不到任何原因，只能刷新页面。
+    try {
+      setStartError('')
+      await startStory(roomId)
+      advancedRef.current = true
+      navigate('/room/story')
+    } catch (err) {
+      setStartError(friendlyErrorMessage(err, '开始游戏失败'))
+    } finally {
+      setStarting(false)
+    }
   }
 
   const toggleReady = () => {
@@ -195,6 +206,9 @@ export default function LobbyPage() {
           <UserPlus className="w-4 h-4" />
           {ready ? '取消就绪' : '标记为已就绪'}
         </button>
+      )}
+      {startError && (
+        <p className="text-center text-xs text-[#c04040] mt-2">{startError}</p>
       )}
 
       <p className="text-center text-xs text-text-muted mt-4">

@@ -10,11 +10,10 @@
   由 pydantic 自动处理，业务代码无需关心
 """
 
-from datetime import datetime
 
 from pydantic import Field, field_validator
 
-from app.dto.common import CamelModel
+from app.dto.common import CamelModel, UtcDatetime
 
 # ── 请求体 ──────────────────────────────────────
 
@@ -131,4 +130,4 @@ class MyRoomSummary(CamelModel):
     module_title: str | None = None
     player_count: int
     max_players: int
-    updated_at: datetime
+    updated_at: UtcDatetime

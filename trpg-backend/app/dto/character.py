@@ -11,11 +11,10 @@ RoomPlayer.has_character 标记为 True；但 issue #84 S2 起，`complete_chara
 `CharacterComputeResult`（`POST /systems/{systemId}/character/preview`）。
 """
 
-from datetime import datetime
 
 from pydantic import Field
 
-from app.dto.common import CamelModel
+from app.dto.common import CamelModel, UtcDatetime
 
 
 class EquipmentItem(CamelModel):
@@ -114,8 +113,8 @@ class CharacterTemplateRead(CamelModel):
     name: str
     system_id: str
     data: dict
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 # ── 建卡计算/校验预览（issue #84 S2，路线乙的接缝） ────────────────────────

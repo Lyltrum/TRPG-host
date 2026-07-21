@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from httpx import AsyncClient
 
 from tests.helpers import ROOMS_BASE, bearer, create_room, join_room, reconnect, register
@@ -217,6 +219,28 @@ async def test_list_my_rooms_does_not_leak_other_accounts(client: AsyncClient) -
     response = await client.get("/api/v1/me/rooms", headers=bearer(mine_token))
 
     assert [room["roomId"] for room in response.json()["data"]] == [mine["roomId"]]
+
+
+async def test_timestamps_are_returned_with_timezone(client: AsyncClient) -> None:
+    """🔴 对外暴露的时间必须带时区后缀。
+
+    数据库里写的是 `datetime.now(UTC)`，但 **SQLite 不保存时区信息**，读出来是
+    naive datetime，序列化就成了 `2026-07-21T09:35:13.095627`——没有任何后缀。
+    客户端按 ECMAScript 规则会把它当**本地时间**解析，于是「4 分钟前」在 UTC+8
+    的机器上显示成「8 小时前」，偏差正好是时区偏移量（真机验证时实测到的）。
+
+    这不是客户端该自己猜的事：光看字符串无从判断它是 UTC 还是本地时间。
+    """
+    token = await register(client)
+    await create_room(client, token=token)
+
+    rooms = (await client.get("/api/v1/me/rooms", headers=bearer(token))).json()["data"]
+
+    updated_at = rooms[0]["updatedAt"]
+    assert updated_at.endswith("Z") or "+" in updated_at, (
+        f"时间戳缺时区后缀：{updated_at}——客户端会把它当本地时间解析"
+    )
+    assert datetime.fromisoformat(updated_at).tzinfo is not None
 
 
 async def test_list_my_rooms_requires_login(client: AsyncClient) -> None:

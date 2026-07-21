@@ -84,8 +84,8 @@ async def preview_character(
     """
     await _require_user_id(authorization, db)
     try:
-        await room_service.get_ruleset(db, system_id)
+        ruleset = await room_service.get_ruleset(db, system_id)
     except room_service.ModuleNotFoundError as exc:
         raise AppException(ErrorCode.NOT_FOUND, str(exc), status.HTTP_404_NOT_FOUND) from exc
-    result = character_service.compute_character_preview(payload)
+    result = character_service.compute_character_preview(ruleset, payload)
     return ApiResponse.ok(result)

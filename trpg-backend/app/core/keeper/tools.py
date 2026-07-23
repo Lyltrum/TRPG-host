@@ -1,13 +1,13 @@
-"""守秘人 agent 的六个工具（keeper agent 实验）。
+"""守秘人的游戏操作层：掷骰/角色卡/剧本/状态的业务实现（keeper agent v2）。
 
-分层约定：每个工具都是「普通 async 函数（`*_impl`，显式收 `KeeperDeps`）+
-`@function_tool` 薄壳」两件套。业务逻辑全在 `*_impl` 里，薄壳只做
-`ctx.context` 的解包——`@function_tool` 装饰后函数会变成 `FunctionTool`
-对象、没法直接调用，分开写才能对掷骰分布/San 扣减这些逻辑做普通单测。
+v2（两阶段回合制）里这些 `*_impl` 由 `decision.execute_decision`（纯代码
+执行器）调用，不再是 LLM 的自由工具——v1 的 `@function_tool` 薄壳层已随
+架构推翻整体移除（自由工具调用被实测证明不可靠，见 agent.py 模块 docstring）。
+`*_impl` 保持普通 async 函数形态，可直接单测。
 
 服务端权威原则：骰子由 `dice.py` 掷（LLM 只消费结果、改不了点数），
-HP/San 修改真实写 `characters` 表，所有工具调用都写一行 `events` 表留痕
-（复盘可审计"守秘人查了什么、掷了什么"）。
+HP/San 修改真实写 `characters` 表，所有操作都写一行 `events` 表留痕
+（复盘可审计"守秘人掷了什么、改了什么"）。
 
 ⚠️ 实验期妥协（非最终形态）：HP/San 的"当前值"直接改写 `derived_stats`
 JSON（首次修改时把上限备份为 `HP_MAX`/`SAN_MAX`）——正经做法是独立的
@@ -19,7 +19,6 @@ import random
 from dataclasses import dataclass, field
 
 import structlog
-from agents import RunContextWrapper, Tool, function_tool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -35,9 +34,9 @@ logger = structlog.get_logger()
 
 @dataclass
 class KeeperDeps:
-    """一次 narrate 调用的运行时依赖。通过 SDK 的 RunContextWrapper 注入到
-    每个工具——这些字段不进工具的 JSON Schema，LLM 看不到也伪造不了
-    room_id/player_id（防止让别的房间掷骰）。"""
+    """一轮回合的运行时依赖，由 KeeperAgent 构造后传给执行器/各 `*_impl`。
+    room_id/player_id 从不进任何 LLM 可控的输入——LLM 伪造不了"给哪个房间
+    掷骰"。"""
 
     room_id: str
     player_id: str  # 本轮行动的发起玩家
@@ -45,22 +44,21 @@ class KeeperDeps:
     module: ScenarioModule
     ruleset: RulesetRead
     rng: random.Random = field(default_factory=random.Random)
-    # 🔴 SDK 会**并行执行**同一条 assistant 消息里的多个工具调用。所有
-    # 「读-改-写」的工具（update_state/adjust_hp/san_check）必须串行，否则
-    # 并发读到同一份旧值、后提交覆盖先提交（真实 DeepSeek 冒烟实测：一轮里
-    # 三次 update_state 只留下最后一个键）。房间级并发已由 action_lock 挡住，
-    # 这把锁只管一次 narrate 内部的工具并发。
+    # 「读-改-写」操作（update_state/adjust_hp/san_check）的串行锁。v2 的
+    # 执行器本身是顺序执行、用不上它，但保留：v1 实测过 openai-agents 会并发
+    # 执行同轮工具（三次 update_state 只留最后一个键的 lost update），`*_impl`
+    # 若再被并发调用方复用，这把锁就是防线。
     write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    # 本轮的检定/理智/伤害结果记录。掷骰可见性不能依赖模型自觉——prompt 要求
-    # "结果数字写进叙事"，真机实测它照样会藏（玩家掷出 94/29 失败，叙事只说
-    # "什么也没找到"，玩家以为根本没掷）。工具往这里记，KeeperAgent.narrate
-    # 由**代码**把它们强制附加在叙事末尾广播，模型想藏都藏不住。
+    # 本轮的检定/理智/伤害结果记录。掷骰可见性不能依赖模型自觉——真机实测
+    # 它会把数字藏进叙事（玩家掷出 94/29 失败，叙事只说"什么也没找到"，玩家
+    # 以为根本没掷）。`*_impl` 往这里记，KeeperAgent.narrate 由**代码**把它们
+    # 强制附加在叙事末尾广播。
     check_results: list[str] = field(default_factory=list)
 
 
 class KeeperToolError(ValueError):
-    """工具参数/状态错误（找不到玩家、未知技能名等）。消息面向 LLM——
-    经 failure_error_function 反馈给模型，让它自己纠正参数重试。"""
+    """操作参数/状态错误（找不到玩家、未知技能名等）。消息面向 LLM——
+    执行器收集后作为 issues 喂给叙事阶段，让它自然圆场。"""
 
 
 # ── 内部查询辅助 ──────────────────────────────────────
@@ -346,135 +344,3 @@ async def san_check_impl(
         f"损失 {loss} 点（{loss_expr}），San {current} → {new_value}"
         + (f"。⚠️ {suffix}" if suffix else "")
     )
-
-
-# ── @function_tool 薄壳（只做 ctx 解包，schema 由 SDK 从签名+docstring 生成） ──
-
-
-def _tool_error(_ctx: RunContextWrapper[KeeperDeps], error: Exception) -> str:
-    """工具失败时反馈给 LLM 的文本。KeeperToolError 的消息本来就是写给模型
-    看的（含纠正建议），原样透出；其它异常只给笼统提示，细节进日志。"""
-    if isinstance(error, KeeperToolError):
-        return f"工具调用失败：{error}"
-    return "工具内部错误，请换一种方式推进（不要重试同样的调用）。"
-
-
-@function_tool(failure_error_function=_tool_error)
-async def roll_check(
-    ctx: RunContextWrapper[KeeperDeps], skill_name: str, player_name: str | None = None
-) -> str:
-    """为玩家进行一次 d100 技能/属性检定（服务端权威掷骰，结果不可更改）。
-
-    Args:
-        skill_name: COC7 技能或属性的中文名，如：侦查、图书馆使用、话术、追踪、力量、幸运。
-        player_name: 要检定的玩家昵称或角色名；省略则默认本轮行动的发起玩家。
-    """
-    logger.info("keeper_tool", tool="roll_check", skill=skill_name, player=player_name)
-    return await roll_check_impl(ctx.context, skill_name, player_name)
-
-
-@function_tool(failure_error_function=_tool_error)
-async def get_character_sheet(
-    ctx: RunContextWrapper[KeeperDeps], player_name: str | None = None
-) -> str:
-    """查看玩家的角色卡（属性、衍生值、已训练技能、背景）。
-
-    Args:
-        player_name: 玩家昵称或角色名；省略则默认本轮行动的发起玩家。
-    """
-    logger.info("keeper_tool", tool="get_character_sheet", player=player_name)
-    return await get_character_sheet_impl(ctx.context, player_name)
-
-
-@function_tool(failure_error_function=_tool_error)
-async def read_module(ctx: RunContextWrapper[KeeperDeps], section: str) -> str:
-    """查阅模组剧本（仅守秘人可见，含剧透与真相——绝不能向玩家原样复述）。
-
-    Args:
-        section: 要查阅的部分：overview（真相/开场/KP指引）、nodes（节点列表）、
-            node:<id>（某节点详情）、npcs（NPC列表）、npc:<id>（某NPC详情）、
-            endings（结局列表）。
-    """
-    # read_module 不写 events（纯读），structlog 是它唯一的可观测痕迹——排查
-    # "agent 这轮到底查没查剧本"（剧本忠实度问题）全靠这行。
-    logger.info("keeper_tool", tool="read_module", section=section)
-    return read_module_impl(ctx.context, section)
-
-
-@function_tool(failure_error_function=_tool_error)
-async def update_state(ctx: RunContextWrapper[KeeperDeps], key: str, value: str) -> str:
-    """记录/更新世界状态笔记（当前场景、已揭示线索、NPC 状态、时间进度等）。
-    每轮你都会在 prompt 里看到全部笔记——重要进展务必记下来，这是你唯一的
-    跨轮记忆手段。
-
-    Args:
-        key: 状态项名称，如：当前场景、已获线索、游戏内时间。
-        value: 状态内容（自由文本，覆盖同名旧值）。
-    """
-    logger.info("keeper_tool", tool="update_state", key=key)
-    return await update_state_impl(ctx.context, key, value)
-
-
-@function_tool(failure_error_function=_tool_error)
-async def adjust_hp(
-    ctx: RunContextWrapper[KeeperDeps], delta: int, reason: str, player_name: str | None = None
-) -> str:
-    """修改玩家的当前 HP（伤害用负数，治疗用正数）。真实写入角色卡。
-
-    Args:
-        delta: HP 变化量，伤害为负（如 -3），恢复为正。
-        reason: 变化原因（会记入事件日志），如：被食尸鬼抓伤。
-        player_name: 玩家昵称或角色名；省略则默认本轮行动的发起玩家。
-    """
-    logger.info("keeper_tool", tool="adjust_hp", delta=delta, player=player_name)
-    return await adjust_hp_impl(ctx.context, delta, reason, player_name)
-
-
-@function_tool(failure_error_function=_tool_error)
-async def san_check(
-    ctx: RunContextWrapper[KeeperDeps],
-    loss_on_success: str,
-    loss_on_failure: str,
-    player_name: str | None = None,
-) -> str:
-    """为玩家进行一次理智检定（d100 对当前 San），并按结果自动扣减理智值。
-
-    Args:
-        loss_on_success: 检定成功时的损失骰子表达式，如 "0" 或 "1"。
-        loss_on_failure: 检定失败时的损失骰子表达式，如 "1d6"、"1d8"。
-        player_name: 玩家昵称或角色名；省略则默认本轮行动的发起玩家。
-    """
-    logger.info("keeper_tool", tool="san_check", player=player_name)
-    return await san_check_impl(ctx.context, loss_on_success, loss_on_failure, player_name)
-
-
-@function_tool(failure_error_function=_tool_error)
-async def declare_no_check(ctx: RunContextWrapper[KeeperDeps], reason: str) -> str:
-    """声明本轮不需要任何检定（纯对话、无风险移动、观察显而易见之物等）。
-
-    每轮回应前你必须二选一：需要检定 → roll_check；不需要 → 调用本工具并
-    说明理由。这是强制的显式裁决，不存在"什么都不调直接叙事"的路径。
-
-    Args:
-        reason: 为什么本轮不需要检定，一句话（如：纯对话，无失败可能）。
-    """
-    # 为什么存在这个"什么都不做"的工具：真实 DeepSeek 实测（连续三轮 prompt
-    # 强化均无效）证明它的工具调用纪律拽不动——隐式调查动作全程零检定、线索
-    # 白给。配合 ModelSettings(tool_choice="required")，把"要不要检定"从
-    # "自愿调用"改成每轮被迫做出的显式裁决：要么掷、要么书面声明不掷，
-    # 裁决和理由都进日志可审计（设计文档 02 的"发起判定显式化"落地）。
-    logger.info("keeper_tool", tool="declare_no_check", reason=reason)
-    return "已确认：本轮无需检定，请直接以守秘人身份叙事。"
-
-
-# 显式标注 list[Tool]：Agent(tools=...) 收的是工具联合类型的列表，list 不型变，
-# 推断成 list[FunctionTool] 会过不了类型检查。
-KEEPER_TOOLS: list[Tool] = [
-    roll_check,
-    get_character_sheet,
-    read_module,
-    update_state,
-    adjust_hp,
-    san_check,
-    declare_no_check,
-]

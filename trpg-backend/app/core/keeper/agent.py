@@ -1,24 +1,41 @@
-"""KeeperAgent：真正的 COC 守秘人（keeper agent 实验，基于 openai-agents SDK）。
+"""KeeperAgent v2：两阶段回合制的 COC 守秘人（裁决与叙事分离）。
 
-对外它只是一个 `Narrator`——WS 层照常 `narrate(context) -> str`，协议/锁/
-广播零改动；SDK（Agent/Runner/function_tool）是本目录内部的实现细节，
-想换 pydantic-ai 或手写 loop 时只动 `keeper/`。
+对外它仍只是一个 `Narrator`——WS 层照常 `narrate(context) -> str`，协议/锁/
+广播零改动；改造全部发生在 narrate() 内部。
 
-与 `DeepSeekNarrator`（单轮叙事替身）的本质区别：这里的 LLM 拥有工具
-（掷骰/角色卡/剧本/状态/HP/San），自己决定"这句话要不要检定、查哪段剧本、
-记什么状态"，是完整的守秘人职责，不再只是文案生成。
+v1（openai-agents 自由工具调用）为什么被推翻：一次 LLM 调用同时承担
+理解/裁决/记账/叙事，模型的写作本能碾压其余三件，实测四类 bug 同一病灶
+（该掷不掷、线索白给、状态不记、骰值藏进叙事），三轮 prompt 强化 + 两次
+结构强制都只是补丁。v2 仿真人 KP 的台前/幕后分离：
+
+    action.submit
+      ↓ 阶段1·裁决（LLM，JSON mode，低温）→ KeeperDecision
+      ↓ 阶段2·执行（纯代码）           → 服务端掷骰/写库/留痕
+      ↓ 阶段3·叙事（LLM，只写故事）    → 广播文本
+      ↓ 代码强制附加 🎲 检定行（可见性硬保证，不依赖模型自觉）
+
+openai-agents SDK 不再出现在这条主路径上（依赖暂保留，未来多 agent 实验
+可能复用）。
 """
 
 import random
 
-from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
+import structlog
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.keeper.decision import KeeperDecision, execute_decision
 from app.core.keeper.module_loader import ScenarioModule
-from app.core.keeper.prompts import build_keeper_instructions, format_turn_input
-from app.core.keeper.tools import KEEPER_TOOLS, KeeperDeps
+from app.core.keeper.prompts import (
+    build_adjudicator_instructions,
+    build_narrator_instructions,
+    format_narrator_input,
+    format_turn_input,
+)
+from app.core.keeper.tools import KeeperDeps
 from app.core.narrator import (
     DEEPSEEK_BASE_URL,
     DEEPSEEK_MODEL,
@@ -29,16 +46,17 @@ from app.dto.game import RulesetRead
 from app.models.event import Event
 from app.models.room import Character, Player, Room
 
+logger = structlog.get_logger()
+
 # 全量重放 events 的上限条数。短模组一场 2-3 小时也就几百条，全放得下
 # （DeepSeek 64K 上下文）；上限只是防御异常膨胀的房间。
 _HISTORY_LIMIT = 200
 
-# 一轮回应允许的最大 agent loop 轮数（每轮 = 一次 LLM 调用，可能带工具调用）。
-# 正常一轮行动 2-4 跳（查剧本→掷骰→生成），12 是防失控的余量。
-_MAX_TURNS = 12
+# 裁决 JSON 解析失败时的重试次数（把解析错误喂回去让模型改）。
+_ADJUDICATE_RETRIES = 1
 
 # 事件类型 → 历史行格式化器。keeper.state 不进历史（状态笔记单独整体注入），
-# 工具留痕（检定/HP/San）进历史是为了让 agent 记得自己此前的裁决结果。
+# 工具留痕（检定/HP/San）进历史是为了让守秘人记得自己此前的裁决结果。
 _EVENT_LABELS = {
     "keeper.check": "检定",
     "keeper.san": "理智",
@@ -55,35 +73,35 @@ class KeeperAgent(Narrator):
         session_factory: async_sessionmaker[AsyncSession],
         rng: random.Random | None = None,
     ) -> None:
-        # 没配 OpenAI 平台账号，trace 上传只会报错刷日志。
-        set_tracing_disabled(True)
         self._module = module
         self._ruleset = ruleset
         self._session_factory = session_factory
         self._rng = rng if rng is not None else random.Random()
-        client = AsyncOpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
-        self._agent = Agent[KeeperDeps](
-            name="守秘人",
-            instructions=build_keeper_instructions(module),
-            tools=KEEPER_TOOLS,
-            # DeepSeek 只有 Chat Completions 接口，不能用 SDK 默认的 Responses API。
-            model=OpenAIChatCompletionsModel(model=DEEPSEEK_MODEL, openai_client=client),
-            # tool_choice="required"：每轮第一次推理**必须**调一个工具——要么
-            # roll_check 掷骰，要么 declare_no_check 书面声明"本轮不掷"。真实
-            # DeepSeek 实测三轮 prompt 强化都拽不动它的工具纪律（隐式调查动作
-            # 零检定、线索白给），只能结构性强制。SDK 默认 reset_tool_choice=True，
-            # 首次工具调用后自动回落 auto，不会无限循环。
-            model_settings=ModelSettings(temperature=0.8, tool_choice="required"),
-        )
+        self._client = AsyncOpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+        self._adjudicator_instructions = build_adjudicator_instructions(module)
+        self._narrator_instructions = build_narrator_instructions(module)
 
     async def narrate(self, context: NarrationContext) -> str:
         if context.room_id is None or context.player_id is None:
             raise ValueError("KeeperAgent 需要 NarrationContext 携带 room_id/player_id")
 
         keeper_state, history_lines, roster = await self._load_room_memory(context.room_id)
-        turn_input = format_turn_input(
+        situation = format_turn_input(
             keeper_state, history_lines, roster, context.player_nickname, context.utterance
         )
+
+        # 阶段1·裁决：结构化输出，检定是 schema 字段，不存在"忘了裁决"。
+        decision = await self._adjudicate(situation)
+        logger.info(
+            "keeper_decision",
+            thinking=decision.thinking,
+            checks=[c.skill for c in decision.checks],
+            san_checks=len(decision.san_checks),
+            hp_changes=len(decision.hp_changes),
+            state_updates=[u.key for u in decision.state_updates],
+        )
+
+        # 阶段2·执行：纯代码掷骰/写库，LLM 摸不到骰子。
         deps = KeeperDeps(
             room_id=context.room_id,
             player_id=context.player_id,
@@ -92,17 +110,67 @@ class KeeperAgent(Narrator):
             ruleset=self._ruleset,
             rng=self._rng,
         )
-        result = await Runner.run(self._agent, turn_input, context=deps, max_turns=_MAX_TURNS)
-        narration = str(result.final_output or "")
+        report, issues = await execute_decision(deps, decision)
 
-        # 🔴 掷骰可见性的硬保证：本轮发生过的检定/理智/伤害，由代码强制附加在
-        # 叙事末尾，不依赖模型"把数字写进叙事"的自觉（实测它会藏——玩家掷出
-        # 94/29 失败，叙事只说"什么也没找到"，玩家以为根本没掷）。骰子当众
-        # 认账是 KP 职责，职责的兜底在代码不在 prompt。
+        # 阶段3·叙事：只写故事。
+        narration = await self._narrate_prose(situation, decision, report, issues)
+
+        # 🔴 掷骰可见性的硬保证：本轮发生过的检定/理智/伤害由代码强制附加在
+        # 叙事末尾——骰子当众认账是机制不是要求（实测模型会把数字藏进叙事）。
         if deps.check_results:
             dice_lines = "\n".join(f"🎲 {line}" for line in deps.check_results)
             narration = f"{narration}\n\n{dice_lines}" if narration else dice_lines
         return narration
+
+    async def _adjudicate(self, situation: str) -> KeeperDecision:
+        """阶段1：裁决。JSON mode + pydantic 校验，解析失败把错误喂回去重试一次。
+
+        温度压低（0.3）：裁决要的是稳定一致的规则判断，不是创造力。
+        """
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": self._adjudicator_instructions},
+            {"role": "user", "content": situation + "\n\n请输出本轮的裁决 JSON。"},
+        ]
+        last_error: Exception | None = None
+        for _ in range(1 + _ADJUDICATE_RETRIES):
+            response = await self._client.chat.completions.create(
+                model=DEEPSEEK_MODEL,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.3,
+            )
+            raw = response.choices[0].message.content or ""
+            try:
+                return KeeperDecision.model_validate_json(raw)
+            except ValidationError as exc:
+                last_error = exc
+                messages.append({"role": "assistant", "content": raw})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": f"JSON 不符合要求：{exc}。请重新只输出一个合法的裁决 JSON。",
+                    }
+                )
+        raise RuntimeError(f"裁决 JSON 解析失败：{last_error}")
+
+    async def _narrate_prose(
+        self,
+        situation: str,
+        decision: KeeperDecision,
+        report: list[str],
+        issues: list[str],
+    ) -> str:
+        """阶段3：叙事。没有工具、没有裁决压力，写作本能是生产力不是对抗对象。"""
+        user_content = format_narrator_input(situation, decision.narration_guidance, report, issues)
+        response = await self._client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {"role": "system", "content": self._narrator_instructions},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.8,
+        )
+        return response.choices[0].message.content or ""
 
     async def _load_room_memory(self, room_id: str) -> tuple[dict | None, list[str], list[str]]:
         """读取世界状态笔记 + 全量事件历史 + 在场调查员名单。

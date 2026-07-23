@@ -20,6 +20,12 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper import dice
+from app.core.keeper.decision import (
+    CheckRequest,
+    KeeperDecision,
+    StateUpdate,
+    execute_decision,
+)
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.tools import (
     KeeperDeps,
@@ -115,6 +121,33 @@ async def _derived(deps: KeeperDeps) -> dict:
     derived = (await _character(deps)).derived_stats
     assert derived is not None
     return derived
+
+
+# ── 执行器（v2 两阶段：裁决 JSON → 纯代码执行）─────────
+
+
+async def test_execute_decision_runs_all_items(deps: KeeperDeps) -> None:
+    decision = KeeperDecision(
+        thinking="搜索书房命中检定点",
+        checks=[CheckRequest(skill="侦查")],
+        state_updates=[StateUpdate(key="当前场景", value="书房")],
+    )
+    report, issues = await execute_decision(deps, decision)
+    assert issues == []
+    assert len(report) == 2
+    assert "侦察检定" in report[0]  # 同义写法归一后按技能表名执行
+    assert len(deps.check_results) == 1  # 掷骰可见性记录
+    assert len(await _events(deps, "keeper.check")) == 1  # 留痕落库
+    assert len(await _events(deps, "keeper.state")) == 1
+
+
+async def test_execute_decision_collects_issues_without_crashing(deps: KeeperDeps) -> None:
+    """裁决里的非法项（未知技能）跳过并记为 issue，合法项照常执行——
+    一项写错不能炸掉整轮回应。"""
+    decision = KeeperDecision(checks=[CheckRequest(skill="量子力学"), CheckRequest(skill="侦查")])
+    report, issues = await execute_decision(deps, decision)
+    assert len(issues) == 1 and "量子力学" in issues[0]
+    assert len(report) == 1 and "侦察检定" in report[0]
 
 
 # ── roll_check ──────────────────────────────────────

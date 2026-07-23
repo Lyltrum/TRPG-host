@@ -165,3 +165,29 @@ def test_format_turn_input_contains_all_sections() -> None:
 
 def test_format_turn_input_empty_state_hints_game_start() -> None:
     assert "对局刚开始" in format_turn_input(None, [], ["阿福（未建卡）"], "阿福", "开始吧")
+
+
+# ── 裁决契约（v2）────────────────────────────────────
+
+
+def test_decision_parses_full_json() -> None:
+    from app.core.keeper.decision import KeeperDecision
+
+    d = KeeperDecision.model_validate_json(
+        '{"thinking": "命中检定点", "checks": [{"skill": "侦查", "player": null, '
+        '"reason": "搜索"}], "san_checks": [], "hp_changes": [], '
+        '"state_updates": [{"key": "场景", "value": "书房"}], '
+        '"narration_guidance": "失败则一无所获", "extra_field": 1}'
+    )
+    assert d.checks[0].skill == "侦查" and d.checks[0].player is None
+    assert d.state_updates[0].key == "场景"
+    # 多余字段忽略不报错（LLM 生成的 JSON 常带私货）
+
+
+def test_decision_all_fields_default_empty() -> None:
+    """空对象也是合法裁决（= 本轮什么都不做）——防御模型偷懒输出 {}，
+    此时执行器零操作、叙事正常进行，不会炸整轮。"""
+    from app.core.keeper.decision import KeeperDecision
+
+    d = KeeperDecision.model_validate_json("{}")
+    assert d.checks == [] and d.san_checks == [] and d.state_updates == []

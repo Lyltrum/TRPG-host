@@ -49,13 +49,20 @@ const PAYLOAD_VALIDATORS: {
   'turn.begin': (p) => typeof p.playerId === 'string',
   'game.ended': () => true, // reason 可空，没有必填字段
   'view.private': (p) => typeof p.playerId === 'string' && typeof p.text === 'string',
-  'check.request': (p) => typeof p.playerId === 'string' && typeof p.skill === 'string',
+  // check.request/check.result/san.check.request/san.check.result 的
+  // checkRequestId 校验松紧不同：request 侧必填（feat/keeper-agent 两段式
+  // 玩家掷骰的标识，没有它玩家没法确认要掷哪一个），result 侧可空（Pydantic
+  // 里给了默认 None，非 keeper 场景理论上不会发出但类型上允许缺省）。
+  'check.request': (p) =>
+    typeof p.playerId === 'string' &&
+    typeof p.skill === 'string' &&
+    typeof p.checkRequestId === 'string',
   'check.result': (p) =>
     typeof p.playerId === 'string' &&
     typeof p.skill === 'string' &&
     typeof p.rollValue === 'number' &&
     typeof p.result === 'string',
-  'san.check.request': (p) => typeof p.playerId === 'string',
+  'san.check.request': (p) => typeof p.playerId === 'string' && typeof p.checkRequestId === 'string',
   'san.check.result': (p) =>
     typeof p.playerId === 'string' &&
     typeof p.rollValue === 'number' &&
@@ -188,13 +195,15 @@ export class RoomSocket {
     this.send('chat.send', playerId, payload);
   }
 
-  /** check.roll —— 玩家请求做一次技能检定（issue #77 新增，后端本期回
-   * NOT_IMPLEMENTED 的 error 事件，真实服务端权威掷骰待规则引擎落地）。 */
+  /** check.roll —— 玩家确认并结算一次守秘人已发起的待掷技能检定（两段式
+   * 玩家掷骰，feat/keeper-agent）：骰值由服务端权威生成，这里只带
+   * `checkRequestId` 表明"确认掷这一个"。非 keeper 模式下后端回
+   * NOT_IMPLEMENTED 的 error 事件。 */
   rollCheck(playerId: string, payload: CheckRollPayload): void {
     this.send('check.roll', playerId, payload);
   }
 
-  /** san.check.roll —— 理智检定摇骰（issue #77 新增，后端本期回 NOT_IMPLEMENTED）。 */
+  /** san.check.roll —— 理智检定版本，同 rollCheck。 */
   rollSanCheck(playerId: string, payload: SanCheckRollPayload): void {
     this.send('san.check.roll', playerId, payload);
   }

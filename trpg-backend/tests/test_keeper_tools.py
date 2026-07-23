@@ -22,9 +22,12 @@ from app.core.db import Base
 from app.core.keeper import dice
 from app.core.keeper.decision import (
     CheckRequest,
+    HpChange,
     KeeperDecision,
+    SanCheckRequest,
     StateUpdate,
-    execute_decision,
+    create_pending_checks,
+    execute_side_effects,
 )
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.tools import (
@@ -124,30 +127,84 @@ async def _derived(deps: KeeperDeps) -> dict:
 
 
 # ── 执行器（v2 两阶段：裁决 JSON → 纯代码执行）─────────
+# ⚠️ checks/san_checks 不再由 execute_side_effects 执行——两段式玩家掷骰下
+# 骰子由玩家确认后才生成，见下面的 create_pending_checks 测试。
 
 
-async def test_execute_decision_runs_all_items(deps: KeeperDeps) -> None:
+async def test_execute_side_effects_runs_hp_and_state(deps: KeeperDeps) -> None:
     decision = KeeperDecision(
-        thinking="搜索书房命中检定点",
-        checks=[CheckRequest(skill="侦查")],
+        thinking="被抓伤，记录场景",
+        hp_changes=[HpChange(delta=-3, reason="被抓伤")],
         state_updates=[StateUpdate(key="当前场景", value="书房")],
     )
-    report, issues = await execute_decision(deps, decision)
+    report, issues = await execute_side_effects(deps, decision)
     assert issues == []
     assert len(report) == 2
-    assert "侦察检定" in report[0]  # 同义写法归一后按技能表名执行
-    assert len(deps.check_results) == 1  # 掷骰可见性记录
-    assert len(await _events(deps, "keeper.check")) == 1  # 留痕落库
+    assert "10 → 7" in report[0]
+    assert len(deps.check_results) == 1  # HP 变动的可见性记录
+    assert len(await _events(deps, "keeper.hp")) == 1  # 留痕落库
     assert len(await _events(deps, "keeper.state")) == 1
 
 
-async def test_execute_decision_collects_issues_without_crashing(deps: KeeperDeps) -> None:
-    """裁决里的非法项（未知技能）跳过并记为 issue，合法项照常执行——
+async def test_execute_side_effects_collects_issues_without_crashing(deps: KeeperDeps) -> None:
+    """裁决里的非法项（未知玩家）跳过并记为 issue，合法项照常执行——
     一项写错不能炸掉整轮回应。"""
-    decision = KeeperDecision(checks=[CheckRequest(skill="量子力学"), CheckRequest(skill="侦查")])
-    report, issues = await execute_decision(deps, decision)
+    decision = KeeperDecision(
+        hp_changes=[
+            HpChange(delta=-1, player="不存在的人", reason="?"),
+            HpChange(delta=-2, reason="被抓伤"),
+        ]
+    )
+    report, issues = await execute_side_effects(deps, decision)
+    assert len(issues) == 1 and "不存在的人" in issues[0]
+    assert len(report) == 1 and "10 → 8" in report[0]
+
+
+# ── create_pending_checks（两段式玩家掷骰：只解析，不掷骰）──────
+
+
+async def test_create_pending_checks_valid_skill(deps: KeeperDeps) -> None:
+    decision = KeeperDecision(checks=[CheckRequest(skill="侦查", reason="搜索书房")])
+    pending, issues = await create_pending_checks(deps, decision)
+    assert issues == []
+    assert len(pending) == 1
+    check = pending[0]
+    assert check.kind == "skill"
+    assert check.skill == "侦察"  # 同义写法归一后按技能表名展示
+    assert check.player_nickname == "阿福"
+    assert check.reason == "搜索书房"
+    assert check.check_request_id  # uuid4，非空
+    # 不掷骰：不留 keeper.check 事件，也不进 check_results 可见性记录
+    assert await _events(deps, "keeper.check") == []
+    assert deps.check_results == []
+
+
+async def test_create_pending_checks_valid_san(deps: KeeperDeps) -> None:
+    decision = KeeperDecision(
+        san_checks=[SanCheckRequest(loss_on_success="0", loss_on_failure="1d6", reason="目击尸体")]
+    )
+    pending, issues = await create_pending_checks(deps, decision)
+    assert issues == []
+    assert len(pending) == 1
+    check = pending[0]
+    assert check.kind == "san"
+    assert check.skill is None
+    assert check.loss_on_success == "0" and check.loss_on_failure == "1d6"
+    assert await _events(deps, "keeper.san") == []
+
+
+async def test_create_pending_checks_unknown_skill_becomes_issue(deps: KeeperDeps) -> None:
+    decision = KeeperDecision(checks=[CheckRequest(skill="量子力学")])
+    pending, issues = await create_pending_checks(deps, decision)
+    assert pending == []
     assert len(issues) == 1 and "量子力学" in issues[0]
-    assert len(report) == 1 and "侦察检定" in report[0]
+
+
+async def test_create_pending_checks_unknown_player_becomes_issue(deps: KeeperDeps) -> None:
+    decision = KeeperDecision(checks=[CheckRequest(skill="侦查", player="不存在的人")])
+    pending, issues = await create_pending_checks(deps, decision)
+    assert pending == []
+    assert len(issues) == 1 and "不存在的人" in issues[0]
 
 
 # ── roll_check ──────────────────────────────────────

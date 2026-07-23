@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Users, Map, BookOpen, ScrollText, Star, X, SendHorizontal, Dice6, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll } from 'lucide-react'
+import { ArrowLeft, Users, Map, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll } from 'lucide-react'
 import { useState, useRef, useEffect, type FormEvent } from 'react'
 import type { ChatMessage } from 'trpg-sdk'
 import { useRoomStore } from '@/stores/room-store'
@@ -18,6 +18,15 @@ interface Message {
   content: string
   time: string
   isSelf?: boolean
+}
+
+// 两段式玩家掷骰（feat/keeper-agent）：守秘人裁决"需要检定"后不直接掷骰，
+// 而是随叙事一起推一张"待掷"卡片，玩家点击确认后骰值才由服务端权威生成。
+interface PendingCheck {
+  id: string
+  kind: 'skill' | 'san'
+  skill: string | null
+  rolling: boolean
 }
 
 interface MapLocation { icon: string; name: string; desc: string; isCurrent?: boolean }
@@ -393,6 +402,7 @@ export default function RoomPage() {
   const [sheetPage, setSheetPage] = useState<'info' | 'background'>('info')
   const [skillsTab, setSkillsTab] = useState<'occupation' | 'interest'>('occupation')
   const [showDice, setShowDice] = useState(false)
+  const [pendingCheck, setPendingCheck] = useState<PendingCheck | null>(null)
   const notesKey = roomId ? `aidm-notes-${roomId}` : null
   // ★ 之前"📋 案件笔记"标题是直接塞进 textarea 初始内容里的普通文本，用户
   // 一编辑/全选删除就会把标题本身也删掉。改成占位符（placeholder），真正
@@ -431,14 +441,26 @@ export default function RoomPage() {
     }
   }, [roomId, playerId, roomCode, nickname, reconnectToken])
 
-  // 服务端广播订阅（issue #107 起是四种事件）：
+  // 服务端广播订阅：
   // - action.broadcast：任何玩家对守秘人说的**原话**。自己的那条也靠这条广播
   //   回显，不再本地乐观插入——所有人（包括自己）看到的时间线完全一致，这就是
   //   修"聊天记录像被隔离"bug 的方式。
   // - narration.push：守秘人的叙事回复（全房间）。
   // - chat.message：讨论区消息（全房间，AI 看不见这条通道）。
-  // - error：ACTION_IN_PROGRESS（有人正在等守秘人回应）等，转成友好的系统提示。
+  // - check.request/san.check.request：两段式玩家掷骰（feat/keeper-agent）——
+  //   守秘人裁决需要检定后推的"待掷"通知。是自己的检定就出现掷骰卡片，
+  //   否则只提示"等待谁来掷"。
+  // - check.result/san.check.result：服务端权威生成的骰值，渲染成一条掷骰
+  //   消息；命中当前待掷卡片的 id 就把卡片收起。
+  // - error：ACTION_IN_PROGRESS（有人正在等守秘人回应）/CHECK_NOT_PENDING
+  //   （待掷检定已失效）等，转成友好的系统提示。
   useEffect(() => {
+    // 按 playerId 找显示名——自己用角色名/昵称，其他人查房间成员列表。
+    // 定义在 effect 内部（而不是组件级函数）是为了不用把它塞进下面的依赖
+    // 数组：它引用的 playerId/senderName/roomInfo 已经都在依赖数组里了。
+    const nicknameFor = (id: string) =>
+      id === playerId ? senderName : roomInfo?.players.find(p => p.playerId === id)?.nickname ?? '玩家'
+
     const off = onWsMessage((envelope) => {
       const now = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
       if (envelope.type === 'action.broadcast') {
@@ -463,6 +485,57 @@ export default function RoomPage() {
             ? prev
             : [...prev, envelope.payload]
         )
+      } else if (envelope.type === 'check.request') {
+        const isSelf = envelope.payload.playerId === playerId
+        if (isSelf) {
+          setPendingCheck({ id: envelope.payload.checkRequestId, kind: 'skill', skill: envelope.payload.skill, rolling: false })
+        }
+        setMessages(prev => [...prev, {
+          type: 'system',
+          content: isSelf
+            ? `守秘人请求你进行${envelope.payload.skill}检定`
+            : `等待 ${nicknameFor(envelope.payload.playerId)} 进行${envelope.payload.skill}检定`,
+          time: now,
+        }])
+      } else if (envelope.type === 'san.check.request') {
+        const isSelf = envelope.payload.playerId === playerId
+        if (isSelf) {
+          setPendingCheck({ id: envelope.payload.checkRequestId, kind: 'san', skill: null, rolling: false })
+        }
+        setMessages(prev => [...prev, {
+          type: 'system',
+          content: isSelf ? '守秘人请求你进行理智检定' : `等待 ${nicknameFor(envelope.payload.playerId)} 进行理智检定`,
+          time: now,
+        }])
+      } else if (envelope.type === 'check.result') {
+        const { playerId: rollerId, skill, rollValue, targetValue, result, checkRequestId } = envelope.payload
+        setMessages(prev => [...prev, {
+          type: 'dice',
+          sender: nicknameFor(rollerId),
+          content: `${skill} · ${rollValue}/${targetValue ?? '?'} · ${result}`,
+          time: now,
+          isSelf: rollerId === playerId,
+        }])
+        // 掷骰确认时置了 typing——如果这不是链式检定里的最后一步，队列还有
+        // 下一个待掷检定，不会再有 narration.push 来关掉这个指示器，这里必须
+        // 主动关掉（掷完这个才知道，不能提前判断）。
+        setTyping(false)
+        if (checkRequestId) {
+          setPendingCheck(prev => (prev && prev.id === checkRequestId ? null : prev))
+        }
+      } else if (envelope.type === 'san.check.result') {
+        const { playerId: rollerId, rollValue, sanLoss, result, checkRequestId } = envelope.payload
+        setMessages(prev => [...prev, {
+          type: 'dice',
+          sender: nicknameFor(rollerId),
+          content: `理智 · ${rollValue} · ${result} · San -${sanLoss}`,
+          time: now,
+          isSelf: rollerId === playerId,
+        }])
+        setTyping(false)
+        if (checkRequestId) {
+          setPendingCheck(prev => (prev && prev.id === checkRequestId ? null : prev))
+        }
       } else if (envelope.type === 'error') {
         setTyping(false)
         const friendly =
@@ -470,14 +543,19 @@ export default function RoomPage() {
             ? '守秘人正在处理其他玩家的行动，请稍候再试'
             : envelope.payload.code === 'INTERNAL_ERROR'
               ? '守秘人暂时无法回应，请稍后重试'
-              : null
+              : envelope.payload.code === 'CHECK_NOT_PENDING'
+                ? '这个检定已经失效，等待守秘人的最新指示吧'
+                : null
+        if (envelope.payload.code === 'CHECK_NOT_PENDING') {
+          setPendingCheck(null)
+        }
         if (friendly) {
           setMessages(prev => [...prev, { type: 'system', content: friendly, time: now }])
         }
       }
     })
     return off
-  }, [playerId, senderName])
+  }, [playerId, senderName, roomInfo])
 
   // 讨论区历史：进房拉一次（倒序返回，反转成时间正序渲染）。实时增量走上面
   // 的 chat.message 广播，历史和增量之间的重复靠 messageId 去重兜住。
@@ -520,6 +598,20 @@ export default function RoomPage() {
     setInput('')
     setTyping(true)
     sdk.roomSocket.submitAction(playerId, { utterance: text })
+  }
+
+  // 掷骰确认（两段式玩家掷骰）：骰值由服务端权威生成，这里只发 checkRequestId
+  // 表明"确认掷这一个"。置 rolling 防连点；结果广播回来后卡片会被收起
+  // （见上面 check.result/san.check.result 的处理），rolling 状态随卡片一起消失。
+  const handleRollCheck = () => {
+    if (!pendingCheck || !playerId || pendingCheck.rolling) return
+    setPendingCheck(prev => (prev ? { ...prev, rolling: true } : prev))
+    setTyping(true)
+    if (pendingCheck.kind === 'san') {
+      sdk.roomSocket.rollSanCheck(playerId, { checkRequestId: pendingCheck.id })
+    } else {
+      sdk.roomSocket.rollCheck(playerId, { checkRequestId: pendingCheck.id })
+    }
   }
 
   const handleDiceResult = (result: number, diceType: DiceType) => {
@@ -765,20 +857,30 @@ export default function RoomPage() {
         </div>
       )}
 
+      {/* 待掷检定卡片（两段式玩家掷骰，feat/keeper-agent）：守秘人裁决需要
+          检定后推给本人，骰值由服务端权威生成——点击才真正掷骰。 */}
+      {channel === 'dm' && pendingCheck && (
+        <div className="px-3 pt-2 bg-page flex-shrink-0">
+          <div className="flex items-center justify-between gap-3 bg-[#faf5eb] border border-brass/40 rounded-md px-3.5 py-2.5">
+            <span className="text-xs font-semibold text-brass-dark">
+              🎲 守秘人请求：{pendingCheck.skill ? `${pendingCheck.skill}检定` : '理智检定'}
+            </span>
+            <button
+              onClick={handleRollCheck}
+              disabled={pendingCheck.rolling}
+              className="px-4 py-1.5 rounded-full bg-brass text-white text-xs font-semibold flex-shrink-0 active:bg-brass-dark disabled:opacity-60 transition-colors"
+            >
+              {pendingCheck.rolling ? '掷骰中…' : '掷骰'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Input area：同一个输入框按当前频道分流（主持人 → action.submit，
           讨论区 → chat.send）。麦克风是语音输入（issue #107）：浏览器本地转写
           成文字填进输入框，之后跟手动打字完全一样；浏览器不支持时按钮不渲染。 */}
       <div className="border-t border-border-light px-3 pb-3 pt-1.5 bg-page flex-shrink-0">
         <form onSubmit={sendMessage} className="flex gap-2 items-end">
-          {channel === 'dm' && (
-            <button
-              type="button"
-              onClick={() => setShowDice(true)}
-              className="w-10 h-10 rounded-full bg-card border border-border-light text-text-muted flex items-center justify-center flex-shrink-0 active:scale-[0.92] active:border-brass active:text-brass-dark transition-all"
-            >
-              <Dice6 className="w-[18px] h-[18px]" strokeWidth={2} />
-            </button>
-          )}
           {speech.supported && (
             <button
               type="button"

@@ -1,4 +1,4 @@
-"""裁决契约与执行器（keeper agent v2 · 两阶段回合制）。
+"""裁决契约与执行器（keeper agent v2 · 两阶段回合制，两段式玩家掷骰）。
 
 「裁决」是守秘人的幕后认知：这个行动要不要检定、状态怎么变。v1 把它做成
 agent 的"自由工具调用"，实测被模型的写作本能碾压（该掷不掷/线索白给/状态
@@ -6,19 +6,27 @@ agent 的"自由工具调用"，实测被模型的写作本能碾压（该掷不
 `KeeperDecision` 的字段就是裁决的完整词汇表——检定是 schema 的一部分而不是
 "可选的工具"，不存在"忘了裁决"这条路径。
 
-执行器（execute_decision）是纯代码：拿着裁决逐项调 tools.py 的 `*_impl`
-（服务端权威掷骰/写库/留痕全部复用），LLM 摸不到骰子也改不了账。
+裁决产出分两条路径执行：
+- `execute_side_effects`：HP 变更 + 状态记账，纯代码立即执行（LLM 摸不到
+  骰子也改不了账）；
+- `create_pending_checks`：checks/san_checks **不再在这里掷骰**——两段式
+  玩家掷骰下，骰子由玩家在前端点击确认后才服务端权威生成，这里只把裁决
+  产出的检定请求解析成待掷记录（`pending.PendingCheck`），真正的掷骰在
+  `KeeperAgent.resolve_check` 里发生（见 agent.py）。
 """
+
+import uuid
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.keeper.pending import PendingCheck
 from app.core.keeper.tools import (
     KeeperDeps,
     KeeperToolError,
+    _resolve_character,
+    _resolve_skill_target,
     adjust_hp_impl,
-    roll_check_impl,
-    san_check_impl,
     update_state_impl,
 )
 
@@ -75,15 +83,18 @@ class KeeperDecision(_DecisionModel):
     )
 
 
-async def execute_decision(
+async def execute_side_effects(
     deps: KeeperDeps, decision: KeeperDecision
 ) -> tuple[list[str], list[str]]:
-    """逐项执行裁决。返回 (执行报告, 未能执行的问题)。
+    """执行裁决里"立即生效"的部分：HP 变更 + 状态记账。返回 (执行报告, 问题清单)。
 
-    - 执行报告：每项 `*_impl` 的完整返回文本（含困难/极难阈值、临时疯狂警告
-      等），喂给叙事阶段——叙事者必须知道"骰子说了什么"才能如实写；
-    - 问题清单：裁决里不合法的项（未知技能名、找不到的玩家）**跳过不炸**，
-      记下来一并喂给叙事阶段让它自然圆场；同时进日志供排查。
+    检定/理智检定不在这里执行——两段式玩家掷骰下骰子由玩家确认后才生成，
+    见 `create_pending_checks`。
+
+    - 执行报告：每项 `*_impl` 的完整返回文本，喂给叙事阶段——叙事者必须知道
+      "发生了什么"才能如实写；
+    - 问题清单：裁决里不合法的项（找不到的玩家）**跳过不炸**，记下来一并
+      喂给叙事阶段让它自然圆场；同时进日志供排查。
 
     执行是顺序的（不并发），tools 层的 write_lock 因此在这条路径上只是冗余
     保险——保留它是因为 `*_impl` 还可能被未来的并发调用方复用。
@@ -91,18 +102,6 @@ async def execute_decision(
     report: list[str] = []
     issues: list[str] = []
 
-    for check in decision.checks:
-        try:
-            report.append(await roll_check_impl(deps, check.skill, check.player))
-        except KeeperToolError as exc:
-            issues.append(f"检定[{check.skill}]未执行：{exc}")
-    for san in decision.san_checks:
-        try:
-            report.append(
-                await san_check_impl(deps, san.loss_on_success, san.loss_on_failure, san.player)
-            )
-        except KeeperToolError as exc:
-            issues.append(f"理智检定未执行：{exc}")
     for hp in decision.hp_changes:
         try:
             report.append(
@@ -119,3 +118,62 @@ async def execute_decision(
     if issues:
         logger.warning("keeper_decision_issues", issues=issues)
     return report, issues
+
+
+async def create_pending_checks(
+    deps: KeeperDeps, decision: KeeperDecision
+) -> tuple[list[PendingCheck], list[str]]:
+    """把裁决里的 checks/san_checks 解析成待掷记录——**本函数不掷骰**。
+
+    玩家/技能名的合法性预检复用 tools.py 内部的解析函数（跟 roll_check_impl/
+    san_check_impl 走的是同一套解析逻辑，保证"能不能掷"的判断口径一致）；
+    非法项跳过并记 issue（未知技能名、找不到的玩家），与旧版执行器行为一致。
+    返回 (待掷记录, 问题清单)。
+    """
+    pending: list[PendingCheck] = []
+    issues: list[str] = []
+
+    async with deps.session_factory() as db:
+        for check in decision.checks:
+            try:
+                player, character = await _resolve_character(db, deps, check.player)
+                display_name, _target = _resolve_skill_target(deps, character, check.skill)
+            except KeeperToolError as exc:
+                issues.append(f"检定[{check.skill}]未能发起：{exc}")
+                continue
+            pending.append(
+                PendingCheck(
+                    check_request_id=str(uuid.uuid4()),
+                    kind="skill",
+                    room_id=deps.room_id,
+                    player_id=player.id,
+                    player_nickname=player.nickname,
+                    skill=display_name,
+                    loss_on_success="0",
+                    loss_on_failure="0",
+                    reason=check.reason,
+                )
+            )
+        for san in decision.san_checks:
+            try:
+                player, _character = await _resolve_character(db, deps, san.player)
+            except KeeperToolError as exc:
+                issues.append(f"理智检定未能发起：{exc}")
+                continue
+            pending.append(
+                PendingCheck(
+                    check_request_id=str(uuid.uuid4()),
+                    kind="san",
+                    room_id=deps.room_id,
+                    player_id=player.id,
+                    player_nickname=player.nickname,
+                    skill=None,
+                    loss_on_success=san.loss_on_success,
+                    loss_on_failure=san.loss_on_failure,
+                    reason=san.reason,
+                )
+            )
+
+    if issues:
+        logger.warning("keeper_pending_check_issues", issues=issues)
+    return pending, issues

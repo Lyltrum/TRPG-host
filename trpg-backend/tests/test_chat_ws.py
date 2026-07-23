@@ -20,7 +20,13 @@ from collections.abc import Iterator
 import pytest
 from starlette.testclient import TestClient
 
-from app.core.narrator import FallbackNarrator, NarrationContext, Narrator
+from app.core.narrator import (
+    CheckResultNotice,
+    FallbackNarrator,
+    NarrationContext,
+    NarrationOutcome,
+    Narrator,
+)
 from app.main import app
 from app.service.action_lock import RoomActionLockManager
 from tests.test_ws import ROOMS_BASE, create_room, register_and_login
@@ -140,7 +146,7 @@ def test_action_submit_broadcasts_utterance_then_narration(sync_client: TestClie
 
 
 class _FailingNarrator(Narrator):
-    async def narrate(self, context: NarrationContext) -> str:
+    async def narrate(self, context: NarrationContext) -> NarrationOutcome:
         raise RuntimeError("模拟 AI 服务超时/失败")
 
 
@@ -217,6 +223,107 @@ def test_action_lock_semantics() -> None:
     assert manager.try_acquire("room-1") is not None, "过期的锁必须能被抢占（防永久锁死）"
 
     manager.release("room-does-not-exist", "any-token")  # 释放不存在的锁是无害空操作
+
+
+# ── check.roll / san.check.roll（两段式玩家掷骰，feat/keeper-agent）────
+
+
+class _FakeCheckNarrator(Narrator):
+    """narrate() 在这些用例里不应该被调用（只测 check.roll 这一条路径），
+    resolve_check 桩死返回一个结果 + 一段结算叙事。"""
+
+    async def narrate(self, context: NarrationContext) -> NarrationOutcome:
+        raise AssertionError("这些用例不应该调用 narrate()")
+
+    async def resolve_check(
+        self, room_id: str, player_id: str, check_request_id: str
+    ) -> NarrationOutcome:
+        notice = CheckResultNotice(
+            check_request_id=check_request_id,
+            kind="skill",
+            player_id=player_id,
+            skill="侦查",
+            rolled=42,
+            target=60,
+            level="成功",
+        )
+        return NarrationOutcome(text="你看清了痕迹。", check_results=[notice])
+
+
+class _RejectingCheckNarrator(Narrator):
+    async def narrate(self, context: NarrationContext) -> NarrationOutcome:
+        raise AssertionError("这些用例不应该调用 narrate()")
+
+    async def resolve_check(
+        self, room_id: str, player_id: str, check_request_id: str
+    ) -> NarrationOutcome:
+        raise ValueError("没有这个待掷的检定（可能已被结算）")
+
+
+def test_check_roll_broadcasts_result_and_narration(sync_client: TestClient) -> None:
+    app.state.narrator = _FakeCheckNarrator()
+    token = register_and_login(sync_client, "check_host")
+    room = create_room(sync_client, token)
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+        ws.send_json(
+            {
+                "type": "check.roll",
+                "playerId": room["playerId"],
+                "payload": {"checkRequestId": "chk-1"},
+            }
+        )
+        result_envelope = ws.receive_json()
+        narration_envelope = ws.receive_json()
+
+    assert result_envelope["type"] == "check.result"
+    assert result_envelope["payload"]["checkRequestId"] == "chk-1"
+    assert result_envelope["payload"]["rollValue"] == 42
+    assert result_envelope["payload"]["result"] == "成功"
+    assert narration_envelope["type"] == "narration.push"
+    assert narration_envelope["payload"]["text"] == "你看清了痕迹。"
+
+
+def test_check_roll_not_implemented_without_keeper(sync_client: TestClient) -> None:
+    """默认 FallbackNarrator 没有"待掷检定"概念——check.roll 收到 NOT_IMPLEMENTED，
+    而不是让请求悬空等不到任何回应。"""
+    token = register_and_login(sync_client, "check_fallback_host")
+    room = create_room(sync_client, token)
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+        ws.send_json(
+            {
+                "type": "check.roll",
+                "playerId": room["playerId"],
+                "payload": {"checkRequestId": "chk-1"},
+            }
+        )
+        envelope = ws.receive_json()
+
+    assert envelope["type"] == "error"
+    assert envelope["payload"]["code"] == "NOT_IMPLEMENTED"
+
+
+def test_san_check_roll_unknown_id_returns_check_not_pending(sync_client: TestClient) -> None:
+    app.state.narrator = _RejectingCheckNarrator()
+    token = register_and_login(sync_client, "check_reject_host")
+    room = create_room(sync_client, token)
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+        ws.send_json(
+            {
+                "type": "san.check.roll",
+                "playerId": room["playerId"],
+                "payload": {"checkRequestId": "no-such"},
+            }
+        )
+        envelope = ws.receive_json()
+
+    assert envelope["type"] == "error"
+    assert envelope["payload"]["code"] == "CHECK_NOT_PENDING"
 
 
 # ── 历史消息 REST ────────────────────────────────────

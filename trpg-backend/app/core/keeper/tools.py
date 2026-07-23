@@ -173,7 +173,12 @@ def _write_stat(character: Character, key: str, new_value: int) -> None:
 # ── 六个工具的业务实现（普通函数，可直接单测） ──────────────
 
 
-async def roll_check_impl(deps: KeeperDeps, skill_name: str, player_name: str | None = None) -> str:
+async def roll_check_detail(
+    deps: KeeperDeps, skill_name: str, player_name: str | None = None
+) -> tuple[str, dict]:
+    """技能/属性检定的完整实现，额外返回结构化明细（两段式玩家掷骰：`check.result`
+    事件需要 player_id/skill/rolled/target/level 这些字段，不能只有一段拼好的文本）。
+    `roll_check_impl` 是它的薄包装，保持旧签名不破坏现有调用方/测试。"""
     async with deps.session_factory() as db:
         player, character = await _resolve_character(db, deps, player_name)
         display_name, target = _resolve_skill_target(deps, character, skill_name)
@@ -194,11 +199,25 @@ async def roll_check_impl(deps: KeeperDeps, skill_name: str, player_name: str | 
         f"{player.nickname} · {display_name}检定："
         f"{outcome.rolled}/{outcome.target} → {outcome.level}"
     )
-    return (
+    text = (
         f"{player.nickname} 的{display_name}检定：d100={outcome.rolled}，"
         f"目标值 {outcome.target}（困难 {outcome.target // 2}/极难 {outcome.target // 5}）"
         f"→ {outcome.level}"
     )
+    detail = {
+        "player_id": player.id,
+        "player": player.nickname,
+        "skill": display_name,
+        "rolled": outcome.rolled,
+        "target": outcome.target,
+        "level": outcome.level,
+    }
+    return text, detail
+
+
+async def roll_check_impl(deps: KeeperDeps, skill_name: str, player_name: str | None = None) -> str:
+    text, _detail = await roll_check_detail(deps, skill_name, player_name)
+    return text
 
 
 async def get_character_sheet_impl(deps: KeeperDeps, player_name: str | None = None) -> str:
@@ -300,12 +319,15 @@ async def adjust_hp_impl(
     return f"{player.nickname} HP {current} → {new_value}{status}（{reason}）"
 
 
-async def san_check_impl(
+async def san_check_detail(
     deps: KeeperDeps,
     loss_on_success: str,
     loss_on_failure: str,
     player_name: str | None = None,
-) -> str:
+) -> tuple[str, dict]:
+    """理智检定的完整实现，额外返回结构化明细（同 `roll_check_detail`，供
+    两段式玩家掷骰的 `san.check.result` 事件使用）。`san_check_impl` 是它的
+    薄包装，保持旧签名不破坏现有调用方/测试。"""
     # write_lock：见 KeeperDeps 注释——并行工具调用下的读-改-写必须串行。
     async with deps.write_lock, deps.session_factory() as db:
         player, character = await _resolve_character(db, deps, player_name)
@@ -339,8 +361,28 @@ async def san_check_impl(
         f"{player.nickname} · 理智检定：{outcome.rolled}/{current} → {result}，"
         f"San {current} → {new_value}（-{loss}）"
     )
-    return (
+    text = (
         f"{player.nickname} 理智检定：d100={outcome.rolled}/{current} → {result}，"
         f"损失 {loss} 点（{loss_expr}），San {current} → {new_value}"
         + (f"。⚠️ {suffix}" if suffix else "")
     )
+    detail = {
+        "player_id": player.id,
+        "player": player.nickname,
+        "rolled": outcome.rolled,
+        "target": current,
+        "succeeded": outcome.succeeded,
+        "loss": loss,
+        "san": new_value,
+    }
+    return text, detail
+
+
+async def san_check_impl(
+    deps: KeeperDeps,
+    loss_on_success: str,
+    loss_on_failure: str,
+    player_name: str | None = None,
+) -> str:
+    text, _detail = await san_check_detail(deps, loss_on_success, loss_on_failure, player_name)
+    return text

@@ -56,19 +56,73 @@ class NarrationContext:
     player_id: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class CheckRequestNotice:
+    """一次"待掷检定"的通知（两段式玩家掷骰）——守秘人裁决需要检定后不立即
+    掷骰，而是把这条通知随叙事一起广播，玩家在前端点击确认后才真正掷骰。"""
+
+    check_request_id: str
+    kind: str  # "skill" | "san"
+    player_id: str
+    player_nickname: str
+    skill: str | None  # kind="san" 时为 None
+    reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CheckResultNotice:
+    """一次检定的服务端权威结果（玩家点击掷骰确认后产生）。"""
+
+    check_request_id: str
+    kind: str  # "skill" | "san"
+    player_id: str
+    skill: str | None  # kind="san" 时为 None
+    rolled: int
+    target: int
+    level: str  # skill：成功等级文本；san："成功"/"失败"
+    san_loss: int | None = None
+    san_remaining: int | None = None
+
+
+@dataclass
+class NarrationOutcome:
+    """`Narrator.narrate()`/`resolve_check()` 的统一返回形状。
+
+    `text` 是要广播的叙事（两段式掷骰的"重发请求"分支可能为空串——彼时不该
+    广播一条空 narration.push）；`check_requests`/`check_results` 是本轮新
+    发起/新结算的检定通知，调用方（WS 层）负责把它们各自广播成
+    `check.request`/`check.result` 事件。非 keeper 的单轮叙事实现两个列表
+    恒为空。"""
+
+    text: str
+    check_requests: list[CheckRequestNotice] = field(default_factory=list)
+    check_results: list[CheckResultNotice] = field(default_factory=list)
+
+
 class Narrator(ABC):
     """叙事生成器接口。"""
 
     @abstractmethod
-    async def narrate(self, context: NarrationContext) -> str:
-        """根据上下文生成一段叙事文本。"""
+    async def narrate(self, context: NarrationContext) -> NarrationOutcome:
+        """根据上下文生成一段叙事文本（及本轮的检定请求/结果通知）。"""
+
+    async def resolve_check(
+        self, room_id: str, player_id: str, check_request_id: str
+    ) -> NarrationOutcome:
+        """结算一次玩家确认的掷骰（两段式玩家掷骰）。
+
+        默认不支持：单轮叙事实现（Fallback/DeepSeek）没有"待掷检定"的概念，
+        WS 层收到 check.roll/san.check.roll 时应把 NotImplementedError 转成
+        NOT_IMPLEMENTED 错误事件，而不是让它把整条连接炸掉。
+        """
+        raise NotImplementedError
 
 
 class FallbackNarrator(Narrator):
     """无 API Key 时的确定性占位实现，等价于此前 ws.py 里硬编码的占位文案。"""
 
-    async def narrate(self, context: NarrationContext) -> str:
-        return f"守秘人记下了你的行动：「{context.utterance}」……"
+    async def narrate(self, context: NarrationContext) -> NarrationOutcome:
+        return NarrationOutcome(text=f"守秘人记下了你的行动：「{context.utterance}」……")
 
 
 def _build_messages(context: NarrationContext) -> list[ChatCompletionMessageParam]:
@@ -105,12 +159,12 @@ class DeepSeekNarrator(Narrator):
             api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=_REQUEST_TIMEOUT_SECONDS
         )
 
-    async def narrate(self, context: NarrationContext) -> str:
+    async def narrate(self, context: NarrationContext) -> NarrationOutcome:
         response = await self._client.chat.completions.create(
             model=DEEPSEEK_MODEL,
             messages=_build_messages(context),
         )
-        return response.choices[0].message.content or ""
+        return NarrationOutcome(text=response.choices[0].message.content or "")
 
 
 class DelayedNarrator(Narrator):
@@ -126,9 +180,15 @@ class DelayedNarrator(Narrator):
         self._inner = inner
         self._delay_seconds = delay_seconds
 
-    async def narrate(self, context: NarrationContext) -> str:
+    async def narrate(self, context: NarrationContext) -> NarrationOutcome:
         await asyncio.sleep(self._delay_seconds)
         return await self._inner.narrate(context)
+
+    async def resolve_check(
+        self, room_id: str, player_id: str, check_request_id: str
+    ) -> NarrationOutcome:
+        await asyncio.sleep(self._delay_seconds)
+        return await self._inner.resolve_check(room_id, player_id, check_request_id)
 
 
 def build_narrator(settings: Settings) -> Narrator:

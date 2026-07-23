@@ -50,6 +50,10 @@ class ErrorCode(StrEnum):
     # 会退化成"零个约束"从而放行空白角色卡，必须显式拒绝而不是当成无约束。
     RULESET_NOT_CONFIGURED = "RULESET_NOT_CONFIGURED"
 
+    # feat/keeper-agent 新增：两段式玩家掷骰——玩家确认的 check_request_id
+    # 不在待掷队列里（已被结算/id 错误），或不是本人的检定 → 409。
+    CHECK_NOT_PENDING = "CHECK_NOT_PENDING"
+
 
 class AppException(Exception):
     """业务代码显式抛出的异常，携带错误码/状态码/用户可见信息。

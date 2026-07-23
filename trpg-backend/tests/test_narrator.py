@@ -6,6 +6,8 @@
   网络请求，只断言拼出来的 messages 里包含该有的信息。
 """
 
+import pytest
+
 from app.core.config import Settings
 from app.core.narrator import (
     DeepSeekNarrator,
@@ -20,9 +22,18 @@ async def test_fallback_narrator_returns_deterministic_placeholder_with_utteranc
     narrator = FallbackNarrator()
     context = NarrationContext(utterance="推开门", player_nickname="调查员A")
 
-    text = await narrator.narrate(context)
+    outcome = await narrator.narrate(context)
 
-    assert text == "守秘人记下了你的行动：「推开门」……"
+    assert outcome.text == "守秘人记下了你的行动：「推开门」……"
+    assert outcome.check_requests == [] and outcome.check_results == []
+
+
+async def test_fallback_narrator_resolve_check_not_implemented() -> None:
+    """非 keeper 实现没有"待掷检定"的概念（两段式玩家掷骰只在 KeeperAgent
+    里实现）——resolve_check 必须显式抛出 NotImplementedError，让 WS 层能
+    转成 NOT_IMPLEMENTED 错误事件，而不是悄悄什么都不做。"""
+    with pytest.raises(NotImplementedError):
+        await FallbackNarrator().resolve_check("room-1", "player-1", "check-1")
 
 
 def test_build_narrator_falls_back_without_api_key() -> None:

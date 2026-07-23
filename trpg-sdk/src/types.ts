@@ -138,8 +138,10 @@ import type {
  * 的 PAYLOAD_VALIDATORS、后端 ws.py 三处要一起加（PAYLOAD_VALIDATORS 那张
  * 映射表漏加会编译期报错，见 room-socket.ts）。
  *
- * issue #77 新增的 11 个 S→C 事件里，除 error 外本期都不会真的被后端发出
- * （协议槽位预留，见 issue"三处原型取舍"），但类型/校验器先铺好。
+ * issue #77 新增的 11 个 S→C 事件里，`check.request`/`check.result`/
+ * `san.check.request`/`san.check.result` 在 keeper 模式下真的会被发出
+ * （两段式玩家掷骰，feat/keeper-agent）；其余（除 error）仍是协议槽位预留
+ * （见 issue"三处原型取舍"），类型/校验器先铺好。
  */
 export type ServerToClientEvent =
   | { type: 'session.bound'; payload: SessionBoundPayload }

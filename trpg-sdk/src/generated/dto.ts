@@ -274,19 +274,29 @@ export interface ChatSendPayload {
 }
 
 /**
- * check.request 推送 payload（issue #77 新增，本期不会真的发出）。
+ * check.request 推送 payload（issue #77 新增；feat/keeper-agent 起在
+ * keeper 模式下真的会发出——守秘人裁决需要检定后，不立即掷骰，而是随叙事
+ * 一起推这条通知，玩家在前端点击「掷骰」确认后才真正生成骰值）。
+ *
+ * `check_request_id` 是这次待掷检定的标识，玩家确认时原样带回
+ * （`check.roll`/`san.check.roll` 的 payload）。非 keeper 模式（Fallback/
+ * DeepSeekNarrator）不会发出这个事件。
  */
 export interface CheckRequestPayload {
   playerId: string;
   skill: string;
   targetValue?: number | null;
+  checkRequestId: string;
+  reason?: string | null;
 }
 
 /**
- * check.result 推送 payload（issue #77 新增）。
+ * check.result 推送 payload（issue #77 新增；feat/keeper-agent 起真的
+ * 会发出）。
  *
  * 直接返回终值，不做两段式初步结果（issue 决策 4：幸运消耗机制推迟，
- * 协议一并简化）。本期不会真的发出。
+ * 协议一并简化）——这里的"两段式"指的是幸运消耗，不要和"两段式玩家掷骰"
+ * （裁决/掷骰分离）混淆。
  */
 export interface CheckResultPayload {
   playerId: string;
@@ -294,18 +304,20 @@ export interface CheckResultPayload {
   rollValue: number;
   targetValue?: number | null;
   result: string;
+  checkRequestId?: string | null;
 }
 
 /**
- * check.roll 事件 payload（issue #77 新增）——玩家请求做一次技能检定。
+ * check.roll 事件 payload（issue #77 新增，feat/keeper-agent 两段式玩家
+ * 掷骰实现）——玩家确认并结算一次守秘人已发起的待掷检定。
  *
- * `skill` 必填：说清楚要检定哪个技能是这个动作本身的意义所在。这条链路
- * 本期是 NOT_IMPLEMENTED 桩（见 issue"三处原型取舍"表格——真正的服务端
- * 权威掷骰依赖规则引擎裁决，归 #48/#68），handler 校验完这个 payload 就
- * 直接回 `error` 事件，不会真的掷骰或读写 `check_results` 表。
+ * `check_request_id` 必填：标识具体是哪一次待掷检定（守秘人裁决"需要
+ * 检定"后随叙事一起广播的 `check.request` 事件带的那个 id）。骰值由服务端
+ * 权威生成——这条消息本身不带任何"掷什么/掷多少"的信息，纯粹是"我确认
+ * 掷这一个"。
  */
 export interface CheckRollPayload {
-  skill: string;
+  checkRequestId: string;
 }
 
 /**
@@ -351,7 +363,8 @@ export type ErrorCode =
   | "RATE_LIMITED"
   | "NOT_IMPLEMENTED"
   | "CHARACTER_INVALID"
-  | "RULESET_NOT_CONFIGURED";
+  | "RULESET_NOT_CONFIGURED"
+  | "CHECK_NOT_PENDING";
 
 /**
  * 错误信息的具体内容，只在 success=false 时出现在 error 字段里。
@@ -709,31 +722,36 @@ export interface RulesetRead {
 }
 
 /**
- * san.check.request 推送 payload（issue #77 新增，本期不会真的发出）。
+ * san.check.request 推送 payload（issue #77 新增；feat/keeper-agent 起
+ * 真的会发出，同 CheckRequestPayload 的理智检定版本）。
  */
 export interface SanCheckRequestPayload {
   playerId: string;
   currentSan?: number | null;
+  checkRequestId: string;
+  reason?: string | null;
 }
 
 /**
  * san.check.result 推送 payload（issue #77 新增，同 CheckResultPayload
- * 直接返回终值，本期不会真的发出）。
+ * 直接返回终值；feat/keeper-agent 起真的会发出）。
  */
 export interface SanCheckResultPayload {
   playerId: string;
   rollValue: number;
   sanLoss: number;
   result: string;
+  checkRequestId?: string | null;
+  sanRemaining?: number | null;
 }
 
 /**
- * san.check.roll 事件 payload（issue #77 新增）。
- *
- * 定义一个空模型（而不是完全跳过校验）理由同 GameStartPayload：让它也走
- * 跟其它事件一致的"接收端过一次模型校验"路径。本期同样是 NOT_IMPLEMENTED 桩。
+ * san.check.roll 事件 payload（issue #77 新增，feat/keeper-agent 两段式
+ * 玩家掷骰实现）——同 CheckRollPayload，理智检定版本。
  */
-export interface SanCheckRollPayload {}
+export interface SanCheckRollPayload {
+  checkRequestId: string;
+}
 
 /**
  * POST /api/v1/rooms/{roomId}/module 请求体

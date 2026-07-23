@@ -16,9 +16,12 @@
   留好，但本期不会真的发出）。
 - `action.submit` 的叙事回复本期是固定文案的占位实现（"Mock 叙事"，
   issue #43 允许），真实 AI 叙事生成留给 #43 落地。
-- `check.roll`/`san.check.roll`/`room.rejoin` 三个新增 C→S 事件校验完
-  payload 后统一回一条 `error` 事件（`NOT_IMPLEMENTED`），不做真实的服务端
-  权威掷骰/断线重连（issue #77"三处原型取舍"表格 + 决策 6）。
+- `room.rejoin` 校验完 payload 后回一条 `error` 事件（`NOT_IMPLEMENTED`），
+  不做真实的断线重连（issue #77"三处原型取舍"表格 + 决策 6）。
+  `check.roll`/`san.check.roll`（两段式玩家掷骰，feat/keeper-agent）：确认
+  并结算守秘人已发起的待掷检定，服务端权威生成骰值——keeper 模式下是真实
+  实现，非 keeper 模式（Fallback/DeepSeekNarrator 没有"待掷检定"的概念）
+  回 `NOT_IMPLEMENTED`。
 - 每条广播出去的 `narration.push` 都会同步写一行 `events` 表——这是本期
   唯一真正打通的事件日志闭环，`GET /rooms/{roomId}/replay` 直接读它。
 
@@ -34,11 +37,14 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory
+from app.core.narrator import CheckRequestNotice, CheckResultNotice
 from app.dto.ws import (
     ActionBroadcastPayload,
     ActionSubmitPayload,
     ChatMessagePayload,
     ChatSendPayload,
+    CheckRequestPayload,
+    CheckResultPayload,
     CheckRollPayload,
     ClientEnvelope,
     ErrorPayload,
@@ -47,6 +53,8 @@ from app.dto.ws import (
     PlayerReadyPayload,
     RoomJoinPayload,
     RoomRejoinPayload,
+    SanCheckRequestPayload,
+    SanCheckResultPayload,
     SanCheckRollPayload,
     ServerEnvelope,
     SessionBoundPayload,
@@ -84,6 +92,56 @@ async def _broadcast_narration(
     envelope = ServerEnvelope(type="narration.push", payload=narration.model_dump(by_alias=True))
     await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
     await room_service.record_event(db, room_id, player_id, "narration.push", {"text": text})
+
+
+async def _broadcast_check_request(room_id: str, notice: CheckRequestNotice) -> None:
+    """广播一次"待掷检定"通知（两段式玩家掷骰）——守秘人裁决需要检定后
+    随叙事一起推给房间，玩家在前端看到卡片、点击掷骰后才真正生成骰值。"""
+    if notice.kind == "san":
+        payload: SanCheckRequestPayload | CheckRequestPayload = SanCheckRequestPayload(
+            player_id=notice.player_id,
+            current_san=None,
+            check_request_id=notice.check_request_id,
+            reason=notice.reason or None,
+        )
+        event_type = "san.check.request"
+    else:
+        payload = CheckRequestPayload(
+            player_id=notice.player_id,
+            skill=notice.skill or "",
+            target_value=None,
+            check_request_id=notice.check_request_id,
+            reason=notice.reason or None,
+        )
+        event_type = "check.request"
+    envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))
+    await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
+
+
+async def _broadcast_check_result(room_id: str, notice: CheckResultNotice) -> None:
+    """广播一次检定结果（玩家点击掷骰确认后，服务端权威生成骰值的结果）。"""
+    if notice.kind == "san":
+        payload: SanCheckResultPayload | CheckResultPayload = SanCheckResultPayload(
+            player_id=notice.player_id,
+            roll_value=notice.rolled,
+            san_loss=notice.san_loss or 0,
+            result=notice.level,
+            check_request_id=notice.check_request_id,
+            san_remaining=notice.san_remaining,
+        )
+        event_type = "san.check.result"
+    else:
+        payload = CheckResultPayload(
+            player_id=notice.player_id,
+            skill=notice.skill or "",
+            roll_value=notice.rolled,
+            target_value=notice.target,
+            result=notice.level,
+            check_request_id=notice.check_request_id,
+        )
+        event_type = "check.result"
+    envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))
+    await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
 
 
 async def _handle_room_join(
@@ -202,12 +260,71 @@ async def _handle_action_submit(
 
         narrator = websocket.app.state.narrator
         try:
-            narration_text = await narrator.narrate(context)
+            outcome = await narrator.narrate(context)
         except Exception as exc:  # 外部服务的失败面（网络/超时/API 错）就是宽的，故意宽捕获
             logger.warning("narrator_failed", room_id=room_id, error=str(exc))
             await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
             return
-        await _broadcast_narration(db, room_id, player_id, narration_text)
+        # outcome.text 可能为空（两段式玩家掷骰：pending 守卫命中时守秘人只
+        # 重发检定请求，不产生新叙事）——空文本不广播一条空 narration.push。
+        if outcome.text:
+            await _broadcast_narration(db, room_id, player_id, outcome.text)
+        for notice in outcome.check_requests:
+            await _broadcast_check_request(room_id, notice)
+    finally:
+        action_lock_manager.release(room_id, lock_token)
+
+
+async def _handle_check_roll(
+    db: AsyncSession,
+    websocket: WebSocket,
+    room_id: str,
+    player_id: str,
+    check_request_id: str,
+) -> None:
+    """处理 check.roll/san.check.roll（issue #77 协议位，feat/keeper-agent
+    落地两段式玩家掷骰）：玩家确认掷骰 → `Narrator.resolve_check` 服务端权威
+    生成骰值 → 广播结果；若守秘人紧接着续写了叙事或发起了新的待掷检定
+    （队列清空后 resolve_check 内部会复用 narrate()），一并广播。
+
+    两个事件共用这一个 handler：具体是技能检定还是理智检定，由 pending 队列
+    里记录的 kind 决定，不需要在这里区分——`check_request_id` 全局唯一。
+
+    跟 action.submit 共用同一把房间锁：掷骰同样可能触发"读世界状态→跑 AI
+    续写→写回"的循环，必须串行，防止和另一名玩家的提交并发读到同一份旧状态。
+    """
+    lock_token = action_lock_manager.try_acquire(room_id)
+    if lock_token is None:
+        await _send_error(websocket, "ACTION_IN_PROGRESS", "守秘人正在处理其他玩家的行动，请稍候")
+        return
+
+    try:
+        narrator = websocket.app.state.narrator
+        try:
+            outcome = await narrator.resolve_check(room_id, player_id, check_request_id)
+        except NotImplementedError:
+            # 非 keeper 模式（Fallback/DeepSeekNarrator）没有"待掷检定"这个
+            # 概念，明确告知发起者，而不是让请求悬空等不到任何回应。
+            await _send_error(websocket, "NOT_IMPLEMENTED", "服务端权威掷骰本期尚未实现")
+            return
+        except ValueError as exc:
+            # KeeperToolError（ValueError 子类）：id 不存在/已被结算/掷错了人。
+            await _send_error(websocket, "CHECK_NOT_PENDING", str(exc))
+            return
+        except Exception as exc:  # 与 action.submit 同理：外部服务失败面宽，故意宽捕获
+            # 此时骰子可能已经掷出并落库（结算叙事的 LLM 调用失败在掷骰之后）
+            # ——结果没广播成，但 keeper.check 事件在历史里，玩家重发一条
+            # action.submit 后裁决器能看到结果并续上，不会丢骰。
+            logger.warning("resolve_check_failed", room_id=room_id, error=str(exc))
+            await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
+            return
+
+        for notice in outcome.check_results:
+            await _broadcast_check_result(room_id, notice)
+        if outcome.text:
+            await _broadcast_narration(db, room_id, player_id, outcome.text)
+        for notice in outcome.check_requests:
+            await _broadcast_check_request(room_id, notice)
     finally:
         action_lock_manager.release(room_id, lock_token)
 
@@ -308,14 +425,22 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                             db, websocket, room_id, bound_player_id, chat_payload
                         )
                     elif event_type == "check.roll":
-                        CheckRollPayload.model_validate(raw_payload)
-                        await _send_error(
-                            websocket, "NOT_IMPLEMENTED", "服务端权威技能检定本期尚未实现"
+                        check_roll_payload = CheckRollPayload.model_validate(raw_payload)
+                        await _handle_check_roll(
+                            db,
+                            websocket,
+                            room_id,
+                            bound_player_id,
+                            check_roll_payload.check_request_id,
                         )
                     elif event_type == "san.check.roll":
-                        SanCheckRollPayload.model_validate(raw_payload)
-                        await _send_error(
-                            websocket, "NOT_IMPLEMENTED", "服务端权威理智检定本期尚未实现"
+                        san_roll_payload = SanCheckRollPayload.model_validate(raw_payload)
+                        await _handle_check_roll(
+                            db,
+                            websocket,
+                            room_id,
+                            bound_player_id,
+                            san_roll_payload.check_request_id,
                         )
                     elif event_type == "room.rejoin":
                         RoomRejoinPayload.model_validate(raw_payload)

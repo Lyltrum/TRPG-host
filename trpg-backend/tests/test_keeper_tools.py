@@ -128,6 +128,10 @@ async def test_roll_check_trained_skill(deps: KeeperDeps) -> None:
     events = await _events(deps, "keeper.check")
     assert len(events) == 1
     assert events[0].payload["target"] == 70
+    # 掷骰可见性硬保证的数据源：结果必须记进 check_results（narrate 末尾由
+    # 代码强制附加广播，不依赖模型把数字写进叙事）
+    assert len(deps.check_results) == 1
+    assert f"{expected_roll}/70" in deps.check_results[0]
 
     # 「侦查」同义写法必须解析到同一技能（模组文本常用写法）
     assert "目标值 70" in await roll_check_impl(deps, "侦查")
@@ -249,6 +253,7 @@ async def test_adjust_hp_damage_and_floor(deps: KeeperDeps) -> None:
     text = await adjust_hp_impl(deps, -99, "致命打击")
     assert "→ 0" in text and "倒地" in text
     assert (await _derived(deps))["HP"] == 0
+    assert len(deps.check_results) == 2  # 两次 HP 变动都进了可见性记录
 
 
 # ── san_check ───────────────────────────────────────
@@ -268,6 +273,8 @@ async def test_san_check_applies_loss(deps: KeeperDeps) -> None:
     events = await _events(deps, "keeper.san")
     assert len(events) == 1
     assert events[0].payload["loss"] == expected_loss
+    assert len(deps.check_results) == 1
+    assert "理智检定" in deps.check_results[0]
 
 
 async def test_san_check_big_loss_warns_temporary_insanity(deps: KeeperDeps) -> None:

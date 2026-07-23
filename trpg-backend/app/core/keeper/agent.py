@@ -93,7 +93,16 @@ class KeeperAgent(Narrator):
             rng=self._rng,
         )
         result = await Runner.run(self._agent, turn_input, context=deps, max_turns=_MAX_TURNS)
-        return str(result.final_output or "")
+        narration = str(result.final_output or "")
+
+        # 🔴 掷骰可见性的硬保证：本轮发生过的检定/理智/伤害，由代码强制附加在
+        # 叙事末尾，不依赖模型"把数字写进叙事"的自觉（实测它会藏——玩家掷出
+        # 94/29 失败，叙事只说"什么也没找到"，玩家以为根本没掷）。骰子当众
+        # 认账是 KP 职责，职责的兜底在代码不在 prompt。
+        if deps.check_results:
+            dice_lines = "\n".join(f"🎲 {line}" for line in deps.check_results)
+            narration = f"{narration}\n\n{dice_lines}" if narration else dice_lines
+        return narration
 
     async def _load_room_memory(self, room_id: str) -> tuple[dict | None, list[str], list[str]]:
         """读取世界状态笔记 + 全量事件历史 + 在场调查员名单。

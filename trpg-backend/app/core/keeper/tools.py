@@ -51,6 +51,11 @@ class KeeperDeps:
     # 三次 update_state 只留下最后一个键）。房间级并发已由 action_lock 挡住，
     # 这把锁只管一次 narrate 内部的工具并发。
     write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # 本轮的检定/理智/伤害结果记录。掷骰可见性不能依赖模型自觉——prompt 要求
+    # "结果数字写进叙事"，真机实测它照样会藏（玩家掷出 94/29 失败，叙事只说
+    # "什么也没找到"，玩家以为根本没掷）。工具往这里记，KeeperAgent.narrate
+    # 由**代码**把它们强制附加在叙事末尾广播，模型想藏都藏不住。
+    check_results: list[str] = field(default_factory=list)
 
 
 class KeeperToolError(ValueError):
@@ -187,6 +192,10 @@ async def roll_check_impl(deps: KeeperDeps, skill_name: str, player_name: str | 
                 "level": outcome.level,
             },
         )
+    deps.check_results.append(
+        f"{player.nickname} · {display_name}检定："
+        f"{outcome.rolled}/{outcome.target} → {outcome.level}"
+    )
     return (
         f"{player.nickname} 的{display_name}检定：d100={outcome.rolled}，"
         f"目标值 {outcome.target}（困难 {outcome.target // 2}/极难 {outcome.target // 5}）"
@@ -289,6 +298,7 @@ async def adjust_hp_impl(
             {"player": player.nickname, "delta": delta, "hp": new_value, "reason": reason},
         )
     status = "（已倒地/濒死）" if new_value == 0 else ""
+    deps.check_results.append(f"{player.nickname} · HP {current} → {new_value}{status}")
     return f"{player.nickname} HP {current} → {new_value}{status}（{reason}）"
 
 
@@ -327,6 +337,10 @@ async def san_check_impl(
     if new_value == 0:
         warnings.append("理智归零，角色永久疯狂")
     suffix = "；".join(warnings)
+    deps.check_results.append(
+        f"{player.nickname} · 理智检定：{outcome.rolled}/{current} → {result}，"
+        f"San {current} → {new_value}（-{loss}）"
+    )
     return (
         f"{player.nickname} 理智检定：d100={outcome.rolled}/{current} → {result}，"
         f"损失 {loss} 点（{loss_expr}），San {current} → {new_value}"

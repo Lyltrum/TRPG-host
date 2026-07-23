@@ -14,19 +14,23 @@ JSON（首次修改时把上限备份为 `HP_MAX`/`SAN_MAX`）——正经做法
 「当前状态」存储，等实验验证过玩法再抽。
 """
 
+import asyncio
 import random
 from dataclasses import dataclass, field
 
+import structlog
 from agents import RunContextWrapper, Tool, function_tool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.coc7_rules import evaluate_skill_base
-from app.core.keeper import dice
+from app.core.keeper import dice, module_loader
 from app.core.keeper.module_loader import ScenarioModule
 from app.dto.game import RulesetRead
 from app.models.event import Event
 from app.models.room import Character, Player, Room
+
+logger = structlog.get_logger()
 
 
 @dataclass
@@ -41,6 +45,12 @@ class KeeperDeps:
     module: ScenarioModule
     ruleset: RulesetRead
     rng: random.Random = field(default_factory=random.Random)
+    # 🔴 SDK 会**并行执行**同一条 assistant 消息里的多个工具调用。所有
+    # 「读-改-写」的工具（update_state/adjust_hp/san_check）必须串行，否则
+    # 并发读到同一份旧值、后提交覆盖先提交（真实 DeepSeek 冒烟实测：一轮里
+    # 三次 update_state 只留下最后一个键）。房间级并发已由 action_lock 挡住，
+    # 这把锁只管一次 narrate 内部的工具并发。
+    write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class KeeperToolError(ValueError):
@@ -213,21 +223,16 @@ async def get_character_sheet_impl(deps: KeeperDeps, player_name: str | None = N
 
 
 def read_module_impl(deps: KeeperDeps, section: str) -> str:
-    """查阅剧本。不碰数据库——模组数据加载时已在内存里。"""
+    """查阅剧本（渲染与 system prompt 的剧本全文共用 module_loader 里的实现）。
+
+    剧本全文已常驻 system prompt，这个工具是"回看细节"的补充手段——保留它
+    是因为长模组未来未必能全文常驻，查询路径先留着。不碰数据库。
+    """
     module = deps.module
     section = section.strip()
 
     if section == "overview":
-        guidance = "\n".join(f"- {k}：{v}" for k, v in module.kp_guidance.items())
-        facts = "\n".join(f"- {f}" for f in module.kp_truth.key_facts)
-        return (
-            f"《{module.meta.title}》（{module.meta.era or ''}）\n"
-            f"基调：{module.meta.tone or ''}\n"
-            f"多人适配：{module.meta.multi_player_note or ''}\n\n"
-            f"【KP 真相（绝密）】{module.kp_truth.summary}\n关键事实：\n{facts}\n\n"
-            f"【开场（可念给玩家）】{module.player_intro}\n\n"
-            f"【KP 指引】\n{guidance}"
-        )
+        return module_loader.render_overview(module)
     if section == "nodes":
         return "调查节点列表：\n" + "\n".join(
             f"- {n.id}：{n.title}（→ {'、'.join(n.leads_to) or '终点'}）" for n in module.nodes
@@ -238,23 +243,7 @@ def read_module_impl(deps: KeeperDeps, section: str) -> str:
             raise KeeperToolError(
                 f"没有这个节点。可用节点：{'、'.join(n.id for n in module.nodes)}"
             )
-        parts = [f"【{node.title}】{node.kp_text}"]
-        for check in node.checks:
-            parts.append(
-                f"- 检定[{check.skill}]（{check.difficulty or '普通'}）"
-                + (f" 前提：{check.prerequisite}" if check.prerequisite else "")
-                + f"\n  成功：{check.on_success or '—'}\n  失败：{check.on_failure or '—'}"
-                + (f"\n  大失败：{check.on_fumble}" if check.on_fumble else "")
-            )
-        for branch in node.branches:
-            parts.append(f"- 分支[{branch.condition}]：{branch.outcome}")
-            for sub in branch.then or []:
-                parts.append(f"  - [{sub.condition}]：{sub.outcome}")
-        if node.sub_node is not None:
-            parts.append(f"（子环节：{node.sub_node.id}·{node.sub_node.title}）")
-        if node.leads_to:
-            parts.append(f"通向：{'、'.join(node.leads_to)}")
-        return "\n".join(parts)
+        return module_loader.render_node(node)
     if section == "npcs":
         return "NPC 列表：\n" + "\n".join(
             f"- {n.id}：{n.name}（{n.role or ''}）" for n in module.npcs
@@ -263,14 +252,9 @@ def read_module_impl(deps: KeeperDeps, section: str) -> str:
         npc = module.npc_by_id(section.removeprefix("npc:"))
         if npc is None:
             raise KeeperToolError(f"没有这个 NPC。可用：{'、'.join(n.id for n in module.npcs)}")
-        parts = [f"【{npc.name}】{npc.role or ''}", npc.kp_notes or ""]
-        if npc.stats:
-            parts.append("数据卡：" + "、".join(f"{k} {v}" for k, v in npc.stats.items()))
-        return "\n".join(p for p in parts if p)
+        return module_loader.render_npc(npc)
     if section == "endings":
-        return "\n".join(
-            f"- {e.id}·{e.title}（条件：{e.condition or '—'}）：{e.text}" for e in module.endings
-        )
+        return module_loader.render_endings(module)
 
     raise KeeperToolError(
         "未知的 section。可用：overview / nodes / node:<id> / npcs / npc:<id> / endings"
@@ -278,7 +262,8 @@ def read_module_impl(deps: KeeperDeps, section: str) -> str:
 
 
 async def update_state_impl(deps: KeeperDeps, key: str, value: str) -> str:
-    async with deps.session_factory() as db:
+    # write_lock：见 KeeperDeps 注释——SDK 并行工具调用下「读-改-写」必须串行。
+    async with deps.write_lock, deps.session_factory() as db:
         room = await db.get(Room, deps.room_id)
         if room is None:
             raise KeeperToolError("房间不存在")
@@ -291,7 +276,8 @@ async def update_state_impl(deps: KeeperDeps, key: str, value: str) -> str:
 async def adjust_hp_impl(
     deps: KeeperDeps, delta: int, reason: str, player_name: str | None = None
 ) -> str:
-    async with deps.session_factory() as db:
+    # write_lock：见 KeeperDeps 注释——并行工具调用下的读-改-写必须串行。
+    async with deps.write_lock, deps.session_factory() as db:
         player, character = await _resolve_character(db, deps, player_name)
         current = _current_stat(character, "HP")
         new_value = max(0, current + delta)
@@ -312,7 +298,8 @@ async def san_check_impl(
     loss_on_failure: str,
     player_name: str | None = None,
 ) -> str:
-    async with deps.session_factory() as db:
+    # write_lock：见 KeeperDeps 注释——并行工具调用下的读-改-写必须串行。
+    async with deps.write_lock, deps.session_factory() as db:
         player, character = await _resolve_character(db, deps, player_name)
         current = _current_stat(character, "SAN")
         outcome = dice.evaluate_check(dice.roll_d100(deps.rng), current)
@@ -368,6 +355,7 @@ async def roll_check(
         skill_name: COC7 技能或属性的中文名，如：侦查、图书馆使用、话术、追踪、力量、幸运。
         player_name: 要检定的玩家昵称或角色名；省略则默认本轮行动的发起玩家。
     """
+    logger.info("keeper_tool", tool="roll_check", skill=skill_name, player=player_name)
     return await roll_check_impl(ctx.context, skill_name, player_name)
 
 
@@ -380,6 +368,7 @@ async def get_character_sheet(
     Args:
         player_name: 玩家昵称或角色名；省略则默认本轮行动的发起玩家。
     """
+    logger.info("keeper_tool", tool="get_character_sheet", player=player_name)
     return await get_character_sheet_impl(ctx.context, player_name)
 
 
@@ -392,6 +381,9 @@ async def read_module(ctx: RunContextWrapper[KeeperDeps], section: str) -> str:
             node:<id>（某节点详情）、npcs（NPC列表）、npc:<id>（某NPC详情）、
             endings（结局列表）。
     """
+    # read_module 不写 events（纯读），structlog 是它唯一的可观测痕迹——排查
+    # "agent 这轮到底查没查剧本"（剧本忠实度问题）全靠这行。
+    logger.info("keeper_tool", tool="read_module", section=section)
     return read_module_impl(ctx.context, section)
 
 
@@ -405,6 +397,7 @@ async def update_state(ctx: RunContextWrapper[KeeperDeps], key: str, value: str)
         key: 状态项名称，如：当前场景、已获线索、游戏内时间。
         value: 状态内容（自由文本，覆盖同名旧值）。
     """
+    logger.info("keeper_tool", tool="update_state", key=key)
     return await update_state_impl(ctx.context, key, value)
 
 
@@ -419,6 +412,7 @@ async def adjust_hp(
         reason: 变化原因（会记入事件日志），如：被食尸鬼抓伤。
         player_name: 玩家昵称或角色名；省略则默认本轮行动的发起玩家。
     """
+    logger.info("keeper_tool", tool="adjust_hp", delta=delta, player=player_name)
     return await adjust_hp_impl(ctx.context, delta, reason, player_name)
 
 
@@ -436,6 +430,7 @@ async def san_check(
         loss_on_failure: 检定失败时的损失骰子表达式，如 "1d6"、"1d8"。
         player_name: 玩家昵称或角色名；省略则默认本轮行动的发起玩家。
     """
+    logger.info("keeper_tool", tool="san_check", player=player_name)
     return await san_check_impl(ctx.context, loss_on_success, loss_on_failure, player_name)
 
 

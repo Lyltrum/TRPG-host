@@ -7,6 +7,7 @@ conftest 的 TestSessionLocal——conftest 明确警告不要从测试模块 im
 module_loader 的加载与查询也在这里一并覆盖（共享同一个 fixture 剧本）。
 """
 
+import asyncio
 import random
 import tempfile
 from pathlib import Path
@@ -206,6 +207,21 @@ async def test_read_module_unknown_section(deps: KeeperDeps) -> None:
 
 
 # ── update_state ────────────────────────────────────
+
+
+async def test_update_state_concurrent_calls_keep_all_keys(deps: KeeperDeps) -> None:
+    """🔴 SDK 会并行执行同一轮的多个工具调用（真实 DeepSeek 冒烟实测：一轮里
+    三次 update_state 只留下最后一个键）。write_lock 必须让三个并发调用的键
+    全部存活——去掉锁这个测试会红（lost update）。"""
+    await asyncio.gather(
+        update_state_impl(deps, "场景", "门厅"),
+        update_state_impl(deps, "线索", "脚印"),
+        update_state_impl(deps, "时间", "傍晚"),
+    )
+    async with _session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        assert room.keeper_state == {"场景": "门厅", "线索": "脚印", "时间": "傍晚"}
 
 
 async def test_update_state_merges_and_persists(deps: KeeperDeps) -> None:

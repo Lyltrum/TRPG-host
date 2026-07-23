@@ -114,3 +114,71 @@ def load_module(path: str | Path) -> ScenarioModule:
     由调用方（build_narrator）决定回退策略，这里不吞。"""
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     return ScenarioModule.model_validate(raw)
+
+
+# ── 文本渲染（给 LLM 消费）────────────────────────────
+# system prompt（剧本全文常驻）和 read_module 工具共用同一份渲染，保证
+# agent 无论从哪条路看剧本，看到的都是同一个文本。
+
+
+def render_overview(module: ScenarioModule) -> str:
+    guidance = "\n".join(f"- {k}：{v}" for k, v in module.kp_guidance.items())
+    facts = "\n".join(f"- {f}" for f in module.kp_truth.key_facts)
+    return (
+        f"《{module.meta.title}》（{module.meta.era or ''}）\n"
+        f"基调：{module.meta.tone or ''}\n"
+        f"多人适配：{module.meta.multi_player_note or ''}\n\n"
+        f"【KP 真相（绝密）】{module.kp_truth.summary}\n关键事实：\n{facts}\n\n"
+        f"【开场（可念给玩家）】{module.player_intro}\n\n"
+        f"【KP 指引】\n{guidance}"
+    )
+
+
+def render_node(node: ModuleNode) -> str:
+    parts = [f"【{node.title}】（id: {node.id}）{node.kp_text}"]
+    for check in node.checks:
+        parts.append(
+            f"- 检定[{check.skill}]（{check.difficulty or '普通'}）"
+            + (f" 前提：{check.prerequisite}" if check.prerequisite else "")
+            + f"\n  成功：{check.on_success or '—'}\n  失败：{check.on_failure or '—'}"
+            + (f"\n  大失败：{check.on_fumble}" if check.on_fumble else "")
+        )
+    for branch in node.branches:
+        parts.append(f"- 分支[{branch.condition}]：{branch.outcome}")
+        for sub in branch.then or []:
+            parts.append(f"  - [{sub.condition}]：{sub.outcome}")
+    if node.sub_node is not None:
+        parts.append(f"（子环节 ↓）\n{render_node(node.sub_node)}")
+    if node.leads_to:
+        parts.append(f"通向：{'、'.join(node.leads_to)}")
+    return "\n".join(parts)
+
+
+def render_npc(npc: ModuleNpc) -> str:
+    parts = [f"【{npc.name}】（id: {npc.id}）{npc.role or ''}", npc.kp_notes or ""]
+    if npc.stats:
+        parts.append("数据卡：" + "、".join(f"{k} {v}" for k, v in npc.stats.items()))
+    return "\n".join(p for p in parts if p)
+
+
+def render_endings(module: ScenarioModule) -> str:
+    return "\n".join(
+        f"- {e.id}·{e.title}（条件：{e.condition or '—'}）：{e.text}" for e in module.endings
+    )
+
+
+def render_full(module: ScenarioModule) -> str:
+    """剧本全文：常驻 system prompt 用。
+
+    为什么全文而不是"速查卡索引 + 工具按需查"：真实 DeepSeek 冒烟连跑三轮
+    证明它的工具调用纪律靠 prompt 拽不动——整轮只调一次工具、NPC 名字现编、
+    检定点视而不见。短模组全文也就几千 token，直接常驻比赌它"会去查"可靠。
+    """
+    nodes = "\n\n".join(render_node(n) for n in module.nodes)
+    npcs = "\n\n".join(render_npc(n) for n in module.npcs)
+    return (
+        f"{render_overview(module)}\n\n"
+        f"═══ 调查节点 ═══\n\n{nodes}\n\n"
+        f"═══ 登场 NPC（专有名词以此为准，不得另起名字）═══\n\n{npcs}\n\n"
+        f"═══ 结局 ═══\n{render_endings(module)}"
+    )

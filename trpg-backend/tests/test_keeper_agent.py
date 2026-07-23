@@ -137,7 +137,7 @@ async def test_load_room_memory_replays_events_in_order() -> None:
         await db.commit()
         room_id = room.id
 
-    keeper_state, lines = await _keeper()._load_room_memory(room_id)
+    keeper_state, lines, roster = await _keeper()._load_room_memory(room_id)
 
     assert keeper_state == {"当前场景": "门厅"}
     assert lines == [
@@ -145,14 +145,23 @@ async def test_load_room_memory_replays_events_in_order() -> None:
         "[检定] 阿福 侦察：30/70 → 成功",
         "守秘人：脚印通向地下室。",
     ]
+    # 在场名单：未建卡的玩家也要出现（agent 不许幻觉出额外的调查员）
+    assert roster == ["阿福（未建卡）"]
 
 
 def test_format_turn_input_contains_all_sections() -> None:
-    text = format_turn_input({"当前场景": "门厅"}, ["阿福：我检查脚印"], "阿福", "我下地下室")
+    text = format_turn_input(
+        {"当前场景": "门厅"},
+        ["阿福：我检查脚印"],
+        ["阿福（角色：侦探福，私家侦探）"],
+        "阿福",
+        "我下地下室",
+    )
     assert "当前场景：门厅" in text
     assert "阿福：我检查脚印" in text
+    assert "侦探福" in text  # 在场名单注入
     assert "「我下地下室」" in text
 
 
 def test_format_turn_input_empty_state_hints_game_start() -> None:
-    assert "对局刚开始" in format_turn_input(None, [], "阿福", "开始吧")
+    assert "对局刚开始" in format_turn_input(None, [], ["阿福（未建卡）"], "阿福", "开始吧")

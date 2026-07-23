@@ -26,13 +26,16 @@ async def test_fallback_narrator_returns_deterministic_placeholder_with_utteranc
 
 
 def test_build_narrator_falls_back_without_api_key() -> None:
-    settings = Settings(deepseek_api_key=None)
+    # keeper_module_path 显式钉 None：Settings() 会读开发机 .env，里面配了
+    # KEEPER_MODULE_PATH 的话会把选择逻辑劈到 keeper 分支去（环境泄漏，
+    # 跟 e2e 端口占用同一类坑）——测选择逻辑就把参与选择的字段全部钉死。
+    settings = Settings(deepseek_api_key=None, keeper_module_path=None)
 
     assert isinstance(build_narrator(settings), FallbackNarrator)
 
 
 def test_build_narrator_uses_deepseek_with_api_key() -> None:
-    settings = Settings(deepseek_api_key="sk-test-key")
+    settings = Settings(deepseek_api_key="sk-test-key", keeper_module_path=None)
 
     assert isinstance(build_narrator(settings), DeepSeekNarrator)
 

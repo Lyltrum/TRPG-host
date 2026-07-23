@@ -68,7 +68,12 @@ class KeeperAgent(Narrator):
             tools=KEEPER_TOOLS,
             # DeepSeek 只有 Chat Completions 接口，不能用 SDK 默认的 Responses API。
             model=OpenAIChatCompletionsModel(model=DEEPSEEK_MODEL, openai_client=client),
-            model_settings=ModelSettings(temperature=0.8),
+            # tool_choice="required"：每轮第一次推理**必须**调一个工具——要么
+            # roll_check 掷骰，要么 declare_no_check 书面声明"本轮不掷"。真实
+            # DeepSeek 实测三轮 prompt 强化都拽不动它的工具纪律（隐式调查动作
+            # 零检定、线索白给），只能结构性强制。SDK 默认 reset_tool_choice=True，
+            # 首次工具调用后自动回落 auto，不会无限循环。
+            model_settings=ModelSettings(temperature=0.8, tool_choice="required"),
         )
 
     async def narrate(self, context: NarrationContext) -> str:

@@ -434,6 +434,25 @@ async def san_check(
     return await san_check_impl(ctx.context, loss_on_success, loss_on_failure, player_name)
 
 
+@function_tool(failure_error_function=_tool_error)
+async def declare_no_check(ctx: RunContextWrapper[KeeperDeps], reason: str) -> str:
+    """声明本轮不需要任何检定（纯对话、无风险移动、观察显而易见之物等）。
+
+    每轮回应前你必须二选一：需要检定 → roll_check；不需要 → 调用本工具并
+    说明理由。这是强制的显式裁决，不存在"什么都不调直接叙事"的路径。
+
+    Args:
+        reason: 为什么本轮不需要检定，一句话（如：纯对话，无失败可能）。
+    """
+    # 为什么存在这个"什么都不做"的工具：真实 DeepSeek 实测（连续三轮 prompt
+    # 强化均无效）证明它的工具调用纪律拽不动——隐式调查动作全程零检定、线索
+    # 白给。配合 ModelSettings(tool_choice="required")，把"要不要检定"从
+    # "自愿调用"改成每轮被迫做出的显式裁决：要么掷、要么书面声明不掷，
+    # 裁决和理由都进日志可审计（设计文档 02 的"发起判定显式化"落地）。
+    logger.info("keeper_tool", tool="declare_no_check", reason=reason)
+    return "已确认：本轮无需检定，请直接以守秘人身份叙事。"
+
+
 # 显式标注 list[Tool]：Agent(tools=...) 收的是工具联合类型的列表，list 不型变，
 # 推断成 list[FunctionTool] 会过不了类型检查。
 KEEPER_TOOLS: list[Tool] = [
@@ -443,4 +462,5 @@ KEEPER_TOOLS: list[Tool] = [
     update_state,
     adjust_hp,
     san_check,
+    declare_no_check,
 ]

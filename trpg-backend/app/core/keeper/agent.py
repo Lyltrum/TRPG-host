@@ -71,6 +71,14 @@ _HISTORY_LIMIT = 200
 # 裁决 JSON 解析失败时的重试次数（把解析错误喂回去让模型改）。
 _ADJUDICATE_RETRIES = 1
 
+# 叙事回复的 token 上限（兜底防长篇失控，≈400 汉字；正常回复够不到）。
+_NARRATION_MAX_TOKENS = 600
+
+# 历史重放里守秘人旧叙事的截断长度。不截断的话历史里全是它自己的 300-550 字
+# 长篇，模型会模仿自己的旧文风越写越长（自我强化）；重要事实的长期记忆靠
+# keeper_state 状态笔记承担，历史行只需要"发生过什么"的梗概。
+_HISTORY_NARRATION_CLIP = 160
+
 # 事件类型 → 历史行格式化器。keeper.state 不进历史（状态笔记单独整体注入），
 # 工具留痕（检定/HP/San）进历史是为了让守秘人记得自己此前的裁决结果。
 _EVENT_LABELS = {
@@ -313,6 +321,10 @@ class KeeperAgent(Narrator):
                 {"role": "user", "content": user_content},
             ],
             temperature=0.8,
+            # 长度兜底：prompt 的"80~180 字"纪律照旧会被无视（真机实测每轮
+            # 300-550 字），max_tokens 挡住失控的长篇——这是底线不是目标，
+            # 正常回复远够不到它。
+            max_tokens=_NARRATION_MAX_TOKENS,
         )
         return response.choices[0].message.content or ""
 
@@ -372,7 +384,10 @@ class KeeperAgent(Narrator):
                 who = nicknames.get(event.player_id or "", "玩家")
                 lines.append(f"{who}：{payload.get('utterance', '')}")
             elif event.event_type == "narration.push":
-                lines.append(f"守秘人：{payload.get('text', '')}")
+                text = payload.get("text", "")
+                if len(text) > _HISTORY_NARRATION_CLIP:
+                    text = text[:_HISTORY_NARRATION_CLIP] + "……"
+                lines.append(f"守秘人：{text}")
             elif event.event_type == "keeper.check":
                 lines.append(
                     f"[检定] {payload.get('player', '')} {payload.get('skill', '')}："

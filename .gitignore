@@ -19,6 +19,11 @@ __pycache__/
 .env.*
 !.env.example
 
+# 模组原始文档（如《追书人》PDF）：第三方创作的出版物，版权不属于本项目，
+# 只能本地使用，绝不能进公开仓库。keeper agent 消费的是从它结构化出来的
+# 剧本数据（同样 gitignore，见 feat/keeper-agent 分支说明）。
+模组资料/
+
 # COC7 职业目录导入管线（issue #114）的中间产物：build_occupations.py 的输出，
 # 会被内联进 app/core/coc7_content.py（那才是提交进 git 的最终产物）。这个原始
 # 片段既不是独立可运行模块（引用 OccupationSpec 等未 import 的名字，ruff 会报

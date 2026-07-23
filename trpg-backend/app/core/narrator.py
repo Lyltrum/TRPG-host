@@ -50,6 +50,10 @@ class NarrationContext:
     module_title: str | None = None
     # 每条已格式化成"昵称: 内容"形状，由调用方从 `events` 表整理出来。
     recent_actions: list[str] = field(default_factory=list)
+    # keeper agent（feat/keeper-agent 实验）需要的定位信息：它的工具要知道
+    # 在哪个房间、为谁掷骰/改状态。单轮叙事实现（DeepSeek/Fallback）不读。
+    room_id: str | None = None
+    player_id: str | None = None
 
 
 class Narrator(ABC):
@@ -128,16 +132,38 @@ class DelayedNarrator(Narrator):
 
 
 def build_narrator(settings: Settings) -> Narrator:
-    """按配置二选一：配了 `deepseek_api_key` 就用真实大模型，否则回退占位实现。
+    """按配置选择实现（优先级从高到低）：
+
+    1. `keeper_module_path` + `deepseek_api_key` 都配了 → KeeperAgent（真正的
+       守秘人 agent，feat/keeper-agent 实验）；剧本加载失败时**故意让异常抛出、
+       应用启动失败**——配了 keeper 就是要玩 keeper，静默回退到单轮叙事只会
+       让人误以为在测 agent；
+    2. 只配 `deepseek_api_key` → DeepSeekNarrator（单轮叙事）；
+    3. 都没配 → FallbackNarrator（占位文案，CI/e2e 零外部依赖）。
 
     `narrator_delay_seconds > 0` 时再包一层 DelayedNarrator（测试钩子，见其
     docstring），生产配置保持 0、不受影响。
     """
-    narrator: Narrator = (
-        DeepSeekNarrator(settings.deepseek_api_key)
-        if settings.deepseek_api_key
-        else FallbackNarrator()
-    )
+    narrator: Narrator
+    if settings.keeper_module_path and settings.deepseek_api_key:
+        # 局部 import：keeper 包依赖 agents SDK 与 DB 层，只有真配了 keeper
+        # 模式才值得付出这次导入；也避免 narrator（core 底层）无条件反向
+        # 依赖更上层的模块。
+        from app.core.coc7_content import build_coc7_ruleset
+        from app.core.db import async_session_factory
+        from app.core.keeper.agent import KeeperAgent
+        from app.core.keeper.module_loader import load_module
+
+        narrator = KeeperAgent(
+            api_key=settings.deepseek_api_key,
+            module=load_module(settings.keeper_module_path),
+            ruleset=build_coc7_ruleset(),
+            session_factory=async_session_factory,
+        )
+    elif settings.deepseek_api_key:
+        narrator = DeepSeekNarrator(settings.deepseek_api_key)
+    else:
+        narrator = FallbackNarrator()
     if settings.narrator_delay_seconds > 0:
         narrator = DelayedNarrator(narrator, settings.narrator_delay_seconds)
     return narrator

@@ -1,0 +1,152 @@
+"""KeeperAgent：真正的 COC 守秘人（keeper agent 实验，基于 openai-agents SDK）。
+
+对外它只是一个 `Narrator`——WS 层照常 `narrate(context) -> str`，协议/锁/
+广播零改动；SDK（Agent/Runner/function_tool）是本目录内部的实现细节，
+想换 pydantic-ai 或手写 loop 时只动 `keeper/`。
+
+与 `DeepSeekNarrator`（单轮叙事替身）的本质区别：这里的 LLM 拥有工具
+（掷骰/角色卡/剧本/状态/HP/San），自己决定"这句话要不要检定、查哪段剧本、
+记什么状态"，是完整的守秘人职责，不再只是文案生成。
+"""
+
+import random
+
+from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
+from openai import AsyncOpenAI
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.core.keeper.module_loader import ScenarioModule
+from app.core.keeper.prompts import build_keeper_instructions, format_turn_input
+from app.core.keeper.tools import KEEPER_TOOLS, KeeperDeps
+from app.core.narrator import (
+    DEEPSEEK_BASE_URL,
+    DEEPSEEK_MODEL,
+    NarrationContext,
+    Narrator,
+)
+from app.dto.game import RulesetRead
+from app.models.event import Event
+from app.models.room import Room
+
+# 全量重放 events 的上限条数。短模组一场 2-3 小时也就几百条，全放得下
+# （DeepSeek 64K 上下文）；上限只是防御异常膨胀的房间。
+_HISTORY_LIMIT = 200
+
+# 一轮回应允许的最大 agent loop 轮数（每轮 = 一次 LLM 调用，可能带工具调用）。
+# 正常一轮行动 2-4 跳（查剧本→掷骰→生成），12 是防失控的余量。
+_MAX_TURNS = 12
+
+# 事件类型 → 历史行格式化器。keeper.state 不进历史（状态笔记单独整体注入），
+# 工具留痕（检定/HP/San）进历史是为了让 agent 记得自己此前的裁决结果。
+_EVENT_LABELS = {
+    "keeper.check": "检定",
+    "keeper.san": "理智",
+    "keeper.hp": "生命",
+}
+
+
+class KeeperAgent(Narrator):
+    def __init__(
+        self,
+        api_key: str,
+        module: ScenarioModule,
+        ruleset: RulesetRead,
+        session_factory: async_sessionmaker[AsyncSession],
+        rng: random.Random | None = None,
+    ) -> None:
+        # 没配 OpenAI 平台账号，trace 上传只会报错刷日志。
+        set_tracing_disabled(True)
+        self._module = module
+        self._ruleset = ruleset
+        self._session_factory = session_factory
+        self._rng = rng if rng is not None else random.Random()
+        client = AsyncOpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+        self._agent = Agent[KeeperDeps](
+            name="守秘人",
+            instructions=build_keeper_instructions(module),
+            tools=KEEPER_TOOLS,
+            # DeepSeek 只有 Chat Completions 接口，不能用 SDK 默认的 Responses API。
+            model=OpenAIChatCompletionsModel(model=DEEPSEEK_MODEL, openai_client=client),
+            model_settings=ModelSettings(temperature=0.8),
+        )
+
+    async def narrate(self, context: NarrationContext) -> str:
+        if context.room_id is None or context.player_id is None:
+            raise ValueError("KeeperAgent 需要 NarrationContext 携带 room_id/player_id")
+
+        keeper_state, history_lines = await self._load_room_memory(context.room_id)
+        turn_input = format_turn_input(
+            keeper_state, history_lines, context.player_nickname, context.utterance
+        )
+        deps = KeeperDeps(
+            room_id=context.room_id,
+            player_id=context.player_id,
+            session_factory=self._session_factory,
+            module=self._module,
+            ruleset=self._ruleset,
+            rng=self._rng,
+        )
+        result = await Runner.run(self._agent, turn_input, context=deps, max_turns=_MAX_TURNS)
+        return str(result.final_output or "")
+
+    async def _load_room_memory(self, room_id: str) -> tuple[dict | None, list[str]]:
+        """读取世界状态笔记 + 全量事件历史（"全量重放"记忆策略）。
+
+        与 build_narration_context 的 6 条窗口不同：守秘人要对整局的一致性
+        负责（玩家在第 3 轮说过的话第 30 轮还得作数），所以重放完整历史。
+        """
+        async with self._session_factory() as db:
+            room = await db.get(Room, room_id)
+            keeper_state = room.keeper_state if room is not None else None
+
+            result = await db.execute(
+                select(Event)
+                .where(
+                    Event.room_id == room_id,
+                    Event.event_type.in_(
+                        ["action.submit", "narration.push", *_EVENT_LABELS.keys()]
+                    ),
+                )
+                .order_by(Event.created_at.desc(), Event.id.desc())
+                .limit(_HISTORY_LIMIT)
+            )
+            events = list(result.scalars())
+            events.reverse()
+
+            # 批量查昵称（N+1 教训，PR #110 review [3]）
+            speaker_ids = {e.player_id for e in events if e.player_id is not None}
+            nicknames: dict[str, str] = {}
+            if speaker_ids:
+                from app.models.room import Player  # 局部 import 避免顶部循环依赖风险
+
+                rows = await db.execute(
+                    select(Player.id, Player.nickname).where(Player.id.in_(speaker_ids))
+                )
+                nicknames = dict(rows.tuples().all())
+
+        lines: list[str] = []
+        for event in events:
+            payload = event.payload or {}
+            if event.event_type == "action.submit":
+                who = nicknames.get(event.player_id or "", "玩家")
+                lines.append(f"{who}：{payload.get('utterance', '')}")
+            elif event.event_type == "narration.push":
+                lines.append(f"守秘人：{payload.get('text', '')}")
+            elif event.event_type == "keeper.check":
+                lines.append(
+                    f"[检定] {payload.get('player', '')} {payload.get('skill', '')}："
+                    f"{payload.get('rolled', '?')}/{payload.get('target', '?')} "
+                    f"→ {payload.get('level', '')}"
+                )
+            elif event.event_type == "keeper.san":
+                lines.append(
+                    f"[理智] {payload.get('player', '')}：损失 {payload.get('loss', '?')}，"
+                    f"当前 San {payload.get('san', '?')}"
+                )
+            elif event.event_type == "keeper.hp":
+                lines.append(
+                    f"[生命] {payload.get('player', '')}：{payload.get('delta', '?')}"
+                    f"（{payload.get('reason', '')}），当前 HP {payload.get('hp', '?')}"
+                )
+        return keeper_state, lines

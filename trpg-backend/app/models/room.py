@@ -67,6 +67,11 @@ class Room(Base):
     # 没有任何写入路径（推进场景发现属于规则引擎/编排器范畴），只铺字段。
     discovered_scene_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
 
+    # keeper agent（feat/keeper-agent 实验）的世界状态笔记：AI 主持人通过
+    # update_state 工具写入的键值对，每轮生成前整体注入 prompt。后端不解释
+    # 其内容——这是 agent 的自由笔记本，形状由 agent 自己决定。
+    keeper_state: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

@@ -26,6 +26,7 @@ from app.core.logging import configure_logging
 from app.core.narrator import build_narrator
 from app.core.seed import ensure_seed_content
 from app.dto.common import ApiResponse
+from app.service.action_lock import action_lock_manager
 
 # 模块被导入时就把 structlog 配好（只需要配一次），后面直接用 structlog.get_logger()。
 configure_logging()
@@ -92,6 +93,10 @@ def create_app() -> FastAPI:
     # ASGITransport 不一定会触发 lifespan——挂在 create_app 里保证"有 app
     # 实例就一定有 narrator"。
     app.state.narrator = build_narrator(settings)
+
+    # 房间行动锁的超时兜底改从配置读（keeper agent 一轮多跳工具调用会超过
+    # 默认 60s，keeper 模式下 .env 配 180）。实例属性赋值，遮蔽类默认值。
+    action_lock_manager.LOCK_TIMEOUT_SECONDS = settings.action_lock_timeout_seconds
 
     # 允许配置里列出的前端源发起跨域请求（本地开发场景下 Vite 默认跑在
     # 9877 端口，跟后端的 8000 端口不同源，没有这个中间件浏览器会拦截请求）。

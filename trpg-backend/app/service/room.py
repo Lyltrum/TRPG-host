@@ -587,6 +587,8 @@ async def build_narration_context(
         player_nickname=nickname,
         module_title=module_title,
         recent_actions=recent_actions,
+        room_id=room_id,
+        player_id=player_id,
     )
 
 

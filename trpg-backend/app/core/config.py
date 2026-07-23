@@ -44,6 +44,18 @@ class Settings(BaseSettings):
     # 环境不配这个变量，本地演示/线上环境按需配置。
     deepseek_api_key: str | None = None
 
+    # keeper agent（feat/keeper-agent 实验）：结构化剧本 JSON 的路径。配了它
+    # **且**配了 deepseek_api_key 时，action.submit 的回应方切换成真正的守秘人
+    # agent（工具调用 loop：掷骰/角色卡/剧本/状态/HP/San）；不配（默认）保持
+    # 原有的单轮叙事行为。剧本文件 gitignore（版权），路径指向本地文件，如
+    # `../模组资料/追书人.structured.json`。
+    keeper_module_path: str | None = None
+
+    # action.submit 房间锁的超时兜底秒数。keeper agent 一轮回应要跑多跳工具
+    # 调用（30-90s），60s 会让锁在正常裁决中途过期、放另一个玩家插进来打断——
+    # keeper 模式建议配 180。
+    action_lock_timeout_seconds: float = 60.0
+
     # ⚠️ 测试专用（issue #107）：让叙事生成人为延迟 N 秒后再返回，生产永远保持 0。
     # 存在的理由：无 key 时的占位叙事同步秒回，action.submit 的房间锁窗口只有
     # 微秒级，e2e 两个客户端"同时提交"永远压不中 ACTION_IN_PROGRESS——锁的

@@ -20,7 +20,9 @@ dependencies = [
   "structlog>=24.4,<25.0",
   "bcrypt>=4.2,<5.0",
   "alembic>=1.13,<2.0",
-  "openai>=1.50,<2.0",
+  "openai>=2.45,<3",
+  "openai-agents>=0.18.3",
+  "cryptography<49",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -56,6 +58,11 @@ select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
 # B008：不检查"函数参数默认值里调用函数"（FastAPI 的 Depends(get_db) 就是
 # 这种写法，是框架要求的用法，不是 bug）。
 ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# 守秘人 system prompt 是面向 LLM 的中文散文，按句意分行比按 100 列硬折
+# 更可读可维护；只豁免行宽，其余规则照常。
+"app/core/keeper/prompts.py" = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]

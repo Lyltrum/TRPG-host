@@ -1,0 +1,63 @@
+{
+  "meta": {
+    "id": "test-module",
+    "title": "测试模组",
+    "era": "1920 年代",
+    "tone": "测试基调"
+  },
+  "kp_truth": {
+    "summary": "真相是管家做的。",
+    "key_facts": ["管家有钥匙", "案发当晚停电"]
+  },
+  "player_intro": "你们受雇调查庄园失窃案。",
+  "nodes": [
+    {
+      "id": "hall",
+      "title": "门厅",
+      "kp_text": "门厅里有可疑的脚印。",
+      "checks": [
+        {
+          "skill": "侦查",
+          "difficulty": "普通",
+          "on_success": "发现脚印通向地下室。",
+          "on_failure": "一无所获，浪费半天。"
+        }
+      ],
+      "leads_to": ["cellar"]
+    },
+    {
+      "id": "cellar",
+      "title": "地下室",
+      "kp_text": "地下室藏着赃物。",
+      "branches": [
+        {
+          "condition": "玩家点燃油灯",
+          "outcome": "看清赃物。",
+          "then": [{ "condition": "继续搜索", "outcome": "找到管家的手套。" }]
+        }
+      ],
+      "sub_node": {
+        "id": "hidden-safe",
+        "title": "暗格保险箱",
+        "kp_text": "保险箱需要钥匙。",
+        "checks": []
+      },
+      "leads_to": []
+    }
+  ],
+  "endings": [
+    { "id": "solved", "title": "破案", "condition": "指认管家", "text": "管家伏法。" }
+  ],
+  "npcs": [
+    {
+      "id": "butler",
+      "name": "管家",
+      "role": "真凶",
+      "kp_notes": "谎称案发时在厨房。",
+      "stats": { "STR": 50, "HP": 10 }
+    }
+  ],
+  "kp_guidance": {
+    "core_clue_paths": "脚印和手套都指向管家。"
+  }
+}

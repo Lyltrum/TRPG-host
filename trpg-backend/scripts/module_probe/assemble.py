@@ -826,6 +826,106 @@ def stage3_toplevel(
 # ── 组装 + 自修 ──────────────────────────────────────────────
 
 
+def _walk_node_dicts(nodes: list[Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        out.append(n)
+        sub = n.get("sub_node")
+        if isinstance(sub, dict):
+            out.extend(_walk_node_dicts([sub]))
+        subs = n.get("sub_nodes")
+        if isinstance(subs, list):
+            out.extend(_walk_node_dicts([c for c in subs if isinstance(c, dict)]))
+    return out
+
+
+def mechanical_sanitize_module(module: dict[str, Any]) -> list[str]:
+    """校验前的机械修补：去重 id、剪悬空边、清非法 same_as/pairs。
+
+    整份 JSON 自修在大体量模组上常因输出截断失败；引用类错误应优先机械修。
+    返回人类可读的修补日志。
+    """
+    notes: list[str] = []
+    nodes = module.get("nodes")
+    if not isinstance(nodes, list):
+        return notes
+
+    # 1) 扁平遍历，重命名重复 id（保留先出现的）
+    seen: set[str] = set()
+
+    def _dedupe_node(node: dict[str, Any], path: str) -> None:
+        nid = str(node.get("id") or "node")
+        if nid in seen:
+            new_id = f"{path}-{nid}" if path else f"dup-{nid}"
+            # 再撞则加序号
+            base, i = new_id, 2
+            while new_id in seen:
+                new_id = f"{base}-{i}"
+                i += 1
+            notes.append(f"重命名重复 node id {nid!r} → {new_id!r}")
+            node["id"] = new_id
+            nid = new_id
+        seen.add(nid)
+        sub = node.get("sub_node")
+        if isinstance(sub, dict):
+            _dedupe_node(sub, nid)
+        for child in node.get("sub_nodes") or []:
+            if isinstance(child, dict):
+                _dedupe_node(child, nid)
+
+    for n in nodes:
+        if isinstance(n, dict):
+            _dedupe_node(n, "")
+
+    node_ids = {str(n.get("id")) for n in _walk_node_dicts(nodes) if n.get("id")}
+    npcs = module.get("npcs") if isinstance(module.get("npcs"), list) else []
+    npc_ids = {str(n.get("id")) for n in npcs if isinstance(n, dict) and n.get("id")}
+
+    # 2) 边只保留存在的 node id（npc 目标丢弃）
+    for n in _walk_node_dicts(nodes):
+        for key in ("leads_to", "exits", "contains"):
+            raw = n.get(key)
+            if not isinstance(raw, list):
+                continue
+            kept = [str(t) for t in raw if str(t) in node_ids]
+            dropped = [str(t) for t in raw if str(t) not in node_ids]
+            if dropped:
+                notes.append(f"node {n.get('id')!r} 丢弃悬空 {key}: {dropped}")
+            n[key] = kept
+
+    # 3) same_as 只保留存在的 npc
+    for npc in npcs:
+        if not isinstance(npc, dict):
+            continue
+        raw = npc.get("same_as")
+        if not isinstance(raw, list):
+            continue
+        kept = [str(t) for t in raw if str(t) in npc_ids]
+        dropped = [str(t) for t in raw if str(t) not in npc_ids]
+        if dropped:
+            notes.append(f"npc {npc.get('id')!r} 丢弃悬空 same_as: {dropped}")
+        npc["same_as"] = kept
+
+    # 4) visibility_pairs 引用必须 ∈ node∪npc
+    entity = node_ids | npc_ids
+    pairs = module.get("visibility_pairs")
+    if isinstance(pairs, list):
+        cleaned: list[dict[str, Any]] = []
+        for p in pairs:
+            if not isinstance(p, dict):
+                continue
+            pref, sref = str(p.get("public_ref") or ""), str(p.get("secret_ref") or "")
+            if pref in entity and sref in entity and pref != sref:
+                cleaned.append(p)
+            else:
+                notes.append(f"丢弃非法 visibility_pair {p.get('id')!r} ({pref}↔{sref})")
+        module["visibility_pairs"] = cleaned
+
+    return notes
+
+
 def compose_module(
     top: dict[str, Any],
     nodes: list[dict[str, Any]],
@@ -1367,6 +1467,11 @@ def run_pipeline(
     n_skill = normalize_module_skills(module)
     if n_skill:
         print(f"  技能名机械归一：{n_skill} 处", flush=True)
+    mech = mechanical_sanitize_module(module)
+    if mech:
+        print(f"  机械修补 {len(mech)} 项：", flush=True)
+        for line in mech[:20]:
+            print(f"    - {line}", flush=True)
 
     # ── 校验 + 自修 ──
     print("\n=== 校验闭环 ===", flush=True)
@@ -1428,6 +1533,9 @@ def run_pipeline(
             n_skill = normalize_module_skills(module)
             if n_skill:
                 print(f"  技能名机械归一：{n_skill} 处", flush=True)
+            mech = mechanical_sanitize_module(module)
+            if mech:
+                print(f"  机械修补 {len(mech)} 项", flush=True)
             report = validate_assembled(
                 module,
                 source_item_ids=source_item_ids,
@@ -1439,23 +1547,50 @@ def run_pipeline(
             if report.ok or report.needs_stage1_repair():
                 continue
 
-        # schema/ref/skill/leak：先机械归一技能，再整份 JSON 自修
-        print("  → 产物级失败，技能归一 + 整份 JSON 自修…", flush=True)
+        # schema/ref/skill/leak：先机械归一+修补，仍失败再尝试整份 JSON 自修
+        print("  → 产物级失败，技能归一 + 机械修补…", flush=True)
         normalize_module_skills(module)
-        module = repair_module(
-            client,
-            module=module,
-            report=report,
-            stats=stats,
-            schema_doc=schema_doc,
-            attempt=repair_count,
+        mech = mechanical_sanitize_module(module)
+        if mech:
+            print(f"  机械修补 {len(mech)} 项", flush=True)
+            for line in mech[:15]:
+                print(f"    - {line}", flush=True)
+        report = validate_assembled(
+            module,
+            source_item_ids=source_item_ids,
+            assignment_map=assignment_map,
+            items=items,
         )
+        print(report.summary_text(), flush=True)
+        if report.ok:
+            continue
+
+        # 仅非引用类错误才上 LLM 整份自修（大体量 JSON 易截断）
+        hard = [e for e in report.all_errors() if not e.startswith("[ref]")]
+        if not hard:
+            print("  → 仅剩 ref 类错误且机械修补后仍在，跳过 LLM 自修", flush=True)
+            continue
+
+        print("  → 仍有非 ref 错误，尝试整份 JSON 自修…", flush=True)
+        try:
+            module = repair_module(
+                client,
+                module=module,
+                report=report,
+                stats=stats,
+                schema_doc=schema_doc,
+                attempt=repair_count,
+            )
+        except RuntimeError as exc:
+            print(f"  → LLM 自修失败（保留当前产物继续）：{exc}", flush=True)
+            break
         module["nodes"] = _ensure_node_minimums(module.get("nodes") or [])
         module["npcs"] = _ensure_npc_minimums(module.get("npcs") or [])
         module["endings"] = _ensure_ending_minimums(module.get("endings") or [])
         module["agenda"] = _ensure_agenda_minimums(module.get("agenda") or [])
         module.setdefault("visibility_pairs", [])
         normalize_module_skills(module)
+        mechanical_sanitize_module(module)
 
         report = validate_assembled(
             module,

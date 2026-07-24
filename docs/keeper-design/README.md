@@ -31,9 +31,10 @@
 - 预处理链：裸抽取/关系探针 → **4a 组装+校验** → **06 组装质量修复** →
   **4b 薄迁移**（`exits`/`contains`/`sub_nodes`/`forms`/`visibility_pairs`，
   见 [exec/07](exec/07-4b-schema长出实体图与密级配对-执行规格.md)）。
-- 已验证：科比特 4a 端到端 + 组装修复后冒烟（gitignored 观察稿）；4b 以
-  fixture/单元测试与 schema 校验为准（完整重装科比特可选）。
-- **下一步候选**（按 03 路线）：
-  1. 路线 **5** — per-observer / 随时间翻面的 Visibility 运行时（4b 只长了静态配对骨架）；
-  2. 路线 **6** — 导演层：世界心跳 → 阶段状态机+结局侦测（设计见 05，议程燃料已备）。
-- 更远：完整实体表/状态机分表（若薄 A 仍堵死主持）、线索账本、线下报数、第二结构模组真主持。
+- **路线 5/6 已落地薄运行时**（见 [exec/08](exec/08-visibility运行时与导演层-执行规格.md)）：
+  - 5：`visibility_revealed` 记账 + 局面注入密级状态（叙事仍全员广播，真私信未做）
+  - 6：对局阶段 opening→investigation→finished、`ending_reached` 收束；
+    世界心跳 ticker（**默认关** `KEEPER_HEARTBEAT_ENABLED`）
+- 已验证：科比特 4a 冒烟（gitignored）；4b/5/6 以单元测试为主（66+ keeper 相关 passed）。
+- **更远**：真 per-player 私信通道、完整 V 函数、厚实体表/状态机分表、线索账本、
+  第二结构模组真主持、心跳实机冒烟调参。

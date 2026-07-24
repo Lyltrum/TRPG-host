@@ -25,15 +25,34 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.coc7_rules import evaluate_skill_base
 from app.core.keeper import dice, module_loader
 from app.core.keeper.module_loader import ScenarioModule
+from app.core.keeper.phase import (
+    ENDING_ID_KEY,
+    PHASE_KEY,
+    VALID_PHASES,
+)
+from app.core.keeper.visibility import (
+    ROOM_WIDE_OBSERVER,
+    VISIBILITY_REVEALED_KEY,
+    load_revealed_visibility,
+    serialize_revealed_visibility,
+)
 from app.dto.game import RulesetRead
 from app.models.event import Event
 from app.models.room import Character, Player, Room
 
 logger = structlog.get_logger()
 
-# keeper_state 里的系统保留 key：议程触发记账由代码写，不交给 LLM 的自由
-# 记账（state_updates）——实测它多数轮根本不记，而 once 语义要靠它。
+# keeper_state 里的系统保留 key：由代码写，不交给 LLM 的 state_updates。
 AGENDA_FIRED_KEY = "已触发议程"
+
+_RESERVED_STATE_KEYS = frozenset(
+    {
+        AGENDA_FIRED_KEY,
+        VISIBILITY_REVEALED_KEY,
+        PHASE_KEY,
+        ENDING_ID_KEY,
+    }
+)
 
 
 def load_fired_agenda(keeper_state: dict | None) -> list[str]:
@@ -308,6 +327,8 @@ def read_module_impl(deps: KeeperDeps, section: str) -> str:
 
 async def update_state_impl(deps: KeeperDeps, key: str, value: str) -> str:
     # write_lock：见 KeeperDeps 注释——SDK 并行工具调用下「读-改-写」必须串行。
+    if key in _RESERVED_STATE_KEYS:
+        raise KeeperToolError(f"状态键 {key!r} 由系统记账，不能通过 state_updates 写入")
     async with deps.write_lock, deps.session_factory() as db:
         room = await db.get(Room, deps.room_id)
         if room is None:
@@ -363,6 +384,81 @@ async def mark_agenda_fired_impl(deps: KeeperDeps, event_ids: list[str]) -> str:
     if not report_parts:
         return "议程事件触发：（无）"
     return "议程事件触发：" + "、".join(report_parts)
+
+
+async def mark_visibility_revealed_impl(
+    deps: KeeperDeps,
+    pair_ids: list[str],
+    *,
+    room_wide: bool = True,
+) -> str:
+    """标记密级配对已揭开。默认房间级（@*）；幂等。"""
+    if not pair_ids:
+        return "密级揭开：（无）"
+
+    async with deps.write_lock, deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            raise KeeperToolError("房间不存在")
+
+        current_state = dict(room.keeper_state or {})
+        entries = load_revealed_visibility(current_state)
+        existing = set(entries)
+        newly: list[str] = []
+        observer = ROOM_WIDE_OBSERVER if room_wide else deps.player_id
+        report: list[str] = []
+
+        for pid in pair_ids:
+            pair = next(
+                (p for p in deps.module.visibility_pairs if p.id == pid),
+                None,
+            )
+            if pair is None:
+                raise KeeperToolError(f"剧本里没有 visibility_pair id={pid}")
+            key = (pid, observer)
+            if key in existing or (pid, ROOM_WIDE_OBSERVER) in existing:
+                report.append(f"{pid}（已揭开）")
+                continue
+            entries.append(key)
+            existing.add(key)
+            newly.append(pid)
+            report.append(pid)
+
+        if newly:
+            current_state[VISIBILITY_REVEALED_KEY] = serialize_revealed_visibility(entries)
+            room.keeper_state = current_state
+            await _record(
+                db,
+                deps,
+                "keeper.visibility",
+                {"pair_ids": newly, "observer": observer},
+            )
+
+    return "密级揭开：" + "、".join(report) if report else "密级揭开：（无）"
+
+
+async def set_phase_impl(deps: KeeperDeps, phase: str, ending_id: str | None = None) -> str:
+    """写入对局阶段（及可选结局 id）。仅允许 VALID_PHASES。"""
+    if phase not in VALID_PHASES:
+        raise KeeperToolError(f"非法对局阶段：{phase!r}")
+    async with deps.write_lock, deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            raise KeeperToolError("房间不存在")
+        current_state = dict(room.keeper_state or {})
+        current_state[PHASE_KEY] = phase
+        if ending_id:
+            current_state[ENDING_ID_KEY] = ending_id
+        room.keeper_state = current_state
+        await _record(
+            db,
+            deps,
+            "keeper.phase",
+            {"phase": phase, "ending_id": ending_id},
+        )
+    if ending_id:
+        return f"对局阶段 → {phase}（结局 {ending_id}）"
+    return f"对局阶段 → {phase}"
 
 
 async def adjust_hp_impl(

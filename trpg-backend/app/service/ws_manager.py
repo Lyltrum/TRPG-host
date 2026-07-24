@@ -25,6 +25,13 @@ class ConnectionManager:
         if not connections:
             del self._rooms[room_id]
 
+    def has_connections(self, room_id: str) -> bool:
+        return bool(self._rooms.get(room_id))
+
+    def connected_room_ids(self) -> list[str]:
+        """当前至少有一条 WS 连接的房间 id（心跳扫描用）。"""
+        return [rid for rid, conns in self._rooms.items() if conns]
+
     async def broadcast(self, room_id: str, message: dict) -> None:
         # 复制一份快照再遍历：广播过程中某个连接掉线触发 remove() 会改动
         # 原集合，直接遍历原集合会撞上"运行时改变集合大小"的异常。

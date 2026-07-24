@@ -265,6 +265,13 @@ async def _handle_action_submit(
             logger.warning("narrator_failed", room_id=room_id, error=str(exc))
             await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
             return
+        # 玩家行动重置心跳节流（路线 6）
+        try:
+            from app.core.keeper.heartbeat import touch_activity
+
+            touch_activity(room_id)
+        except Exception:  # noqa: BLE001 — 心跳模块不可用时不影响主路径
+            pass
         # outcome.text 可能为空（两段式玩家掷骰：pending 守卫命中时守秘人只
         # 重发检定请求，不产生新叙事）——空文本不广播一条空 narration.push。
         if outcome.text:

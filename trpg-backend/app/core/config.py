@@ -56,6 +56,13 @@ class Settings(BaseSettings):
     # keeper 模式建议配 180。
     action_lock_timeout_seconds: float = 60.0
 
+    # 世界心跳（路线 6）：默认关，实验期显式开启；e2e 不感知。
+    keeper_heartbeat_enabled: bool = False
+    keeper_heartbeat_silence_seconds: float = 100.0
+    keeper_heartbeat_min_interval_seconds: float = 300.0
+    keeper_heartbeat_scan_interval_seconds: float = 30.0
+    keeper_heartbeat_max_consecutive: int = 2
+
     # ⚠️ 测试专用（issue #107）：让叙事生成人为延迟 N 秒后再返回，生产永远保持 0。
     # 存在的理由：无 key 时的占位叙事同步秒回，action.submit 的房间锁窗口只有
     # 微秒级，e2e 两个客户端"同时提交"永远压不中 ACTION_IN_PROGRESS——锁的

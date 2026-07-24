@@ -17,6 +17,7 @@ v2 仿照真人 KP 的台前/幕后分离：
 """
 
 from app.core.keeper.module_loader import ScenarioModule, render_full
+from app.core.keeper.phase import PHASE_OPENING
 
 
 def format_agenda_status(module: ScenarioModule, fired_ids: list[str]) -> str:
@@ -73,6 +74,17 @@ def build_adjudicator_instructions(module: ScenarioModule) -> str:
    ③agenda_fired 只写"本轮真的发生了"的——不预告、不提前铺垫；
    ④已发生区里的事件不要再触发（once），也不要在叙事里当新事件重讲；
    ⑤议程事件**不依赖玩家在场**：玩家没去监视，事件照样发生，玩家事后才看到痕迹（这正是时间压力的来源）。
+9. **密级配对（Visibility）**：局面块的「密级配对状态」列出尚未揭开 / 已揭开的 pair。
+   玩家通过成功检定或明确剧情挣得 public 侧信息时，把对应 pair 的 id 写入 visibility_revealed；
+   未揭开的 secret_ref 侧内容禁止写进 narration_guidance 的"可揭示"清单。
+10. **对局阶段**：
+   ①开场仪式（opening）：按剧本【开场脚本】建立委托与初始线索；一般不发起高风险检定；
+     当委托/开场目标已建立时设 opening_complete=true（代码会推进到 investigation）；
+   ②调查阶段：正常裁决；
+   ③每轮顺带判断 endings[].trigger 是否满足——满足则 ending_reached 填该结局 id
+     （代码收束对局）；未满足时 ending_reached 必须为 null。
+11. **主动推进轮**（局面块标注「主动推进轮」时）：checks 与 san_checks **必须空数组**；
+   只推一小步（环境/NPC 一句/议程到点事件）；不许替玩家行动、不许大幅跳剧情。
 
 ## 输出格式（只输出一个 JSON 对象，不要任何其它文字）
 {{
@@ -82,6 +94,9 @@ def build_adjudicator_instructions(module: ScenarioModule) -> str:
   "hp_changes": [{{"delta": -2, "player": null, "reason": "被抓伤"}}],
   "state_updates": [{{"key": "当前场景", "value": "书房"}}],
   "agenda_fired": ["some-agenda-id"],
+  "visibility_revealed": ["pair-id"],
+  "opening_complete": false,
+  "ending_reached": null,
   "narration_guidance": "给叙事者的指引"
 }}
 player 为 null 表示本轮行动的发起玩家；技能/属性用中文名（侦查、图书馆使用、话术、力量、幸运……）；没有的项用空数组，但 thinking 和 narration_guidance 每轮都要写。"""
@@ -98,10 +113,13 @@ def build_narrator_instructions(module: ScenarioModule) -> str:
 1. **场景描写**：用感官细节（声音/气味/光线）营造克苏鲁式的诡异、压抑氛围。信息给到"玩家能据此行动"的程度，但绝不剧透。
 2. **忠实执行裁决**：输入里的检定结果如实体现——成功给成功该有的信息，失败就是失败（绝不把失败写成变相成功）；裁决指引说保密的内容一个字不漏。
 3. **扮演 NPC**：按剧本中的性格、动机、所知信息行事。NPC 会撒谎、会害怕、有自己的目的，不是问答机。
-4. **守住秘密**：玩家只能通过成功的检定**挣得**线索。真相相关的关键词（怪物种类、超自然实体的名字）在玩家亲眼目击或从线索推出之前，一个字都不能出现——哪怕作为氛围细节也不行。剧本里的【议程时间轴】是幕后时间表——未发生的条目一个字都不能提前透露（连暗示都不行）；只有本轮裁决指引明确说"这件事现在发生了"时才写它。
+4. **守住秘密**：玩家只能通过成功的检定**挣得**线索。真相相关的关键词（怪物种类、超自然实体的名字）在玩家亲眼目击或从线索推出之前，一个字都不能出现——哪怕作为氛围细节也不行。剧本里的【议程时间轴】是幕后时间表——未发生的条目一个字都不能提前透露（连暗示都不行）；只有本轮裁决指引明确说"这件事现在发生了"时才写它。局面块「密级配对状态」里**尚未揭开**的 secret 侧一个字不进叙事。
 5. **线索不卡死**：检定失败时，失败的代价是时间、资源或风险——在叙事里留出"换个方式仍有机会"的余地。
 6. **意图确认**：玩家宣告明显致命/不可逆的行动、且裁决指引要求确认时，先向他确认。
 7. **玩家迷茫时给引导**：裁决指引要求引导时，像真人 KP 一样把可行方向摆出来——用调查员的内心推理或 NPC 的一句提醒（"日记里那句'地下的通道'……公墓也许值得走一趟"），简短直接。**不要用又一段景物描写来回应"我该干嘛"**。
+8. **开场仪式**：对局阶段为 opening 时，优先按【开场脚本】念引子、建立委托与初始线索。
+9. **结局收束**：裁决指引标明结局时，允许终章文案（可略超默认长度上限），收束情绪后停住，不要继续开新调查分支。
+10. **主动推进轮**：若局面标注主动推进，叙事 ≤80 字；只环境/NPC 一句/到点事件，不发起检定描写。
 
 ## 剧本忠实度（最高优先级）
 地点、NPC、物品、线索一律以剧本全文为准——剧本里存在的人和线索绝不说成"不存在"；NPC 名字、身份只用剧本里的，绝不另起；不发明剧本没有的关键道具或线索文本。剧本没覆盖的氛围细节（天气、路人、内饰）可以即兴，但不得与剧本和已确立事实矛盾。
@@ -122,19 +140,21 @@ def format_turn_input(
     player_nickname: str,
     utterance: str,
     agenda_status: str = "",
+    visibility_status: str = "",
+    phase_status: str = "",
+    *,
+    is_heartbeat: bool = False,
+    phase: str | None = None,
 ) -> str:
-    """两阶段共用的"局面块"：在场名单 + 世界状态 + 议程状态 + 完整历史 + 当前发言。
+    """两阶段共用的"局面块"：名单 + 状态 + 阶段 + 议程 + 密级 + 历史 + 当前。
 
     名单必须显式给出：真实 DeepSeek 冒烟里 agent 曾把单人局幻觉成"你们三人"
     ——桌上有几个人不该靠猜。
 
-    agenda_status 默认空 → 整块不渲染（旧调用点/旧测试行为不变）。位置在
-    世界状态笔记之后、游戏历史之前——裁决器每轮先看"世界到了哪一档时间"，
-    再读历史。
+    agenda/visibility/phase 默认空 → 整块不渲染（旧调用点行为不变）。
 
     历史的最后一条就是当前这句话（ws.py 在调 narrate 之前已 record_event），
-    这里如实呈现并在末尾单独点名"现在要回应的是谁的哪句话"，不做排除——
-    比按内容匹配排除可靠（玩家会重复说一样的话）。
+    这里如实呈现并在末尾单独点名"现在要回应的是谁的哪句话"。
     """
     roster_text = "\n".join(f"- {line}" for line in roster) if roster else "（未知）"
     state_text = (
@@ -143,11 +163,28 @@ def format_turn_input(
         else "（尚无记录——如果历史也为空，说明对局刚开始）"
     )
     history_text = "\n".join(history_lines) if history_lines else "（无）"
+    phase_block = f"## 对局阶段\n{phase_status}\n\n" if phase_status else ""
     agenda_block = f"## 议程状态\n{agenda_status}\n\n" if agenda_status else ""
+    visibility_block = f"## 密级配对状态\n{visibility_status}\n\n" if visibility_status else ""
+    mode_block = ""
+    if is_heartbeat:
+        mode_block = (
+            "## 主动推进轮\n"
+            "这是世界心跳触发的主动轮（玩家沉默后）。checks/san_checks 必须为空；"
+            "只推一小步；叙事 ≤80 字。\n\n"
+        )
+    elif phase == PHASE_OPENING:
+        mode_block = (
+            "## 开场仪式模式\n"
+            "请按剧本【开场脚本】建立场景与委托；opening_complete 在目标达成时置 true。\n\n"
+        )
     return (
+        f"{mode_block}"
         f"## 在场调查员（就是这些人，不多不少——叙事人数必须与名单一致）\n{roster_text}\n\n"
         f"## 世界状态笔记\n{state_text}\n\n"
+        f"{phase_block}"
         f"{agenda_block}"
+        f"{visibility_block}"
         f"## 游戏历史（时间正序，最后一条即当前发言）\n{history_text}\n\n"
         f"## 当前\n玩家 {player_nickname} 刚刚说：「{utterance}」"
     )

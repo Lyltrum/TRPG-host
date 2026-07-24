@@ -6,6 +6,8 @@
 重复写 try/except。
 """
 
+import asyncio
+import contextlib
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -61,8 +63,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     async with async_session_factory() as db:
         await ensure_seed_content(db)
+
+    settings = get_settings()
+    heartbeat_task: asyncio.Task | None = None
+    if settings.keeper_heartbeat_enabled:
+        from app.core.keeper.heartbeat import heartbeat_loop
+
+        heartbeat_task = asyncio.create_task(
+            heartbeat_loop(
+                app,
+                interval_seconds=settings.keeper_heartbeat_scan_interval_seconds,
+                silence_seconds=settings.keeper_heartbeat_silence_seconds,
+                min_interval_seconds=settings.keeper_heartbeat_min_interval_seconds,
+                max_consecutive=settings.keeper_heartbeat_max_consecutive,
+            )
+        )
+        logger.info("keeper_heartbeat_enabled")
+
     logger.info("app_started")
     yield
+    if heartbeat_task is not None:
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
     logger.info("app_stopped")
 
 

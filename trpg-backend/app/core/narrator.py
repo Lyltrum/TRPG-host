@@ -54,6 +54,8 @@ class NarrationContext:
     # 在哪个房间、为谁掷骰/改状态。单轮叙事实现（DeepSeek/Fallback）不读。
     room_id: str | None = None
     player_id: str | None = None
+    # 世界心跳主动轮（路线 6）：裁决/叙事走克制模式，不发起检定。
+    is_heartbeat: bool = False
 
 
 @dataclass(frozen=True, slots=True)

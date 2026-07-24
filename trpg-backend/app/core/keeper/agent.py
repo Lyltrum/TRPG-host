@@ -42,6 +42,15 @@ from app.core.keeper.decision import (
 )
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.pending import PendingCheck, pending_check_manager
+from app.core.keeper.phase import (
+    ENDING_ID_KEY,
+    PHASE_FINISHED,
+    PHASE_KEY,
+    PHASE_OPENING,
+    format_phase_status,
+    load_ending_id,
+    load_phase,
+)
 from app.core.keeper.prompts import (
     build_adjudicator_instructions,
     build_narrator_instructions,
@@ -56,6 +65,12 @@ from app.core.keeper.tools import (
     load_fired_agenda,
     roll_check_detail,
     san_check_detail,
+    set_phase_impl,
+)
+from app.core.keeper.visibility import (
+    VISIBILITY_REVEALED_KEY,
+    format_visibility_status,
+    load_revealed_visibility,
 )
 from app.core.narrator import (
     DEEPSEEK_BASE_URL,
@@ -128,11 +143,15 @@ class KeeperAgent(Narrator):
         if context.room_id is None or context.player_id is None:
             raise ValueError("KeeperAgent 需要 NarrationContext 携带 room_id/player_id")
         room_id = context.room_id
+        is_heartbeat = getattr(context, "is_heartbeat", False)
 
         # 两段式玩家掷骰：还有待掷的检定时不再裁决新一轮——先让玩家把手头的
         # 骰子掷完。重发同一个请求（而不是静默不回应），防前端刷新丢卡片。
+        # 主动心跳轮：有待掷时直接放弃（设计：等玩家掷骰不算冷场）。
         pending = pending_check_manager.first(room_id)
         if pending is not None:
+            if is_heartbeat:
+                return NarrationOutcome(text="")
             logger.info(
                 "keeper_narrate_pending_guard",
                 room_id=room_id,
@@ -144,14 +163,50 @@ class KeeperAgent(Narrator):
             )
 
         keeper_state, history_lines, roster = await self._load_room_memory(room_id)
-        # 议程状态由代码从 keeper_state 算出后注入局面块——once 语义和
-        # "别重复触发"是硬约束，靠模型从剧本全文自己推等于没有。
+
+        # 对局已结束：拒绝新行动（心跳亦静默）
+        phase = load_phase(keeper_state)
+        ending_id = load_ending_id(keeper_state)
+        if phase == PHASE_FINISHED:
+            if is_heartbeat:
+                return NarrationOutcome(text="")
+            return NarrationOutcome(
+                text=f"本局已结束（结局：{ending_id or '—'}）。感谢各位调查员。"
+            )
+
+        # 首次进入：模组有 opening 且尚未记阶段 → 初始化为 opening
+        if phase is None and self._module.opening is not None:
+            deps_boot = KeeperDeps(
+                room_id=room_id,
+                player_id=context.player_id,
+                session_factory=self._session_factory,
+                module=self._module,
+                ruleset=self._ruleset,
+                rng=self._rng,
+            )
+            await set_phase_impl(deps_boot, PHASE_OPENING)
+            phase = PHASE_OPENING
+            keeper_state = {
+                **(keeper_state or {}),
+                PHASE_KEY: PHASE_OPENING,
+            }
+
+        # 议程 / 密级 / 阶段状态由代码注入——once 与揭开记账不靠模型自觉。
         fired = load_fired_agenda(keeper_state)
         agenda_status = format_agenda_status(self._module, fired)
-        # 保留 key 不进"世界状态笔记"——议程状态块已经更好地呈现了它，
-        # 重复注入既费 token 又会诱导模型去改它。
+        revealed = load_revealed_visibility(keeper_state)
+        visibility_status = format_visibility_status(
+            self._module, revealed, observer_id=context.player_id
+        )
+        phase_status = format_phase_status(phase, ending_id)
+        _hidden_keys = {
+            AGENDA_FIRED_KEY,
+            VISIBILITY_REVEALED_KEY,
+            PHASE_KEY,
+            ENDING_ID_KEY,
+        }
         visible_state = (
-            {k: v for k, v in keeper_state.items() if k != AGENDA_FIRED_KEY}
+            {k: v for k, v in keeper_state.items() if k not in _hidden_keys}
             if keeper_state
             else keeper_state
         )
@@ -162,10 +217,17 @@ class KeeperAgent(Narrator):
             context.player_nickname,
             context.utterance,
             agenda_status=agenda_status,
+            visibility_status=visibility_status,
+            phase_status=phase_status,
+            is_heartbeat=is_heartbeat,
+            phase=phase,
         )
 
         # 阶段1·裁决：结构化输出，检定是 schema 字段，不存在"忘了裁决"。
         decision = await self._adjudicate(situation)
+        # 主动轮硬约束：丢弃检定请求（设计：主动轮不发起检定）
+        if is_heartbeat and (decision.checks or decision.san_checks):
+            decision = decision.model_copy(update={"checks": [], "san_checks": []})
         logger.info(
             "keeper_decision",
             thinking=decision.thinking,
@@ -174,6 +236,10 @@ class KeeperAgent(Narrator):
             hp_changes=len(decision.hp_changes),
             state_updates=[u.key for u in decision.state_updates],
             agenda_fired=decision.agenda_fired,
+            visibility_revealed=decision.visibility_revealed,
+            opening_complete=decision.opening_complete,
+            ending_reached=decision.ending_reached,
+            is_heartbeat=is_heartbeat,
         )
 
         # 阶段2·执行：HP/状态纯代码立即写库；检定不在这里掷骰，解析成待掷记录。

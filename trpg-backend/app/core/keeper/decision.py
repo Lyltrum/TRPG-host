@@ -21,6 +21,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.keeper.pending import PendingCheck
+from app.core.keeper.phase import PHASE_FINISHED, PHASE_INVESTIGATION
 from app.core.keeper.tools import (
     KeeperDeps,
     KeeperToolError,
@@ -28,6 +29,8 @@ from app.core.keeper.tools import (
     _resolve_skill_target,
     adjust_hp_impl,
     mark_agenda_fired_impl,
+    mark_visibility_revealed_impl,
+    set_phase_impl,
     update_state_impl,
 )
 
@@ -82,6 +85,13 @@ class KeeperDecision(_DecisionModel):
     agenda_fired: list[str] = Field(
         default_factory=list, description="本轮真正发生的议程事件 id（不预告）"
     )
+    # 路线 5：本轮玩家挣得后可揭开的密级配对 id（须存在于 module.visibility_pairs）
+    visibility_revealed: list[str] = Field(
+        default_factory=list, description="本轮揭开的 visibility_pair id"
+    )
+    # 路线 6：开场仪式完成 → investigation；命中结局 → ending 收束
+    opening_complete: bool = Field(default=False, description="开场仪式是否已完成（委托已建立等）")
+    ending_reached: str | None = Field(default=None, description="本轮命中的结局 id；None=未收束")
     narration_guidance: str = Field(
         default="", description="给叙事阶段的指引：可揭示什么/须保密什么/NPC 如何反应"
     )
@@ -135,6 +145,38 @@ async def execute_side_effects(
                 report.append(await mark_agenda_fired_impl(deps, valid_ids))
             except KeeperToolError as exc:
                 issues.append(f"议程事件未执行：{exc}")
+
+    # 密级配对揭开（路线 5）
+    if decision.visibility_revealed:
+        pair_ids_ok = {p.id for p in deps.module.visibility_pairs}
+        valid_pairs: list[str] = []
+        for pid in decision.visibility_revealed:
+            if pid not in pair_ids_ok:
+                issues.append(f"密级揭开未执行：剧本里没有 pair id={pid}")
+                continue
+            valid_pairs.append(pid)
+        if valid_pairs:
+            try:
+                report.append(await mark_visibility_revealed_impl(deps, valid_pairs))
+            except KeeperToolError as exc:
+                issues.append(f"密级揭开未执行：{exc}")
+
+    # 对局阶段推进（路线 6）
+    if decision.ending_reached:
+        eid = decision.ending_reached
+        if deps.module.endings and not any(e.id == eid for e in deps.module.endings):
+            issues.append(f"结局收束未执行：剧本里没有 ending id={eid}")
+        else:
+            try:
+                # 收束当轮直接 finished：叙事仍可写终章，下一行动立即拒
+                report.append(await set_phase_impl(deps, PHASE_FINISHED, ending_id=eid))
+            except KeeperToolError as exc:
+                issues.append(f"结局收束未执行：{exc}")
+    elif decision.opening_complete:
+        try:
+            report.append(await set_phase_impl(deps, PHASE_INVESTIGATION))
+        except KeeperToolError as exc:
+            issues.append(f"开场完成未执行：{exc}")
 
     if issues:
         logger.warning("keeper_decision_issues", issues=issues)

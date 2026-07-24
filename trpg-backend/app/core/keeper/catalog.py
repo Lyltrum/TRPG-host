@@ -3,7 +3,8 @@
 种子 Scenario 用固定 UUID；房间 `scenario_id` 命中本表时，Keeper 加载对应
 `模组资料/*.structured.json`（gitignored，版权文件本地放置）。
 
-仅列出**已有 structured 成品**、能真主持的模组。探针-only 的不进目录。
+契约发现实验的四个结构型模组 + 追书人，全部作为前端预设；
+structured 缺失时列表仍在，开局主持会失败并提示需先组装。
 """
 
 from __future__ import annotations
@@ -11,9 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-# 与 seed 共用的稳定 id（勿随意改——前端 SCENARIO_REGISTRY 也钉死这些）
+# 与 seed / 前端 SCENARIO_REGISTRY 共用的稳定 id（勿随意改）
 SCENARIO_BOOK_HUNTER_ID = "00000000-0000-0000-0000-000000000003"
 SCENARIO_CORBITT_ID = "00000000-0000-0000-0000-000000000004"
+SCENARIO_FERRY_ID = "00000000-0000-0000-0000-000000000005"
+SCENARIO_FUSU_ID = "00000000-0000-0000-0000-000000000006"
+SCENARIO_FOOTSTOMP_ID = "00000000-0000-0000-0000-000000000007"
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +36,7 @@ class KeeperModuleSpec:
     synopsis: str
 
 
-# 权威目录：新增可玩模组只加这里 + 确保 模组资料/ 有 structured 文件
+# 权威目录：前端预设 = 这里全部条目
 KEEPER_MODULE_SPECS: tuple[KeeperModuleSpec, ...] = (
     KeeperModuleSpec(
         scenario_id=SCENARIO_BOOK_HUNTER_ID,
@@ -56,7 +60,43 @@ KEEPER_MODULE_SPECS: tuple[KeeperModuleSpec, ...] = (
         players_max=4,
         difficulty=2,
         estimated_duration="3-5 小时",
-        synopsis="宅邸调查向。邻居异常、报纸线索与宅邸探索；当前 AI 主持压测主模组。",
+        synopsis="宅邸调查向。邻居异常、报纸线索与宅邸探索。",
+    ),
+    KeeperModuleSpec(
+        scenario_id=SCENARIO_FERRY_ID,
+        title="神秘渡轮",
+        structured_filename="神秘渡轮.structured.json",
+        version="1.0.0",
+        authors=("本地剧本",),
+        players_min=1,
+        players_max=4,
+        difficulty=2,
+        estimated_duration="3-4 小时",
+        synopsis="封闭空间 + 倒计时压力。船上调查与时间窗口。",
+    ),
+    KeeperModuleSpec(
+        scenario_id=SCENARIO_FUSU_ID,
+        title="复足",
+        structured_filename="复足.structured.json",
+        version="1.0.0",
+        authors=("本地剧本",),
+        players_min=1,
+        players_max=4,
+        difficulty=3,
+        estimated_duration="3-5 小时",
+        synopsis="封闭生存/战斗向。资源与威胁并重。",
+    ),
+    KeeperModuleSpec(
+        scenario_id=SCENARIO_FOOTSTOMP_ID,
+        title="死者的顿足舞",
+        structured_filename="死者的顿足舞.structured.json",
+        version="1.0.0",
+        authors=("本地剧本",),
+        players_min=1,
+        players_max=4,
+        difficulty=2,
+        estimated_duration="4-6 小时",
+        synopsis="城市多线调查。篇幅较长，适合完整局压测。",
     ),
 )
 

@@ -69,69 +69,88 @@ export function getGameById(id: string): GameManifest | undefined {
 }
 
 /**
- * 前端「选择模组」列表。
+ * 前端「选择模组」列表 = 契约发现实验的可玩模组全集。
  *
  * id 必须与后端 `app/core/keeper/catalog.py` 的 scenario_id **完全一致**，
- * 建房时 `selectModule(roomId, sceneId)` 才能命中 DB 行，Keeper 才能加载
- * 对应 `模组资料/*.structured.json`。
- *
- * 仅列出已有 structured、能真玩的模组；占位卡（惠特利/死光等）已移除。
+ * 建房时 `selectModule(roomId, sceneId)` 才能命中 DB，Keeper 加载对应
+ * `模组资料/*.structured.json`。
  */
+const KEEPER_STORY_PAGES = [
+  '本局由 AI 守秘人主持（需后端配置 DeepSeek + 本地 structured 剧本）。',
+  '建完角色后进入对局，在「主持人」频道发言即可推进。',
+  '掷骰采用两段式：守秘人发起检定后，请点击「掷骰」确认。',
+]
+
 export const SCENARIO_REGISTRY: Scenario[] = [
   {
     id: '00000000-0000-0000-0000-000000000003',
     name: '追书人',
     nameEn: 'The Book-Hunter',
     systemId: 'coc',
-    description:
-      '线性调查向短模组。失踪与藏书线索，适合 1–2 人试玩 AI 守秘人。',
+    description: '线性调查向短模组。失踪与藏书线索，适合 1–2 人试玩。',
     difficulty: '入门',
     status: 'ready',
     playerCount: '1-2 人',
     estimatedTime: '2-3 小时',
-    storyLabel: '可玩模组 · 追书人',
+    storyLabel: '可玩 · 追书人',
     subtitle: 'BOOK-HUNTER',
-    storyPages: [
-      '本局由 AI 守秘人主持（需后端配置 DeepSeek + 本地 structured 剧本）。',
-      '建完角色后进入对局，在「主持人」频道发言即可推进。',
-      '掷骰采用两段式：守秘人发起检定后，请点击「掷骰」确认。',
-    ],
+    storyPages: KEEPER_STORY_PAGES,
   },
   {
     id: '00000000-0000-0000-0000-000000000004',
     name: '科比特先生',
     nameEn: 'Mister Corbitt',
     systemId: 'coc',
-    description:
-      '宅邸调查向。邻居异常、报纸线索与宅邸探索；当前 AI 主持压测主模组。',
+    description: '宅邸调查向。邻居异常、报纸线索与宅邸探索。',
     difficulty: '进阶',
     status: 'ready',
     playerCount: '1-4 人',
     estimatedTime: '3-5 小时',
-    storyLabel: '可玩模组 · 科比特先生',
+    storyLabel: '可玩 · 科比特先生',
     subtitle: 'MISTER CORBITT',
-    storyPages: [
-      '本局由 AI 守秘人主持（需后端配置 DeepSeek + 本地 structured 剧本）。',
-      '建议先从观察邻居、查阅报纸过刊等调查行动开始。',
-      '掷骰采用两段式：守秘人发起检定后，请点击「掷骰」确认。',
-    ],
+    storyPages: KEEPER_STORY_PAGES,
   },
-  // DnD 仍占位展示，无后端 structured，建房会选不到对应 module（仅 COC ready）
   {
-    id: 'lost-mine',
-    name: '失落矿坑',
-    nameEn: 'The Lost Mine',
-    systemId: 'dnd',
-    description: '剑湾北部的法尔姆小村近日来饱受地精侵扰。（AI 主持尚未接入）',
-    difficulty: '入门',
-    status: 'wip',
-    playerCount: '3-5 人',
+    id: '00000000-0000-0000-0000-000000000005',
+    name: '神秘渡轮',
+    nameEn: 'The Ferry',
+    systemId: 'coc',
+    description: '封闭空间 + 倒计时压力。船上调查与时间窗口。',
+    difficulty: '进阶',
+    status: 'ready',
+    playerCount: '1-4 人',
+    estimatedTime: '3-4 小时',
+    storyLabel: '可玩 · 神秘渡轮',
+    subtitle: 'THE FERRY',
+    storyPages: KEEPER_STORY_PAGES,
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000006',
+    name: '复足',
+    nameEn: 'Fuzu',
+    systemId: 'coc',
+    description: '封闭生存/战斗向。资源与威胁并重。',
+    difficulty: '挑战',
+    status: 'ready',
+    playerCount: '1-4 人',
+    estimatedTime: '3-5 小时',
+    storyLabel: '可玩 · 复足',
+    subtitle: 'FUZU',
+    storyPages: KEEPER_STORY_PAGES,
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000007',
+    name: '死者的顿足舞',
+    nameEn: "Dead Man's Stomp",
+    systemId: 'coc',
+    description: '城市多线调查。篇幅较长，适合完整局压测。',
+    difficulty: '进阶',
+    status: 'ready',
+    playerCount: '1-4 人',
     estimatedTime: '4-6 小时',
-    storyLabel: '剑湾日志 #1372',
-    subtitle: 'THE LOST MINE',
-    storyPages: [
-      '本模组的 AI 主持尚未接入，请选择克苏鲁可玩模组。',
-    ],
+    storyLabel: '可玩 · 死者的顿足舞',
+    subtitle: "DEAD MAN'S STOMP",
+    storyPages: KEEPER_STORY_PAGES,
   },
 ]
 

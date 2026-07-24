@@ -1,10 +1,11 @@
 """组装产物的机械校验（预处理管线校验闭环）。
 
-与 docs/keeper-design/exec/05 第 3 节 + 06 第 2–3 节对齐：
+与 docs/keeper-design/exec/05 第 3 节 + 06 第 2–3 节 + 07（4b）对齐：
 
 原五项（硬失败）：
 1. schema 合法 —— ScenarioModule.model_validate
-2. 引用闭合 —— leads_to / sub_node / branches 引用、id 唯一
+2. 引用闭合 —— leads_to / exits / contains / sub_node / sub_nodes / same_as /
+   visibility_pairs 引用、id 唯一
 3. 技能名可查 —— check.skill 能在 COC7 规则表解析（与 keeper tools 同源口径）
 4. 无孤儿片段 —— 阶段 1 归组映射覆盖全部源片段 id
 5. 不泄密 —— kp_truth.key_facts 关键词在 player_intro + opening.script 零出现
@@ -246,19 +247,23 @@ def normalize_module_skills(raw: dict[str, Any]) -> int:
     def _fix_node(node: dict[str, Any]) -> None:
         nonlocal changed
         checks = node.get("checks")
-        if not isinstance(checks, list):
-            return
-        for check in checks:
-            if not isinstance(check, dict):
-                continue
-            old = str(check.get("skill") or "")
-            new = normalize_skill_name(old)
-            if new != old:
-                check["skill"] = new
-                changed += 1
+        if isinstance(checks, list):
+            for check in checks:
+                if not isinstance(check, dict):
+                    continue
+                old = str(check.get("skill") or "")
+                new = normalize_skill_name(old)
+                if new != old:
+                    check["skill"] = new
+                    changed += 1
         sub = node.get("sub_node")
         if isinstance(sub, dict):
             _fix_node(sub)
+        subs = node.get("sub_nodes")
+        if isinstance(subs, list):
+            for child in subs:
+                if isinstance(child, dict):
+                    _fix_node(child)
 
     for n in nodes:
         if isinstance(n, dict):
@@ -268,10 +273,8 @@ def normalize_module_skills(raw: dict[str, Any]) -> int:
 
 def _collect_node_ids(nodes: list[ModuleNode]) -> set[str]:
     ids: set[str] = set()
-    for node in nodes:
+    for node in _iter_nodes(nodes):
         ids.add(node.id)
-        if node.sub_node is not None:
-            ids.add(node.sub_node.id)
     return ids
 
 
@@ -280,7 +283,9 @@ def _iter_nodes(nodes: list[ModuleNode]) -> list[ModuleNode]:
     for node in nodes:
         out.append(node)
         if node.sub_node is not None:
-            out.append(node.sub_node)
+            out.extend(_iter_nodes([node.sub_node]))
+        if node.sub_nodes:
+            out.extend(_iter_nodes(node.sub_nodes))
     return out
 
 
@@ -295,12 +300,15 @@ def check_schema(raw: dict[str, Any]) -> tuple[ScenarioModule | None, list[str]]
 def check_refs(module: ScenarioModule) -> list[str]:
     errors: list[str] = []
     node_ids = _collect_node_ids(module.nodes)
-    # id 唯一：node / npc / ending / agenda
+    npc_ids = {n.id for n in module.npcs}
+    entity_ids = node_ids | npc_ids
+    # id 唯一：node / npc / ending / agenda / visibility_pair
     for label, ids in (
         ("node", [n.id for n in _iter_nodes(module.nodes)]),
         ("npc", [n.id for n in module.npcs]),
         ("ending", [e.id for e in module.endings]),
         ("agenda", [a.id for a in module.agenda]),
+        ("visibility_pair", [p.id for p in module.visibility_pairs]),
     ):
         seen: set[str] = set()
         for i in ids:
@@ -312,11 +320,32 @@ def check_refs(module: ScenarioModule) -> list[str]:
         for target in node.leads_to:
             if target not in node_ids:
                 errors.append(f"node {node.id!r} leads_to 悬空：{target!r}")
+        for target in node.exits:
+            if target not in node_ids:
+                errors.append(f"node {node.id!r} exits 悬空：{target!r}")
+        for target in node.contains:
+            if target not in node_ids:
+                errors.append(f"node {node.id!r} contains 悬空：{target!r}")
         if node.sub_node is not None and node.sub_node.id not in node_ids:
-            # sub_node 自己也在集合里，这里只是防御
             errors.append(f"node {node.id!r} sub_node.id 未登记：{node.sub_node.id!r}")
         # branches 里的 then 不引用 node id（outcome 是自由文本）；
         # 若 outcome/condition 里看起来像 id 引用，留给内容层，骨架层不扫文本。
+
+    for npc in module.npcs:
+        form_ids: set[str] = set()
+        for form in npc.forms:
+            if form.id in form_ids:
+                errors.append(f"npc {npc.id!r} forms id 重复：{form.id!r}")
+            form_ids.add(form.id)
+        for other in npc.same_as:
+            if other not in npc_ids:
+                errors.append(f"npc {npc.id!r} same_as 悬空：{other!r}")
+
+    for pair in module.visibility_pairs:
+        if pair.public_ref not in entity_ids:
+            errors.append(f"visibility_pair {pair.id!r} public_ref 悬空：{pair.public_ref!r}")
+        if pair.secret_ref not in entity_ids:
+            errors.append(f"visibility_pair {pair.id!r} secret_ref 悬空：{pair.secret_ref!r}")
     return errors
 
 

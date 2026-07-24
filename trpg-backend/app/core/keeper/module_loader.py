@@ -4,10 +4,10 @@
 **gitignore、不进公开仓库**——第三方模组的版权不属于本项目。这里只提交
 「形状定义 + 加载器」；测试用 `tests/fixtures/` 下的原创迷你剧本。
 
-形状刻意宽松（大量 Optional / 自由文本字段）：不同模组的组织方式千差万别，
-这一版的目标是「让 agent 能按需查阅」，不是「把所有模组抽象成统一状态机」——
-后者是最终目的（所有模组可抽象、AI 能推进），但抽象要从多个真实模组的共性里
-长出来，第一个模组先忠实还原。
+形状刻意宽松（大量 Optional / 自由文本字段）。4b 起 schema 开始承担「实体图 /
+形态 / 密级配对」的可寻址骨架位（见 docs/keeper-design/exec/07），但仍保持
+向后兼容：旧 JSON 无新字段时 load_module 必须成功。完整分表（实体表 vs 状态机
+独立）若仍堵死主持再做，不在本加载器一次做完。
 """
 
 import json
@@ -42,15 +42,39 @@ class ModuleBranch(_LenientModel):
 
 
 class ModuleNode(_LenientModel):
-    """一个调查节点/场景：KP 视角的完整信息 + 检定点 + 通向哪里。"""
+    """一个调查节点/场景：KP 视角的完整信息 + 检定点 + 图边。
+
+    图边语义（4b，口诀）：
+    - exits：空间邻接（地图边）
+    - contains：包含层级（地点↔物件/子区域 id）
+    - leads_to：情节/因果推进边（调查解锁），不再兼作房间邻接表
+    """
 
     id: str
     title: str
     kp_text: str
+    # location | clue | item | event | … 自由短标签，内容层
+    kind: str | None = None
+    # 挣得/公开后可念给玩家的摘要；绝密仍在 kp_text
+    public_text: str | None = None
     checks: list[ModuleCheck] = []
     branches: list[ModuleBranch] = []
+    # 向后兼容：单子节点
     sub_node: "ModuleNode | None" = None
+    # 可寻址多子节点（物件、子房间、日志等）
+    sub_nodes: list["ModuleNode"] = []
     leads_to: list[str] = []
+    exits: list[str] = []
+    contains: list[str] = []
+
+
+class ModuleNpcForm(_LenientModel):
+    """同一 NPC 的一个形态（成体/幼体、战斗形态等）。"""
+
+    id: str
+    name: str | None = None
+    notes: str | None = None
+    stats: dict | None = None
 
 
 class ModuleNpc(_LenientModel):
@@ -60,6 +84,10 @@ class ModuleNpc(_LenientModel):
     kp_notes: str | None = None
     # 数据卡保持自由字典：不同怪物/NPC 的数据轴不一样，agent 直接读原文。
     stats: dict | None = None
+    public_text: str | None = None
+    forms: list[ModuleNpcForm] = []
+    # 其它 npc id：公开形象行 ↔ 秘密行等「同一实体」链接
+    same_as: list[str] = []
 
 
 class AgendaEvent(_LenientModel):
@@ -111,6 +139,15 @@ class KeeperTruth(_LenientModel):
     key_facts: list[str] = []
 
 
+class VisibilityPair(_LenientModel):
+    """同一事实的公开版 ↔ 真相版可遍历配对（静态骨架；翻面记账属路线第 5 步）。"""
+
+    id: str
+    public_ref: str
+    secret_ref: str
+    note: str | None = None
+
+
 class ScenarioModule(_LenientModel):
     """一个可被 keeper agent 主持的完整模组。"""
 
@@ -125,14 +162,11 @@ class ScenarioModule(_LenientModel):
     endings: list[ModuleEnding] = []
     npcs: list[ModuleNpc] = []
     kp_guidance: dict[str, str] = {}
+    # 4b：密级配对表（空列表兼容旧模组）
+    visibility_pairs: list[VisibilityPair] = []
 
     def node_by_id(self, node_id: str) -> ModuleNode | None:
-        for node in self.nodes:
-            if node.id == node_id:
-                return node
-            if node.sub_node is not None and node.sub_node.id == node_id:
-                return node.sub_node
-        return None
+        return _find_node(self.nodes, node_id)
 
     def npc_by_id(self, npc_id: str) -> ModuleNpc | None:
         for npc in self.npcs:
@@ -145,6 +179,20 @@ class ScenarioModule(_LenientModel):
             if event.id == event_id:
                 return event
         return None
+
+
+def _find_node(nodes: list[ModuleNode], node_id: str) -> ModuleNode | None:
+    for node in nodes:
+        if node.id == node_id:
+            return node
+        if node.sub_node is not None:
+            found = _find_node([node.sub_node], node_id)
+            if found is not None:
+                return found
+        found = _find_node(node.sub_nodes, node_id)
+        if found is not None:
+            return found
+    return None
 
 
 def load_module(path: str | Path) -> ScenarioModule:
@@ -173,7 +221,10 @@ def render_overview(module: ScenarioModule) -> str:
 
 
 def render_node(node: ModuleNode) -> str:
-    parts = [f"【{node.title}】（id: {node.id}）{node.kp_text}"]
+    kind_part = f" kind:{node.kind}" if node.kind else ""
+    parts = [f"【{node.title}】（id: {node.id}{kind_part}）{node.kp_text}"]
+    if node.public_text:
+        parts.append(f"公开摘要：{node.public_text}")
     for check in node.checks:
         parts.append(
             f"- 检定[{check.skill}]（{check.difficulty or '普通'}）"
@@ -187,15 +238,33 @@ def render_node(node: ModuleNode) -> str:
             parts.append(f"  - [{sub.condition}]：{sub.outcome}")
     if node.sub_node is not None:
         parts.append(f"（子环节 ↓）\n{render_node(node.sub_node)}")
+    for child in node.sub_nodes:
+        parts.append(f"（子节点 ↓）\n{render_node(child)}")
+    if node.exits:
+        parts.append(f"邻接（空间）：{'、'.join(node.exits)}")
+    if node.contains:
+        parts.append(f"包含：{'、'.join(node.contains)}")
     if node.leads_to:
-        parts.append(f"通向：{'、'.join(node.leads_to)}")
+        parts.append(f"情节推进：{'、'.join(node.leads_to)}")
     return "\n".join(parts)
 
 
 def render_npc(npc: ModuleNpc) -> str:
     parts = [f"【{npc.name}】（id: {npc.id}）{npc.role or ''}", npc.kp_notes or ""]
+    if npc.public_text:
+        parts.append(f"公开摘要：{npc.public_text}")
     if npc.stats:
         parts.append("数据卡：" + "、".join(f"{k} {v}" for k, v in npc.stats.items()))
+    if npc.same_as:
+        parts.append(f"同一实体链接：{'、'.join(npc.same_as)}")
+    for form in npc.forms:
+        label = form.name or form.id
+        line = f"形态[{form.id}] {label}"
+        if form.notes:
+            line += f"：{form.notes}"
+        parts.append(line)
+        if form.stats:
+            parts.append("  形态数据：" + "、".join(f"{k} {v}" for k, v in form.stats.items()))
     return "\n".join(p for p in parts if p)
 
 
@@ -235,6 +304,17 @@ def render_opening(module: ScenarioModule) -> str:
     return "\n".join(parts)
 
 
+def render_visibility_pairs(module: ScenarioModule) -> str:
+    """密级配对表：公开 ref ↔ 真相 ref。空则返回空串。"""
+    if not module.visibility_pairs:
+        return ""
+    lines: list[str] = []
+    for pair in module.visibility_pairs:
+        note = f"（{pair.note}）" if pair.note else ""
+        lines.append(f"- {pair.id}：公开 {pair.public_ref} ↔ 真相 {pair.secret_ref}{note}")
+    return "\n".join(lines)
+
+
 def render_full(module: ScenarioModule) -> str:
     """剧本全文：常驻 system prompt 用。
 
@@ -242,8 +322,9 @@ def render_full(module: ScenarioModule) -> str:
     证明它的工具调用纪律靠 prompt 拽不动——整轮只调一次工具、NPC 名字现编、
     检定点视而不见。短模组全文也就几千 token，直接常驻比赌它"会去查"可靠。
 
-    块顺序：overview → 开场脚本 → 议程时间轴（绝密）→ 调查节点 → NPC → 结局。
-    空块整块省略——旧模组不含 opening/agenda 时输出不应变脏。
+    块顺序：overview → 开场脚本 → 议程时间轴（绝密）→ 密级配对（绝密）→
+    调查节点 → NPC → 结局。空块整块省略——旧模组不含 opening/agenda/pairs 时
+    输出不应变脏。
     """
     parts = [render_overview(module)]
     opening_text = render_opening(module)
@@ -254,6 +335,9 @@ def render_full(module: ScenarioModule) -> str:
         # 标题必须带「绝密」——议程 kp_text 里会出现真相关键词（怪物、地点），
         # 与 kp_truth 同级；提前泄露就毁了本模组。
         parts.append(f"═══ 【议程时间轴（绝密）】 ═══\n{agenda_text}")
+    pairs_text = render_visibility_pairs(module)
+    if pairs_text:
+        parts.append(f"═══ 【密级配对（绝密）】 ═══\n{pairs_text}")
     nodes = "\n\n".join(render_node(n) for n in module.nodes)
     parts.append(f"═══ 调查节点 ═══\n\n{nodes}")
     npcs = "\n\n".join(render_npc(n) for n in module.npcs)

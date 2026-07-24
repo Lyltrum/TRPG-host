@@ -42,7 +42,7 @@ async def _run(module_path: Path, rounds: list[str]) -> int:
     from app.core.coc7_content import build_coc7_ruleset
     from app.core.db import Base
     from app.core.keeper.agent import KeeperAgent
-    from app.core.keeper.module_loader import load_module
+    from app.core.keeper.module_loader import ModuleNode, load_module
     from app.core.narrator import NarrationContext
     from app.models.room import Character, Player, Room
 
@@ -54,32 +54,62 @@ async def _run(module_path: Path, rounds: list[str]) -> int:
     print(f"  npcs={len(module.npcs)}", flush=True)
     print(f"  endings={len(module.endings)}", flush=True)
     print(f"  agenda={len(module.agenda)}", flush=True)
-    check_n = sum(len(n.checks) for n in module.nodes)
-    if any(n.sub_node is not None for n in module.nodes):
-        check_n += sum(len(n.sub_node.checks) for n in module.nodes if n.sub_node is not None)
+
+    def _walk_nodes(nodes: list[ModuleNode]) -> list[ModuleNode]:
+        out: list[ModuleNode] = []
+        for n in nodes:
+            out.append(n)
+            if n.sub_node is not None:
+                out.extend(_walk_nodes([n.sub_node]))
+            if n.sub_nodes:
+                out.extend(_walk_nodes(n.sub_nodes))
+        return out
+
+    all_nodes = _walk_nodes(module.nodes)
+    check_n = sum(len(n.checks) for n in all_nodes)
+    sub_nodes_n = sum(len(n.sub_nodes) for n in all_nodes)
+    forms_n = sum(len(n.forms) for n in module.npcs)
     print(f"  checks={check_n}", flush=True)
+    print(f"  sub_nodes_total={sub_nodes_n}", flush=True)
+    print(f"  npc forms_total={forms_n}", flush=True)
+    print(f"  visibility_pairs={len(module.visibility_pairs)}", flush=True)
     print(f"  kp_guidance keys={list(module.kp_guidance.keys())}", flush=True)
     print("  node ids:", [n.id for n in module.nodes], flush=True)
     print("  npc ids:", [n.id for n in module.npcs], flush=True)
     print("  ending ids:", [e.id for e in module.endings], flush=True)
     print("  agenda ids:", [a.id for a in module.agenda], flush=True)
 
-    # 拓扑观察（缺口仪器）：leads_to 图
-    print("\n--- leads_to 图（有向）---", flush=True)
-    for n in module.nodes:
+    # 拓扑观察（缺口仪器）：三类边
+    print("\n--- exits 图（空间邻接）---", flush=True)
+    for n in all_nodes:
+        if n.exits:
+            print(f"  {n.id} ↔ {n.exits}", flush=True)
+    print("\n--- contains 边（包含）---", flush=True)
+    for n in all_nodes:
+        if n.contains:
+            print(f"  {n.id} ⊃ {n.contains}", flush=True)
+    print("\n--- leads_to 图（情节推进）---", flush=True)
+    for n in all_nodes:
         print(f"  {n.id} → {n.leads_to}", flush=True)
-        if n.sub_node is not None:
-            print(f"    sub_node {n.sub_node.id} → {n.sub_node.leads_to}", flush=True)
 
-    print("\n--- npc stats 键（看战斗数据塞哪了）---", flush=True)
+    print("\n--- npc stats / forms / same_as ---", flush=True)
     for npc in module.npcs:
         keys = list((npc.stats or {}).keys()) if npc.stats else []
         notes_len = len(npc.kp_notes or "")
+        form_ids = [f.id for f in npc.forms]
         print(
             f"  {npc.id} name={npc.name!r} role={npc.role!r} "
-            f"stats_keys={keys} kp_notes_len={notes_len}",
+            f"stats_keys={keys} forms={form_ids} same_as={npc.same_as} "
+            f"kp_notes_len={notes_len}",
             flush=True,
         )
+    if module.visibility_pairs:
+        print("\n--- visibility_pairs ---", flush=True)
+        for p in module.visibility_pairs:
+            print(
+                f"  {p.id}: {p.public_ref} ↔ {p.secret_ref} ({p.note or ''})",
+                flush=True,
+            )
 
     api_key = load_api_key()
     ruleset = build_coc7_ruleset()

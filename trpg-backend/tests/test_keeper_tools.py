@@ -286,7 +286,7 @@ async def test_read_module_sections(deps: KeeperDeps) -> None:
     safe = read_module_impl(deps, "node:hidden-safe")  # sub_node 可直接按 id 查
     assert "保险箱" in safe
 
-    npc = read_module_impl(deps, "npc:butler")
+    npc = read_module_impl(deps, "npc:butler-secret")
     assert "厨房" in npc and "STR 50" in npc
 
     endings = read_module_impl(deps, "endings")

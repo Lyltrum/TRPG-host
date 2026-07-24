@@ -1,17 +1,15 @@
-"""预处理管线 · 组装层 + 校验闭环（路线第 4a 步 = B）。
+"""预处理管线 · 组装层 + 校验闭环（路线 4a/B + 4b 薄骨架）。
 
-把探针产物（裸抽取 + 关系）组装成现有 ScenarioModule 形状的结构化 JSON，
-供 keeper **一行不改**就能主持。
-
-与探针的关键区别：本步**刻意给出目标 schema**（B 的定义）。
-与 A 的边界：不产出三层新结构，不改 app/core/keeper/。
+把探针产物（裸抽取 + 关系）组装成 ScenarioModule 结构化 JSON。
+4b 起目标 schema 含 exits/contains/sub_nodes/forms/visibility_pairs
+（见 docs/keeper-design/exec/07）。
 
 阶段（窄合同多次调用，不压成一次干所有事）：
   1. 实体归组 —— 片段 id → 归宿（node/npc/ending/agenda/kp_truth/…）
   2. 实体成形 —— 按归宿合成 node/npc/ending/agenda 对象
   3. 顶层字段 —— meta / kp_truth / player_intro / opening / kp_guidance
-  然后机械校验（原五项 + 06 薄槽/绝密/结构完整性）+ 内容保全软项；
-  自修 ≤2 次。归组类失败回灌阶段1，其它失败喂最终 JSON 修正。
+  3b. 密级配对 —— visibility_pairs（启发式 + 可选 LLM 补洞）
+  然后机械校验（含 4b 引用闭合）+ 内容保全软项；自修 ≤2 次。
 
 用法（在 trpg-backend/ 下）：
 
@@ -104,7 +102,9 @@ TARGET_SCHEMA_DOC = """\
     {
       "id": "英文短 id",
       "title": "节点标题",
+      "kind": "可选：location|clue|item|event|…",
       "kp_text": "KP 视角完整信息（可含真相）",
+      "public_text": "可选，挣得后可念给玩家的摘要",
       "checks": [
         {
           "skill": "中文技能名（COC7 可解析：侦察/聆听/图书馆使用/话术/格斗：斗殴…）",
@@ -119,7 +119,23 @@ TARGET_SCHEMA_DOC = """\
         {"condition": "条件", "outcome": "结果", "then": [{"condition":"…","outcome":"…"}]}
       ],
       "sub_node": null,
-      "leads_to": ["其它 node id"]
+      "sub_nodes": [
+        {
+          "id": "子节点英文短 id",
+          "title": "物件或子区域",
+          "kind": "item",
+          "kp_text": "可寻址细节",
+          "checks": [],
+          "branches": [],
+          "sub_nodes": [],
+          "leads_to": [],
+          "exits": [],
+          "contains": []
+        }
+      ],
+      "exits": ["空间邻接的 node id"],
+      "contains": ["被包含的 node/sub 节点 id"],
+      "leads_to": ["情节/因果推进的 node id"]
     }
   ],
   "npcs": [
@@ -128,7 +144,12 @@ TARGET_SCHEMA_DOC = """\
       "name": "显示名",
       "role": "可选",
       "kp_notes": "KP 笔记",
-      "stats": {"STR": 50, "HP": 10}
+      "public_text": "可选公开摘要",
+      "stats": {"STR": 50, "HP": 10},
+      "forms": [
+        {"id": "form-id", "name": "形态名", "notes": "可选", "stats": {"HP": 12}}
+      ],
+      "same_as": ["同一实体的其它 npc id"]
     }
   ],
   "endings": [
@@ -140,8 +161,18 @@ TARGET_SCHEMA_DOC = """\
       "text": "结局文本"
     }
   ],
-  "kp_guidance": {"键": "自由文本指引"}
+  "kp_guidance": {"键": "自由文本指引"},
+  "visibility_pairs": [
+    {
+      "id": "pair-id",
+      "public_ref": "公开侧 node 或 npc id",
+      "secret_ref": "真相侧 node 或 npc id",
+      "note": "可选说明"
+    }
+  ]
 }
+
+图边口诀：exits=空间邻接；contains=包含层级；leads_to=情节/因果推进。三者引用的 id 必须存在。
 """
 
 
@@ -514,7 +545,14 @@ STAGE2_NODE_SYSTEM = """\
 任务：根据归到同一 node 的片段原文，合成 ScenarioModule.nodes[] 里的对象。
 严格遵守目标 schema。skill 必须用 COC7 中文技能名（侦察、聆听、图书馆使用、\
 话术、恐吓、说服、心理学、潜行、格斗：斗殴、射击：手枪……）。
-leads_to 只能引用已知的 node id 列表中的 id。
+
+图边必须分开填（只能引用已知 node id）：
+- exits：空间上相邻的房间/地点
+- contains：本节点内的物件/子区域 id（若那些 id 也在已知 node 列表中）
+- leads_to：情节或因果上推进到的下一调查点（不是房间邻接表）
+大段地点描述里若有可独立寻址的物件/子区，写入 sub_nodes[]（带独立 id），\
+不要只堆在 kp_text。
+有玩家可见摘要时填 public_text。
 kp_text 可含 KP 绝密信息。不要发明原文没有的关键事实。
 
 只输出 JSON：{"nodes": [ ... ]}
@@ -525,7 +563,10 @@ STAGE2_NPC_SYSTEM = """\
 
 任务：根据归到同一 npc 的片段，合成 npcs[] 对象。
 stats 用自由字典（可含 STR/CON/SIZ/DEX/INT/POW/HP/DB/护甲等原文数据）。
-不要发明原文没有的数值。
+战斗/属性数据优先写入 stats 或 forms[].stats，不要只留在旁路叙述。
+同一实体的多形态（成体/幼体等）写入 forms[]；若公开形象与秘密身份是两行 npc，\
+在 same_as 里写上对方 id（若已知）。
+可填 public_text 作公开摘要。不要发明原文没有的数值。
 
 只输出 JSON：{"npcs": [ ... ]}
 """
@@ -545,6 +586,8 @@ STAGE2_AGENDA_SYSTEM = """\
 任务：根据议程相关片段合成 agenda[]。
 trigger 必须是自由文本（描述何时触发），不要用枚举。
 once 默认 true。
+若原文写了触发后的可执行后果（路线关闭、时间推进、场景变化等），填入 effects[]，\
+不要总给空列表。
 
 只输出 JSON：{"agenda": [ ... ]}
 """
@@ -624,7 +667,7 @@ def stage2_form_kind(
         materials = _bundle_entity_materials(ent, items_by_id, lines, rels)
         user = (
             f"{schema_doc}\n\n"
-            "【已知全部 node id（leads_to 只能用这些）】\n"
+            "【已知全部 node id（exits/contains/leads_to 只能用这些）】\n"
             f"{', '.join(known_node_ids) or '（尚未固定，请用实体 id 列表）'}\n\n"
             f"【本实体材料】\n{materials}\n\n"
             f"请只产出这一个 {kind} 对象，放在 {key_name} 数组里（长度 1）。"
@@ -789,6 +832,7 @@ def compose_module(
     npcs: list[dict[str, Any]],
     endings: list[dict[str, Any]],
     agenda: list[dict[str, Any]],
+    visibility_pairs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     mod: dict[str, Any] = {
         "meta": top["meta"],
@@ -799,6 +843,7 @@ def compose_module(
         "endings": endings,
         "agenda": agenda,
         "kp_guidance": top.get("kp_guidance") or {},
+        "visibility_pairs": visibility_pairs or [],
     }
     if top.get("opening"):
         mod["opening"] = top["opening"]
@@ -819,6 +864,16 @@ def _ensure_node_minimums(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row.setdefault("checks", [])
         row.setdefault("branches", [])
         row.setdefault("leads_to", [])
+        row.setdefault("exits", [])
+        row.setdefault("contains", [])
+        row.setdefault("sub_nodes", [])
+        if isinstance(row.get("sub_node"), dict):
+            fixed_subs = _ensure_node_minimums([row["sub_node"]])
+            row["sub_node"] = fixed_subs[0] if fixed_subs else row["sub_node"]
+        if isinstance(row.get("sub_nodes"), list):
+            row["sub_nodes"] = _ensure_node_minimums(
+                [c for c in row["sub_nodes"] if isinstance(c, dict)]
+            )
         out.append(row)
     return out
 
@@ -832,8 +887,158 @@ def _ensure_npc_minimums(npcs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row.setdefault("id", "unknown-npc")
         if not row.get("name"):
             row["name"] = row["id"]
+        row.setdefault("forms", [])
+        row.setdefault("same_as", [])
         out.append(row)
     return out
+
+
+def _heuristic_visibility_pairs(
+    nodes: list[dict[str, Any]],
+    npcs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """从 same_as 与 id 命名启发生成密级配对（无 LLM）。"""
+    pairs: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    npc_ids = {str(n.get("id")) for n in npcs if isinstance(n, dict) and n.get("id")}
+
+    def _add(public_ref: str, secret_ref: str, note: str) -> None:
+        if public_ref == secret_ref:
+            return
+        key = (public_ref, secret_ref)
+        rev = (secret_ref, public_ref)
+        if key in seen or rev in seen:
+            return
+        seen.add(key)
+        pairs.append(
+            {
+                "id": f"pair-{public_ref}-{secret_ref}"[:64],
+                "public_ref": public_ref,
+                "secret_ref": secret_ref,
+                "note": note,
+            }
+        )
+
+    for npc in npcs:
+        if not isinstance(npc, dict):
+            continue
+        nid = str(npc.get("id") or "")
+        for other in npc.get("same_as") or []:
+            other_s = str(other)
+            if other_s in npc_ids:
+                # 启发式：id 含 secret/public 时定向，否则双向记一条 public→other
+                if "secret" in nid.lower() or "真相" in nid:
+                    _add(other_s, nid, "same_as 启发")
+                elif "public" in nid.lower() or "公开" in nid:
+                    _add(nid, other_s, "same_as 启发")
+                else:
+                    _add(nid, other_s, "same_as 启发")
+
+    # id 对：foo-public / foo-secret 或 foo-public-persona / foo-secret
+    by_stem: dict[str, dict[str, str]] = {}
+    for nid in npc_ids:
+        low = nid.lower()
+        stem = (
+            low.replace("-public-persona", "")
+            .replace("-public", "")
+            .replace("-secret", "")
+            .replace("_public", "")
+            .replace("_secret", "")
+        )
+        slot = by_stem.setdefault(stem, {})
+        if "public" in low or "公开" in nid:
+            slot["public"] = nid
+        if "secret" in low or "真相" in nid or "true" in low:
+            slot["secret"] = nid
+    for stem, slots in by_stem.items():
+        if "public" in slots and "secret" in slots:
+            _add(slots["public"], slots["secret"], f"id 命名启发:{stem}")
+
+    # node 侧：*public* / *secret* 成对
+    node_ids = [str(n.get("id")) for n in nodes if isinstance(n, dict) and n.get("id")]
+    node_set = set(node_ids)
+    for nid in node_ids:
+        low = nid.lower()
+        if "public" in low:
+            cand = nid.lower().replace("public", "secret")
+            # 保持原大小写尽量：简单扫描
+            for other in node_set:
+                if other.lower() == cand and other != nid:
+                    _add(nid, other, "node id 命名启发")
+    return pairs
+
+
+def stage3b_visibility_pairs(
+    client: OpenAI | None,
+    *,
+    nodes: list[dict[str, Any]],
+    npcs: list[dict[str, Any]],
+    rels: list[dict[str, Any]],
+    stats: CallStats | None,
+    schema_doc: str,
+) -> list[dict[str, Any]]:
+    """3b：密级配对。先启发式，可选 LLM 补洞（无 client 则只启发式）。"""
+    pairs = _heuristic_visibility_pairs(nodes, npcs)
+    if client is None or stats is None:
+        return pairs
+
+    # 关系里像「公开/假象/真相」的边，喂 LLM 一次补全
+    hints: list[str] = []
+    for r in rels:
+        text = str(r.get("relation") or "")
+        if any(k in text for k in ("公开", "假象", "真相", "配对", "表面", "实际")):
+            hints.append(f"{r.get('item_a')} ↔ {r.get('item_b')}: {text[:120]}")
+    if not hints and pairs:
+        return pairs
+
+    system = (
+        "你是模组预处理流水线的「密级配对」阶段。根据已成形的 node/npc id 列表与"
+        "关系提示，产出 visibility_pairs[]。"
+        "public_ref 与 secret_ref 必须是已有 node 或 npc 的 id。"
+        "不要发明 id。若无从配对，输出空数组。\n"
+        '只输出 JSON：{"visibility_pairs": [...]}\n\n' + schema_doc
+    )
+    node_ids = [str(n.get("id")) for n in nodes if isinstance(n, dict) and n.get("id")]
+    npc_ids = [str(n.get("id")) for n in npcs if isinstance(n, dict) and n.get("id")]
+    user = (
+        f"【node ids】{', '.join(node_ids)}\n"
+        f"【npc ids】{', '.join(npc_ids)}\n"
+        f"【已有启发式 pairs】{json.dumps(pairs, ensure_ascii=False)}\n"
+        f"【关系提示】\n" + ("\n".join(hints[:40]) if hints else "（无）") + "\n"
+        "请合并/补全 visibility_pairs（可保留启发式结果）。"
+    )
+    try:
+        data = _chat_json(
+            client,
+            system=system,
+            user=user,
+            temperature=TEMPERATURE,
+            stats=stats,
+            label="stage3b.visibility_pairs",
+        )
+        arr = data.get("visibility_pairs")
+        if isinstance(arr, list) and arr:
+            cleaned: list[dict[str, Any]] = []
+            entity = set(node_ids) | set(npc_ids)
+            for p in arr:
+                if not isinstance(p, dict):
+                    continue
+                pref = str(p.get("public_ref") or "")
+                sref = str(p.get("secret_ref") or "")
+                if pref in entity and sref in entity and pref != sref:
+                    cleaned.append(
+                        {
+                            "id": str(p.get("id") or f"pair-{pref}-{sref}")[:64],
+                            "public_ref": pref,
+                            "secret_ref": sref,
+                            "note": p.get("note"),
+                        }
+                    )
+            if cleaned:
+                return cleaned
+    except Exception as exc:  # noqa: BLE001 — 配对失败不阻断管线
+        print(f"  stage3b warn: {exc}", flush=True)
+    return pairs
 
 
 def _ensure_ending_minimums(endings: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -884,7 +1089,9 @@ def repair_module(
         "特别注意：\n"
         "- 技能名必须是 COC7 中文名（侦察 不是 侦查 也可，二者都接受；"
         "斗殴 应写作 格斗：斗殴；手枪 应写作 射击：手枪）。\n"
-        "- leads_to 只能引用已存在的 node id；悬空引用请删除或改成存在的 id。\n"
+        "- leads_to / exits / contains 只能引用已存在的 node id；悬空引用请删除或改成存在的 id。\n"
+        "- visibility_pairs 的 public_ref/secret_ref 必须是已有 node 或 npc id；悬空则删。\n"
+        "- npc.same_as 只能引用已有 npc id。\n"
         "- 不泄密：从 key_facts 抽出的关键词不得出现在 player_intro 与 opening.script；"
         "可改写玩家可见字段，或把过细的关键词从 key_facts 改成更抽象的表述。\n"
         "- node.kp_text 可以含真相，不要为了「不泄密」去清空 kp_text。\n"
@@ -1143,7 +1350,20 @@ def run_pipeline(
     )
     intermediate["stage2"] = s23["stage2"]
     intermediate["stage3"] = s23["stage3"]
-    module = compose_module(top, nodes, npcs, endings, agenda)
+
+    print("\n=== 阶段 3b · 密级配对 ===", flush=True)
+    visibility_pairs = stage3b_visibility_pairs(
+        client,
+        nodes=nodes,
+        npcs=npcs,
+        rels=rels,
+        stats=stats,
+        schema_doc=schema_doc,
+    )
+    intermediate["stage3b"] = {"pair_count": len(visibility_pairs)}
+    print(f"  visibility_pairs: {len(visibility_pairs)}", flush=True)
+
+    module = compose_module(top, nodes, npcs, endings, agenda, visibility_pairs=visibility_pairs)
     n_skill = normalize_module_skills(module)
     if n_skill:
         print(f"  技能名机械归一：{n_skill} 处", flush=True)
@@ -1193,7 +1413,18 @@ def run_pipeline(
             )
             intermediate["stage2"] = s23["stage2"]
             intermediate["stage3"] = s23["stage3"]
-            module = compose_module(top, nodes, npcs, endings, agenda)
+            visibility_pairs = stage3b_visibility_pairs(
+                client,
+                nodes=nodes,
+                npcs=npcs,
+                rels=rels,
+                stats=stats,
+                schema_doc=schema_doc,
+            )
+            intermediate["stage3b"] = {"pair_count": len(visibility_pairs)}
+            module = compose_module(
+                top, nodes, npcs, endings, agenda, visibility_pairs=visibility_pairs
+            )
             n_skill = normalize_module_skills(module)
             if n_skill:
                 print(f"  技能名机械归一：{n_skill} 处", flush=True)
@@ -1223,6 +1454,7 @@ def run_pipeline(
         module["npcs"] = _ensure_npc_minimums(module.get("npcs") or [])
         module["endings"] = _ensure_ending_minimums(module.get("endings") or [])
         module["agenda"] = _ensure_agenda_minimums(module.get("agenda") or [])
+        module.setdefault("visibility_pairs", [])
         normalize_module_skills(module)
 
         report = validate_assembled(

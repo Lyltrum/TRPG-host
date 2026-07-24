@@ -40,7 +40,9 @@
     {
       "id": "hall",
       "title": "门厅",
+      "kind": "location",
       "kp_text": "门厅里有可疑的脚印。",
+      "public_text": "门厅铺着长地毯，昨夜有人走过。",
       "checks": [
         {
           "skill": "侦查",
@@ -49,11 +51,29 @@
           "on_failure": "一无所获，浪费半天。"
         }
       ],
-      "leads_to": ["cellar"]
+      "exits": ["cellar"],
+      "contains": ["hall-footprints"],
+      "leads_to": [],
+      "sub_nodes": [
+        {
+          "id": "hall-footprints",
+          "title": "门厅脚印",
+          "kind": "clue",
+          "kp_text": "脚印尺寸与管家皮靴吻合。",
+          "public_text": "一串湿泥脚印通向内侧走廊。",
+          "checks": [],
+          "branches": [],
+          "sub_nodes": [],
+          "exits": [],
+          "contains": [],
+          "leads_to": []
+        }
+      ]
     },
     {
       "id": "cellar",
       "title": "地下室",
+      "kind": "location",
       "kp_text": "地下室藏着赃物。",
       "branches": [
         {
@@ -68,6 +88,8 @@
         "kp_text": "保险箱需要钥匙。",
         "checks": []
       },
+      "exits": ["hall"],
+      "contains": ["hidden-safe"],
       "leads_to": []
     }
   ],
@@ -82,11 +104,44 @@
   ],
   "npcs": [
     {
-      "id": "butler",
+      "id": "butler-public",
+      "name": "管家",
+      "role": "仆人",
+      "public_text": "恭顺的老管家，声称案发时在厨房。",
+      "kp_notes": "公开口径：案发时在厨房。",
+      "stats": { "STR": 50, "HP": 10 },
+      "same_as": ["butler-secret"],
+      "forms": []
+    },
+    {
+      "id": "butler-secret",
       "name": "管家",
       "role": "真凶",
-      "kp_notes": "谎称案发时在厨房。",
-      "stats": { "STR": 50, "HP": 10 }
+      "kp_notes": "谎称案发时在厨房；实际持有银器钥匙。",
+      "stats": { "STR": 50, "HP": 10 },
+      "same_as": ["butler-public"],
+      "forms": [
+        {
+          "id": "butler-cornered",
+          "name": "被揭穿时",
+          "notes": "可能夺路而逃",
+          "stats": { "STR": 55, "HP": 10 }
+        }
+      ]
+    }
+  ],
+  "visibility_pairs": [
+    {
+      "id": "pair-butler-faces",
+      "public_ref": "butler-public",
+      "secret_ref": "butler-secret",
+      "note": "管家公开形象与真凶身份"
+    },
+    {
+      "id": "pair-hall-mud",
+      "public_ref": "hall-footprints",
+      "secret_ref": "cellar",
+      "note": "脚印公开线索指向地下真相"
     }
   ],
   "kp_guidance": {

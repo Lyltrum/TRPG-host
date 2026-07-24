@@ -62,25 +62,18 @@ class ModuleNpc(_LenientModel):
     stats: dict | None = None
 
 
-class AgendaTrigger(_LenientModel):
-    """议程事件的触发条件。
-
-    type 刻意用 str 而非 Literal：不同模组会长出新的触发轴，未知类型应当
-    "渲染成原样让 KP 自行裁量"，而不是加载时炸掉（加载器的职责是读得出来）。
-    """
-
-    type: str  # "game_night" | "silence" | "manual"
-    at: int | None = None  # game_night：第 N 个游戏内夜晚
-    seconds: int | None = None  # silence：现实沉默秒数（提案②世界心跳消费，本期只存）
-    note: str | None = None  # manual：时机描述，由裁决器裁量
-
-
 class AgendaEvent(_LenientModel):
     """时间轴上的一个"该发生的事"——不依赖玩家行动，世界自己会动。"""
 
     id: str
     title: str | None = None
-    trigger: AgendaTrigger
+    # 自由文本，必填无默认。触发条件是"内容"（LLM 消费）不是"结构"（代码消费）：
+    # 曾用 AgendaTrigger{type,at,seconds,note} 逼预处理 agent 做语义归类
+    # （"第二个满月之夜"归哪个枚举？），枚举从一个模组倒推、归错就废。
+    # 主持人手里有剧本全文 + 历史 + keeper_state 的游戏内时间，判断"本轮是否
+    # 达成触发"本来就该它做；代码去算第几晚反而脆（实测措辞一变就误触发）。
+    # 与 ModuleEnding.trigger（str | None）同构——内容层一律自由文本。
+    trigger: str
     kp_text: str
     effects: list[str] = []
     once: bool = True
@@ -215,27 +208,6 @@ def render_endings(module: ScenarioModule) -> str:
     return "\n".join(lines)
 
 
-def render_agenda_trigger(trigger: AgendaTrigger) -> str:
-    """把触发条件渲染成人话。未知 type 原样带出，不抛异常。"""
-    if trigger.type == "game_night":
-        return f"第 {trigger.at} 个游戏内夜晚" if trigger.at is not None else "游戏内夜晚"
-    if trigger.type == "silence":
-        return f"现实沉默 {trigger.seconds} 秒后" if trigger.seconds is not None else "现实沉默后"
-    if trigger.type == "manual":
-        return f"KP 裁量：{trigger.note}" if trigger.note else "KP 裁量"
-    # 未知 type：把已填字段原样带出，让 KP 自行裁量，不在加载/渲染时炸掉。
-    extras: list[str] = []
-    if trigger.at is not None:
-        extras.append(f"at={trigger.at}")
-    if trigger.seconds is not None:
-        extras.append(f"seconds={trigger.seconds}")
-    if trigger.note:
-        extras.append(f"note={trigger.note}")
-    if extras:
-        return f"{trigger.type}（{', '.join(extras)}）"
-    return trigger.type
-
-
 def render_agenda(module: ScenarioModule) -> str:
     """议程时间轴。每条：id · 标题（触发条件）→ kp_text，effects 缩进列出。"""
     if not module.agenda:
@@ -243,8 +215,7 @@ def render_agenda(module: ScenarioModule) -> str:
     lines: list[str] = []
     for event in module.agenda:
         title = event.title or "（无标题）"
-        cond = render_agenda_trigger(event.trigger)
-        lines.append(f"- {event.id} · {title}（{cond}）→ {event.kp_text}")
+        lines.append(f"- {event.id} · {title}（{event.trigger}）→ {event.kp_text}")
         for effect in event.effects:
             lines.append(f"  · {effect}")
     return "\n".join(lines)

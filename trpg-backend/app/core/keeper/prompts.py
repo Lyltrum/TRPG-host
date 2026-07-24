@@ -16,7 +16,7 @@ v2 仿照真人 KP 的台前/幕后分离：
 裁决用它对检定点、叙事用它保忠实度，"哪些能说"由裁决的 guidance 显式传递。
 """
 
-from app.core.keeper.module_loader import ScenarioModule, render_agenda_trigger, render_full
+from app.core.keeper.module_loader import ScenarioModule, render_full
 
 
 def format_agenda_status(module: ScenarioModule, fired_ids: list[str]) -> str:
@@ -37,13 +37,12 @@ def format_agenda_status(module: ScenarioModule, fired_ids: list[str]) -> str:
         if event.id in fired_set and event.once:
             done_lines.append(f"- {event.id} · {title}")
             continue
-        cond = render_agenda_trigger(event.trigger)
         # 未发生区：给首句或全文，方便裁决器判断"本轮是否该触发"。
         if "。" in event.kp_text:
             kp_preview = event.kp_text.split("。", 1)[0] + "。"
         else:
             kp_preview = event.kp_text
-        pending_lines.append(f"- {event.id} · {title}（{cond}）：{kp_preview}")
+        pending_lines.append(f"- {event.id} · {title}（{event.trigger}）：{kp_preview}")
 
     parts: list[str] = []
     if pending_lines:
@@ -70,7 +69,7 @@ def build_adjudicator_instructions(module: ScenarioModule) -> str:
 7. **检定结果结算**：游戏历史末尾若有尚未被叙述的 [检定]/[理智] 结果，本轮任务是基于该结果裁决后续（成功给成功的信息，失败给失败的代价；目击恐怖之物时追加 san_checks）——**绝不重复发起刚刚已出结果的同一项检定**。
 8. **议程与游戏内时间**：世界不只随玩家行动而动，还有自己的时间表。
    ①每轮维护 keeper_state 的「游戏内时间」（如"第2天 夜晚"）——用 state_updates 写，剧情推进到新的时段就更新；
-   ②局面块的「议程状态」列出尚未发生的事件；当某条的触发条件在本轮达成（game_night 到达对应夜晚 / manual 时机成熟），把它的 id 写进 agenda_fired，并在 narration_guidance 里指示叙事者把这件事呈现出来；
+   ②局面块的「议程状态」列出尚未发生的事件及其触发条件（自由文本描述）；你对照 keeper_state 的游戏内时间与当前局面，判断某条的触发条件是否在本轮达成，达成就把它的 id 写进 agenda_fired，并在 narration_guidance 里指示叙事者把这件事呈现出来；
    ③agenda_fired 只写"本轮真的发生了"的——不预告、不提前铺垫；
    ④已发生区里的事件不要再触发（once），也不要在叙事里当新事件重讲；
    ⑤议程事件**不依赖玩家在场**：玩家没去监视，事件照样发生，玩家事后才看到痕迹（这正是时间压力的来源）。

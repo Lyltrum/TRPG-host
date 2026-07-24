@@ -19,12 +19,7 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.decision import KeeperDecision, execute_side_effects
-from app.core.keeper.module_loader import (
-    AgendaTrigger,
-    load_module,
-    render_agenda_trigger,
-    render_full,
-)
+from app.core.keeper.module_loader import load_module, render_agenda, render_full
 from app.core.keeper.prompts import format_agenda_status, format_turn_input
 from app.core.keeper.tools import (
     AGENDA_FIRED_KEY,
@@ -124,11 +119,14 @@ def test_fixture_loads_agenda_and_opening() -> None:
     assert len(module.agenda) == 2
     night = module.agenda_by_id("night-1-footprints")
     assert night is not None
-    assert night.trigger.type == "game_night" and night.trigger.at == 1
+    assert night.trigger == "第一个游戏内夜晚"
+    assert isinstance(night.trigger, str) and night.trigger
     assert night.once is True
     manual = module.agenda_by_id("butler-confession-window")
     assert manual is not None
-    assert manual.trigger.type == "manual" and manual.once is False
+    assert manual.trigger == "当调查员当众指认管家时"
+    assert isinstance(manual.trigger, str) and manual.trigger
+    assert manual.once is False
     assert module.agenda_by_id("no-such-id") is None
     assert module.opening is not None
     assert module.opening.scene == "庄园门厅"
@@ -145,6 +143,9 @@ def test_render_full_includes_opening_and_secret_agenda() -> None:
     assert "【议程时间轴（绝密）】" in text
     assert "night-1-footprints" in text
     assert "绝密" in text
+    # 自由文本 trigger 原样出现在议程块里
+    assert "第一个游戏内夜晚" in text
+    assert "当调查员当众指认管家时" in text
 
 
 def test_render_full_omits_empty_agenda_and_opening_blocks(tmp_path: Path) -> None:
@@ -163,19 +164,26 @@ def test_render_full_omits_empty_agenda_and_opening_blocks(tmp_path: Path) -> No
     assert "开场脚本" not in text
 
 
-# ── 4. render_agenda_trigger ────────────────────────
+# ── 4. 自由文本 trigger 原样出现在渲染输出 ──────────
 
 
-def test_render_agenda_trigger_known_and_unknown() -> None:
-    assert render_agenda_trigger(AgendaTrigger(type="game_night", at=2)) == "第 2 个游戏内夜晚"
-    assert render_agenda_trigger(AgendaTrigger(type="silence", seconds=90)) == "现实沉默 90 秒后"
-    assert (
-        render_agenda_trigger(AgendaTrigger(type="manual", note="玩家掌握钥匙证据后"))
-        == "KP 裁量：玩家掌握钥匙证据后"
-    )
-    # 未知 type 不抛，带出原始信息
-    unknown = render_agenda_trigger(AgendaTrigger(type="weather", at=3, note="暴雨"))
-    assert "weather" in unknown and "at=3" in unknown and "note=暴雨" in unknown
+def test_free_text_trigger_appears_verbatim_in_renders() -> None:
+    """trigger 收缩为 str 后，无 render_agenda_trigger；原样进 prompt 是等价保证。"""
+    module = load_module(_FIXTURE_MODULE)
+    night_trigger = "第一个游戏内夜晚"
+    manual_trigger = "当调查员当众指认管家时"
+
+    agenda_text = render_agenda(module)
+    assert night_trigger in agenda_text
+    assert manual_trigger in agenda_text
+
+    full_text = render_full(module)
+    assert night_trigger in full_text
+    assert manual_trigger in full_text
+
+    status = format_agenda_status(module, [])
+    assert night_trigger in status
+    assert manual_trigger in status
 
 
 # ── 5. format_agenda_status ─────────────────────────

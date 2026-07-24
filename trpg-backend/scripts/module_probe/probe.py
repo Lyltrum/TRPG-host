@@ -380,9 +380,13 @@ def extract_chunk(
 def coverage_stats(total_lines: int, items: list[dict[str, Any]]) -> dict[str, Any]:
     cover_count = [0] * (total_lines + 1)  # 1-based
     for item in items:
+        raw_a = item.get("line_start")
+        raw_b = item.get("line_end")
+        if raw_a is None or raw_b is None:
+            continue
         try:
-            a = int(item.get("line_start"))
-            b = int(item.get("line_end"))
+            a = int(raw_a)
+            b = int(raw_b)
         except (TypeError, ValueError):
             continue
         if a > b:

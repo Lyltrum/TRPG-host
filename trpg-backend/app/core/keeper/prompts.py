@@ -16,7 +16,41 @@ v2 仿照真人 KP 的台前/幕后分离：
 裁决用它对检定点、叙事用它保忠实度，"哪些能说"由裁决的 guidance 显式传递。
 """
 
-from app.core.keeper.module_loader import ScenarioModule, render_full
+from app.core.keeper.module_loader import ScenarioModule, render_agenda_trigger, render_full
+
+
+def format_agenda_status(module: ScenarioModule, fired_ids: list[str]) -> str:
+    """每轮注入的议程状态：哪些还没发生、哪些已经发生过。
+
+    为什么代码算而不是让模型从剧本全文里自己推：`once` 语义和"别重复触发"
+    是硬约束，靠模型记忆等于没有。
+    """
+    if not module.agenda:
+        return ""
+
+    fired_set = set(fired_ids)
+    pending_lines: list[str] = []
+    done_lines: list[str] = []
+    for event in module.agenda:
+        title = event.title or "（无标题）"
+        # once=False 的事件即使已触发仍留在"未发生"区——可再次发生。
+        if event.id in fired_set and event.once:
+            done_lines.append(f"- {event.id} · {title}")
+            continue
+        cond = render_agenda_trigger(event.trigger)
+        # 未发生区：给首句或全文，方便裁决器判断"本轮是否该触发"。
+        if "。" in event.kp_text:
+            kp_preview = event.kp_text.split("。", 1)[0] + "。"
+        else:
+            kp_preview = event.kp_text
+        pending_lines.append(f"- {event.id} · {title}（{cond}）：{kp_preview}")
+
+    parts: list[str] = []
+    if pending_lines:
+        parts.append("### 尚未发生\n" + "\n".join(pending_lines))
+    if done_lines:
+        parts.append("### 已经发生\n" + "\n".join(done_lines))
+    return "\n\n".join(parts)
 
 
 def build_adjudicator_instructions(module: ScenarioModule) -> str:
@@ -33,7 +67,13 @@ def build_adjudicator_instructions(module: ScenarioModule) -> str:
 4. **状态记账**：本轮有实质进展时（进入新场景、关键线索被挣得、NPC 态度变化、游戏内时间流逝）写 state_updates——这是跨轮记忆的唯一来源。
 5. **narration_guidance 必须写清**：本轮可以揭示什么（挂在检定成败上——检定失败就不许把成功才有的线索给出去）、必须继续保密什么、NPC 应如何反应；行动模糊到无法裁决时，在这里让叙事者向玩家追问。
 6. **玩家迷茫时给引导**：玩家问"我该做什么/接下来干嘛/没头绪"这类元问题时——这不是行动，checks 留空；在 narration_guidance 里明确指示叙事者**做引导而不是写景**：盘点已获线索，基于剧本给出 1-2 个具体可行的方向（借 NPC 之口、调查员的直觉推理都行），不剧透真相。真人守秘人不会用一段风景描写回应"我该干嘛"。
-6. **检定结果结算**：游戏历史末尾若有尚未被叙述的 [检定]/[理智] 结果，本轮任务是基于该结果裁决后续（成功给成功的信息，失败给失败的代价；目击恐怖之物时追加 san_checks）——**绝不重复发起刚刚已出结果的同一项检定**。
+7. **检定结果结算**：游戏历史末尾若有尚未被叙述的 [检定]/[理智] 结果，本轮任务是基于该结果裁决后续（成功给成功的信息，失败给失败的代价；目击恐怖之物时追加 san_checks）——**绝不重复发起刚刚已出结果的同一项检定**。
+8. **议程与游戏内时间**：世界不只随玩家行动而动，还有自己的时间表。
+   ①每轮维护 keeper_state 的「游戏内时间」（如"第2天 夜晚"）——用 state_updates 写，剧情推进到新的时段就更新；
+   ②局面块的「议程状态」列出尚未发生的事件；当某条的触发条件在本轮达成（game_night 到达对应夜晚 / manual 时机成熟），把它的 id 写进 agenda_fired，并在 narration_guidance 里指示叙事者把这件事呈现出来；
+   ③agenda_fired 只写"本轮真的发生了"的——不预告、不提前铺垫；
+   ④已发生区里的事件不要再触发（once），也不要在叙事里当新事件重讲；
+   ⑤议程事件**不依赖玩家在场**：玩家没去监视，事件照样发生，玩家事后才看到痕迹（这正是时间压力的来源）。
 
 ## 输出格式（只输出一个 JSON 对象，不要任何其它文字）
 {{
@@ -42,6 +82,7 @@ def build_adjudicator_instructions(module: ScenarioModule) -> str:
   "san_checks": [{{"player": null, "loss_on_success": "0", "loss_on_failure": "1d6", "reason": "目击食尸鬼"}}],
   "hp_changes": [{{"delta": -2, "player": null, "reason": "被抓伤"}}],
   "state_updates": [{{"key": "当前场景", "value": "书房"}}],
+  "agenda_fired": ["some-agenda-id"],
   "narration_guidance": "给叙事者的指引"
 }}
 player 为 null 表示本轮行动的发起玩家；技能/属性用中文名（侦查、图书馆使用、话术、力量、幸运……）；没有的项用空数组，但 thinking 和 narration_guidance 每轮都要写。"""
@@ -58,7 +99,7 @@ def build_narrator_instructions(module: ScenarioModule) -> str:
 1. **场景描写**：用感官细节（声音/气味/光线）营造克苏鲁式的诡异、压抑氛围。信息给到"玩家能据此行动"的程度，但绝不剧透。
 2. **忠实执行裁决**：输入里的检定结果如实体现——成功给成功该有的信息，失败就是失败（绝不把失败写成变相成功）；裁决指引说保密的内容一个字不漏。
 3. **扮演 NPC**：按剧本中的性格、动机、所知信息行事。NPC 会撒谎、会害怕、有自己的目的，不是问答机。
-4. **守住秘密**：玩家只能通过成功的检定**挣得**线索。真相相关的关键词（怪物种类、超自然实体的名字）在玩家亲眼目击或从线索推出之前，一个字都不能出现——哪怕作为氛围细节也不行。
+4. **守住秘密**：玩家只能通过成功的检定**挣得**线索。真相相关的关键词（怪物种类、超自然实体的名字）在玩家亲眼目击或从线索推出之前，一个字都不能出现——哪怕作为氛围细节也不行。剧本里的【议程时间轴】是幕后时间表——未发生的条目一个字都不能提前透露（连暗示都不行）；只有本轮裁决指引明确说"这件事现在发生了"时才写它。
 5. **线索不卡死**：检定失败时，失败的代价是时间、资源或风险——在叙事里留出"换个方式仍有机会"的余地。
 6. **意图确认**：玩家宣告明显致命/不可逆的行动、且裁决指引要求确认时，先向他确认。
 7. **玩家迷茫时给引导**：裁决指引要求引导时，像真人 KP 一样把可行方向摆出来——用调查员的内心推理或 NPC 的一句提醒（"日记里那句'地下的通道'……公墓也许值得走一趟"），简短直接。**不要用又一段景物描写来回应"我该干嘛"**。
@@ -81,11 +122,16 @@ def format_turn_input(
     roster: list[str],
     player_nickname: str,
     utterance: str,
+    agenda_status: str = "",
 ) -> str:
-    """两阶段共用的"局面块"：在场名单 + 世界状态 + 完整历史 + 当前发言。
+    """两阶段共用的"局面块"：在场名单 + 世界状态 + 议程状态 + 完整历史 + 当前发言。
 
     名单必须显式给出：真实 DeepSeek 冒烟里 agent 曾把单人局幻觉成"你们三人"
     ——桌上有几个人不该靠猜。
+
+    agenda_status 默认空 → 整块不渲染（旧调用点/旧测试行为不变）。位置在
+    世界状态笔记之后、游戏历史之前——裁决器每轮先看"世界到了哪一档时间"，
+    再读历史。
 
     历史的最后一条就是当前这句话（ws.py 在调 narrate 之前已 record_event），
     这里如实呈现并在末尾单独点名"现在要回应的是谁的哪句话"，不做排除——
@@ -98,9 +144,11 @@ def format_turn_input(
         else "（尚无记录——如果历史也为空，说明对局刚开始）"
     )
     history_text = "\n".join(history_lines) if history_lines else "（无）"
+    agenda_block = f"## 议程状态\n{agenda_status}\n\n" if agenda_status else ""
     return (
         f"## 在场调查员（就是这些人，不多不少——叙事人数必须与名单一致）\n{roster_text}\n\n"
         f"## 世界状态笔记\n{state_text}\n\n"
+        f"{agenda_block}"
         f"## 游戏历史（时间正序，最后一条即当前发言）\n{history_text}\n\n"
         f"## 当前\n玩家 {player_nickname} 刚刚说：「{utterance}」"
     )

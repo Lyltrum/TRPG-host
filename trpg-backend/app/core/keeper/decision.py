@@ -27,6 +27,7 @@ from app.core.keeper.tools import (
     _resolve_character,
     _resolve_skill_target,
     adjust_hp_impl,
+    mark_agenda_fired_impl,
     update_state_impl,
 )
 
@@ -78,6 +79,9 @@ class KeeperDecision(_DecisionModel):
     san_checks: list[SanCheckRequest] = Field(default_factory=list)
     hp_changes: list[HpChange] = Field(default_factory=list)
     state_updates: list[StateUpdate] = Field(default_factory=list)
+    agenda_fired: list[str] = Field(
+        default_factory=list, description="本轮真正发生的议程事件 id（不预告）"
+    )
     narration_guidance: str = Field(
         default="", description="给叙事阶段的指引：可揭示什么/须保密什么/NPC 如何反应"
     )
@@ -86,15 +90,18 @@ class KeeperDecision(_DecisionModel):
 async def execute_side_effects(
     deps: KeeperDeps, decision: KeeperDecision
 ) -> tuple[list[str], list[str]]:
-    """执行裁决里"立即生效"的部分：HP 变更 + 状态记账。返回 (执行报告, 问题清单)。
+    """执行裁决里"立即生效"的部分：HP 变更 + 状态记账 + 议程触发。返回 (执行报告, 问题清单)。
 
     检定/理智检定不在这里执行——两段式玩家掷骰下骰子由玩家确认后才生成，
     见 `create_pending_checks`。
 
     - 执行报告：每项 `*_impl` 的完整返回文本，喂给叙事阶段——叙事者必须知道
       "发生了什么"才能如实写；
-    - 问题清单：裁决里不合法的项（找不到的玩家）**跳过不炸**，记下来一并
-      喂给叙事阶段让它自然圆场；同时进日志供排查。
+    - 问题清单：裁决里不合法的项（找不到的玩家 / 未知议程 id）**跳过不炸**，
+      记下来一并喂给叙事阶段让它自然圆场；同时进日志供排查。
+
+    议程 once 去重下沉在 mark_agenda_fired_impl（它拿得到 deps.module 与现值），
+    这里只做「id 不存在 → issue」。
 
     执行是顺序的（不并发），tools 层的 write_lock 因此在这条路径上只是冗余
     保险——保留它是因为 `*_impl` 还可能被未来的并发调用方复用。
@@ -114,6 +121,20 @@ async def execute_side_effects(
             report.append(await update_state_impl(deps, update.key, update.value))
         except KeeperToolError as exc:
             issues.append(f"状态更新未执行：{exc}")
+
+    # 议程触发：只校验 id 合法性，once 幂等由 mark_agenda_fired_impl 兜底。
+    if decision.agenda_fired:
+        valid_ids: list[str] = []
+        for eid in decision.agenda_fired:
+            if deps.module.agenda_by_id(eid) is None:
+                issues.append(f"议程事件未执行：剧本里没有 id={eid}")
+                continue
+            valid_ids.append(eid)
+        if valid_ids:
+            try:
+                report.append(await mark_agenda_fired_impl(deps, valid_ids))
+            except KeeperToolError as exc:
+                issues.append(f"议程事件未执行：{exc}")
 
     if issues:
         logger.warning("keeper_decision_issues", issues=issues)

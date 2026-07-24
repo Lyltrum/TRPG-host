@@ -45,10 +45,18 @@ from app.core.keeper.pending import PendingCheck, pending_check_manager
 from app.core.keeper.prompts import (
     build_adjudicator_instructions,
     build_narrator_instructions,
+    format_agenda_status,
     format_narrator_input,
     format_turn_input,
 )
-from app.core.keeper.tools import KeeperDeps, KeeperToolError, roll_check_detail, san_check_detail
+from app.core.keeper.tools import (
+    AGENDA_FIRED_KEY,
+    KeeperDeps,
+    KeeperToolError,
+    load_fired_agenda,
+    roll_check_detail,
+    san_check_detail,
+)
 from app.core.narrator import (
     DEEPSEEK_BASE_URL,
     DEEPSEEK_MODEL,
@@ -136,8 +144,24 @@ class KeeperAgent(Narrator):
             )
 
         keeper_state, history_lines, roster = await self._load_room_memory(room_id)
+        # 议程状态由代码从 keeper_state 算出后注入局面块——once 语义和
+        # "别重复触发"是硬约束，靠模型从剧本全文自己推等于没有。
+        fired = load_fired_agenda(keeper_state)
+        agenda_status = format_agenda_status(self._module, fired)
+        # 保留 key 不进"世界状态笔记"——议程状态块已经更好地呈现了它，
+        # 重复注入既费 token 又会诱导模型去改它。
+        visible_state = (
+            {k: v for k, v in keeper_state.items() if k != AGENDA_FIRED_KEY}
+            if keeper_state
+            else keeper_state
+        )
         situation = format_turn_input(
-            keeper_state, history_lines, roster, context.player_nickname, context.utterance
+            visible_state,
+            history_lines,
+            roster,
+            context.player_nickname,
+            context.utterance,
+            agenda_status=agenda_status,
         )
 
         # 阶段1·裁决：结构化输出，检定是 schema 字段，不存在"忘了裁决"。
@@ -149,6 +173,7 @@ class KeeperAgent(Narrator):
             san_checks=len(decision.san_checks),
             hp_changes=len(decision.hp_changes),
             state_updates=[u.key for u in decision.state_updates],
+            agenda_fired=decision.agenda_fired,
         )
 
         # 阶段2·执行：HP/状态纯代码立即写库；检定不在这里掷骰，解析成待掷记录。

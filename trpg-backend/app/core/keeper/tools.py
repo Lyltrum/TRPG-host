@@ -31,6 +31,25 @@ from app.models.room import Character, Player, Room
 
 logger = structlog.get_logger()
 
+# keeper_state 里的系统保留 key：议程触发记账由代码写，不交给 LLM 的自由
+# 记账（state_updates）——实测它多数轮根本不记，而 once 语义要靠它。
+AGENDA_FIRED_KEY = "已触发议程"
+
+
+def load_fired_agenda(keeper_state: dict | None) -> list[str]:
+    """从状态笔记里解析已触发的议程 id（纯函数，无 IO）。
+
+    存储形态是逗号分隔字符串——keeper_state 的值一律是 str（update_state_impl
+    的契约），不为一个列表破例。None / 缺 key / 空串 / 尾逗号都要稳健解析。
+    """
+    if not keeper_state:
+        return []
+    raw = keeper_state.get(AGENDA_FIRED_KEY)
+    if raw is None or raw == "":
+        return []
+    # 去空白、去空项、保序（一旦写入顺序就是触发顺序，审计用得上）。
+    return [part.strip() for part in str(raw).split(",") if part.strip()]
+
 
 @dataclass
 class KeeperDeps:
@@ -297,6 +316,53 @@ async def update_state_impl(deps: KeeperDeps, key: str, value: str) -> str:
         room.keeper_state = {**(room.keeper_state or {}), key: value}
         await _record(db, deps, "keeper.state", {"key": key, "value": value})
     return f"已记录：{key} = {value}"
+
+
+async def mark_agenda_fired_impl(deps: KeeperDeps, event_ids: list[str]) -> str:
+    """把议程事件标记为已触发（幂等：已在列表里且 once=True 的忽略）。
+
+    once 语义必须由代码保证：LLM 的 state_updates 靠不住，实测多数轮不记。
+    once=False 的事件允许重复触发——仍写事件留痕，但不重复塞进列表。
+
+    必须走 write_lock（与 update_state_impl 一致——JSON 列是整体重新赋值，
+    读改写并发会丢更新，v1 冒烟真的踩过）。
+    """
+    if not event_ids:
+        return "议程事件触发：（无）"
+
+    async with deps.write_lock, deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            raise KeeperToolError("房间不存在")
+
+        current_state = dict(room.keeper_state or {})
+        already = load_fired_agenda(current_state)
+        newly: list[str] = []
+        report_parts: list[str] = []
+
+        for eid in event_ids:
+            event = deps.module.agenda_by_id(eid)
+            title = (event.title if event is not None else None) or eid
+            # once=True 且已在列表 → 幂等跳过（不是错误，只是不重复记账）
+            if event is not None and event.once and eid in already:
+                report_parts.append(f"{eid}（{title}，已触发过）")
+                continue
+            # once=False 或首次：进列表（once=False 已在列表里时不重复塞）
+            if eid not in already:
+                already.append(eid)
+                newly.append(eid)
+            report_parts.append(f"{eid}（{title}）")
+
+        if newly:
+            # ⚠️ JSON 列整体重新赋值（同 update_state_impl / _write_stat）。
+            current_state[AGENDA_FIRED_KEY] = ", ".join(already)
+            room.keeper_state = current_state
+            await _record(db, deps, "keeper.agenda", {"event_ids": newly})
+        # 纯跳过（全部已触发过）时不写库、不留痕，但返回可读报告让调用方知情。
+
+    if not report_parts:
+        return "议程事件触发：（无）"
+    return "议程事件触发：" + "、".join(report_parts)
 
 
 async def adjust_hp_impl(

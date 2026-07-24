@@ -34,7 +34,7 @@ export async function createGameRoom(
   );
 }
 
-// 拉取可用模组列表（本次没有做模组导入，只有一款内置模拟模组）
+// 拉取可用模组列表（与后端 seed/catalog 对齐：追书人、科比特先生等）
 export async function listModules(): Promise<ModuleSummary[]> {
   return sdk.rooms.listModules();
 }

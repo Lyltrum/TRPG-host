@@ -7,7 +7,7 @@ import { friendlyErrorMessage } from '@/services/api-client'
 // 复盘摘要目前后端还没有真的生成——这里先展示一段占位文案，模拟设计稿里
 // 「复盘摘要异步生成，先 pending 再补上」的体验（见 API 接口对齐规范 §复盘）。
 const PLACEHOLDER_RECAP =
-  '调查员们循着匿名信的线索来到惠特利旧宅，从铁门上的划痕开始，一路深入宅邸内部。过程中的每一次调查、对话与检定都将被记录进这里——目前后端的复盘摘要生成还在开发中，这段文字只是占位效果。'
+  '本局的调查过程将被整理成复盘摘要——目前后端的摘要生成还在开发中，这段文字只是占位效果。'
 
 export default function ReviewPage() {
   const navigate = useNavigate()

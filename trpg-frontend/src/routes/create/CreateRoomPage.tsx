@@ -44,11 +44,19 @@ export default function CreateRoomPage() {
       // 必须先把房间身份（含 reconnectToken）写进 store，selectModule 等
       // 需要重连凭证的接口才能读到它——见 issue #66，真机联调时发现的顺序 bug。
       setRoomIdentity(room)
+      // sceneId 与后端 catalog scenario_id 对齐（见 config/games.ts）
+      const moduleId = store.sceneId
+      if (!moduleId) throw new Error('请先选择模组')
       const modules = await listModules()
       if (modules.length === 0) throw new Error('暂无可用模组')
-      // 目前只有一款内置模拟模组，不管前端选的是哪张模组卡都用它
-      await selectModule(room.roomId, modules[0].id)
-      setStoreModuleId(modules[0].id)
+      const hit = modules.find((m) => m.id === moduleId)
+      if (!hit) {
+        throw new Error(
+          '所选模组在服务端不可用（仅支持已 seed 的可玩模组，如「追书人」「科比特先生」）'
+        )
+      }
+      await selectModule(room.roomId, hit.id)
+      setStoreModuleId(hit.id)
       setHost(true)
       navigate('/room/lobby')
     } catch (err) {

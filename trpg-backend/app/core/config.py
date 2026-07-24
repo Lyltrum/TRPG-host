@@ -44,11 +44,12 @@ class Settings(BaseSettings):
     # 环境不配这个变量，本地演示/线上环境按需配置。
     deepseek_api_key: str | None = None
 
-    # keeper agent（feat/keeper-agent 实验）：结构化剧本 JSON 的路径。配了它
-    # **且**配了 deepseek_api_key 时，action.submit 的回应方切换成真正的守秘人
-    # agent（工具调用 loop：掷骰/角色卡/剧本/状态/HP/San）；不配（默认）保持
-    # 原有的单轮叙事行为。剧本文件 gitignore（版权），路径指向本地文件，如
-    # `../模组资料/追书人.structured.json`。
+    # keeper agent（feat/keeper-agent 实验）：配 deepseek_api_key 后启用。
+    # - keeper_modules_dir：structured JSON 所在目录（默认仓库 `模组资料/`）；
+    #   房间选中的 scenario 经 catalog 映射到该目录下文件。
+    # - keeper_module_path：可选兜底单文件；房间未选中 catalog 模组时用它。
+    # 剧本文件 gitignore（版权），不进公开仓库。
+    keeper_modules_dir: str | None = None
     keeper_module_path: str | None = None
 
     # action.submit 房间锁的超时兜底秒数。keeper agent 一轮回应要跑多跳工具

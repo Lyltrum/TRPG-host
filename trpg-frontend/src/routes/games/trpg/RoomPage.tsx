@@ -32,12 +32,8 @@ interface PendingCheck {
 interface MapLocation { icon: string; name: string; desc: string; isCurrent?: boolean }
 
 const MAP_LOCATIONS: MapLocation[] = [
-  { icon: '🏚️', name: '惠特利旧宅 · 正门', desc: '当前所在 · 铁门虚掩', isCurrent: true },
-  { icon: '🌿', name: '前院 · 花园', desc: '杂草丛生，喷泉干涸' },
-  { icon: '🚪', name: '门厅', desc: '一楼入口，尚未探索' },
-  { icon: '📚', name: '书房', desc: '教授最后出现的地点' },
-  { icon: '🪟', name: '二楼走廊', desc: '蓝绿色光芒的来源' },
-  { icon: '🔻', name: '地下室', desc: '门锁着，钥匙未知' },
+  { icon: '📍', name: '当前场景', desc: '由守秘人叙事推进', isCurrent: true },
+  { icon: '🔍', name: '调查中', desc: '线索与地点随行动展开' },
 ]
 
 const DICE_OPTIONS = [
@@ -389,7 +385,11 @@ export default function RoomPage() {
   const [endError, setEndError] = useState('')
   const [confirmExit, setConfirmExit] = useState(false)
   const [messages, setMessages] = useState<Message[]>([
-    { type: 'system', content: '案件档案已加载 · 惠特利旧宅', time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) },
+    {
+      type: 'system',
+      content: '案件档案已加载',
+      time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+    },
   ])
   // 两个独立界面（issue #107）：「主持人」是跟 AI 守秘人的对话（全房间广播、
   // 进 AI 上下文），「讨论区」是玩家之间的商量（AI 完全看不见）。同一个输入框
@@ -657,7 +657,9 @@ export default function RoomPage() {
           🏚️
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-text-primary">惠特利旧宅</div>
+          <div className="text-sm font-semibold text-text-primary">
+            {roomInfo?.moduleTitle || '对局中'}
+          </div>
           <div className="text-[11px] text-text-muted">
             {roomInfo ? `${roomInfo.players.length} 位调查员` : '克苏鲁的呼唤'}
           </div>
@@ -1052,7 +1054,9 @@ export default function RoomPage() {
       <BottomPanel open={openPanel === 'map'} onClose={() => setOpenPanel(null)} title="地图">
         <div className="bg-[#f2efe8] rounded-md flex flex-col items-center justify-center py-10 mb-4 border border-border-light">
           <Map className="w-10 h-10 text-text-dim mb-2" />
-          <span className="text-xs text-text-dim">惠特利旧宅 · 阿卡姆郊区</span>
+          <span className="text-xs text-text-dim">
+            {roomInfo?.moduleTitle || '当前模组'} · 进行中
+          </span>
         </div>
         <div className="h-px bg-border-light mb-3.5" />
         <h4 className="text-xs font-semibold text-brass-dark mb-2.5">已知地点</h4>

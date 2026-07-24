@@ -13,6 +13,7 @@ from app.core.narrator import (
     DeepSeekNarrator,
     FallbackNarrator,
     NarrationContext,
+    RoomAwareKeeperNarrator,
     _build_messages,
     build_narrator,
 )
@@ -36,19 +37,42 @@ async def test_fallback_narrator_resolve_check_not_implemented() -> None:
         await FallbackNarrator().resolve_check("room-1", "player-1", "check-1")
 
 
-def test_build_narrator_falls_back_without_api_key() -> None:
-    # keeper_module_path 显式钉 None：Settings() 会读开发机 .env，里面配了
-    # KEEPER_MODULE_PATH 的话会把选择逻辑劈到 keeper 分支去（环境泄漏，
-    # 跟 e2e 端口占用同一类坑）——测选择逻辑就把参与选择的字段全部钉死。
-    settings = Settings(deepseek_api_key=None, keeper_module_path=None)
+def test_build_narrator_falls_back_without_api_key(tmp_path) -> None:
+    # 参与选择的字段全部钉死，避免开发机 .env 泄漏。
+    settings = Settings(
+        deepseek_api_key=None,
+        keeper_module_path=None,
+        keeper_modules_dir=str(tmp_path),
+    )
 
     assert isinstance(build_narrator(settings), FallbackNarrator)
 
 
-def test_build_narrator_uses_deepseek_with_api_key() -> None:
-    settings = Settings(deepseek_api_key="sk-test-key", keeper_module_path=None)
+def test_build_narrator_uses_deepseek_with_api_key_when_no_structured(tmp_path) -> None:
+    # 空目录：无 catalog structured → 单轮 DeepSeek，不是 Keeper
+    settings = Settings(
+        deepseek_api_key="sk-test-key",
+        keeper_module_path=None,
+        keeper_modules_dir=str(tmp_path),
+    )
 
     assert isinstance(build_narrator(settings), DeepSeekNarrator)
+
+
+def test_build_narrator_uses_room_aware_keeper_when_modules_dir_ready() -> None:
+    # 仓库 模组资料/ 有 structured 时，有 key 即启用按房间选剧本的 Keeper
+    from app.core.keeper.catalog import default_modules_dir
+
+    modules_dir = default_modules_dir()
+    if not modules_dir.is_dir():
+        pytest.skip("本地无 模组资料/ 目录")
+    settings = Settings(
+        deepseek_api_key="sk-test-key",
+        keeper_module_path=None,
+        keeper_modules_dir=str(modules_dir),
+    )
+
+    assert isinstance(build_narrator(settings), RoomAwareKeeperNarrator)
 
 
 def test_build_messages_includes_module_title_history_and_utterance() -> None:

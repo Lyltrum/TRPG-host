@@ -186,21 +186,24 @@ def backfill_missing_kinds(
     lines: list[str],
     stats: CallStats,
     *,
-    chunk_index: int = 2,
+    chunk_index: int | None = None,
 ) -> list[dict[str, Any]]:
     """只补 what_kind_of_thing，不改条目边界与其它字段。
 
-    每条独立调用，且不附带任何其它条目的已有描述——避免往已有类上靠。
+    默认补**所有**缺失条目；若给 chunk_index 则只补该块（兼容科比特先生那次
+    只修 chunk 2 的用法）。每条独立调用，且不附带任何其它条目的已有描述——
+    避免往已有类上靠。
     """
     items: list[dict[str, Any]] = payload["items"]
     targets = [
         it
         for it in items
-        if it.get("chunk_index") == chunk_index
-        and not str(it.get("what_kind_of_thing") or "").strip()
+        if not str(it.get("what_kind_of_thing") or "").strip()
+        and (chunk_index is None or it.get("chunk_index") == chunk_index)
     ]
+    scope = f"chunk_index={chunk_index}" if chunk_index is not None else "全部块"
     print(
-        f"A · 字段补抽：chunk_index={chunk_index} 且 what_kind_of_thing 为空 → {len(targets)} 条",
+        f"A · 字段补抽：{scope} 且 what_kind_of_thing 为空 → {len(targets)} 条",
         flush=True,
     )
     results: list[dict[str, Any]] = []
@@ -585,6 +588,7 @@ def run(
     *,
     skip_backfill: bool = False,
     skip_relations: bool = False,
+    backfill_chunk: int | None = None,
 ) -> int:
     print(f"extract: {extract_path}", flush=True)
     payload = json.loads(extract_path.read_text(encoding="utf-8"))
@@ -605,7 +609,13 @@ def run(
 
     # ── A ──
     if not skip_backfill:
-        backfilled = backfill_missing_kinds(client, payload, lines, stats)
+        backfilled = backfill_missing_kinds(
+            client,
+            payload,
+            lines,
+            stats,
+            chunk_index=backfill_chunk,
+        )
         extract_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
@@ -752,6 +762,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="跳过 B 部分关系发现",
     )
+    parser.add_argument(
+        "--backfill-chunk",
+        type=int,
+        default=None,
+        help="只补该 chunk_index 的空字段（默认：所有块中缺失的）",
+    )
     args = parser.parse_args(argv)
     extract_path = args.extract.expanduser().resolve()
     if not extract_path.is_file():
@@ -762,6 +778,7 @@ def main(argv: list[str] | None = None) -> int:
         args.source_txt,
         skip_backfill=args.skip_backfill,
         skip_relations=args.skip_relations,
+        backfill_chunk=args.backfill_chunk,
     )
 
 

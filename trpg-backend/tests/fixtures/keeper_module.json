@@ -10,6 +10,32 @@
     "key_facts": ["管家有钥匙", "案发当晚停电"]
   },
   "player_intro": "你们受雇调查庄园失窃案。",
+  "opening": {
+    "scene": "庄园门厅",
+    "script": "管家把你们迎进门厅，说昨夜银器失窃，主人希望尽快查出窃贼。",
+    "kp_notes": "建立委托关系；给出口供与脚印两条初始线索；不掷骰。"
+  },
+  "agenda": [
+    {
+      "id": "night-1-footprints",
+      "title": "第一夜·脚印加深",
+      "trigger": { "type": "game_night", "at": 1 },
+      "kp_text": "入夜后门厅的脚印又深了一层，像是有人再次经过。",
+      "effects": [
+        "为侦查检定提供新痕迹",
+        "玩家不在场时，次日仆人会提起昨夜脚步声"
+      ],
+      "once": true
+    },
+    {
+      "id": "butler-confession-window",
+      "title": "可复现·管家松口窗口",
+      "trigger": { "type": "manual", "note": "玩家多次逼问管家且已掌握钥匙证据" },
+      "kp_text": "管家在证据面前短暂动摇，可能吐露部分真相。",
+      "effects": ["话术/恐吓检定可推进真相线"],
+      "once": false
+    }
+  ],
   "nodes": [
     {
       "id": "hall",
@@ -46,7 +72,13 @@
     }
   ],
   "endings": [
-    { "id": "solved", "title": "破案", "condition": "指认管家", "text": "管家伏法。" }
+    {
+      "id": "solved",
+      "title": "破案",
+      "condition": "指认管家",
+      "trigger": "玩家当众指认管家且出示钥匙或手套证据",
+      "text": "管家伏法。"
+    }
   ],
   "npcs": [
     {

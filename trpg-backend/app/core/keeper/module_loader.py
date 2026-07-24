@@ -62,10 +62,45 @@ class ModuleNpc(_LenientModel):
     stats: dict | None = None
 
 
+class AgendaTrigger(_LenientModel):
+    """议程事件的触发条件。
+
+    type 刻意用 str 而非 Literal：不同模组会长出新的触发轴，未知类型应当
+    "渲染成原样让 KP 自行裁量"，而不是加载时炸掉（加载器的职责是读得出来）。
+    """
+
+    type: str  # "game_night" | "silence" | "manual"
+    at: int | None = None  # game_night：第 N 个游戏内夜晚
+    seconds: int | None = None  # silence：现实沉默秒数（提案②世界心跳消费，本期只存）
+    note: str | None = None  # manual：时机描述，由裁决器裁量
+
+
+class AgendaEvent(_LenientModel):
+    """时间轴上的一个"该发生的事"——不依赖玩家行动，世界自己会动。"""
+
+    id: str
+    title: str | None = None
+    trigger: AgendaTrigger
+    kp_text: str
+    effects: list[str] = []
+    once: bool = True
+
+
+class ModuleOpening(_LenientModel):
+    """开场脚本（提案③的 opening 阶段会消费，本期先让它存在并进 prompt）。"""
+
+    scene: str | None = None
+    script: str
+    kp_notes: str | None = None
+
+
 class ModuleEnding(_LenientModel):
     id: str
     title: str
     condition: str | None = None
+    # 可判定的触发描述（提案③ ending_reached 消费）；condition 是原文叙述，
+    # 两者共存——本期只存字段、只渲染，不做判定。
+    trigger: str | None = None
     text: str
 
 
@@ -89,6 +124,10 @@ class ScenarioModule(_LenientModel):
     meta: ModuleMeta
     kp_truth: KeeperTruth
     player_intro: str
+    # 时间骨架（提案①）：开场脚本 + 议程时间轴。全部可选/默认空，旧模组
+    # 不含这些字段时照常 load_module 成功（向后兼容是硬要求）。
+    opening: ModuleOpening | None = None
+    agenda: list[AgendaEvent] = []
     nodes: list[ModuleNode] = []
     endings: list[ModuleEnding] = []
     npcs: list[ModuleNpc] = []
@@ -106,6 +145,12 @@ class ScenarioModule(_LenientModel):
         for npc in self.npcs:
             if npc.id == npc_id:
                 return npc
+        return None
+
+    def agenda_by_id(self, event_id: str) -> AgendaEvent | None:
+        for event in self.agenda:
+            if event.id == event_id:
+                return event
         return None
 
 
@@ -162,9 +207,61 @@ def render_npc(npc: ModuleNpc) -> str:
 
 
 def render_endings(module: ScenarioModule) -> str:
-    return "\n".join(
-        f"- {e.id}·{e.title}（条件：{e.condition or '—'}）：{e.text}" for e in module.endings
-    )
+    lines: list[str] = []
+    for e in module.endings:
+        # trigger 是提案③的可判定口径；有则并列展示，没有就不占位置。
+        trigger_part = f"，触发：{e.trigger}" if e.trigger else ""
+        lines.append(f"- {e.id}·{e.title}（条件：{e.condition or '—'}{trigger_part}）：{e.text}")
+    return "\n".join(lines)
+
+
+def render_agenda_trigger(trigger: AgendaTrigger) -> str:
+    """把触发条件渲染成人话。未知 type 原样带出，不抛异常。"""
+    if trigger.type == "game_night":
+        return f"第 {trigger.at} 个游戏内夜晚" if trigger.at is not None else "游戏内夜晚"
+    if trigger.type == "silence":
+        return f"现实沉默 {trigger.seconds} 秒后" if trigger.seconds is not None else "现实沉默后"
+    if trigger.type == "manual":
+        return f"KP 裁量：{trigger.note}" if trigger.note else "KP 裁量"
+    # 未知 type：把已填字段原样带出，让 KP 自行裁量，不在加载/渲染时炸掉。
+    extras: list[str] = []
+    if trigger.at is not None:
+        extras.append(f"at={trigger.at}")
+    if trigger.seconds is not None:
+        extras.append(f"seconds={trigger.seconds}")
+    if trigger.note:
+        extras.append(f"note={trigger.note}")
+    if extras:
+        return f"{trigger.type}（{', '.join(extras)}）"
+    return trigger.type
+
+
+def render_agenda(module: ScenarioModule) -> str:
+    """议程时间轴。每条：id · 标题（触发条件）→ kp_text，effects 缩进列出。"""
+    if not module.agenda:
+        return ""
+    lines: list[str] = []
+    for event in module.agenda:
+        title = event.title or "（无标题）"
+        cond = render_agenda_trigger(event.trigger)
+        lines.append(f"- {event.id} · {title}（{cond}）→ {event.kp_text}")
+        for effect in event.effects:
+            lines.append(f"  · {effect}")
+    return "\n".join(lines)
+
+
+def render_opening(module: ScenarioModule) -> str:
+    """开场脚本：场景 + 念白 + KP 要建立什么。"""
+    if module.opening is None:
+        return ""
+    opening = module.opening
+    parts: list[str] = []
+    if opening.scene:
+        parts.append(f"场景：{opening.scene}")
+    parts.append(f"念白：{opening.script}")
+    if opening.kp_notes:
+        parts.append(f"KP 要建立：{opening.kp_notes}")
+    return "\n".join(parts)
 
 
 def render_full(module: ScenarioModule) -> str:
@@ -173,12 +270,22 @@ def render_full(module: ScenarioModule) -> str:
     为什么全文而不是"速查卡索引 + 工具按需查"：真实 DeepSeek 冒烟连跑三轮
     证明它的工具调用纪律靠 prompt 拽不动——整轮只调一次工具、NPC 名字现编、
     检定点视而不见。短模组全文也就几千 token，直接常驻比赌它"会去查"可靠。
+
+    块顺序：overview → 开场脚本 → 议程时间轴（绝密）→ 调查节点 → NPC → 结局。
+    空块整块省略——旧模组不含 opening/agenda 时输出不应变脏。
     """
+    parts = [render_overview(module)]
+    opening_text = render_opening(module)
+    if opening_text:
+        parts.append(f"═══ 【开场脚本】 ═══\n{opening_text}")
+    agenda_text = render_agenda(module)
+    if agenda_text:
+        # 标题必须带「绝密」——议程 kp_text 里会出现真相关键词（怪物、地点），
+        # 与 kp_truth 同级；提前泄露就毁了本模组。
+        parts.append(f"═══ 【议程时间轴（绝密）】 ═══\n{agenda_text}")
     nodes = "\n\n".join(render_node(n) for n in module.nodes)
+    parts.append(f"═══ 调查节点 ═══\n\n{nodes}")
     npcs = "\n\n".join(render_npc(n) for n in module.npcs)
-    return (
-        f"{render_overview(module)}\n\n"
-        f"═══ 调查节点 ═══\n\n{nodes}\n\n"
-        f"═══ 登场 NPC（专有名词以此为准，不得另起名字）═══\n\n{npcs}\n\n"
-        f"═══ 结局 ═══\n{render_endings(module)}"
-    )
+    parts.append(f"═══ 登场 NPC（专有名词以此为准，不得另起名字）═══\n\n{npcs}")
+    parts.append(f"═══ 结局 ═══\n{render_endings(module)}")
+    return "\n\n".join(parts)

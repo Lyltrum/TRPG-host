@@ -10,7 +10,8 @@
   1. 实体归组 —— 片段 id → 归宿（node/npc/ending/agenda/kp_truth/…）
   2. 实体成形 —— 按归宿合成 node/npc/ending/agenda 对象
   3. 顶层字段 —— meta / kp_truth / player_intro / opening / kp_guidance
-  然后机械五项校验 + 自修重试 ≤2 次。
+  然后机械校验（原五项 + 06 薄槽/绝密/结构完整性）+ 内容保全软项；
+  自修 ≤2 次。归组类失败回灌阶段1，其它失败喂最终 JSON 修正。
 
 用法（在 trpg-backend/ 下）：
 
@@ -52,7 +53,11 @@ from probe import (  # noqa: E402
     load_api_key,
     read_numbered_lines,
 )
-from validate_module import ValidationReport, validate_assembled  # noqa: E402
+from validate_module import (  # noqa: E402
+    ValidationReport,
+    normalize_module_skills,
+    validate_assembled,
+)
 
 MAX_RETRIES = 3
 TEMPERATURE = 0.2
@@ -326,15 +331,15 @@ STAGE1_SYSTEM = """\
 任务：把**每个片段**分配到一个归宿，并产出实体清单。
 
 归宿种类（dest_kind）：
-- node —— 调查场景/地点/可到达节点（会进入 nodes[]）
+- node —— 调查场景/地点/可到达节点/可发现的线索与行动（会进入 nodes[]）
 - npc —— 人物或怪物（会进入 npcs[]）
 - ending —— 结局相关（会进入 endings[]）
-- agenda —— 不依赖玩家行动、世界自己会推进的事件（会进入 agenda[]）
-- kp_truth —— 顶层 KP 绝密真相（背景真相、核心秘密）
+- agenda —— 不依赖玩家行动、世界自己会推进的事件/时间压力（会进入 agenda[]）
+- kp_truth —— 顶层 KP 绝密真相（**仅**纯背景真相/超自然设定）
 - kp_guidance —— 顶层 KP 主持指引（节奏、战斗警告、跑偏处理等）
-- opening —— 开场脚本素材
-- player_intro —— 玩家开场介绍素材（仅玩家可见信息）
-- meta —— 模组元信息（标题、人数等）
+- opening —— 开场脚本素材（薄字段，最多 1 个片段）
+- player_intro —— 玩家开场介绍素材（薄字段，最多 1 个片段；仅玩家可见）
+- meta —— 模组元信息（薄字段，最多 1 个片段）
 
 规则：
 1. **无孤儿**：每个输入片段 id 必须出现在 assignments 里恰好一次。
@@ -343,6 +348,30 @@ STAGE1_SYSTEM = """\
 4. 分不掉的片段 dest_kind 用 "unassigned"，并在 orphans 里说明原因——禁止静默丢弃。
 5. 不要发明清单里没有的片段 id。
 6. 只输出 JSON，不要 markdown 围栏。
+
+【硬约束——违反即整批作废】
+A. **kp_truth 不是兜底垃圾桶**：只装「背景真相 / 超自然设定」这类**纯背景**片段。
+   若片段本身就是结局、事件、线索、地点、NPC、数据块、行动描述——归到对应结构位
+  （ending / agenda / node / npc …），**不许因为「和真相有关」就丢进 kp_truth**
+  （几乎所有片段都和真相有关）。
+B. **薄公开字段各只收 1 个片段**：player_intro / opening / meta **各自最多归入 1 个**
+   片段——那个真正「公开开场框架 / 元信息」的片段。
+   - meta：只放版权/标题/人数这类元信息（通常 1 个 credits 片段）。
+   - opening：只放**玩家可见**的开场场景脚本（通常 1 个 initial-scene 类）。
+   - player_intro：只放**玩家可见**的开场介绍框架（若 opening 已覆盖开场，player_intro
+     可空——即 0 个片段也合法，不要硬塞）。
+   - 模组简介若 audience 是守密人/KP → 进 **kp_guidance**，不要塞 opening/meta。
+   **调查线索**（报纸剪报、证词、现场发现、可挣得的情报）、**调查行动**、**地点描述**
+   一律进 **node**（在某个调查节点里被发现），**禁止**塞进 player_intro。
+   player_intro+opening+meta 合计 ≤ 3。
+C. **结局与时间压力要建实体**（强制，不可吞进 kp_truth）：
+   - what_kind_of_thing 指示「结局 / 结尾 / 结束」→ dest_kind=**ending**，建 ending 实体；
+   - 指示「当前事件 / 行动规律 / 时间压力 / 今晚 / 期限」等时间驱动 → dest_kind=**agenda**，
+     建 agenda 条目（trigger 用自由文本）。
+   - 可有多条 agenda；至少覆盖所有带上述信号的片段。
+D. **利用 audience 辅助归组**：
+   - audience 含「绝密 / 守密人 / KP」的片段 **不得** 归到 player_intro 或 opening；
+   - 玩家可见的调查线索仍应进 node，不是 player_intro。
 
 输出形状：
 {
@@ -646,7 +675,12 @@ STAGE3_SYSTEM = """\
 2. kp_truth.summary 与 key_facts 放绝密；key_facts 里的措辞不要出现在 player_intro/opening.script。
 3. kp_guidance 是 KP 主持用自由文本字典（键用英文蛇形或短中文均可）。
 4. 不要输出 nodes/npcs/endings/agenda（那些已在其它阶段完成）。
-5. 只输出 JSON：
+5. **薄字段内容保全**：player_intro / opening 各自通常只对应 1 个归组片段——
+   只用「标记为 player_intro / opening 的那一个片段」写它们的正文。
+   **不要**把调查线索、报纸、行动描写并进 player_intro（那些应已在 nodes 里）。
+6. kp_truth 只用标记为 kp_truth 的纯背景片段；
+   不要把结局/议程材料写进 key_facts 代替 endings/agenda。
+7. 只输出 JSON：
 {"meta":{…},"kp_truth":{…},"player_intro":"…","opening":{…},"kp_guidance":{…}}
 """
 
@@ -854,6 +888,8 @@ def repair_module(
         "- 不泄密：从 key_facts 抽出的关键词不得出现在 player_intro 与 opening.script；"
         "可改写玩家可见字段，或把过细的关键词从 key_facts 改成更抽象的表述。\n"
         "- node.kp_text 可以含真相，不要为了「不泄密」去清空 kp_text。\n"
+        "- 若 structure 报 endings/agenda 为空：从现有 kp_truth/node 文本抽出对应条目，"
+        "补进 endings[] / agenda[]（不要只改 key_facts）。\n"
         "- 只输出一个 JSON 对象，即完整模组。\n\n" + schema_doc
     )
     user = (
@@ -872,6 +908,147 @@ def repair_module(
     if "meta" not in data and isinstance(data.get("module"), dict):
         data = data["module"]
     return data
+
+
+def _print_stage1_summary(stage1: dict[str, Any]) -> None:
+    print(
+        f"  entities: {len(stage1['entities'])}, "
+        f"assignments: {len(stage1['assignment_map'])}, "
+        f"orphans: {len(stage1['orphans'])}",
+        flush=True,
+    )
+    kind_counts: dict[str, int] = {}
+    for info in stage1["assignment_map"].values():
+        k = str(info.get("dest_kind") or "?")
+        kind_counts[k] = kind_counts.get(k, 0) + 1
+    print(f"  dest_kind 分布: {kind_counts}", flush=True)
+    for ent in stage1["entities"]:
+        print(
+            f"    - {ent['kind']}:{ent['id']} ← {len(ent.get('item_ids') or [])} items",
+            flush=True,
+        )
+
+
+def _run_stage2_and_3(
+    client: OpenAI,
+    *,
+    stage1: dict[str, Any],
+    items: list[dict[str, Any]],
+    items_by_id: dict[str, dict[str, Any]],
+    lines: list[str],
+    rels: list[dict[str, Any]],
+    schema_doc: str,
+    title_hint: str,
+    stats: CallStats,
+    repair_notes: str = "",
+) -> tuple[
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, Any],
+]:
+    """阶段2+3：返回 (top, nodes, npcs, endings, agenda, stage_meta)。"""
+    known_node_ids = [e["id"] for e in stage1["entities"] if e.get("kind") == "node"]
+
+    print("\n=== 阶段 2 · 实体成形 ===", flush=True)
+    t2 = time.perf_counter()
+    nodes = stage2_form_kind(
+        client,
+        kind="node",
+        entities=stage1["entities"],
+        items_by_id=items_by_id,
+        lines=lines,
+        rels=rels,
+        known_node_ids=known_node_ids,
+        stats=stats,
+        schema_doc=schema_doc,
+        repair_notes=repair_notes,
+    )
+    npcs = stage2_form_kind(
+        client,
+        kind="npc",
+        entities=stage1["entities"],
+        items_by_id=items_by_id,
+        lines=lines,
+        rels=rels,
+        known_node_ids=known_node_ids,
+        stats=stats,
+        schema_doc=schema_doc,
+        repair_notes=repair_notes,
+    )
+    endings = stage2_form_kind(
+        client,
+        kind="ending",
+        entities=stage1["entities"],
+        items_by_id=items_by_id,
+        lines=lines,
+        rels=rels,
+        known_node_ids=known_node_ids,
+        stats=stats,
+        schema_doc=schema_doc,
+        repair_notes=repair_notes,
+    )
+    agenda = stage2_form_kind(
+        client,
+        kind="agenda",
+        entities=stage1["entities"],
+        items_by_id=items_by_id,
+        lines=lines,
+        rels=rels,
+        known_node_ids=known_node_ids,
+        stats=stats,
+        schema_doc=schema_doc,
+        repair_notes=repair_notes,
+    )
+    nodes = _ensure_node_minimums(nodes)
+    npcs = _ensure_npc_minimums(npcs)
+    endings = _ensure_ending_minimums(endings)
+    agenda = _ensure_agenda_minimums(agenda)
+    print(
+        f"  formed: nodes={len(nodes)} npcs={len(npcs)} "
+        f"endings={len(endings)} agenda={len(agenda)}",
+        flush=True,
+    )
+    stage2_meta = {
+        "node_ids": [n.get("id") for n in nodes],
+        "npc_ids": [n.get("id") for n in npcs],
+        "ending_ids": [e.get("id") for e in endings],
+        "agenda_ids": [a.get("id") for a in agenda],
+        "elapsed_s": round(time.perf_counter() - t2, 2),
+    }
+
+    print("\n=== 阶段 3 · 顶层字段 ===", flush=True)
+    t3 = time.perf_counter()
+    top = stage3_toplevel(
+        client,
+        items=items,
+        items_by_id=items_by_id,
+        lines=lines,
+        stage1=stage1,
+        schema_doc=schema_doc,
+        stats=stats,
+        module_title_hint=title_hint,
+        repair_notes=repair_notes,
+    )
+    stage3_meta = {
+        "meta_id": top["meta"].get("id"),
+        "key_facts_count": len(top["kp_truth"].get("key_facts") or []),
+        "kp_guidance_keys": list((top.get("kp_guidance") or {}).keys()),
+        "player_intro_len": len(top.get("player_intro") or ""),
+        "elapsed_s": round(time.perf_counter() - t3, 2),
+    }
+    return top, nodes, npcs, endings, agenda, {"stage2": stage2_meta, "stage3": stage3_meta}
+
+
+def _assignment_thin_counts(assignment_map: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for info in assignment_map.values():
+        k = str(info.get("dest_kind") or "")
+        if k in ("player_intro", "opening", "meta"):
+            counts[k] = counts.get(k, 0) + 1
+    return counts
 
 
 def run_pipeline(
@@ -919,21 +1096,12 @@ def run_pipeline(
     print("\n=== 阶段 1 · 实体归组 ===", flush=True)
     t1 = time.perf_counter()
     stage1 = stage1_group(client, items, rels, stats)
-    print(
-        f"  entities: {len(stage1['entities'])}, "
-        f"assignments: {len(stage1['assignment_map'])}, "
-        f"orphans: {len(stage1['orphans'])}",
-        flush=True,
-    )
-    for ent in stage1["entities"]:
-        print(
-            f"    - {ent['kind']}:{ent['id']} ← {len(ent.get('item_ids') or [])} items",
-            flush=True,
-        )
+    _print_stage1_summary(stage1)
     intermediate["stage1"] = {
         "entities": stage1["entities"],
         "assignments": stage1["assignments"],
         "orphans": stage1["orphans"],
+        "thin_slot_counts": _assignment_thin_counts(stage1["assignment_map"]),
         "elapsed_s": round(time.perf_counter() - t1, 2),
     }
 
@@ -952,101 +1120,33 @@ def run_pipeline(
             f"- {i}" for i in unassigned
         )
         stage1 = stage1_group(client, items, rels, stats, repair_notes=notes)
+        _print_stage1_summary(stage1)
         intermediate["stage1"] = {
             "entities": stage1["entities"],
             "assignments": stage1["assignments"],
             "orphans": stage1["orphans"],
+            "thin_slot_counts": _assignment_thin_counts(stage1["assignment_map"]),
             "elapsed_s": round(time.perf_counter() - t1, 2),
             "had_regroup": True,
         }
 
-    known_node_ids = [e["id"] for e in stage1["entities"] if e.get("kind") == "node"]
-
-    # ── 阶段 2 ──
-    print("\n=== 阶段 2 · 实体成形 ===", flush=True)
-    t2 = time.perf_counter()
-    nodes = stage2_form_kind(
+    top, nodes, npcs, endings, agenda, s23 = _run_stage2_and_3(
         client,
-        kind="node",
-        entities=stage1["entities"],
-        items_by_id=items_by_id,
-        lines=lines,
-        rels=rels,
-        known_node_ids=known_node_ids,
-        stats=stats,
-        schema_doc=schema_doc,
-    )
-    npcs = stage2_form_kind(
-        client,
-        kind="npc",
-        entities=stage1["entities"],
-        items_by_id=items_by_id,
-        lines=lines,
-        rels=rels,
-        known_node_ids=known_node_ids,
-        stats=stats,
-        schema_doc=schema_doc,
-    )
-    endings = stage2_form_kind(
-        client,
-        kind="ending",
-        entities=stage1["entities"],
-        items_by_id=items_by_id,
-        lines=lines,
-        rels=rels,
-        known_node_ids=known_node_ids,
-        stats=stats,
-        schema_doc=schema_doc,
-    )
-    agenda = stage2_form_kind(
-        client,
-        kind="agenda",
-        entities=stage1["entities"],
-        items_by_id=items_by_id,
-        lines=lines,
-        rels=rels,
-        known_node_ids=known_node_ids,
-        stats=stats,
-        schema_doc=schema_doc,
-    )
-    nodes = _ensure_node_minimums(nodes)
-    npcs = _ensure_npc_minimums(npcs)
-    endings = _ensure_ending_minimums(endings)
-    agenda = _ensure_agenda_minimums(agenda)
-    print(
-        f"  formed: nodes={len(nodes)} npcs={len(npcs)} "
-        f"endings={len(endings)} agenda={len(agenda)}",
-        flush=True,
-    )
-    intermediate["stage2"] = {
-        "node_ids": [n.get("id") for n in nodes],
-        "npc_ids": [n.get("id") for n in npcs],
-        "ending_ids": [e.get("id") for e in endings],
-        "agenda_ids": [a.get("id") for a in agenda],
-        "elapsed_s": round(time.perf_counter() - t2, 2),
-    }
-
-    # ── 阶段 3 ──
-    print("\n=== 阶段 3 · 顶层字段 ===", flush=True)
-    t3 = time.perf_counter()
-    top = stage3_toplevel(
-        client,
+        stage1=stage1,
         items=items,
         items_by_id=items_by_id,
         lines=lines,
-        stage1=stage1,
+        rels=rels,
         schema_doc=schema_doc,
+        title_hint=title_hint,
         stats=stats,
-        module_title_hint=title_hint,
     )
-    intermediate["stage3"] = {
-        "meta_id": top["meta"].get("id"),
-        "key_facts_count": len(top["kp_truth"].get("key_facts") or []),
-        "kp_guidance_keys": list((top.get("kp_guidance") or {}).keys()),
-        "elapsed_s": round(time.perf_counter() - t3, 2),
-    }
-
+    intermediate["stage2"] = s23["stage2"]
+    intermediate["stage3"] = s23["stage3"]
     module = compose_module(top, nodes, npcs, endings, agenda)
+    n_skill = normalize_module_skills(module)
+    if n_skill:
+        print(f"  技能名机械归一：{n_skill} 处", flush=True)
 
     # ── 校验 + 自修 ──
     print("\n=== 校验闭环 ===", flush=True)
@@ -1056,12 +1156,61 @@ def run_pipeline(
         module,
         source_item_ids=source_item_ids,
         assignment_map=assignment_map,
+        items=items,
     )
     print(report.summary_text(), flush=True)
 
     while not report.ok and repair_count < MAX_REPAIR:
         repair_count += 1
         print(f"\n--- 自修 #{repair_count} ---", flush=True)
+        err_text = "\n".join(report.all_errors())
+
+        if report.needs_stage1_repair():
+            # 归组类失败：回灌阶段1，再重跑阶段2/3（06：错误喂回阶段1 重新归组）
+            print("  → 归组类失败，回灌阶段1 重新归组…", flush=True)
+            stage1 = stage1_group(client, items, rels, stats, repair_notes=err_text)
+            _print_stage1_summary(stage1)
+            intermediate["stage1"] = {
+                "entities": stage1["entities"],
+                "assignments": stage1["assignments"],
+                "orphans": stage1["orphans"],
+                "thin_slot_counts": _assignment_thin_counts(stage1["assignment_map"]),
+                "elapsed_s": round(time.perf_counter() - t1, 2),
+                f"repair_regroup_{repair_count}": True,
+            }
+            assignment_map = stage1["assignment_map"]
+            top, nodes, npcs, endings, agenda, s23 = _run_stage2_and_3(
+                client,
+                stage1=stage1,
+                items=items,
+                items_by_id=items_by_id,
+                lines=lines,
+                rels=rels,
+                schema_doc=schema_doc,
+                title_hint=title_hint,
+                stats=stats,
+                repair_notes=err_text,
+            )
+            intermediate["stage2"] = s23["stage2"]
+            intermediate["stage3"] = s23["stage3"]
+            module = compose_module(top, nodes, npcs, endings, agenda)
+            n_skill = normalize_module_skills(module)
+            if n_skill:
+                print(f"  技能名机械归一：{n_skill} 处", flush=True)
+            report = validate_assembled(
+                module,
+                source_item_ids=source_item_ids,
+                assignment_map=assignment_map,
+                items=items,
+            )
+            print(report.summary_text(), flush=True)
+            # 归组修好后若只剩产物级问题，同轮再修一次 JSON（不另计 repair）
+            if report.ok or report.needs_stage1_repair():
+                continue
+
+        # schema/ref/skill/leak：先机械归一技能，再整份 JSON 自修
+        print("  → 产物级失败，技能归一 + 整份 JSON 自修…", flush=True)
+        normalize_module_skills(module)
         module = repair_module(
             client,
             module=module,
@@ -1070,15 +1219,17 @@ def run_pipeline(
             schema_doc=schema_doc,
             attempt=repair_count,
         )
-        # 自修后仍强制 minimums
         module["nodes"] = _ensure_node_minimums(module.get("nodes") or [])
         module["npcs"] = _ensure_npc_minimums(module.get("npcs") or [])
         module["endings"] = _ensure_ending_minimums(module.get("endings") or [])
         module["agenda"] = _ensure_agenda_minimums(module.get("agenda") or [])
+        normalize_module_skills(module)
+
         report = validate_assembled(
             module,
             source_item_ids=source_item_ids,
             assignment_map=assignment_map,
+            items=items,
         )
         print(report.summary_text(), flush=True)
 
@@ -1087,9 +1238,12 @@ def run_pipeline(
 
     # 计数
     check_count = sum(len(n.get("checks") or []) for n in module.get("nodes") or [])
+    thin_counts = _assignment_thin_counts(assignment_map)
 
     intermediate["validation"] = report.to_dict()
     intermediate["repair_count"] = repair_count
+    intermediate["thin_slot_counts"] = thin_counts
+    intermediate["content_preserve_suspect_count"] = len(report.content_preserve_suspects)
     intermediate["stats"] = {
         "elapsed_seconds": round(elapsed_all, 2),
         "calls": stats.calls,
@@ -1109,6 +1263,10 @@ def run_pipeline(
         "checks": check_count,
         "kp_guidance_keys": len(module.get("kp_guidance") or {}),
         "key_facts": len((module.get("kp_truth") or {}).get("key_facts") or []),
+        "player_intro_items": thin_counts.get("player_intro", 0),
+        "opening_items": thin_counts.get("opening", 0),
+        "meta_items": thin_counts.get("meta", 0),
+        "content_preserve_suspects": len(report.content_preserve_suspects),
     }
     intermediate["success"] = report.ok
 
@@ -1129,6 +1287,7 @@ def run_pipeline(
                 "repair_count": repair_count,
                 "report": report.to_dict(),
                 "counts": intermediate["counts"],
+                "thin_slot_counts": thin_counts,
                 "stats": intermediate["stats"],
             },
             ensure_ascii=False,
@@ -1145,6 +1304,11 @@ def run_pipeline(
     print(f"success: {report.ok}", flush=True)
     print(f"repair_count: {repair_count}", flush=True)
     print(f"counts: {intermediate['counts']}", flush=True)
+    print(f"thin_slot_counts: {thin_counts}", flush=True)
+    print(
+        f"content_preserve_suspects: {len(report.content_preserve_suspects)}",
+        flush=True,
+    )
     print(
         f"calls={stats.calls} elapsed={elapsed_all:.1f}s "
         f"tokens={stats.total_tokens} cost≈¥{cost:.4f}",

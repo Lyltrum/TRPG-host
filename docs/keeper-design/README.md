@@ -24,7 +24,7 @@
   🆕 "聊天机器人感"诊断（主持人=裁判+导演，导演缺位）；三提案设计定稿：
   议程标注/世界心跳(主动发言权)/对局阶段状态机+结局侦测。
 
-## 当前实验状态（2026-07-24）
+## 当前实验状态（2026-07-24 晚）
 
 - 已实现：两阶段回合制（04）+ **两段式玩家掷骰**（01）+ 长度纪律 + 迷茫引导
   + **议程标注**（opening/agenda/`agenda_fired`）+ trigger 自由文本收缩。
@@ -35,6 +35,10 @@
   - 5：`visibility_revealed` 记账 + 局面注入密级状态（叙事仍全员广播，真私信未做）
   - 6：对局阶段 opening→investigation→finished、`ending_reached` 收束；
     世界心跳 ticker（**默认关** `KEEPER_HEARTBEAT_ENABLED`）
-- 已验证：科比特 4a 冒烟（gitignored）；4b/5/6 以单元测试为主（66+ keeper 相关 passed）。
-- **更远**：真 per-player 私信通道、完整 V 函数、厚实体表/状态机分表、线索账本、
-  第二结构模组真主持、心跳实机冒烟调参。
+- **前后端模组对齐**：`catalog.py` + 前端 `SCENARIO_REGISTRY` + `RoomAwareKeeperNarrator`；
+  建房所选 scenario 驱动 structured 加载。预设五模组（structured 在 `模组资料/`）：
+  追书人 / 科比特先生 / 神秘渡轮 / 复足 / 死者的顿足舞。
+- 工程记忆：仓库根 `AGENTS.md`（跨 Claude/Grok）；本地 CORS 须含 localhost **与** 127.0.0.1。
+- 已验证：科比特组装冒烟 + SDK 全链路；五模组 `load_module` 通过；单元测试 keeper/narrator。
+- **已知缺口**：play 页历史旁白有时不回放；`game.start` 占位开场；心跳默认关。
+- **更远**：真 per-player 私信、完整 V、厚分表、心跳实机调参、前端历史/WS 硬化。

@@ -70,7 +70,6 @@ logger = structlog.get_logger()
 
 _UNAUTHORIZED_CLOSE_CODE = 4401
 _NOT_FOUND_CLOSE_CODE = 4404
-_OPENING_NARRATION = "案件已加载。守秘人整理好了开场的场景描述，故事即将开始……"
 
 
 async def _send_error(websocket: WebSocket, code: str, message: str) -> None:
@@ -92,6 +91,79 @@ async def _broadcast_narration(
     envelope = ServerEnvelope(type="narration.push", payload=narration.model_dump(by_alias=True))
     await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
     await room_service.record_event(db, room_id, player_id, "narration.push", {"text": text})
+
+
+_OPENING_CEREMONY_UTTERANCE = (
+    "（开场仪式：模组没有现成开场脚本。请用简短段落建立场景与处境，"
+    "让调查员知道身在何处；不要灌水，不要发起检定。）"
+)
+
+
+async def _run_opening_ceremony(
+    db: AsyncSession,
+    websocket: WebSocket,
+    room_id: str,
+    player_id: str,
+    fallback_text: str,
+) -> str:
+    """设计 05：game.start 后给出**唯一**开场旁白，并初始化 opening 阶段。
+
+    全模组统一（禁止双重引导）：
+    1. structured 已有 opening.script/player_intro → 只用这一段 + 写 phase
+       （不 LLM 扩写；前情页与对局同源）
+    2. 无脚本 → narrate 生成一段
+    3. 仍失败 → 中性兜底
+    """
+    from app.core.narrator import NarrationContext
+
+    script = (fallback_text or "").strip()
+    player = await room_service.get_player(db, player_id)
+    nickname = player.nickname if player is not None else "玩家"
+    used_llm = False
+    text = ""
+
+    narrator = websocket.app.state.narrator
+    context = NarrationContext(
+        utterance=_OPENING_CEREMONY_UTTERANCE,
+        player_nickname=nickname,
+        module_title=None,
+        recent_actions=[],
+        room_id=room_id,
+        player_id=player_id,
+        is_heartbeat=False,
+        is_opening_ceremony=True,
+    )
+    try:
+        outcome = await narrator.narrate(context)
+        text = (outcome.text or "").strip()
+    except Exception as exc:  # 开场失败不能卡死进局
+        logger.warning("opening_ceremony_failed", room_id=room_id, error=str(exc))
+        text = ""
+
+    # 权威顺序：structured 脚本 > narrate 结果 > 中性兜底（全模组只推一段）
+    if script:
+        text = script
+        used_llm = False
+    elif not text or text.startswith("守秘人正在等待掷骰"):
+        text = room_service.opening_narration_for_scenario(None)
+        used_llm = False
+    else:
+        used_llm = True
+
+    try:
+        from app.core.keeper.heartbeat import touch_activity
+
+        touch_activity(room_id)
+    except Exception:  # noqa: BLE001
+        pass
+    await room_service.record_event(
+        db,
+        room_id,
+        player_id,
+        "keeper.opening_ceremony",
+        {"source": "game.start", "used_llm": used_llm, "single_opening": True},
+    )
+    return text
 
 
 async def _broadcast_check_request(room_id: str, notice: CheckRequestNotice) -> None:
@@ -264,6 +336,16 @@ async def _handle_action_submit(
         except Exception as exc:  # 外部服务的失败面（网络/超时/API 错）就是宽的，故意宽捕获
             logger.warning("narrator_failed", room_id=room_id, error=str(exc))
             await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
+            # 聊天区不能静默：补一条可见兜底，避免玩家以为断线
+            try:
+                await _broadcast_narration(
+                    db,
+                    room_id,
+                    player_id,
+                    "守秘人整理思路时卡了一下。请用一句更明确的行动再说一次。",
+                )
+            except Exception:  # noqa: BLE001 — 兜底广播失败也不再抛
+                pass
             return
         # 玩家行动重置心跳节流（路线 6）
         try:
@@ -396,7 +478,9 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                     elif event_type == "game.start":
                         GameStartPayload.model_validate(raw_payload)
                         try:
-                            await room_service.begin_game(db, room_id, bound_player_id)
+                            fallback_opening = await room_service.begin_game(
+                                db, room_id, bound_player_id
+                            )
                         except room_service.RoomAuthorizationError as exc:
                             await _send_error(websocket, "FORBIDDEN", str(exc))
                             continue
@@ -409,7 +493,19 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                         ) as exc:
                             await _send_error(websocket, "CONFLICT", str(exc))
                             continue
-                        await _broadcast_narration(db, room_id, bound_player_id, _OPENING_NARRATION)
+                        # 设计 05 验收：game.start 后**第一轮**走开场仪式
+                        # （裁决→叙事），不是干等玩家、也不是只粘贴 script。
+                        # 失败/空结果时回退 structured 粘贴，保证进局必有旁白。
+                        opening_text = await _run_opening_ceremony(
+                            db,
+                            websocket,
+                            room_id,
+                            bound_player_id,
+                            fallback_opening,
+                        )
+                        await _broadcast_narration(
+                            db, room_id, bound_player_id, opening_text
+                        )
                     elif event_type == "action.submit":
                         submit_payload = ActionSubmitPayload.model_validate(raw_payload)
                         utterance = submit_payload.utterance.strip()

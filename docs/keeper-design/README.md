@@ -40,5 +40,10 @@
   追书人 / 科比特先生 / 神秘渡轮 / 复足 / 死者的顿足舞。
 - 工程记忆：仓库根 `AGENTS.md`（跨 Claude/Grok）；本地 CORS 须含 localhost **与** 127.0.0.1。
 - 已验证：科比特组装冒烟 + SDK 全链路；五模组 `load_module` 通过；单元测试 keeper/narrator。
-- **已知缺口**：play 页历史旁白有时不回放；`game.start` 占位开场；心跳默认关。
-- **更远**：真 per-player 私信、完整 V、厚分表、心跳实机调参、前端历史/WS 硬化。
+- **主路径**：`game.start` **开场仪式**（设计 05：合成 utterance → 裁决→叙事，
+  phase=opening，本轮不检定；失败回退 structured 粘贴）+ play `replay` 回补。
+- **叙事纪律**：`prose_discipline` 硬裁 + 迷茫强制引导。
+- **心跳**：development 默认开（静默 90s / 最短间隔 180s）；test/prod 默认关。
+- **02 护栏**：`check_guard` 按当前场景节点 checks 过滤即兴非法技能。
+- **前端**：掷骰新手提示；地图无假数据；`moduleId` 进预览供访客回填。
+- **仍更远**（exec/08 明确不做）：真 per-player 私信、完整 V、厚分表、线下报骰。

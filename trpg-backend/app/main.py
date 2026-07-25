@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     settings = get_settings()
     heartbeat_task: asyncio.Task | None = None
-    if settings.keeper_heartbeat_enabled:
+    if settings.heartbeat_enabled():
         from app.core.keeper.heartbeat import heartbeat_loop
 
         heartbeat_task = asyncio.create_task(
@@ -78,7 +78,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 max_consecutive=settings.keeper_heartbeat_max_consecutive,
             )
         )
-        logger.info("keeper_heartbeat_enabled")
+        logger.info(
+            "keeper_heartbeat_enabled",
+            silence=settings.keeper_heartbeat_silence_seconds,
+            min_interval=settings.keeper_heartbeat_min_interval_seconds,
+            app_env=settings.app_env,
+        )
 
     logger.info("app_started")
     yield

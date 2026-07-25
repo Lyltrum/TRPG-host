@@ -3,6 +3,7 @@ import { ArrowLeft, Users, Map, BookOpen, ScrollText, Star, X, SendHorizontal, P
 import { useState, useRef, useEffect, type FormEvent } from 'react'
 import type { ChatMessage } from 'trpg-sdk'
 import { useRoomStore } from '@/stores/room-store'
+import { useGameStore } from '@/stores/game-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { useCharacterStore } from '@/stores/character-store'
 import { connectWebSocket, waitForWsOpen, sdk, onWsMessage, disconnectWebSocket, friendlyErrorMessage } from '@/services/api-client'
@@ -29,12 +30,7 @@ interface PendingCheck {
   rolling: boolean
 }
 
-interface MapLocation { icon: string; name: string; desc: string; isCurrent?: boolean }
-
-const MAP_LOCATIONS: MapLocation[] = [
-  { icon: '📍', name: '当前场景', desc: '由守秘人叙事推进', isCurrent: true },
-  { icon: '🔍', name: '调查中', desc: '线索与地点随行动展开' },
-]
+// 地图结构化数据未接线：不展示假地点，避免砸信任（设计评测 P1）
 
 const DICE_OPTIONS = [
   { id: 'd100', label: 'D100' },
@@ -384,13 +380,10 @@ export default function RoomPage() {
   const [ending, setEnding] = useState(false)
   const [endError, setEndError] = useState('')
   const [confirmExit, setConfirmExit] = useState(false)
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      type: 'system',
-      content: '案件档案已加载',
-      time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-    },
-  ])
+  const [messages, setMessages] = useState<Message[]>([])
+  // 开场旁白常在 RoomPage 订阅 onWsMessage 之前就推完（房主点开始后立刻
+  // navigate）；用 event id 去重，把 GET /replay 与实时 WS 合成一条时间线。
+  const seenEventKeysRef = useRef<Set<string>>(new Set())
   // 两个独立界面（issue #107）：「主持人」是跟 AI 守秘人的对话（全房间广播、
   // 进 AI 上下文），「讨论区」是玩家之间的商量（AI 完全看不见）。同一个输入框
   // 按当前频道分流到 action.submit / chat.send 两条通道。
@@ -403,6 +396,14 @@ export default function RoomPage() {
   const [skillsTab, setSkillsTab] = useState<'occupation' | 'interest'>('occupation')
   const [showDice, setShowDice] = useState(false)
   const [pendingCheck, setPendingCheck] = useState<PendingCheck | null>(null)
+  // 首次待掷检定教学（session 内一次）
+  const [showDiceTip, setShowDiceTip] = useState(() => {
+    try {
+      return sessionStorage.getItem('aidm-dice-tip-seen') !== '1'
+    } catch {
+      return true
+    }
+  })
   const notesKey = roomId ? `aidm-notes-${roomId}` : null
   // ★ 之前"📋 案件笔记"标题是直接塞进 textarea 初始内容里的普通文本，用户
   // 一编辑/全选删除就会把标题本身也删掉。改成占位符（placeholder），真正
@@ -441,6 +442,92 @@ export default function RoomPage() {
     }
   }, [roomId, playerId, roomCode, nickname, reconnectToken])
 
+  // 进房回补主持人时间线（开场旁白 + 已发生的行动/叙事），避免只靠 WS 漏消息。
+  useEffect(() => {
+    if (!roomId || !reconnectToken) return
+    let cancelled = false
+    const moduleId =
+      useRoomStore.getState().moduleId || useGameStore.getState().sceneId || null
+    const staleOpening =
+      '案件已加载。守秘人整理好了开场的场景描述，故事即将开始……'
+
+    ;(async () => {
+      const boot: Message[] = [{
+        type: 'system',
+        content: '案件档案已加载 · 向守秘人描述你的行动即可推进',
+        time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+      }]
+      try {
+        // game.start 的开场可能仍在生成：短轮询 replay，只认服务端 narration.push
+        // （禁止前端再垫 openingScript，否则会与权威开场叠成两段）
+        let events: Awaited<ReturnType<typeof sdk.rooms.getReplay>> = []
+        for (let attempt = 0; attempt < 8; attempt++) {
+          if (cancelled) return
+          events = await sdk.rooms.getReplay(roomId, reconnectToken)
+          if (events.some((e) => e.eventType === 'narration.push')) break
+          await new Promise((r) => setTimeout(r, 400))
+        }
+        if (cancelled) return
+        for (const ev of events) {
+          const payload = (ev.payload ?? {}) as Record<string, unknown>
+          const t = ev.createdAt
+            ? new Date(ev.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+            : ''
+          if (ev.eventType === 'narration.push' && typeof payload.text === 'string') {
+            let text = payload.text
+            // 仅替换极旧占位句；不另注入第二段模组正文
+            if (text === staleOpening && moduleId) {
+              try {
+                const detail = await sdk.modules.getDetail(moduleId)
+                const real =
+                  detail.openingScript ||
+                  detail.playerIntro ||
+                  detail.storyPages?.[0]
+                if (real) text = real
+              } catch { /* 拉不到就保留原文 */ }
+            }
+            const key = `narr:${ev.id}`
+            if (seenEventKeysRef.current.has(key)) continue
+            seenEventKeysRef.current.add(key)
+            seenEventKeysRef.current.add(`narr-text:${text}`)
+            boot.push({ type: 'narr', sender: '守秘人', content: text, time: t })
+          } else if (ev.eventType === 'action.submit' && typeof payload.utterance === 'string') {
+            const key = `act:${ev.id}`
+            if (seenEventKeysRef.current.has(key)) continue
+            seenEventKeysRef.current.add(key)
+            seenEventKeysRef.current.add(`act-text:${payload.utterance}`)
+            const isSelf = ev.playerId === playerId
+            boot.push({
+              type: 'player',
+              sender: isSelf ? senderName : '调查员',
+              content: payload.utterance,
+              time: t,
+              isSelf,
+            })
+          }
+        }
+        // 仍无旁白：只显示等待提示，不客户端垫第二段开场
+        if (!boot.some((m) => m.type === 'narr')) {
+          boot.push({
+            type: 'system',
+            content: '守秘人正在开场…',
+            time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+          })
+          setTyping(true)
+        }
+      } catch {
+        // replay 失败时至少给系统条
+      }
+      if (cancelled) return
+      setMessages(boot)
+      if (boot.some(m => m.type === 'narr')) setTyping(false)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [roomId, reconnectToken, playerId, senderName])
+
   // 服务端广播订阅：
   // - action.broadcast：任何玩家对守秘人说的**原话**。自己的那条也靠这条广播
   //   回显，不再本地乐观插入——所有人（包括自己）看到的时间线完全一致，这就是
@@ -465,6 +552,9 @@ export default function RoomPage() {
       const now = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
       if (envelope.type === 'action.broadcast') {
         const isSelf = envelope.payload.playerId === playerId
+        const textKey = `act-text:${envelope.payload.utterance}`
+        if (seenEventKeysRef.current.has(textKey)) return
+        seenEventKeysRef.current.add(textKey)
         setMessages(prev => [...prev, {
           type: 'player',
           sender: isSelf ? senderName : envelope.payload.nickname,
@@ -474,6 +564,9 @@ export default function RoomPage() {
         }])
       } else if (envelope.type === 'narration.push') {
         setTyping(false)
+        const textKey = `narr-text:${envelope.payload.text}`
+        if (seenEventKeysRef.current.has(textKey)) return
+        seenEventKeysRef.current.add(textKey)
         setMessages(prev => [...prev, {
           type: 'narr', sender: '守秘人', content: envelope.payload.text, time: now,
         }])
@@ -862,13 +955,41 @@ export default function RoomPage() {
       {/* 待掷检定卡片（两段式玩家掷骰，feat/keeper-agent）：守秘人裁决需要
           检定后推给本人，骰值由服务端权威生成——点击才真正掷骰。 */}
       {channel === 'dm' && pendingCheck && (
-        <div className="px-3 pt-2 bg-page flex-shrink-0">
+        <div className="px-3 pt-2 bg-page flex-shrink-0 space-y-1.5">
+          {showDiceTip && (
+            <div className="text-[11px] leading-relaxed text-[#6a5a40] bg-[#f3ebe0] border border-brass/25 rounded-md px-3 py-2">
+              <strong className="font-semibold">两段式掷骰：</strong>
+              守秘人已发起检定，请点右侧「掷骰」由服务器生成结果；
+              不点则剧情会停在这里（不是卡死）。下方自由骰与本次检定无关。
+              <button
+                type="button"
+                className="ml-2 underline text-brass-dark"
+                onClick={() => {
+                  setShowDiceTip(false)
+                  try {
+                    sessionStorage.setItem('aidm-dice-tip-seen', '1')
+                  } catch { /* ignore */ }
+                }}
+              >
+                知道了
+              </button>
+            </div>
+          )}
           <div className="flex items-center justify-between gap-3 bg-[#faf5eb] border border-brass/40 rounded-md px-3.5 py-2.5">
             <span className="text-xs font-semibold text-brass-dark">
               🎲 守秘人请求：{pendingCheck.skill ? `${pendingCheck.skill}检定` : '理智检定'}
+              {pendingCheck.rolling ? '' : ' · 请点击掷骰'}
             </span>
             <button
-              onClick={handleRollCheck}
+              onClick={() => {
+                if (showDiceTip) {
+                  setShowDiceTip(false)
+                  try {
+                    sessionStorage.setItem('aidm-dice-tip-seen', '1')
+                  } catch { /* ignore */ }
+                }
+                handleRollCheck()
+              }}
               disabled={pendingCheck.rolling}
               className="px-4 py-1.5 rounded-full bg-brass text-white text-xs font-semibold flex-shrink-0 active:bg-brass-dark disabled:opacity-60 transition-colors"
             >
@@ -1050,29 +1171,18 @@ export default function RoomPage() {
         )}
       </BottomPanel>
 
-      {/* Panel: 地图 */}
+      {/* Panel: 地图——结构化地点未接线，不展示假数据 */}
       <BottomPanel open={openPanel === 'map'} onClose={() => setOpenPanel(null)} title="地图">
-        <div className="bg-[#f2efe8] rounded-md flex flex-col items-center justify-center py-10 mb-4 border border-border-light">
-          <Map className="w-10 h-10 text-text-dim mb-2" />
-          <span className="text-xs text-text-dim">
-            {roomInfo?.moduleTitle || '当前模组'} · 进行中
-          </span>
-        </div>
-        <div className="h-px bg-border-light mb-3.5" />
-        <h4 className="text-xs font-semibold text-brass-dark mb-2.5">已知地点</h4>
-        <div className="space-y-1.5">
-          {MAP_LOCATIONS.map((loc) => (
-            <div key={loc.name} className={`flex items-center gap-3 px-3 py-2 rounded ${
-              loc.isCurrent ? 'bg-[rgba(74,138,74,0.06)] border border-[rgba(74,138,74,0.15)]' : 'hover:bg-panel'
-            }`}>
-              <span className="text-lg">{loc.icon}</span>
-              <div className="flex-1">
-                <div className="text-sm font-medium text-text-primary">{loc.name}</div>
-                <div className="text-[11px] text-text-muted">{loc.desc}</div>
-              </div>
-              {loc.isCurrent && <span className="text-[10px] font-semibold text-mold flex-shrink-0">▶ 当前位置</span>}
-            </div>
-          ))}
+        <div className="bg-[#f2efe8] rounded-md flex flex-col items-center justify-center py-12 px-6 border border-border-light text-center">
+          <Map className="w-10 h-10 text-text-dim mb-3 opacity-60" />
+          <p className="text-sm text-text-primary font-medium mb-1.5">地点随叙事推进</p>
+          <p className="text-xs text-text-muted leading-relaxed">
+            结构化地图尚未接入。请以主持人频道的场景描写为准；
+            有「当前场景」状态后这里再显示真地点。
+          </p>
+          {roomInfo?.moduleTitle && (
+            <p className="text-[11px] text-text-dim mt-3 font-mono">{roomInfo.moduleTitle}</p>
+          )}
         </div>
       </BottomPanel>
 

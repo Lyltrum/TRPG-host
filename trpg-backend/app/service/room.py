@@ -155,6 +155,7 @@ async def _to_room_preview(db: AsyncSession, room: Room) -> RoomPreview:
         room_name=room.room_name,
         phase=room.phase,
         story_started=room.phase != "Lobby",
+        module_id=room.scenario_id,
         module_title=await _module_title(db, room.scenario_id),
         player_count=len(room_players),
         max_players=room.max_players,
@@ -356,8 +357,30 @@ async def set_player_connected(db: AsyncSession, player_id: str, connected: bool
         await db.commit()
 
 
-async def begin_game(db: AsyncSession, room_id: str, player_id: str) -> None:
-    """WS game.start 事件：全员建完角色后，房主正式开局（Building → InGame）。"""
+_OPENING_FALLBACK = (
+    "故事开始了。请在下方输入框向守秘人描述你的行动或观察——"
+    "例如你看到了什么、想调查哪里、想和谁交谈。"
+)
+
+
+def opening_narration_for_scenario(scenario_id: str | None) -> str:
+    """正式开局时念给玩家的开场白：优先 structured 的 opening.script，其次 player_intro。
+
+    structured 缺失（CI/未组装）时用中性引导，避免再推「案件已加载」空壳。
+    """
+    if not scenario_id:
+        return _OPENING_FALLBACK
+    _intro, opening, pages = _load_public_story(scenario_id)
+    text = (opening or _intro or (pages[0] if pages else "")).strip()
+    return text or _OPENING_FALLBACK
+
+
+async def begin_game(db: AsyncSession, room_id: str, player_id: str) -> str:
+    """WS game.start 事件：全员建完角色后，房主正式开局（Building → InGame）。
+
+    返回 structured 开场粘贴文案，供开场仪式 LLM 失败时回退（设计 05：
+    正常路径由 ws 层再跑一轮裁决→叙事开场仪式）。
+    """
     room = await find_room_by_id(db, room_id)
     player = await db.get(Player, player_id)
     if player is None or player.room_id != room.id or player.id != room.host_player_id:
@@ -371,6 +394,7 @@ async def begin_game(db: AsyncSession, room_id: str, player_id: str) -> None:
     room.phase = "InGame"
     room.started_at = datetime.now(UTC)
     await db.commit()
+    return opening_narration_for_scenario(room.scenario_id)
 
 
 async def list_my_rooms(db: AsyncSession, user: User) -> list[MyRoomSummary]:
@@ -418,6 +442,7 @@ async def list_my_rooms(db: AsyncSession, user: User) -> list[MyRoomSummary]:
             room_code=room.room_code,
             room_name=room.room_name,
             phase=room.phase,
+            module_id=room.scenario_id,
             module_title=titles.get(room.scenario_id) if room.scenario_id else None,
             player_count=counts.get(room.id, 0),
             max_players=room.max_players,
@@ -509,12 +534,46 @@ async def list_modules(db: AsyncSession) -> list[ModuleRead]:
     return [ModuleRead.model_validate(s) for s in result]
 
 
+def _load_public_story(module_id: str) -> tuple[str | None, str | None, list[str]]:
+    """从 keeper structured JSON 读玩家可见前情；文件缺失/损坏时返回空。"""
+    from pathlib import Path
+
+    from app.core.config import get_settings
+    from app.core.keeper.catalog import default_modules_dir, resolve_structured_path
+    from app.core.keeper.module_loader import load_module, public_story_from_module
+
+    settings = get_settings()
+    modules_dir = (
+        Path(settings.keeper_modules_dir).expanduser().resolve()
+        if settings.keeper_modules_dir
+        else default_modules_dir()
+    )
+    path = resolve_structured_path(modules_dir, module_id)
+    if path is None:
+        return None, None, []
+    try:
+        return public_story_from_module(load_module(path))
+    except Exception:
+        # JSON 坏 / schema 不符时不拖垮详情接口；列表仍有 synopsis
+        return None, None, []
+
+
 async def get_module_detail(db: AsyncSession, module_id: str) -> ModuleDetailRead | None:
-    """GET /api/v1/modules/{moduleId} —— 模组详情。"""
+    """GET /api/v1/modules/{moduleId} —— 模组详情（含 structured 玩家前情）。"""
     scenario = await db.get(Scenario, module_id)
     if scenario is None:
         return None
-    return ModuleDetailRead.model_validate(scenario)
+    detail = ModuleDetailRead.model_validate(scenario)
+    intro, opening, pages = _load_public_story(module_id)
+    if not pages and detail.synopsis:
+        pages = [detail.synopsis]
+    return detail.model_copy(
+        update={
+            "player_intro": intro,
+            "opening_script": opening,
+            "story_pages": pages,
+        }
+    )
 
 
 # ── 复盘 / 事件回放 ──────────────────────────────────────

@@ -22,7 +22,8 @@ export interface Scenario {
   estimatedTime: string
   storyLabel: string
   subtitle: string
-  storyPages: string[]
+  /** 离线兜底；正常路径由 GET /modules/{id}.storyPages 提供 */
+  storyPages?: string[]
 }
 
 export interface GameManifest {

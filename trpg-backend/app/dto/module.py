@@ -13,9 +13,18 @@ from app.dto.room import ModuleRead
 
 
 class ModuleDetailRead(ModuleRead):
-    """GET /api/v1/modules/{moduleId} 返回——在 ModuleRead 基础上补充简介。"""
+    """GET /api/v1/modules/{moduleId} 返回——列表字段 + 玩家可见前情。
+
+    - synopsis：目录简介（Scenario 表，选模组用）
+    - player_intro / opening_script：来自 structured JSON 的玩家可见开场
+      （绝不含 kp_truth；文件缺失时为 null）
+    - story_pages：前端前情页直接渲染的段落列表（intro + opening 去重）
+    """
 
     synopsis: str | None = None
+    player_intro: str | None = None
+    opening_script: str | None = None
+    story_pages: list[str] = Field(default_factory=list)
 
 
 class ModuleImportRequestBody(CamelModel):

@@ -57,12 +57,19 @@ class Settings(BaseSettings):
     # keeper 模式建议配 180。
     action_lock_timeout_seconds: float = 60.0
 
-    # 世界心跳（路线 6）：默认关，实验期显式开启；e2e 不感知。
-    keeper_heartbeat_enabled: bool = False
-    keeper_heartbeat_silence_seconds: float = 100.0
-    keeper_heartbeat_min_interval_seconds: float = 300.0
+    # 世界心跳（设计 05 / 路线 6）：development 默认真·试玩要世界会动；
+    # production/test 默认关（CI/e2e 不烧 token、不抢锁）。可用环境变量覆盖。
+    # 未显式配置时：仅 development 自动开。
+    keeper_heartbeat_enabled: bool | None = None
+    keeper_heartbeat_silence_seconds: float = 90.0
+    keeper_heartbeat_min_interval_seconds: float = 180.0
     keeper_heartbeat_scan_interval_seconds: float = 30.0
     keeper_heartbeat_max_consecutive: int = 2
+
+    def heartbeat_enabled(self) -> bool:
+        if self.keeper_heartbeat_enabled is not None:
+            return self.keeper_heartbeat_enabled
+        return self.app_env == "development"
 
     # ⚠️ 测试专用（issue #107）：让叙事生成人为延迟 N 秒后再返回，生产永远保持 0。
     # 存在的理由：无 key 时的占位叙事同步秒回，action.submit 的房间锁窗口只有

@@ -202,6 +202,24 @@ def load_module(path: str | Path) -> ScenarioModule:
     return ScenarioModule.model_validate(raw)
 
 
+def public_story_from_module(
+    module: ScenarioModule,
+) -> tuple[str | None, str | None, list[str]]:
+    """抽取玩家可见前情（player_intro + opening.script），去重为段落列表。
+
+    仅返回可直接给玩家看的文本；不含 kp_notes / kp_truth。
+    """
+    intro = (module.player_intro or "").strip() or None
+    opening: str | None = None
+    if module.opening is not None:
+        opening = (module.opening.script or "").strip() or None
+    pages: list[str] = []
+    for text in (intro, opening):
+        if text and text not in pages:
+            pages.append(text)
+    return intro, opening, pages
+
+
 # ── 文本渲染（给 LLM 消费）────────────────────────────
 # system prompt（剧本全文常驻）和 read_module 工具共用同一份渲染，保证
 # agent 无论从哪条路看剧本，看到的都是同一个文本。

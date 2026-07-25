@@ -58,6 +58,19 @@ from app.core.keeper.prompts import (
     format_narrator_input,
     format_turn_input,
 )
+from app.core.keeper.prose_discipline import (
+    clip_narration,
+    inject_action_resolution_guidance,
+    inject_confusion_guidance,
+    inject_weird_response_guidance,
+    is_clear_action_intent,
+    is_player_confused,
+    is_violence_edge_utterance,
+    is_weird_or_meta_utterance,
+    narration_limit,
+    narration_max_tokens,
+    scrub_kp_anti_patterns,
+)
 from app.core.keeper.tools import (
     AGENDA_FIRED_KEY,
     KeeperDeps,
@@ -92,10 +105,15 @@ logger = structlog.get_logger()
 _HISTORY_LIMIT = 200
 
 # 裁决 JSON 解析失败时的重试次数（把解析错误喂回去让模型改）。
-_ADJUDICATE_RETRIES = 1
+# 空响应常见于模型偶发不返回 content；多给一次机会，仍失败则兜底决策。
+_ADJUDICATE_RETRIES = 2
 
-# 叙事回复的 token 上限（兜底防长篇失控，≈400 汉字；正常回复够不到）。
-_NARRATION_MAX_TOKENS = 600
+_FALLBACK_ADJUDICATE_GUIDANCE = (
+    "【系统兜底】裁决模型未返回合法 JSON。"
+    "请用一两句世界内文字回应玩家本轮意图：能推进就写行动结果，"
+    "有障碍就写眼前障碍；不要编造未发生的重大剧情；"
+    "可请玩家用更明确的一句行动再说一次。checks 必须为空。"
+)
 
 # 历史重放里守秘人旧叙事的截断长度。不截断的话历史里全是它自己的 300-550 字
 # 长篇，模型会模仿自己的旧文风越写越长（自我强化）；重要事实的长期记忆靠
@@ -144,13 +162,14 @@ class KeeperAgent(Narrator):
             raise ValueError("KeeperAgent 需要 NarrationContext 携带 room_id/player_id")
         room_id = context.room_id
         is_heartbeat = getattr(context, "is_heartbeat", False)
+        is_opening_ceremony = getattr(context, "is_opening_ceremony", False)
 
         # 两段式玩家掷骰：还有待掷的检定时不再裁决新一轮——先让玩家把手头的
         # 骰子掷完。重发同一个请求（而不是静默不回应），防前端刷新丢卡片。
-        # 主动心跳轮：有待掷时直接放弃（设计：等玩家掷骰不算冷场）。
+        # 主动心跳 / 开场仪式：有待掷时直接放弃（开场不该卡在旧检定上）。
         pending = pending_check_manager.first(room_id)
         if pending is not None:
-            if is_heartbeat:
+            if is_heartbeat or is_opening_ceremony:
                 return NarrationOutcome(text="")
             logger.info(
                 "keeper_narrate_pending_guard",
@@ -168,14 +187,17 @@ class KeeperAgent(Narrator):
         phase = load_phase(keeper_state)
         ending_id = load_ending_id(keeper_state)
         if phase == PHASE_FINISHED:
-            if is_heartbeat:
+            if is_heartbeat or is_opening_ceremony:
                 return NarrationOutcome(text="")
             return NarrationOutcome(
                 text=f"本局已结束（结局：{ending_id or '—'}）。感谢各位调查员。"
             )
 
-        # 首次进入：模组有 opening 且尚未记阶段 → 初始化为 opening
-        if phase is None and self._module.opening is not None:
+        # 开场仪式或首次进入：模组有 opening 且尚未记阶段 → 初始化为 opening
+        # （设计 05：game.start 后第一轮即开场仪式，不干等玩家）
+        if phase is None and (
+            is_opening_ceremony or self._module.opening is not None
+        ):
             deps_boot = KeeperDeps(
                 room_id=room_id,
                 player_id=context.player_id,
@@ -190,6 +212,22 @@ class KeeperAgent(Narrator):
                 **(keeper_state or {}),
                 PHASE_KEY: PHASE_OPENING,
             }
+
+        # 有 structured 开场脚本时：仪式轮只推这一段，不 LLM 再写第二遍
+        # （全模组通用：前情页已读过 intro 时，对局再扩写 = 双重引导）
+        if is_opening_ceremony:
+            script = ""
+            if self._module.opening and (self._module.opening.script or "").strip():
+                script = self._module.opening.script.strip()
+            elif (self._module.player_intro or "").strip():
+                script = self._module.player_intro.strip()
+            if script:
+                logger.info(
+                    "keeper_opening_use_script",
+                    room_id=room_id,
+                    script_len=len(script),
+                )
+                return NarrationOutcome(text=script)
 
         # 议程 / 密级 / 阶段状态由代码注入——once 与揭开记账不靠模型自觉。
         fired = load_fired_agenda(keeper_state)
@@ -220,14 +258,53 @@ class KeeperAgent(Narrator):
             visibility_status=visibility_status,
             phase_status=phase_status,
             is_heartbeat=is_heartbeat,
+            is_opening_ceremony=is_opening_ceremony,
             phase=phase,
         )
 
         # 阶段1·裁决：结构化输出，检定是 schema 字段，不存在"忘了裁决"。
         decision = await self._adjudicate(situation)
-        # 主动轮硬约束：丢弃检定请求（设计：主动轮不发起检定）
-        if is_heartbeat and (decision.checks or decision.san_checks):
+        # 主动轮 / 开场仪式硬约束：丢弃检定请求（设计：开场不发起高风险检定）
+        if (is_heartbeat or is_opening_ceremony) and (
+            decision.checks or decision.san_checks
+        ):
             decision = decision.model_copy(update={"checks": [], "san_checks": []})
+
+        # 迷茫 / 怪话 / 明确行动：代码注入 guidance（不靠模型自觉）
+        confused = is_player_confused(context.utterance)
+        weird = is_weird_or_meta_utterance(context.utterance)
+        action_intent = is_clear_action_intent(context.utterance)
+        if confused:
+            decision = decision.model_copy(
+                update={
+                    "checks": [],
+                    "san_checks": [],
+                    "narration_guidance": inject_confusion_guidance(
+                        decision.narration_guidance
+                    ),
+                }
+            )
+        elif weird and not is_heartbeat and not is_opening_ceremony:
+            # 怪话接招：元/玩笑清检定；暴力边界保留检定（伤害/SAN）但同样强制接招
+            update: dict = {
+                "narration_guidance": inject_weird_response_guidance(
+                    decision.narration_guidance
+                ),
+            }
+            if not is_violence_edge_utterance(context.utterance):
+                update["checks"] = []
+                update["san_checks"] = []
+            decision = decision.model_copy(update=update)
+        elif action_intent and not is_heartbeat and not is_opening_ceremony:
+            # 明确行动：强制推进，禁止街景挡枪（全模组通用）
+            decision = decision.model_copy(
+                update={
+                    "narration_guidance": inject_action_resolution_guidance(
+                        decision.narration_guidance
+                    ),
+                }
+            )
+
         logger.info(
             "keeper_decision",
             thinking=decision.thinking,
@@ -240,7 +317,19 @@ class KeeperAgent(Narrator):
             opening_complete=decision.opening_complete,
             ending_reached=decision.ending_reached,
             is_heartbeat=is_heartbeat,
+            is_opening_ceremony=is_opening_ceremony,
+            player_confused=confused,
+            clear_action_intent=action_intent,
+            weird_or_meta=weird,
         )
+
+        char_limit = narration_limit(
+            is_heartbeat=is_heartbeat,
+            is_opening_ceremony=is_opening_ceremony,
+            phase=phase,
+            ending_reached=bool(decision.ending_reached),
+        )
+        token_limit = narration_max_tokens(char_limit)
 
         # 阶段2·执行：HP/状态纯代码立即写库；检定不在这里掷骰，解析成待掷记录。
         deps = KeeperDeps(
@@ -269,17 +358,44 @@ class KeeperAgent(Narrator):
                 "要靠这次检定才能获得的信息**——线索一个字都留到掷骰之后）\n" + check_list
             )
             decision_for_narration = decision.model_copy(update={"narration_guidance": guidance})
-            narration = await self._narrate_prose(situation, decision_for_narration, report, issues)
+            narration = await self._narrate_prose(
+                situation,
+                decision_for_narration,
+                report,
+                issues,
+                max_tokens=token_limit,
+                max_chars=char_limit,
+            )
+            narration = self._finalize_prose(
+                narration,
+                action_intent=action_intent,
+                confused=confused,
+                max_chars=char_limit,
+            )
             return NarrationOutcome(
                 text=narration,
                 check_requests=[_pending_to_notice(c) for c in pending_checks],
             )
 
-        # 阶段3·叙事：只写故事。
-        narration = await self._narrate_prose(situation, decision, report, issues)
+        # 阶段3·叙事：只写故事 + 长度硬裁 + 去菜单/软挡。
+        narration = await self._narrate_prose(
+            situation,
+            decision,
+            report,
+            issues,
+            max_tokens=token_limit,
+            max_chars=char_limit,
+        )
+        narration = self._finalize_prose(
+            narration,
+            action_intent=action_intent,
+            confused=confused,
+            max_chars=char_limit,
+        )
 
         # 🔴 掷骰可见性的硬保证：本轮发生过的伤害由代码强制附加在叙事末尾——
         # 骰子/数值当众认账是机制不是要求（实测模型会把数字藏进叙事）。
+        # 附加在 clip 之后，避免 🎲 行被裁掉。
         if deps.check_results:
             dice_lines = "\n".join(f"🎲 {line}" for line in deps.check_results)
             narration = f"{narration}\n\n{dice_lines}" if narration else dice_lines
@@ -366,23 +482,42 @@ class KeeperAgent(Narrator):
         return replace(outcome, check_results=[notice, *outcome.check_results])
 
     async def _adjudicate(self, situation: str) -> KeeperDecision:
-        """阶段1：裁决。JSON mode + pydantic 校验，解析失败把错误喂回去重试一次。
+        """阶段1：裁决。JSON mode + pydantic 校验，解析失败把错误喂回去重试。
 
         温度压低（0.3）：裁决要的是稳定一致的规则判断，不是创造力。
+        全部重试仍失败（含空 content）时返回兜底决策，避免整轮静默失败。
         """
         messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": self._adjudicator_instructions},
             {"role": "user", "content": situation + "\n\n请输出本轮的裁决 JSON。"},
         ]
         last_error: Exception | None = None
-        for _ in range(1 + _ADJUDICATE_RETRIES):
+        for attempt in range(1 + _ADJUDICATE_RETRIES):
             response = await self._client.chat.completions.create(
                 model=DEEPSEEK_MODEL,
                 messages=messages,
                 response_format={"type": "json_object"},
                 temperature=0.3,
             )
-            raw = response.choices[0].message.content or ""
+            raw = (response.choices[0].message.content or "").strip()
+            if not raw:
+                last_error = ValueError("empty adjudicate response")
+                logger.warning(
+                    "keeper_adjudicate_empty",
+                    attempt=attempt + 1,
+                    room_hint=situation[:80],
+                )
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "你上一轮返回了空内容。必须输出完整合法的裁决 JSON 对象，"
+                            "至少包含 thinking 与 narration_guidance 字段；"
+                            "checks/san_checks/hp_changes/state_updates 可为 []。"
+                        ),
+                    }
+                )
+                continue
             try:
                 return KeeperDecision.model_validate_json(raw)
             except ValidationError as exc:
@@ -394,7 +529,14 @@ class KeeperAgent(Narrator):
                         "content": f"JSON 不符合要求：{exc}。请重新只输出一个合法的裁决 JSON。",
                     }
                 )
-        raise RuntimeError(f"裁决 JSON 解析失败：{last_error}")
+        logger.warning(
+            "keeper_adjudicate_fallback",
+            error=str(last_error),
+        )
+        return KeeperDecision(
+            thinking=f"裁决解析失败兜底：{last_error}",
+            narration_guidance=_FALLBACK_ADJUDICATE_GUIDANCE,
+        )
 
     async def _narrate_prose(
         self,
@@ -402,9 +544,19 @@ class KeeperAgent(Narrator):
         decision: KeeperDecision,
         report: list[str],
         issues: list[str],
+        *,
+        max_tokens: int,
+        max_chars: int,
     ) -> str:
-        """阶段3：叙事。没有工具、没有裁决压力，写作本能是生产力不是对抗对象。"""
-        user_content = format_narrator_input(situation, decision.narration_guidance, report, issues)
+        """阶段3：叙事。max_tokens 限生成；max_chars 代码硬裁（句末优先）。"""
+        length_hint = (
+            f"\n\n【长度硬限】本轮正文不得超过 {max_chars} 字（含标点）。"
+            "超长会被系统截断——请一次写完且写短。"
+        )
+        user_content = (
+            format_narrator_input(situation, decision.narration_guidance, report, issues)
+            + length_hint
+        )
         response = await self._client.chat.completions.create(
             model=DEEPSEEK_MODEL,
             messages=[
@@ -412,12 +564,41 @@ class KeeperAgent(Narrator):
                 {"role": "user", "content": user_content},
             ],
             temperature=0.8,
-            # 长度兜底：prompt 的"80~180 字"纪律照旧会被无视（真机实测每轮
-            # 300-550 字），max_tokens 挡住失控的长篇——这是底线不是目标，
-            # 正常回复远够不到它。
-            max_tokens=_NARRATION_MAX_TOKENS,
+            max_tokens=max_tokens,
         )
-        return response.choices[0].message.content or ""
+        raw = response.choices[0].message.content or ""
+        clipped = clip_narration(raw, max_chars)
+        if len(raw.strip()) > max_chars:
+            logger.info(
+                "keeper_narration_clipped",
+                before=len(raw.strip()),
+                after=len(clipped),
+                limit=max_chars,
+            )
+        return clipped
+
+    def _finalize_prose(
+        self,
+        text: str,
+        *,
+        action_intent: bool,
+        confused: bool = False,
+        max_chars: int,
+    ) -> str:
+        scrubbed = scrub_kp_anti_patterns(
+            text, action_intent=action_intent, confused=confused
+        )
+        # scrub 后再 clip，避免删菜单后仍超长 / 或裁切前未处理的尾巴
+        final = clip_narration(scrubbed, max_chars)
+        if scrubbed != (text or "").strip() or final != scrubbed:
+            logger.info(
+                "keeper_narration_scrubbed",
+                before=len(text or ""),
+                after=len(final),
+                action_intent=action_intent,
+                confused=confused,
+            )
+        return final
 
     async def _load_room_memory(self, room_id: str) -> tuple[dict | None, list[str], list[str]]:
         """读取世界状态笔记 + 全量事件历史 + 在场调查员名单。

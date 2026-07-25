@@ -61,10 +61,13 @@
 - ✅ 两阶段回合制 + 两段式玩家掷骰 + 议程 `agenda_fired` + trigger 自由文本
 - ✅ 预处理 4a/4b：组装校验、exits/contains/sub_nodes/forms/visibility_pairs
 - ✅ 路线 5 薄：`visibility_revealed` 代码记账 + 局面注入（叙事仍全员广播）
-- ✅ 路线 6 薄：对局阶段 / `ending_reached`；心跳默认 **关**（`KEEPER_HEARTBEAT_ENABLED`）
-- ⚠️ 前端进 play 有时不回放历史旁白（历史/WS 与注入会话问题）
-- ⚠️ `game.start` 仍有占位开场句，真开场常绑在首动
-- ❌ 真 per-player 私信；完整 V 函数；厚实体表分表
+- ✅ 路线 6：对局阶段 / `ending_reached` / 心跳（development 默认开，test 关）
+- ✅ 前情 API + game.start 开场仪式 + play replay 回补
+- ✅ 叙事纪律硬裁 + 迷茫强制引导
+- ✅ 02 `check_guard`：当前场景节点 checks 外技能不得发 request
+- ✅ 掷骰新手提示；地图无假地点；`moduleId` 进预览/访客回填
+- ❌ 真 per-player 私信 / 完整 V（exec/08 本期不做）；厚分表；线下报骰
+- 冒烟：`e2e/scripts/sim-human-playability.py`
 
 ## 测试与产物
 

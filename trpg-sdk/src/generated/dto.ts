@@ -453,7 +453,12 @@ export interface MeRead {
 }
 
 /**
- * GET /api/v1/modules/{moduleId} 返回——在 ModuleRead 基础上补充简介。
+ * GET /api/v1/modules/{moduleId} 返回——列表字段 + 玩家可见前情。
+ *
+ * - synopsis：目录简介（Scenario 表，选模组用）
+ * - player_intro / opening_script：来自 structured JSON 的玩家可见开场
+ *   （绝不含 kp_truth；文件缺失时为 null）
+ * - story_pages：前端前情页直接渲染的段落列表（intro + opening 去重）
  */
 export interface ModuleDetailRead {
   id: string;
@@ -465,6 +470,9 @@ export interface ModuleDetailRead {
   difficulty: number;
   estimatedDuration?: string | null;
   synopsis?: string | null;
+  playerIntro?: string | null;
+  openingScript?: string | null;
+  storyPages?: string[];
 }
 
 /**
@@ -517,6 +525,7 @@ export interface MyRoomSummary {
   roomCode: string;
   roomName: string;
   phase: string;
+  moduleId?: string | null;
   moduleTitle?: string | null;
   playerCount: number;
   maxPlayers: number;
@@ -671,6 +680,7 @@ export interface RoomPreview {
   roomName: string;
   phase: string;
   storyStarted: boolean;
+  moduleId?: string | null;
   moduleTitle?: string | null;
   playerCount: number;
   maxPlayers: number;

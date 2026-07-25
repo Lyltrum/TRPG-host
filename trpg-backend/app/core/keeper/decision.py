@@ -191,13 +191,35 @@ async def create_pending_checks(
     玩家/技能名的合法性预检复用 tools.py 内部的解析函数（跟 roll_check_impl/
     san_check_impl 走的是同一套解析逻辑，保证"能不能掷"的判断口径一致）；
     非法项跳过并记 issue（未知技能名、找不到的玩家），与旧版执行器行为一致。
+    另：设计 02——当前场景节点若标注了 checks[]，只允许其中的 skill 进入
+    check.request（第一层模组护栏）。
     返回 (待掷记录, 问题清单)。
     """
+    from app.core.keeper.check_guard import filter_checks_against_module
+    from app.models.room import Room
+
     pending: list[PendingCheck] = []
     issues: list[str] = []
 
+    # 模组节点护栏：先按当前场景过滤 skill 列表
+    current_scene: str | None = None
     async with deps.session_factory() as db:
-        for check in decision.checks:
+        room = await db.get(Room, deps.room_id)
+        if room and isinstance(room.keeper_state, dict):
+            raw = room.keeper_state.get("当前场景")
+            current_scene = str(raw) if raw is not None else None
+    allowed_skills, guard_issues = filter_checks_against_module(
+        deps.module,
+        [c.skill for c in decision.checks],
+        current_scene=current_scene,
+    )
+    issues.extend(guard_issues)
+    allowed_set = set(allowed_skills)
+    # 保持原 checks 顺序，只保留通过护栏的
+    guarded_checks = [c for c in decision.checks if c.skill in allowed_set]
+
+    async with deps.session_factory() as db:
+        for check in guarded_checks:
             try:
                 player, character = await _resolve_character(db, deps, check.player)
                 display_name, _target = _resolve_skill_target(deps, character, check.skill)

@@ -74,13 +74,10 @@ export function getGameById(id: string): GameManifest | undefined {
  * id 必须与后端 `app/core/keeper/catalog.py` 的 scenario_id **完全一致**，
  * 建房时 `selectModule(roomId, sceneId)` 才能命中 DB，Keeper 加载对应
  * `模组资料/*.structured.json`。
+ *
+ * 前情正文不写在这里：`/room/story` 走 `GET /modules/{id}` 的
+ * `storyPages`（structured 的 player_intro + opening.script）。
  */
-const KEEPER_STORY_PAGES = [
-  '本局由 AI 守秘人主持（需后端配置 DeepSeek + 本地 structured 剧本）。',
-  '建完角色后进入对局，在「主持人」频道发言即可推进。',
-  '掷骰采用两段式：守秘人发起检定后，请点击「掷骰」确认。',
-]
-
 export const SCENARIO_REGISTRY: Scenario[] = [
   {
     id: '00000000-0000-0000-0000-000000000003',
@@ -94,7 +91,6 @@ export const SCENARIO_REGISTRY: Scenario[] = [
     estimatedTime: '2-3 小时',
     storyLabel: '可玩 · 追书人',
     subtitle: 'BOOK-HUNTER',
-    storyPages: KEEPER_STORY_PAGES,
   },
   {
     id: '00000000-0000-0000-0000-000000000004',
@@ -108,7 +104,6 @@ export const SCENARIO_REGISTRY: Scenario[] = [
     estimatedTime: '3-5 小时',
     storyLabel: '可玩 · 科比特先生',
     subtitle: 'MISTER CORBITT',
-    storyPages: KEEPER_STORY_PAGES,
   },
   {
     id: '00000000-0000-0000-0000-000000000005',
@@ -122,7 +117,6 @@ export const SCENARIO_REGISTRY: Scenario[] = [
     estimatedTime: '3-4 小时',
     storyLabel: '可玩 · 神秘渡轮',
     subtitle: 'THE FERRY',
-    storyPages: KEEPER_STORY_PAGES,
   },
   {
     id: '00000000-0000-0000-0000-000000000006',
@@ -136,7 +130,6 @@ export const SCENARIO_REGISTRY: Scenario[] = [
     estimatedTime: '3-5 小时',
     storyLabel: '可玩 · 复足',
     subtitle: 'FUZU',
-    storyPages: KEEPER_STORY_PAGES,
   },
   {
     id: '00000000-0000-0000-0000-000000000007',
@@ -150,7 +143,6 @@ export const SCENARIO_REGISTRY: Scenario[] = [
     estimatedTime: '4-6 小时',
     storyLabel: '可玩 · 死者的顿足舞',
     subtitle: "DEAD MAN'S STOMP",
-    storyPages: KEEPER_STORY_PAGES,
   },
 ]
 

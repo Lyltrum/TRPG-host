@@ -30,7 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import Settings
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEEPSEEK_MODEL = "deepseek-chat"
+# 2026-07 DeepSeek 仅支持 v4：deepseek-v4-flash / deepseek-v4-pro（deepseek-chat 已 400）
+DEEPSEEK_MODEL = "deepseek-v4-pro"
 _REQUEST_TIMEOUT_SECONDS = 30.0
 
 _SYSTEM_PROMPT = (
@@ -58,6 +59,8 @@ class NarrationContext:
     player_id: str | None = None
     # 世界心跳主动轮（路线 6）：裁决/叙事走克制模式，不发起检定。
     is_heartbeat: bool = False
+    # 开场仪式轮（设计 05）：game.start 后自动跑的第一轮，不发起高风险检定。
+    is_opening_ceremony: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +129,10 @@ class FallbackNarrator(Narrator):
     """无 API Key 时的确定性占位实现，等价于此前 ws.py 里硬编码的占位文案。"""
 
     async def narrate(self, context: NarrationContext) -> NarrationOutcome:
+        # 开场仪式：空串让 WS 层回退到 structured opening.script 粘贴
+        # （CI 无 DeepSeek 时仍满足「进局必有开场旁白」）。
+        if context.is_opening_ceremony:
+            return NarrationOutcome(text="")
         return NarrationOutcome(text=f"守秘人记下了你的行动：「{context.utterance}」……")
 
 

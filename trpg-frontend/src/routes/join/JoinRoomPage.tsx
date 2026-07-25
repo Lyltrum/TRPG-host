@@ -3,13 +3,16 @@ import { useState } from 'react'
 import { ArrowLeft, DoorOpen, Hash } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 import { useRoomStore } from '@/stores/room-store'
-import { joinRoomByCode } from '@/services/room'
+import { getRoomInfo, joinRoomByCode } from '@/services/room'
 import { friendlyErrorMessage } from '@/services/api-client'
+import { useGameStore } from '@/stores/game-store'
 
 export default function JoinRoomPage() {
   const navigate = useNavigate()
   const nickname = useAuthStore((s) => s.nickname)
   const setRoomIdentity = useRoomStore((s) => s.setRoomIdentity)
+  const setModuleId = useRoomStore((s) => s.setModuleId)
+  const setScene = useGameStore((s) => s.setScene)
   const setHost = useRoomStore((s) => s.setHost)
   const [roomCode, setRoomCode] = useState('')
   const [error, setError] = useState('')
@@ -27,6 +30,15 @@ export default function JoinRoomPage() {
       const room = await joinRoomByCode(code, nickname || undefined)
       setRoomIdentity(room)
       setHost(false)
+      // 访客拿不到选模组页的 sceneId：从房间预览补 moduleId（前情/开场依赖）
+      try {
+        const preview = await getRoomInfo(room.roomCode || code)
+        const mid = preview.moduleId
+        if (mid) {
+          setModuleId(mid)
+          setScene(mid)
+        }
+      } catch { /* 预览失败不挡进房 */ }
       // ★ 访客也要先进大厅——所有玩家到齐、都准备好之后才能一起进入建卡
       // 阶段，不能像以前那样直接跳过大厅、单独去建卡（见需求：全员到齐才能
       // 开始游戏）。

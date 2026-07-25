@@ -1,27 +1,56 @@
 import { useNavigate } from 'react-router-dom'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, BookOpen } from 'lucide-react'
 import { useGameStore } from '@/stores/game-store'
+import { useRoomStore } from '@/stores/room-store'
 import { getScenarioById } from '@/config/games'
-import { useMemo } from 'react'
-import { disconnectWebSocket } from '@/services/api-client'
-
-// 访客走 /join 加入房间，从来不会经过"选择游戏/世界/模组"那几步，本地
-// game-store 里的 sceneId 天然是空的。后端目前也确实只有这一款真实落库的
-// 模组（惠特利旧宅，见 server/rest/lobby.py 的注释），不管房主当初在 UI 上
-// 选的是哪张模组卡，实际跑的都是它——所以访客没有 sceneId 时，直接兜底成
-// 这一款，跟后端的真实行为保持一致，而不是让访客看到"未选择模组"的空页面。
-const FALLBACK_SCENE_ID = 'whateley'
+import { disconnectWebSocket, friendlyErrorMessage, sdk } from '@/services/api-client'
+import type { ModuleDetail } from 'trpg-sdk'
 
 export default function StoryPage() {
   const navigate = useNavigate()
   const sceneId = useGameStore((s) => s.sceneId)
-  const scenario = useMemo(() => getScenarioById(sceneId || FALLBACK_SCENE_ID), [sceneId])
-  // ★ 这里已经在"游戏进行中"的流程里了（大厅已经全员就绪、房主已经点了开始），
-  // 左上角不能再是无提示的 navigate(-1)——那样会悄悄把人退回一个其实已经走完
-  // 的大厅步骤，其他人可能都已经往下走了，状态会对不上。改成和 RoomPage 一致
-  // 的"退出确认"：退出只是这个人自己先走，房间保留，之后能从「我的游戏」继续。
+  const roomModuleId = useRoomStore((s) => s.moduleId)
+  // 房主选模组时 sceneId 在 game-store；访客/刷新后优先 room-store.moduleId
+  const moduleId = sceneId || roomModuleId
+
+  const localScenario = useMemo(
+    () => (moduleId ? getScenarioById(moduleId) : undefined),
+    [moduleId],
+  )
+
+  const [detail, setDetail] = useState<ModuleDetail | null>(null)
+  const [loading, setLoading] = useState(Boolean(moduleId))
+  const [loadError, setLoadError] = useState('')
   const [confirmExit, setConfirmExit] = useState(false)
+
+  useEffect(() => {
+    if (!moduleId) {
+      setLoading(false)
+      setDetail(null)
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    setLoadError('')
+    sdk.modules
+      .getDetail(moduleId)
+      .then((mod) => {
+        if (!cancelled) setDetail(mod)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setDetail(null)
+          setLoadError(friendlyErrorMessage(err, '加载模组前情失败'))
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [moduleId])
 
   const handleExit = () => {
     disconnectWebSocket()
@@ -46,7 +75,21 @@ export default function StoryPage() {
     </div>
   )
 
-  if (!scenario) {
+  const title = detail?.title || localScenario?.name
+  const titleEn = localScenario?.nameEn
+  const storyLabel = localScenario?.storyLabel || (title ? `可玩 · ${title}` : '')
+  const storyPages =
+    (detail?.storyPages && detail.storyPages.length > 0
+      ? detail.storyPages
+      : detail?.playerIntro
+        ? [detail.playerIntro]
+        : detail?.synopsis
+          ? [detail.synopsis]
+          : localScenario?.storyPages?.length
+            ? localScenario.storyPages
+            : []) as string[]
+
+  if (!moduleId) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-[#1a1620] to-[#0d0b10] flex flex-col justify-center px-7 py-10 relative">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_30%,rgba(112,80,160,0.08),transparent_70%)] pointer-events-none" />
@@ -83,25 +126,41 @@ export default function StoryPage() {
       </button>
 
       <div className="font-mono text-[11px] tracking-[0.15em] text-[#706090] mb-5">
-        {scenario.storyLabel}
+        {storyLabel}
       </div>
       <h1 className="text-[28px] font-bold text-[#eeead8] leading-[1.25] mb-2">
-        {scenario.name}
+        {title || '…'}
       </h1>
-      <p className="font-mono text-xs text-[#9088a0] mb-8 tracking-[0.05em]">
-        {scenario.nameEn}
-      </p>
+      {titleEn ? (
+        <p className="font-mono text-xs text-[#9088a0] mb-8 tracking-[0.05em]">
+          {titleEn}
+        </p>
+      ) : (
+        <div className="mb-8" />
+      )}
       <div className="w-10 h-px bg-[#504860] mb-7" />
       <div className="text-sm leading-[1.9] text-[#c8c0b8]">
-        {scenario.storyPages.map((page, idx) => (
-          <p key={idx} className={idx < scenario.storyPages.length - 1 ? 'mb-4' : ''}
-            dangerouslySetInnerHTML={{ __html: page }}
-          />
-        ))}
+        {loading && <p className="text-[#9088a0]">正在加载前情…</p>}
+        {!loading && loadError && (
+          <p className="text-[#c08080]">{loadError}</p>
+        )}
+        {!loading && !loadError && storyPages.length === 0 && (
+          <p className="text-[#9088a0]">暂无玩家可见的开场介绍（structured 未就绪）。</p>
+        )}
+        {!loading &&
+          storyPages.map((page, idx) => (
+            <p
+              key={idx}
+              className={idx < storyPages.length - 1 ? 'mb-4' : ''}
+            >
+              {page}
+            </p>
+          ))}
       </div>
       <button
         onClick={() => navigate('/room/character')}
-        className="mt-10 self-start px-6 py-3.5 rounded-sm bg-brass text-white text-sm font-semibold active:bg-brass-dark transition-all"
+        disabled={loading}
+        className="mt-10 self-start px-6 py-3.5 rounded-sm bg-brass text-white text-sm font-semibold active:bg-brass-dark transition-all disabled:opacity-50"
       >
         继续 →
       </button>

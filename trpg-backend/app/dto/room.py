@@ -119,6 +119,7 @@ class RoomPreview(CamelModel):
     room_name: str
     phase: str
     story_started: bool
+    module_id: str | None = None
     module_title: str | None = None
     player_count: int
     max_players: int
@@ -132,6 +133,7 @@ class MyRoomSummary(CamelModel):
     room_code: str
     room_name: str
     phase: str
+    module_id: str | None = None
     module_title: str | None = None
     player_count: int
     max_players: int

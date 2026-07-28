@@ -19,7 +19,13 @@ from app.core.db import Base
 from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.prompts import format_turn_input
-from app.core.narrator import DeepSeekNarrator, FallbackNarrator, NarrationContext, build_narrator
+from app.core.narrator import (
+    DeepSeekNarrator,
+    FallbackNarrator,
+    NarrationContext,
+    RoomAwareKeeperNarrator,
+    build_narrator,
+)
 from app.models.event import Event
 from app.models.room import Player, Room
 
@@ -52,8 +58,10 @@ def _keeper(api_key: str = "fake-key") -> KeeperAgent:
 
 
 def test_build_narrator_prefers_keeper_when_fully_configured() -> None:
+    # 前端可选模组后，keeper 入口是按房间 scenario_id 选剧本的
+    # RoomAwareKeeperNarrator（内部再按 path 缓存 KeeperAgent）。
     settings = Settings(deepseek_api_key="k", keeper_module_path=_FIXTURE_MODULE)
-    assert isinstance(build_narrator(settings), KeeperAgent)
+    assert isinstance(build_narrator(settings), RoomAwareKeeperNarrator)
 
 
 def test_build_narrator_module_path_without_key_stays_fallback() -> None:
@@ -61,8 +69,13 @@ def test_build_narrator_module_path_without_key_stays_fallback() -> None:
     assert isinstance(build_narrator(settings), FallbackNarrator)
 
 
-def test_build_narrator_key_without_module_path_stays_deepseek() -> None:
-    settings = Settings(deepseek_api_key="k", keeper_module_path=None)
+def test_build_narrator_key_without_module_path_stays_deepseek(tmp_path: Path) -> None:
+    # 🔴 keeper_modules_dir 必须钉死到空目录：不钉的话会去扫开发机真实的
+    # `模组资料/`，本机有 structured 就走 keeper、CI 空目录才走 DeepSeek——
+    # 同一份代码两种结果（环境泄漏，与 e2e 端口占用同类坑）。
+    settings = Settings(
+        deepseek_api_key="k", keeper_module_path=None, keeper_modules_dir=str(tmp_path)
+    )
     assert isinstance(build_narrator(settings), DeepSeekNarrator)
 
 

@@ -65,7 +65,9 @@ def test_build_narrator_uses_room_aware_keeper_when_modules_dir_ready() -> None:
 
     modules_dir = default_modules_dir()
     if not modules_dir.is_dir():
-        pytest.skip("本地无 模组资料/ 目录")
+        # pytest.skip 被 @_with_exception 包过，ty 推不出它的真实签名
+        # （位置参数嫌多、关键字嫌不认识），是工具局限不是调用错误。
+        pytest.skip("本地无 模组资料/ 目录")  # ty: ignore[too-many-positional-arguments]
     settings = Settings(
         deepseek_api_key="sk-test-key",
         keeper_module_path=None,

@@ -31,6 +31,8 @@ WebSocket 可能存活很久，用一个 session 包住整条连接会在这期�
 鉴权单独用一个短 session，之后每条消息各开各的，消息之间等待时不持有连接。
 """
 
+import contextlib
+
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
@@ -337,15 +339,13 @@ async def _handle_action_submit(
             logger.warning("narrator_failed", room_id=room_id, error=str(exc))
             await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
             # 聊天区不能静默：补一条可见兜底，避免玩家以为断线
-            try:
+            with contextlib.suppress(Exception):  # 兜底广播失败也不再抛
                 await _broadcast_narration(
                     db,
                     room_id,
                     player_id,
                     "守秘人整理思路时卡了一下。请用一句更明确的行动再说一次。",
                 )
-            except Exception:  # noqa: BLE001 — 兜底广播失败也不再抛
-                pass
             return
         # 玩家行动重置心跳节流（路线 6）
         try:
@@ -503,9 +503,7 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                             bound_player_id,
                             fallback_opening,
                         )
-                        await _broadcast_narration(
-                            db, room_id, bound_player_id, opening_text
-                        )
+                        await _broadcast_narration(db, room_id, bound_player_id, opening_text)
                     elif event_type == "action.submit":
                         submit_payload = ActionSubmitPayload.model_validate(raw_payload)
                         utterance = submit_payload.utterance.strip()

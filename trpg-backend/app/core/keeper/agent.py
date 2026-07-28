@@ -195,9 +195,7 @@ class KeeperAgent(Narrator):
 
         # 开场仪式或首次进入：模组有 opening 且尚未记阶段 → 初始化为 opening
         # （设计 05：game.start 后第一轮即开场仪式，不干等玩家）
-        if phase is None and (
-            is_opening_ceremony or self._module.opening is not None
-        ):
+        if phase is None and (is_opening_ceremony or self._module.opening is not None):
             deps_boot = KeeperDeps(
                 room_id=room_id,
                 player_id=context.player_id,
@@ -265,9 +263,7 @@ class KeeperAgent(Narrator):
         # 阶段1·裁决：结构化输出，检定是 schema 字段，不存在"忘了裁决"。
         decision = await self._adjudicate(situation)
         # 主动轮 / 开场仪式硬约束：丢弃检定请求（设计：开场不发起高风险检定）
-        if (is_heartbeat or is_opening_ceremony) and (
-            decision.checks or decision.san_checks
-        ):
+        if (is_heartbeat or is_opening_ceremony) and (decision.checks or decision.san_checks):
             decision = decision.model_copy(update={"checks": [], "san_checks": []})
 
         # 迷茫 / 怪话 / 明确行动：代码注入 guidance（不靠模型自觉）
@@ -279,17 +275,13 @@ class KeeperAgent(Narrator):
                 update={
                     "checks": [],
                     "san_checks": [],
-                    "narration_guidance": inject_confusion_guidance(
-                        decision.narration_guidance
-                    ),
+                    "narration_guidance": inject_confusion_guidance(decision.narration_guidance),
                 }
             )
         elif weird and not is_heartbeat and not is_opening_ceremony:
             # 怪话接招：元/玩笑清检定；暴力边界保留检定（伤害/SAN）但同样强制接招
             update: dict = {
-                "narration_guidance": inject_weird_response_guidance(
-                    decision.narration_guidance
-                ),
+                "narration_guidance": inject_weird_response_guidance(decision.narration_guidance),
             }
             if not is_violence_edge_utterance(context.utterance):
                 update["checks"] = []
@@ -585,9 +577,7 @@ class KeeperAgent(Narrator):
         confused: bool = False,
         max_chars: int,
     ) -> str:
-        scrubbed = scrub_kp_anti_patterns(
-            text, action_intent=action_intent, confused=confused
-        )
+        scrubbed = scrub_kp_anti_patterns(text, action_intent=action_intent, confused=confused)
         # scrub 后再 clip，避免删菜单后仍超长 / 或裁切前未处理的尾巴
         final = clip_narration(scrubbed, max_chars)
         if scrubbed != (text or "").strip() or final != scrubbed:

@@ -880,7 +880,10 @@ def mechanical_sanitize_module(module: dict[str, Any]) -> list[str]:
             _dedupe_node(n, "")
 
     node_ids = {str(n.get("id")) for n in _walk_node_dicts(nodes) if n.get("id")}
-    npcs = module.get("npcs") if isinstance(module.get("npcs"), list) else []
+    # 先取再判断：写成 `module.get(...) if isinstance(module.get(...), list)`
+    # 是两次独立调用，类型收窄不会传递到赋值结果上。
+    raw_npcs = module.get("npcs")
+    npcs: list[Any] = raw_npcs if isinstance(raw_npcs, list) else []
     npc_ids = {str(n.get("id")) for n in npcs if isinstance(n, dict) and n.get("id")}
 
     # 2) 边只保留存在的 node id（npc 目标丢弃）

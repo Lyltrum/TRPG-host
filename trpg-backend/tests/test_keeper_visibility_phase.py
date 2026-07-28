@@ -166,6 +166,7 @@ async def test_opening_complete_advances_phase(deps: KeeperDeps) -> None:
 
     async with deps.session_factory() as db:
         room = await db.get(Room, deps.room_id)
+        assert room is not None
         assert load_phase(room.keeper_state) == PHASE_INVESTIGATION
 
 

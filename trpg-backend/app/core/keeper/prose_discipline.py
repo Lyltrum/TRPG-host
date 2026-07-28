@@ -136,9 +136,7 @@ _WEIRD_GUIDANCE_PREFIX = (
 )
 
 
-_SYSTEM_UTTERANCE = re.compile(
-    r"^（(?:开场|掷骰|心跳|系统|主动推进)"
-)
+_SYSTEM_UTTERANCE = re.compile(r"^（(?:开场|掷骰|心跳|系统|主动推进)")
 
 
 def _is_system_utterance(text: str) -> bool:
@@ -216,9 +214,7 @@ def inject_confusion_guidance(guidance: str) -> str:
 
 # ── scrub：菜单 / 虚拟挡 ──────────────────────────────────
 
-_BRACKET_MENU = re.compile(
-    r"[\[【][^\]】]{0,120}(?:你可以|你也可以|选择|或者)[^\]】]{0,120}[\]】]"
-)
+_BRACKET_MENU = re.compile(r"[\[【][^\]】]{0,120}(?:你可以|你也可以|选择|或者)[^\]】]{0,120}[\]】]")
 _MENU_TAIL = re.compile(
     r"\n+(?:你可以(?:选择)?[：:．.\s].*|"
     r"你也可以[：:].*|"
@@ -226,9 +222,7 @@ _MENU_TAIL = re.compile(
     r"(?:1[\.．、]|2[\.．、]|3[\.．、]).*)\s*$",
     re.S,
 )
-_VIRTUAL_SOFT = re.compile(
-    r"(如果你(?:现在)?(?:穿过|走进|靠近|敲门|尝试)[^。]{0,40}[，,])"
-)
+_VIRTUAL_SOFT = re.compile(r"(如果你(?:现在)?(?:穿过|走进|靠近|敲门|尝试)[^。]{0,40}[，,])")
 # 整句虚拟挡 / 菜单（按句切分后丢弃）
 _SENTENCE_DROP = re.compile(
     r"^(?:"
@@ -250,9 +244,7 @@ def _split_sentences(text: str) -> list[str]:
     return [p for p in parts if p and p.strip()]
 
 
-def scrub_kp_anti_patterns(
-    text: str, *, action_intent: bool, confused: bool = False
-) -> str:
+def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = False) -> str:
     """叙事后处理：去菜单尾巴；行动轮去掉「你可以/如果你」虚拟挡（全模组通用）。
 
     confused=True（玩家问「能做什么」）时只打硬菜单：方括号块、编号列表、
@@ -301,9 +293,7 @@ def scrub_kp_anti_patterns(
             continue
         if re.match(r"^[-•*]\s*", s) and ("可以" in s or "试着" in s or "或者" in s):
             continue
-        if action_intent and re.search(
-            r"你可以|你也可以|如果你|要是你|倘若你|假如你|你自己选", s
-        ):
+        if action_intent and re.search(r"你可以|你也可以|如果你|要是你|倘若你|假如你|你自己选", s):
             continue
         # 非行动轮也去掉纯菜单句（「你可以：…」）
         if re.search(r"你可以[：:]|你可以选择|选项[：:]", s):

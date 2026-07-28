@@ -29,3 +29,8 @@ __pycache__/
 # 片段既不是独立可运行模块（引用 OccupationSpec 等未 import 的名字，ruff 会报
 # 一堆 F821），也跟 coc7_content.py 内容重复，所以不进 git。
 trpg-backend/scripts/coc7_occupations/generated_occupations.py
+
+# keeper 全链路 e2e / 混沌脚本的运行产物：里面是真实对局的叙事与裁决日志，
+# 会带上 gitignored 模组的剧情内容——版权红线同 模组资料/，绝不进公开仓库。
+# （AGENTS.md 写了"勿提交"，但口头约定拦不住 `git add -A`，这里做机制兜底。）
+e2e/artifacts/

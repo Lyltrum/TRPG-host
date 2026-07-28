@@ -81,9 +81,7 @@ def test_scrub_menu_and_virtual_block() -> None:
     assert "你可以" not in scrubbed
     assert "门铃" in scrubbed
 
-    with_bracket = (
-        "托马斯递来咖啡。\n\n[你可以告诉托马斯日记内容，或问他关于邻居的事。]"
-    )
+    with_bracket = "托马斯递来咖啡。\n\n[你可以告诉托马斯日记内容，或问他关于邻居的事。]"
     s2 = scrub_kp_anti_patterns(with_bracket, action_intent=True)
     assert "你可以" not in s2
     assert "咖啡" in s2
@@ -102,10 +100,7 @@ def test_scrub_menu_and_virtual_block() -> None:
 
 def test_scrub_confused_keeps_soft_guidance() -> None:
     """迷茫轮：保留「你可以去找邻居」方向句，只砍编号/冒号菜单。"""
-    soft = (
-        "街对面宅子还亮着灯。你可以去找邻居打听他的为人。"
-        "别急着现在敲门——他刚把东西搬进去。"
-    )
+    soft = "街对面宅子还亮着灯。你可以去找邻居打听他的为人。别急着现在敲门——他刚把东西搬进去。"
     out = scrub_kp_anti_patterns(soft, action_intent=False, confused=True)
     assert "邻居" in out
     assert "你可以去找" in out

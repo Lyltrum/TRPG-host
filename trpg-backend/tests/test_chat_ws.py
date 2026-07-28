@@ -166,6 +166,9 @@ def test_lock_released_after_narrator_failure(sync_client: TestClient) -> None:
         failure = ws.receive_json()
         assert failure["type"] == "error"
         assert failure["payload"]["code"] == "INTERNAL_ERROR"
+        # 失败后还会广播一条可见兜底叙事——聊天区不能静默，否则玩家以为断线。
+        # error 只发给发起者，这条兜底是全房间可见的。
+        assert ws.receive_json()["type"] == "narration.push"
 
         # 换一个能正常返回的 narrator，立刻重试——若锁没被释放，这里会收到
         # ACTION_IN_PROGRESS 而不是 action.broadcast。

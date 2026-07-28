@@ -35,6 +35,11 @@ class CharacterUpdateBody(CamelModel):
     occupation: str | None = None
     background: str = Field(default="", max_length=4000)
     notes: str = Field(default="", max_length=4000)
+    # 结构化背景故事（迁移自 coc-char-gen）：personalDescription/ideology/
+    # significantPeople/meaningfulLocations/treasuredPossessions/traits/
+    # injuries/phobias 8 个引导字段，值可以是空字符串。不做逐键校验——键的
+    # 含义是前端表单的事，后端只透明存取。
+    background_detail: dict[str, str] | None = None
 
 
 class CharacterRead(CamelModel):
@@ -64,6 +69,7 @@ class CharacterRead(CamelModel):
     occupation: str | None = None
     background: str = ""
     notes: str = ""
+    background_detail: dict[str, str] | None = None
 
 
 class CharacterCreateBody(CamelModel):
@@ -168,3 +174,63 @@ class CharacterComputeResult(CamelModel):
     interest_skill_points: SkillPointsBudgetView
     skill_view: list[SkillComputeView]
     validation: list[ValidationIssueView]
+
+
+# ── 年龄调整（迁移自 coc-char-gen `js/plugins/age.js`） ─────────────────────
+
+
+class AgeAdjustmentRequest(CamelModel):
+    """POST /api/v1/rooms/{roomId}/characters/{characterId}/apply-age-adjustment
+    请求体。"""
+
+    age: int = Field(..., ge=1, le=120)
+
+
+class EduImprovementCheckView(CamelModel):
+    """一次 EDU 改进检定的掷骰明细：服务端权威 `d100`，`roll > eduBefore`
+    才算成功，成功再掷 `1d10` 当增量（上限 99）。"""
+
+    success: bool
+    roll: int
+    gain: int
+    edu_before: int
+    edu_after: int
+
+
+class AgeAdjustmentResult(CamelModel):
+    """apply-age-adjustment 的响应：调整前后的完整属性 + 每一步的掷骰/减值
+    明细，供前端展示"发生了什么"而不只是甩最终数字。"""
+
+    age: int
+    age_label: str
+    attributes_before: dict[str, int]
+    attributes_after: dict[str, int]
+    edu_checks: list[EduImprovementCheckView] = Field(default_factory=list)
+    edu_flat_adjustment: int = 0
+    scd_loss: int = 0
+    scd_affected_attributes: list[str] = Field(default_factory=list)
+    app_loss: int = 0
+    luck_rerolled: bool = False
+    mov_penalty: int = 0
+
+
+# ── 掷点池生成法（迁移自 coc-char-gen `js/core/dice.js::rollAttributePointPool`） ──
+
+
+class AttributePoolRollView(CamelModel):
+    """掷点池法里的一次骰子明细：`kind` 是骰子公式（`3d6x5`/`2d6+6x5`），
+    `dice` 是原始骰子值，`value` 是这一项换算后的最终点数。"""
+
+    kind: str
+    dice: list[int]
+    value: int
+
+
+class RollAttributePoolResult(CamelModel):
+    """POST /api/v1/rooms/{roomId}/characters/{characterId}/roll-attribute-pool
+    返回：8 次掷骰明细 + 求和后的总点数池。分配到八维由玩家在前端完成，
+    最终结果走 PATCH 保存——`total` 就是 `complete` 时校验分配总和用的权威值
+    （`character.attribute_pool_total`）。"""
+
+    rolls: list[AttributePoolRollView]
+    total: int

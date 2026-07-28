@@ -168,6 +168,12 @@ class Character(Base):
     # 预算的话，会把合法掷出来的角色卡判成非法，等于废掉 roll-attributes 端点。
     generation_method: Mapped[str] = mapped_column(String(20), nullable=False, default="pointbuy")
 
+    # 掷点池法（"roll_pool"）掷出的权威总值——玩家把这个总值手动分配到八维，
+    # complete 时校验"分配总和是否等于这个值"要有个真实依据，不能只信任
+    # 前端报的数（见 coc7_rules.py 的 roll_pool 校验分支）。其余两种生成
+    # 方法不写这一列，始终是 None。
+    attribute_pool_total: Mapped[int | None] = mapped_column(nullable=True)
+
     # 建卡三条路径的来源（都可空，互斥但不做数据库层面强制）：
     # ① based_on_pregen_id：套用模组作者预设角色；
     # ② based_on_template_id：复用玩家自己的常用卡（issue 决策 5，本期不实现）；
@@ -187,6 +193,11 @@ class Character(Base):
     equipment: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     background: Mapped[str] = mapped_column(Text, nullable=False, default="")
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 结构化背景故事（信念/重要之人/意义之地/珍视之物/特质/外伤/恐惧症等引导
+    # 字段，迁移自用户个人项目 coc-char-gen）。不删除上面 background/notes
+    # 这两个扁平字段——向后兼容、风险低；这一列是额外的结构化补充，键的具体
+    # 含义由前端表单决定，后端只透明存取。
+    background_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

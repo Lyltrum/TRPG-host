@@ -106,6 +106,8 @@ _MODELS: list[type[BaseModel]] = [
     ws.ActionBroadcastPayload,
     # 讨论区历史消息 REST（issue #107）
     chat.ChatMessageRead,
+    # HP 结构化广播（feat/keeper-agent，真人实测 09-#4 修复）
+    ws.CharacterStatChangedPayload,
 ]
 
 _DEFAULT_OUT_PATH = Path(__file__).resolve().parent.parent / ".schema-export" / "models.schema.json"

@@ -179,6 +179,22 @@ export interface CharacterRead {
 }
 
 /**
+ * character.stat_changed 推送 payload（feat/keeper-agent，真人实测 09-#4
+ * 修复）——HP 变更的结构化广播。
+ *
+ * San 已经有 `san.check.result` 携带 `san_remaining`（走"检定→掷骰→广播
+ * 结果"这条路），不需要这个事件；HP 变化是裁决直接判定伤害后立即执行，
+ * 没有对应的检定/掷骰事件可以携带新值，此前只把结果拼进叙事正文当纯文本，
+ * 前端角色卡拿不到任何结构化数据、HP 从进房间起就是建卡快照、永不更新。
+ */
+export interface CharacterStatChangedPayload {
+  playerId: string;
+  hp: number;
+  hpMax?: number | null;
+  reason?: string | null;
+}
+
+/**
  * POST /api/v1/me/character-templates 请求体（issue 决策 5，本期不实现）。
  */
 export interface CharacterTemplateCreateBody {

@@ -294,6 +294,22 @@ class SanCheckResultPayload(CamelModel):
     san_remaining: int | None = None
 
 
+class CharacterStatChangedPayload(CamelModel):
+    """character.stat_changed 推送 payload（feat/keeper-agent，真人实测 09-#4
+    修复）——HP 变更的结构化广播。
+
+    San 已经有 `san.check.result` 携带 `san_remaining`（走"检定→掷骰→广播
+    结果"这条路），不需要这个事件；HP 变化是裁决直接判定伤害后立即执行，
+    没有对应的检定/掷骰事件可以携带新值，此前只把结果拼进叙事正文当纯文本，
+    前端角色卡拿不到任何结构化数据、HP 从进房间起就是建卡快照、永不更新。
+    """
+
+    player_id: str
+    hp: int
+    hp_max: int | None = None
+    reason: str | None = None
+
+
 class ClueGrantedPayload(CamelModel):
     """clue.granted 推送 payload（issue #77 新增，线索发现，本期不会真的发出）。"""
 

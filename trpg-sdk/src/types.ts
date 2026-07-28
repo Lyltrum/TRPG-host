@@ -81,6 +81,8 @@ export type {
   ChatMessagePayload,
   ActionBroadcastPayload,
   ChatMessageRead as ChatMessage,
+  // HP 结构化广播（feat/keeper-agent，真人实测 09-#4 修复）
+  CharacterStatChangedPayload,
 } from './generated/dto';
 
 /** GET /api/v1/me/rooms 返回项。 */
@@ -111,6 +113,7 @@ export interface ApiResponse<T> {
 
 import type {
   ActionBroadcastPayload,
+  CharacterStatChangedPayload,
   ChatMessagePayload,
   CheckRequestPayload,
   CheckResultPayload,
@@ -159,4 +162,7 @@ export type ServerToClientEvent =
   | { type: 'san.check.request'; payload: SanCheckRequestPayload }
   | { type: 'san.check.result'; payload: SanCheckResultPayload }
   | { type: 'clue.granted'; payload: ClueGrantedPayload }
+  // HP 结构化广播（feat/keeper-agent，真人实测 09-#4 修复；San 已有
+  // san.check.result 携带 sanRemaining，不需要对应事件）
+  | { type: 'character.stat_changed'; payload: CharacterStatChangedPayload }
   | { type: 'error'; payload: ErrorPayload };

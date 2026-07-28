@@ -36,6 +36,7 @@ from app.core.keeper.visibility import (
     load_revealed_visibility,
     serialize_revealed_visibility,
 )
+from app.core.narrator import StatChangeNotice
 from app.dto.game import RulesetRead
 from app.models.event import Event
 from app.models.room import Character, Player, Room
@@ -92,6 +93,9 @@ class KeeperDeps:
     # 以为根本没掷）。`*_impl` 往这里记，KeeperAgent.narrate 由**代码**把它们
     # 强制附加在叙事末尾广播。
     check_results: list[str] = field(default_factory=list)
+    # 本轮发生的 HP 变更（结构化，供 WS 层广播 `character.stat_changed`，
+    # 供前端把角色卡的 HP 从"建卡快照"更新成实时值——真人实测 09-#4）。
+    stat_changes: list[StatChangeNotice] = field(default_factory=list)
 
 
 class KeeperToolError(ValueError):
@@ -172,6 +176,27 @@ def _resolve_skill_target(
             if value is None:
                 value = evaluate_skill_base(spec.base, attributes)
             return spec.name, value
+
+    # 复合名技能的短名匹配：规则表把 33 个技能存成「大类：子类」复合名
+    # （如"格斗：斗殴"），但裁决器/玩家说人话只会用短名（"斗殴"）——真人实测
+    # 复现过"斗殴"精确匹配失败、检定静默丢失（09-#5）。短名能唯一定位到一个
+    # 复合技能时直接命中；短名本身是大类前缀（如"驾驶"对应 5 个子类）时不能
+    # 瞎猜，报错列出候选，让裁决器/模型自己说清楚具体是哪一项。
+    suffix_matches = [spec for spec in deps.ruleset.skills if spec.name.split("：")[-1] == wanted]
+    if len(suffix_matches) == 1:
+        spec = suffix_matches[0]
+        value = skills.get(spec.id)
+        if value is None:
+            value = evaluate_skill_base(spec.base, attributes)
+        return spec.name, value
+    if len(suffix_matches) > 1:
+        options = "、".join(spec.name for spec in suffix_matches)
+        raise KeeperToolError(f"「{skill_name}」对应多个细分技能，请指定具体是哪一项：{options}")
+
+    prefix_matches = [spec for spec in deps.ruleset.skills if spec.name.startswith(f"{wanted}：")]
+    if prefix_matches:
+        options = "、".join(spec.name for spec in prefix_matches)
+        raise KeeperToolError(f"「{skill_name}」对应多个细分技能，请指定具体是哪一项：{options}")
 
     raise KeeperToolError(
         f"未知的技能/属性名「{skill_name}」。请使用 COC7 技能表中的中文名（如：侦查、"
@@ -478,6 +503,14 @@ async def adjust_hp_impl(
         )
     status = "（已倒地/濒死）" if new_value == 0 else ""
     deps.check_results.append(f"{player.nickname} · HP {current} → {new_value}{status}")
+    deps.stat_changes.append(
+        StatChangeNotice(
+            player_id=player.id,
+            hp=new_value,
+            hp_max=character.derived_stats.get("HP_MAX") if character.derived_stats else None,
+            reason=reason,
+        )
+    )
     return f"{player.nickname} HP {current} → {new_value}{status}（{reason}）"
 
 

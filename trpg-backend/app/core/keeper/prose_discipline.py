@@ -235,6 +235,18 @@ _SENTENCE_DROP = re.compile(
     r")"
 )
 
+# 机制播报泄露进叙事正文（真人实测 2026-07-28 复现："该掷斗殴了。"）：检定
+# 卡片本身已经承担"提示玩家该掷骰"这个功能，正文里再赤裸播报一遍是重复且
+# 出戏的——引导原文要求的是「情境示意」，不是这种机制口吻。精确到
+# "该/请/需要 + 掷/过/来一次/进行 + 短技能名 + (检定)?(了)?" 的结构，
+# 不按"检定"这个词粗暴整句砍（NPC 台词里合理出现"警察会来做检定"这类不
+# 该被误伤）。整句丢弃（跟 _SENTENCE_DROP 同处理方式，不是部分替换）。
+_MECHANIC_ANNOUNCE_SENTENCE = re.compile(
+    r"^(?:那|现在|看来|接下来)?(?:你(?:们)?)?(?:该|请|需要|得)(?:你(?:们)?)?"
+    r"(?:掷|摇|过一下|来一次|进行)(?:一次)?"
+    r"[^\s，,。！？]{0,12}?(?:检定)?了?(?:吧|呢)?$"
+)
+
 
 def _split_sentences(text: str) -> list[str]:
     """按中文句末切分，保留分隔符在句尾。"""
@@ -242,6 +254,11 @@ def _split_sentences(text: str) -> list[str]:
         return []
     parts = re.split(r"(?<=[。！？…\n])", text)
     return [p for p in parts if p and p.strip()]
+
+
+def _is_mechanic_announce(sentence: str) -> bool:
+    core = sentence.rstrip("。！？.!?…")
+    return bool(_MECHANIC_ANNOUNCE_SENTENCE.match(core))
 
 
 def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = False) -> str:
@@ -275,6 +292,8 @@ def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = F
                 continue
             if re.search(r"你可以[：:]|你可以选择|选项[：:]", s):
                 continue
+            if _is_mechanic_announce(s):
+                continue
             kept_soft.append(sent)
         body = "".join(kept_soft).strip()
         body = re.sub(r"[，,、；;\s]+$", "", body)
@@ -297,6 +316,8 @@ def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = F
             continue
         # 非行动轮也去掉纯菜单句（「你可以：…」）
         if re.search(r"你可以[：:]|你可以选择|选项[：:]", s):
+            continue
+        if _is_mechanic_announce(s):
             continue
         kept.append(sent)
 

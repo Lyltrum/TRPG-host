@@ -24,6 +24,10 @@ interface CharacterState {
   roomId: string | null
   setCharacter: (c: CompletedCharacter, roomId: string) => void
   getForRoom: (roomId: string) => CompletedCharacter | null
+  // 局内 HP/San 结构化广播（character.stat_changed / san.check.result 里的
+  // sanRemaining）写回角色卡——只在 roomId 对得上当前存的这份角色时生效，
+  // 避免把过期广播误写进另一个房间的角色数据（真人实测 09-#4 修复）。
+  updateDerived: (roomId: string, patch: Partial<CompletedCharacter['derived']>) => void
   clear: () => void
 }
 
@@ -44,6 +48,11 @@ export const useCharacterStore = create<CharacterState>()(
       roomId: null,
       setCharacter: (character, roomId) => set({ character, roomId }),
       getForRoom: (roomId) => (get().roomId === roomId ? get().character : null),
+      updateDerived: (roomId, patch) => {
+        const state = get()
+        if (state.roomId !== roomId || !state.character) return
+        set({ character: { ...state.character, derived: { ...state.character.derived, ...patch } } })
+      },
       clear: () => set({ character: null, roomId: null }),
     }),
     { name: 'aidm-character', storage: createJSONStorage(() => localStorage) }

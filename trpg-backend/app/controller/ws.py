@@ -39,10 +39,11 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory
-from app.core.narrator import CheckRequestNotice, CheckResultNotice
+from app.core.narrator import CheckRequestNotice, CheckResultNotice, StatChangeNotice
 from app.dto.ws import (
     ActionBroadcastPayload,
     ActionSubmitPayload,
+    CharacterStatChangedPayload,
     ChatMessagePayload,
     ChatSendPayload,
     CheckRequestPayload,
@@ -218,6 +219,20 @@ async def _broadcast_check_result(room_id: str, notice: CheckResultNotice) -> No
     await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
 
 
+async def _broadcast_stat_change(room_id: str, notice: StatChangeNotice) -> None:
+    """广播一次 HP 变更（真人实测 09-#4 修复）：裁决判定伤害后立即执行，没有
+    对应的检定/掷骰事件可以携带新值，此前只拼进叙事正文当纯文本，前端角色卡
+    拿不到结构化数据。这条只广播 HP——San 已经有 `san.check.result` 携带
+    `san_remaining`，走"检定→掷骰→广播结果"这条路，不需要这个事件。"""
+    payload = CharacterStatChangedPayload(
+        player_id=notice.player_id, hp=notice.hp, hp_max=notice.hp_max, reason=notice.reason or None
+    )
+    envelope = ServerEnvelope(
+        type="character.stat_changed", payload=payload.model_dump(by_alias=True)
+    )
+    await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
+
+
 async def _handle_room_join(
     db: AsyncSession,
     websocket: WebSocket,
@@ -356,6 +371,8 @@ async def _handle_action_submit(
             pass
         # outcome.text 可能为空（两段式玩家掷骰：pending 守卫命中时守秘人只
         # 重发检定请求，不产生新叙事）——空文本不广播一条空 narration.push。
+        for notice in outcome.stat_changes:
+            await _broadcast_stat_change(room_id, notice)
         if outcome.text:
             await _broadcast_narration(db, room_id, player_id, outcome.text)
         for notice in outcome.check_requests:
@@ -410,6 +427,8 @@ async def _handle_check_roll(
 
         for notice in outcome.check_results:
             await _broadcast_check_result(room_id, notice)
+        for notice in outcome.stat_changes:
+            await _broadcast_stat_change(room_id, notice)
         if outcome.text:
             await _broadcast_narration(db, room_id, player_id, outcome.text)
         for notice in outcome.check_requests:

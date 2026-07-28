@@ -147,6 +147,18 @@ async def _resolve_character(
     return player, character
 
 
+# 常见同义写法归一：规则表用的规范名 vs. 模组原文/裁决器口语化说法。
+# 真人实测连续挖出三例（09-#5 的"斗殴"是复合名短名，走下面单独的后缀匹配；
+# 这里是纯粹的同义词，规则表压根没有这个名字）："观察"（该轮理智检定失去
+# 前置条件，检定静默丢失）、"闪躲"（"该掷躲闪了"却从未生成待掷卡片）。
+# 口语说法和规则表规范名之间的落差大概率不止这几个，发现一个补一个。
+_SKILL_SYNONYMS: dict[str, str] = {
+    "侦查": "侦察",
+    "观察": "侦察",
+    "闪躲": "闪避",
+}
+
+
 def _resolve_skill_target(
     deps: KeeperDeps, character: Character, skill_name: str
 ) -> tuple[str, int]:
@@ -156,8 +168,8 @@ def _resolve_skill_target(
     中文名/缩写（"力量"/"STR"/"幸运"）。技能值 = 角色卡总值，没点过的
     技能回落到基础值（含 `DEX/2` 这类公式）。
     """
-    # 常见同义写法归一：技能表用「侦察」，模组文本/玩家口语常写「侦查」。
-    wanted = skill_name.strip().replace("侦查", "侦察")
+    stripped = skill_name.strip()
+    wanted = _SKILL_SYNONYMS.get(stripped, stripped)
     attributes: dict[str, int] = character.attributes or {}
     skills: dict[str, int] = character.skills or {}
 

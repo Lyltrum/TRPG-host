@@ -256,24 +256,41 @@ def _split_sentences(text: str) -> list[str]:
     return [p for p in parts if p and p.strip()]
 
 
-_CLAUSE_SPLIT = re.compile(r"[，,、]")
+_CLAUSE_SPLIT = re.compile(r"[，,、]|——|—")
+
+# 编造检定/属性变化结果，格式神似 agent.py::_load_room_memory 喂给 LLM 看
+# 历史记录时用的内部记账格式（"[理智] 玩家：损失 N，当前 San N"）——真人
+# 实测 2026-07-28（神秘渡轮）复现：检定卡片还没弹出，叙事正文里就先编好了
+# 一句"[理智] 压测员 0/1d3 → 损失 2，当前 San 52"，跟随后真实掷骰的结果
+# （25/54·成功·San-0）完全对不上，数据库里也查不到这次"损失2"的真实记录。
+# 这是编造检定结果，比机制播报泄露更严重，整句丢弃。
+_FAKE_STAT_LOG_LEAK = re.compile(
+    r"[\[【](?:理智|生命|San|HP|检定)[\]】][^\n]{0,40}?(?:损失|获得)\s*\d+"
+    r"[^\n]{0,20}?(?:当前)?\s*(?:San|HP|理智|生命)\s*\d+"
+)
 
 
 def _strip_mechanic_announce(sentence: str) -> str:
     """砍掉句子里泄露的机制播报，返回处理后的句子（未命中则原样返回）。
 
-    真人实测 2026-07-28 复现的实际形态比"整句就是播报"更常见的是**逗号分句
-    里的尾句**（"现在距离近了，你该掷斗殴检定了。"）——只匹配整句会漏掉这种
-    真实 LLM 输出。命中整句就整句丢弃；命中的是分句里的最后一段，就只砍掉
-    那一段+它前面的逗号，保留前半句描写和收尾标点。"""
+    真人实测 2026-07-28 复现的实际形态比"整句就是播报"更常见的是**分句里
+    的尾句**（"现在距离近了，你该掷斗殴检定了。"/"……朝你的后背砸来——该
+    掷躲闪了。"，逗号和破折号都见过）——只匹配整句会漏掉这种真实 LLM 输出。
+    命中整句就整句丢弃；命中的是分句里的最后一段，就只砍掉那一段+它前面的
+    分隔符，保留前半句描写和收尾标点。用 `finditer` 找最后一个分隔符的位置
+    直接切片，不对分隔符宽度做假设（破折号"——"是两个字符，逗号只有一个）。"""
     core = sentence.rstrip("。！？.!?…")
     trailing = sentence[len(core) :]
     if _MECHANIC_ANNOUNCE_SENTENCE.match(core):
         return ""
-    parts = _CLAUSE_SPLIT.split(core)
-    if len(parts) > 1 and _MECHANIC_ANNOUNCE_SENTENCE.match(parts[-1].strip()):
-        head = core[: -(len(parts[-1]) + 1)].rstrip("，,、")
-        return f"{head}{trailing}" if head else ""
+    last_sep = None
+    for m in _CLAUSE_SPLIT.finditer(core):
+        last_sep = m
+    if last_sep is not None:
+        tail = core[last_sep.end() :].strip()
+        if _MECHANIC_ANNOUNCE_SENTENCE.match(tail):
+            head = core[: last_sep.start()].rstrip("，,、—")
+            return f"{head}{trailing}" if head else ""
     return sentence
 
 
@@ -308,6 +325,8 @@ def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = F
                 continue
             if re.search(r"你可以[：:]|你可以选择|选项[：:]", s):
                 continue
+            if _FAKE_STAT_LOG_LEAK.search(s):
+                continue
             stripped = _strip_mechanic_announce(s)
             if not stripped:
                 continue
@@ -333,6 +352,8 @@ def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = F
             continue
         # 非行动轮也去掉纯菜单句（「你可以：…」）
         if re.search(r"你可以[：:]|你可以选择|选项[：:]", s):
+            continue
+        if _FAKE_STAT_LOG_LEAK.search(s):
             continue
         stripped = _strip_mechanic_announce(s)
         if not stripped:

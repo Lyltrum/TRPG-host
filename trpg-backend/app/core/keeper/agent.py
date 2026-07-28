@@ -100,6 +100,16 @@ from app.models.room import Character, Player, Room
 
 logger = structlog.get_logger()
 
+# 🔴 真人实测 2026-07-28（神秘渡轮）复现：单次请求卡了 4~5 分钟——
+# AsyncOpenAI 客户端此前没传 timeout，落到 SDK 默认值（600 秒）。这段时间
+# 里玩家发的消息在 WS 收发循环里是同步 await 处理的，连别的操作都发不出去，
+# 前端只有一个转圈的"…"，没有任何提示。KeeperAgent 的上下文比
+# narrator.py::DeepSeekNarrator（30 秒）大得多——剧本全文常驻 system
+# prompt + 完整历史重放，给宽松一点；超时后走既有的宽捕获异常路径
+# （ws.py 的 narrator_failed → "守秘人整理思路时卡了一下，请重试"兜底广播），
+# 不再无界等待。
+_REQUEST_TIMEOUT_SECONDS = 60.0
+
 # 全量重放 events 的上限条数。短模组一场 2-3 小时也就几百条，全放得下
 # （DeepSeek 64K 上下文）；上限只是防御异常膨胀的房间。
 _HISTORY_LIMIT = 200
@@ -162,7 +172,9 @@ class KeeperAgent(Narrator):
         self._ruleset = ruleset
         self._session_factory = session_factory
         self._rng = rng if rng is not None else random.Random()
-        self._client = AsyncOpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+        self._client = AsyncOpenAI(
+            api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=_REQUEST_TIMEOUT_SECONDS
+        )
         self._adjudicator_instructions = build_adjudicator_instructions(module)
         self._narrator_instructions = build_narrator_instructions(module)
 
@@ -220,22 +232,6 @@ class KeeperAgent(Narrator):
                 PHASE_KEY: PHASE_OPENING,
             }
 
-        # 有 structured 开场脚本时：仪式轮只推这一段，不 LLM 再写第二遍
-        # （全模组通用：前情页已读过 intro 时，对局再扩写 = 双重引导）
-        if is_opening_ceremony:
-            script = ""
-            if self._module.opening and (self._module.opening.script or "").strip():
-                script = self._module.opening.script.strip()
-            elif (self._module.player_intro or "").strip():
-                script = self._module.player_intro.strip()
-            if script:
-                logger.info(
-                    "keeper_opening_use_script",
-                    room_id=room_id,
-                    script_len=len(script),
-                )
-                return NarrationOutcome(text=script)
-
         # 议程 / 密级 / 阶段状态由代码注入——once 与揭开记账不靠模型自觉。
         fired = load_fired_agenda(keeper_state)
         agenda_status = format_agenda_status(self._module, fired)
@@ -268,6 +264,53 @@ class KeeperAgent(Narrator):
             is_opening_ceremony=is_opening_ceremony,
             phase=phase,
         )
+
+        # 有 structured 开场素材时：仪式轮不跑裁决（开场没有玩家行动可裁决），
+        # 直接把素材喂给叙事阶段的 LLM 改写——不再原样播报。
+        # 🔴 真人实测 2026-07-28（神秘渡轮）：原样播报等于让 AI 主持人
+        # "照本宣科"念模组书的背景说明，模组数据里混进的 GM 指导语等缺陷
+        # 也会被原样带进游戏（例句："让PC通过表演而使得……活跃跑团的气氛"，
+        # 这是写给守秘人看的素材，不是能念给玩家听的台词）。走跟其他每一轮
+        # 完全一样的"KP 声音"处理后，这类缺陷会被叙事语气自然冲掉。
+        if is_opening_ceremony:
+            opening_material = ""
+            if self._module.opening and (self._module.opening.script or "").strip():
+                opening_material = self._module.opening.script.strip()
+            elif (self._module.player_intro or "").strip():
+                opening_material = self._module.player_intro.strip()
+            if opening_material:
+                char_limit = narration_limit(is_opening_ceremony=True)
+                token_limit = narration_max_tokens(char_limit)
+                opening_decision = KeeperDecision(
+                    thinking="开场仪式：把 structured 开场素材改写成守秘人的开场白。",
+                    narration_guidance=(
+                        "下面是本模组的开场素材（背景说明，写给守秘人看的，不是可以"
+                        "逐字照抄的台词）：\n"
+                        f"{opening_material}\n\n"
+                        "请用你自己的话、以守秘人叙事口吻讲给玩家听——建立场景与处境，"
+                        "让调查员知道身在何处；禁止逐字照搬素材原文；禁止把素材里任何"
+                        "面向守秘人的指导性文字（比如「可以让玩家自行设定……」「这样可以"
+                        "活跃气氛」这类）读出来；不要发起检定。"
+                    ),
+                )
+                narration = await self._narrate_prose(
+                    situation,
+                    opening_decision,
+                    [],
+                    [],
+                    max_tokens=token_limit,
+                    max_chars=char_limit,
+                )
+                narration = self._finalize_prose(
+                    narration, action_intent=False, confused=False, max_chars=char_limit
+                )
+                logger.info(
+                    "keeper_opening_narrated",
+                    room_id=room_id,
+                    material_len=len(opening_material),
+                    narration_len=len(narration),
+                )
+                return NarrationOutcome(text=narration)
 
         # 阶段1·裁决：结构化输出，检定是 schema 字段，不存在"忘了裁决"。
         decision = await self._adjudicate(situation)

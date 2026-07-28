@@ -131,6 +131,21 @@ def test_scrub_drops_mechanic_announcement() -> None:
     assert "压低声音" in out3
 
 
+def test_scrub_drops_mechanic_announcement_in_comma_clause() -> None:
+    """真人实测复现的实际形态：机制播报不是独立整句，是逗号分句里的尾句
+    （"现在距离近了，你该掷斗殴检定了。"）——只按整句匹配会漏掉这种真实
+    LLM 输出，必须能识别分句边界只砍尾巴，保留前半句描写。"""
+    text = (
+        "那个裂开的包裹就在你们脚边，白色圆柱体的一端从帆布缝隙中露出——"
+        "现在距离近了，你该掷斗殴检定了。"
+    )
+    out = scrub_kp_anti_patterns(text, action_intent=True)
+    assert "该掷" not in out
+    assert "检定了" not in out
+    assert "白色圆柱体" in out
+    assert out.endswith("。")
+
+
 def test_scrub_keeps_legit_dialogue_mentioning_check() -> None:
     """不能按「检定」关键词粗暴整句砍——NPC 台词/氛围描写合理提到调查/检定
     时必须保留，只有「该/请/需要+掷/进行+…+了/检定」这种赤裸机制播报才砍。"""

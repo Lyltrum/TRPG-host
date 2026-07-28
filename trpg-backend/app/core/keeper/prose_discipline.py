@@ -256,9 +256,25 @@ def _split_sentences(text: str) -> list[str]:
     return [p for p in parts if p and p.strip()]
 
 
-def _is_mechanic_announce(sentence: str) -> bool:
+_CLAUSE_SPLIT = re.compile(r"[，,、]")
+
+
+def _strip_mechanic_announce(sentence: str) -> str:
+    """砍掉句子里泄露的机制播报，返回处理后的句子（未命中则原样返回）。
+
+    真人实测 2026-07-28 复现的实际形态比"整句就是播报"更常见的是**逗号分句
+    里的尾句**（"现在距离近了，你该掷斗殴检定了。"）——只匹配整句会漏掉这种
+    真实 LLM 输出。命中整句就整句丢弃；命中的是分句里的最后一段，就只砍掉
+    那一段+它前面的逗号，保留前半句描写和收尾标点。"""
     core = sentence.rstrip("。！？.!?…")
-    return bool(_MECHANIC_ANNOUNCE_SENTENCE.match(core))
+    trailing = sentence[len(core) :]
+    if _MECHANIC_ANNOUNCE_SENTENCE.match(core):
+        return ""
+    parts = _CLAUSE_SPLIT.split(core)
+    if len(parts) > 1 and _MECHANIC_ANNOUNCE_SENTENCE.match(parts[-1].strip()):
+        head = core[: -(len(parts[-1]) + 1)].rstrip("，,、")
+        return f"{head}{trailing}" if head else ""
+    return sentence
 
 
 def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = False) -> str:
@@ -292,9 +308,10 @@ def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = F
                 continue
             if re.search(r"你可以[：:]|你可以选择|选项[：:]", s):
                 continue
-            if _is_mechanic_announce(s):
+            stripped = _strip_mechanic_announce(s)
+            if not stripped:
                 continue
-            kept_soft.append(sent)
+            kept_soft.append(sent if stripped == s else stripped)
         body = "".join(kept_soft).strip()
         body = re.sub(r"[，,、；;\s]+$", "", body)
         return body or (text or "").strip()
@@ -317,9 +334,10 @@ def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = F
         # 非行动轮也去掉纯菜单句（「你可以：…」）
         if re.search(r"你可以[：:]|你可以选择|选项[：:]", s):
             continue
-        if _is_mechanic_announce(s):
+        stripped = _strip_mechanic_announce(s)
+        if not stripped:
             continue
-        kept.append(sent)
+        kept.append(sent if stripped == s else stripped)
 
     body = "".join(kept).strip()
     # 残留行首菜单

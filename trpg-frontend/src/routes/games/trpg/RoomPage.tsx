@@ -7,6 +7,7 @@ import { useGameStore } from '@/stores/game-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { useCharacterStore } from '@/stores/character-store'
 import { connectWebSocket, waitForWsOpen, sdk, onWsMessage, disconnectWebSocket, friendlyErrorMessage } from '@/services/api-client'
+import { BACKGROUND_DETAIL_FIELDS } from '@/data/character-model'
 import { endGame } from '@/services/room'
 import { useRoomPlayers } from '@/hooks/useRoomPlayers'
 import { useRuleset } from '@/hooks/useRuleset'
@@ -1145,7 +1146,28 @@ export default function RoomPage() {
                 <h4 className="text-xs font-semibold text-brass-dark mb-2.5">背景故事</h4>
                 <p className="text-sm text-text-body leading-[1.7] mb-4">{character.background || '未填写背景故事'}</p>
                 <h4 className="text-xs font-semibold text-brass-dark mb-2.5">备注</h4>
-                <p className="text-sm text-text-body leading-[1.7]">{character.notes || '未填写备注'}</p>
+                <p className="text-sm text-text-body leading-[1.7] mb-4">{character.notes || '未填写备注'}</p>
+
+                {/* 结构化背景故事（character-build-migration）：建卡向导里填的
+                    8 个引导字段，此前只存进了 character-store，没有任何地方
+                    渲染出来——建过卡之后这些内容进游戏就再也看不到。只展示
+                    玩家实际填过的字段，全空则不显示这个区块，避免一堆
+                    "未填写"占屏幕。 */}
+                {character.backgroundDetail &&
+                  BACKGROUND_DETAIL_FIELDS.some(({ key }) => character.backgroundDetail?.[key]) && (
+                    <>
+                      <div className="h-px bg-border-light mb-3.5" />
+                      <h4 className="text-xs font-semibold text-brass-dark mb-2.5">背景故事细节</h4>
+                      {BACKGROUND_DETAIL_FIELDS.filter(({ key }) => character.backgroundDetail?.[key]).map(
+                        ({ key, label }) => (
+                          <div key={key} className="mb-3">
+                            <div className="text-[11px] font-medium text-text-muted mb-1">{label}</div>
+                            <p className="text-sm text-text-body leading-[1.7]">{character.backgroundDetail?.[key]}</p>
+                          </div>
+                        )
+                      )}
+                    </>
+                  )}
               </>
             )}
           </>

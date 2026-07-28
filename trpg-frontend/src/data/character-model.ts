@@ -67,3 +67,19 @@ export function emptyBackgroundDetail(): BackgroundDetail {
     phobias: '',
   }
 }
+
+/**
+ * 结构化背景故事 8 个字段的中文标签 + 填写提示，建卡向导（CharacterPage）
+ * 和游戏内角色卡（RoomPage）两处都要用同一份——两处各写一份的话，以后加/改
+ * 字段容易漏改一处，正是 issue #96 属性名单重复维护踩过的坑。
+ */
+export const BACKGROUND_DETAIL_FIELDS: Array<{ key: keyof BackgroundDetail; label: string; placeholder: string }> = [
+  { key: 'personalDescription', label: '个人描述', placeholder: '外貌、习惯、说话方式…' },
+  { key: 'ideology', label: '信念 / 思想', placeholder: '角色的信仰、价值观、人生哲学…' },
+  { key: 'significantPeople', label: '重要之人', placeholder: '对角色而言最重要的人是谁，为什么…' },
+  { key: 'meaningfulLocations', label: '意义非凡的地点', placeholder: '角色心中特殊的地方…' },
+  { key: 'treasuredPossessions', label: '珍视的物品', placeholder: '角色随身携带或格外珍惜的东西…' },
+  { key: 'traits', label: '特质', placeholder: '性格特点、怪癖…' },
+  { key: 'injuries', label: '外伤', placeholder: '角色身上留下的伤痕或旧疾…' },
+  { key: 'phobias', label: '恐惧症', placeholder: '角色特有的恐惧或心理阴影…' },
+]

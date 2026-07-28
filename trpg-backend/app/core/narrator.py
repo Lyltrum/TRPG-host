@@ -174,6 +174,10 @@ class DeepSeekNarrator(Narrator):
         response = await self._client.chat.completions.create(
             model=DEEPSEEK_MODEL,
             messages=_build_messages(context),
+            # deepseek-v4-pro 默认带隐藏推理（reasoning_content），单轮场景描写不
+            # 需要链式思考，关掉省 token 和延迟（keeper/agent.py 同款设置，那边
+            # 还额外解决了推理挤占 max_tokens 导致正文被硬砍的问题）。
+            extra_body={"thinking": {"type": "disabled"}},
         )
         return NarrationOutcome(text=response.choices[0].message.content or "")
 

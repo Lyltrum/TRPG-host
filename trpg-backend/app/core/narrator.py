@@ -268,9 +268,7 @@ class RoomAwareKeeperNarrator(Narrator):
         self, room_id: str, player_id: str, check_request_id: str
     ) -> NarrationOutcome:
         path = await self._resolve_path(room_id)
-        return await self._agent_for(path).resolve_check(
-            room_id, player_id, check_request_id
-        )
+        return await self._agent_for(path).resolve_check(room_id, player_id, check_request_id)
 
 
 def build_narrator(settings: Settings) -> Narrator:
@@ -296,16 +294,19 @@ def build_narrator(settings: Settings) -> Narrator:
         if settings.keeper_module_path
         else None
     )
+    # 🔴 显式配了 keeper_module_path 却指不到文件 = 配置错误，**启动期就炸**。
+    # 不能只在 _resolve_path 里推迟到玩家第一次发言才报——那会把"服务起不来"
+    # 这种一眼可见的故障，变成"对局跑到一半 AI 突然失灵"。
+    if fallback is not None and not fallback.is_file():
+        raise FileNotFoundError(f"KEEPER_MODULE_PATH 指向的剧本不存在：{fallback}")
+
     # 启用 keeper：有 key，且至少有一个可加载的 structured（catalog 映射或兜底）
     from app.core.keeper.catalog import KEEPER_MODULE_SPECS, resolve_structured_path
 
     any_structured = any(
-        resolve_structured_path(modules_dir, s.scenario_id) is not None
-        for s in KEEPER_MODULE_SPECS
+        resolve_structured_path(modules_dir, s.scenario_id) is not None for s in KEEPER_MODULE_SPECS
     )
-    keeper_ready = bool(settings.deepseek_api_key) and (
-        any_structured or (fallback is not None and fallback.is_file())
-    )
+    keeper_ready = bool(settings.deepseek_api_key) and (any_structured or fallback is not None)
 
     if keeper_ready:
         from app.core.db import async_session_factory

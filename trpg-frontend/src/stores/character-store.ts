@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { Attributes, InvestigatorInfo } from '@/data/character-model'
+import type { Attributes, BackgroundDetail, InvestigatorInfo } from '@/data/character-model'
 
 export interface CompletedCharacter {
   info: InvestigatorInfo
@@ -15,6 +15,9 @@ export interface CompletedCharacter {
   background: string
   notes: string
   derived: { hp: number; san: number; mp: number; db: string; move: number }
+  // 结构化背景故事（character-build-migration），可选——旧缓存/没填过的
+  // 角色卡没有这个字段，读取处要能容忍 undefined。
+  backgroundDetail?: BackgroundDetail
 }
 
 interface CharacterState {

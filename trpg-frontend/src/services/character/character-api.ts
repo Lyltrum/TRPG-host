@@ -1,3 +1,9 @@
+import type {
+  AgeAdjustmentResult,
+  RollAttributePoolResult,
+  RollAttributesResult,
+} from 'trpg-sdk';
+import type { BackgroundDetail } from '@/data/character-model';
 import { useRoomStore } from '@/stores/room-store';
 import { sdk } from '../api-client';
 
@@ -18,6 +24,8 @@ export interface BuiltCharacter {
   occupationName: string | null;
   background: string;
   notes: string;
+  // 结构化背景故事（character-build-migration），可选——不是每次保存都填过。
+  backgroundDetail?: BackgroundDetail;
 }
 
 // 建卡接口跟房间模块一样，靠 X-Reconnect-Token 确认"你是这个房间里的哪个玩家"。
@@ -58,7 +66,8 @@ export async function saveCharacter(
         : [],
       occupation: built.occupationName,
       background: built.background,
-      notes: built.notes
+      notes: built.notes,
+      backgroundDetail: (built.backgroundDetail as Record<string, string> | undefined) ?? null
     },
     requireReconnectToken()
   );
@@ -77,4 +86,29 @@ export async function fetchCharacter(roomId: string, characterId: string) {
 
 export async function completeCharacter(roomId: string, characterId: string): Promise<void> {
   await sdk.characters.complete(roomId, characterId, requireReconnectToken());
+}
+
+/**
+ * 服务端权威掷骰生成 8+1 项属性（character-build-migration）。跟其余四个
+ * 函数保持同样的薄封装风格，页面组件不直接碰 sdk/reconnectToken。
+ */
+export async function rollAttributes(roomId: string, characterId: string): Promise<RollAttributesResult> {
+  return sdk.characters.rollAttributes(roomId, characterId, requireReconnectToken());
+}
+
+/** 掷点池生成法：服务端掷出总点数池，分配到八维由前端向导完成。 */
+export async function rollAttributePool(
+  roomId: string,
+  characterId: string
+): Promise<RollAttributePoolResult> {
+  return sdk.characters.rollAttributePool(roomId, characterId, requireReconnectToken());
+}
+
+/** 套用 COC7 建卡期年龄修正（EDU 改进检定/身体减值/外貌减值/青年幸运双掷）。 */
+export async function applyAgeAdjustment(
+  roomId: string,
+  characterId: string,
+  age: number
+): Promise<AgeAdjustmentResult> {
+  return sdk.characters.applyAgeAdjustment(roomId, characterId, age, requireReconnectToken());
 }

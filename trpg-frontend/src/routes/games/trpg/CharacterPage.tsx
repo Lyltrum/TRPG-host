@@ -1,16 +1,67 @@
 import { useNavigate } from 'react-router-dom'
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { ArrowLeft, Plus, Minus, Search, Shield, Heart, Brain, Zap, Eye, Maximize2, Lightbulb, BookOpen, ChevronDown, X, Info, Clover } from 'lucide-react'
-import type { CharacterComputeResult, SkillComputeView } from 'trpg-sdk'
+import type {
+  AgeAdjustmentResult,
+  AttributePoolRollView,
+  Character as SdkCharacter,
+  CharacterComputeResult,
+  SkillComputeView,
+} from 'trpg-sdk'
+import { formatCharacterJson, formatDicebotFull, formatDicebotShort, formatTextCard } from 'trpg-sdk'
 import { OCCUPATION_ICONS, OCCUPATION_GROUPS } from '@/data/occupations'
-import type { Attributes, InvestigatorInfo } from '@/data/character-model'
+import type { Attributes, BackgroundDetail, GenerationMethod, InvestigatorInfo } from '@/data/character-model'
+import { emptyBackgroundDetail } from '@/data/character-model'
 import { useCharacterStore } from '@/stores/character-store'
 import { useRoomStore } from '@/stores/room-store'
-import { createCharacterDraft, saveCharacter, completeCharacter, fetchCharacter } from '@/services/character/character-api'
+import {
+  applyAgeAdjustment,
+  completeCharacter,
+  createCharacterDraft,
+  fetchCharacter,
+  rollAttributePool,
+  rollAttributes,
+  saveCharacter,
+} from '@/services/character/character-api'
 import { previewCharacter, translateCharacterValidationError } from '@/services/character/ruleset-api'
 import { friendlyErrorMessage } from '@/services/api-client'
 import { useRuleset } from '@/hooks/useRuleset'
 import type { OccupationSpec, SkillSpec } from '@/data/types'
+
+// 年龄修正表（COC7 守秘人规则书 · 创造调查员 / 年龄，迁移自 coc-char-gen
+// `js/plugins/age.js`），纯展示用的静态数据——真正的计算权威在后端
+// `apply-age-adjustment` 端点，这里只是给玩家看"我这个年龄档会发生什么"。
+const AGE_MODIFIER_TABLE: Array<{ range: string; edu: string; body: string; other: string }> = [
+  { range: '15–19', edu: '固定 −5', body: 'STR 与 SIZ 合计 −5', other: '幸运掷两次取高' },
+  { range: '20–39', edu: '改进检定 ×1', body: '—', other: '—' },
+  { range: '40–49', edu: '改进检定 ×2', body: 'STR+CON+DEX 共 −5，APP−5', other: 'MOV−1' },
+  { range: '50–59', edu: '改进检定 ×3', body: '共 −10，APP−10', other: 'MOV−2' },
+  { range: '60–69', edu: '改进检定 ×4', body: '共 −20，APP−15', other: 'MOV−3' },
+  { range: '70–79', edu: '改进检定 ×4', body: '共 −40，APP−20', other: 'MOV−4' },
+  { range: '80–89', edu: '改进检定 ×4', body: '共 −80，APP−25', other: 'MOV−5' },
+]
+
+// 结构化背景故事的 8 个引导字段（迁移自 coc-char-gen），字段本身是这次产品
+// 设计定的固定字段，不是规则数据，写死在这里符合 character-model.ts 的
+// BackgroundDetail 类型注释。
+const BACKGROUND_DETAIL_FIELDS: Array<{ key: keyof BackgroundDetail; label: string; placeholder: string }> = [
+  { key: 'personalDescription', label: '个人描述', placeholder: '外貌、习惯、说话方式…' },
+  { key: 'ideology', label: '信念 / 思想', placeholder: '角色的信仰、价值观、人生哲学…' },
+  { key: 'significantPeople', label: '重要之人', placeholder: '对角色而言最重要的人是谁，为什么…' },
+  { key: 'meaningfulLocations', label: '意义非凡的地点', placeholder: '角色心中特殊的地方…' },
+  { key: 'treasuredPossessions', label: '珍视的物品', placeholder: '角色随身携带或格外珍惜的东西…' },
+  { key: 'traits', label: '特质', placeholder: '性格特点、怪癖…' },
+  { key: 'injuries', label: '外伤', placeholder: '角色身上留下的伤痕或旧疾…' },
+  { key: 'phobias', label: '恐惧症', placeholder: '角色特有的恐惧或心理阴影…' },
+]
+
+type ExportFormatKey = 'dicebotFull' | 'dicebotShort' | 'textCard' | 'json'
+const EXPORT_FORMATS: Array<{ key: ExportFormatKey; label: string }> = [
+  { key: 'dicebotFull', label: '骰娘·完整' },
+  { key: 'dicebotShort', label: '骰娘·精简' },
+  { key: 'textCard', label: '文本卡' },
+  { key: 'json', label: 'JSON' },
+]
 
 // 图标和配色是纯 UI 装饰，不是规则数据，留在前端；键用后端 ruleset 的属性键。
 // 「有哪些属性、哪些能加点、默认值多少、预算和上下限是什么」全部来自
@@ -144,6 +195,18 @@ export default function CharacterPage() {
   // Attributes
   const [attr, setAttr] = useState<Attributes>(() => ({ ...existingCharacter?.attr }))
 
+  // 属性生成方式（character-build-migration）：默认点数购买，本地缓存的
+  // CompletedCharacter 不携带这个字段（它只存在于后端 Character），所以
+  // 这里先给默认值，后端水合到位后由下面的 fetchCharacter effect 覆盖。
+  const [generationMethod, setGenerationMethod] = useState<GenerationMethod>('pointbuy')
+  // 掷点池模式下的权威总点数，直接来自后端 `CharacterRead.attributePoolTotal`
+  // （见下面的水合 effect）——不是从当前已保存的八维总和反推的近似值，玩家
+  // 后续手动改过属性也不影响这个预算分母的准确性。
+  const [attributePoolTotal, setAttributePoolTotal] = useState<number | null>(null)
+  const [poolRolls, setPoolRolls] = useState<AttributePoolRollView[]>([])
+  const [generationBusy, setGenerationBusy] = useState(false)
+  const [generationError, setGenerationError] = useState('')
+
   // 可用点数购买的属性键（幸运不在其中——COC7 里它只能掷）。这份名单来自
   // 后端 ruleset 的 pointBuy 标志，前端不再自己维护（issue #96）。
   const pointBuyAttributes = useMemo(
@@ -151,6 +214,16 @@ export default function CharacterPage() {
     [ruleset]
   )
   const pointBuyRules = ruleset?.attributePointBuy ?? null
+
+  // 属性总预算的来源：掷点池模式下预算是这次掷出来的权威总值，其余两种
+  // 模式沿用 ruleset 的固定预算。单项上下限/step 仍然统一用 pointBuyRules
+  // （设计文档：roll_pool 只是预算来源换了，单项区间校验路径不变）。
+  const currentBudget = generationMethod === 'roll_pool' ? (attributePoolTotal ?? 0) : (pointBuyRules?.budget ?? 0)
+  // 服务端掷骰（`roll`）给的是最终值，不允许再手动调整——继续编辑会让
+  // 「这是掷出来的」这个语义失真，且后端 PATCH 一旦发现属性被改过就会把
+  // generation_method 悄悄退回点数购买法（见 service/character.py
+  // update_character），不如直接在 UI 上禁用，行为对得上。
+  const attrEditable = generationMethod !== 'roll'
 
   // 从后端读回已保存的角色卡（issue #96）。
   //
@@ -242,9 +315,16 @@ export default function CharacterPage() {
         }))
         setBackground(saved.background ?? '')
         setNotes(saved.notes ?? '')
+        setBackgroundDetail({ ...emptyBackgroundDetail(), ...(saved.backgroundDetail ?? {}) })
         setEquipment((saved.equipment ?? []).join('、'))
         setSkillAlloc(alloc)
         setInterestAlloc(interest)
+
+        // 生成方式随后端权威值覆盖（issue #96 同款原则），掷点池的权威总值
+        // 同样直接来自后端，不是靠当前属性反推的近似值。
+        const method = (saved.generationMethod as GenerationMethod | undefined) ?? 'pointbuy'
+        setGenerationMethod(method)
+        setAttributePoolTotal(method === 'roll_pool' ? (saved.attributePoolTotal ?? null) : null)
         // 后端那份已经是权威，别再让 localStorage 那条重建逻辑覆盖回去。
         interestAllocInitialized.current = true
       })
@@ -286,6 +366,21 @@ export default function CharacterPage() {
   const [equipment, setEquipment] = useState(existingCharacter?.equipment ?? '')
   const [background, setBackground] = useState(existingCharacter?.background ?? '')
   const [notes, setNotes] = useState(existingCharacter?.notes ?? '')
+  const [backgroundDetail, setBackgroundDetail] = useState<BackgroundDetail>(
+    () => existingCharacter?.backgroundDetail ?? emptyBackgroundDetail()
+  )
+  const updateBackgroundDetail = (key: keyof BackgroundDetail, value: string) =>
+    setBackgroundDetail(prev => ({ ...prev, [key]: value }))
+
+  // 年龄调整（character-build-migration）：结果 + 加载态，跟其余向导步骤
+  // 的状态放一起。
+  const [ageResult, setAgeResult] = useState<AgeAdjustmentResult | null>(null)
+  const [ageAdjusting, setAgeAdjusting] = useState(false)
+  const [ageAdjustError, setAgeAdjustError] = useState('')
+
+  // 导出面板（character-build-migration）：只格式化，不发请求。
+  const [exportFormat, setExportFormat] = useState<ExportFormatKey>('dicebotFull')
+  const [copyStatus, setCopyStatus] = useState('')
 
   // UI state
   const [search, setSearch] = useState('')
@@ -587,13 +682,13 @@ export default function CharacterPage() {
     )
 
   const handleAttrChange = (key: string, delta: number) => {
-    if (!pointBuyRules) return
+    if (!pointBuyRules || !attrEditable) return
     setAttr(prev => {
       const newVal = Math.max(
         pointBuyRules.minValue,
         Math.min(pointBuyRules.maxValue, (prev[key] ?? 0) + delta)
       )
-      if (delta > 0 && sumOtherPointBuy(prev, key) + newVal > pointBuyRules.budget) return prev
+      if (delta > 0 && sumOtherPointBuy(prev, key) + newVal > currentBudget) return prev
       setAttrInputs(inputs => ({ ...inputs, [key]: String(newVal) }))
       return { ...prev, [key]: newVal }
     })
@@ -603,12 +698,12 @@ export default function CharacterPage() {
   // 只在失焦时校验：范围和总预算都取自后端 ruleset。超出总预算时按"其余属性
   // 还剩多少点"封顶，而不是直接拒绝，体验上比"打了数字却没反应"更清楚。
   const commitAttrInput = (key: string) => {
-    if (!pointBuyRules) return
+    if (!pointBuyRules || !attrEditable) return
     const raw = parseInt(attrInputs[key], 10)
     setAttr(prev => {
       const maxAllowed = Math.min(
         pointBuyRules.maxValue,
-        pointBuyRules.budget - sumOtherPointBuy(prev, key)
+        currentBudget - sumOtherPointBuy(prev, key)
       )
       const clamped = Number.isNaN(raw)
         ? (prev[key] ?? pointBuyRules.defaultValue)
@@ -621,9 +716,180 @@ export default function CharacterPage() {
   const steps = [
     { label: '信息', key: 'info', done: step > 0 },
     { label: '属性', key: 'attr', done: step > 1 },
-    { label: '技能', key: 'skill', done: step > 2 },
-    { label: '完成', key: 'done', done: step > 3 },
+    { label: '年龄', key: 'age', done: step > 2 },
+    { label: '技能', key: 'skill', done: step > 3 },
+    { label: '完成', key: 'done', done: step > 4 },
   ]
+
+  // skillAlloc（本地记的"加了多少点"）换算成"最终值"（base + 加点）——
+  // 后端 PATCH/preview 要的是最终值，不是加点数。handleSubmit 最终提交和
+  // 年龄调整前的临时同步（syncCurrentStateToBackend）都要用同一份换算，
+  // 抽出来避免两处各写一遍、口径漂移。
+  const buildSkillsPayload = (): Record<string, number> => {
+    const payload: Record<string, number> = {}
+    for (const [id, pts] of Object.entries(skillAlloc)) {
+      if (!pts) continue
+      const base = skillComputeMap.get(id)?.base ?? 0
+      payload[id] = base + pts
+    }
+    return payload
+  }
+
+  // 已有草稿就复用同一个 characterId，不要每次调用都新建一条（跟
+  // handleSubmit 原有的"已经有草稿就复用"是同一个理由）。
+  const ensureCharacterId = async (): Promise<string> => {
+    if (!roomId) throw new Error('房间信息丢失，请重新创建/加入房间')
+    const existing = useRoomStore.getState().characterId
+    if (existing) return existing
+    const id = await createCharacterDraft(roomId)
+    setCharacterId(id)
+    return id
+  }
+
+  // 把向导当前的本地状态同步一份到后端。年龄调整端点（apply-age-adjustment）
+  // 作用于**后端已保存**的 character.attributes，而属性分配这一步全程只改
+  // 本地 state，不落库——不先同步一次的话，年龄调整会套在一份陈旧（甚至是
+  // 空）的属性上，跟玩家在向导里看到的对不上。
+  const syncCurrentStateToBackend = async (targetRoomId: string, characterId: string): Promise<void> => {
+    await saveCharacter(targetRoomId, characterId, {
+      name: info.name,
+      age: info.age ? Number(info.age) : null,
+      gender: info.gender || null,
+      residence: info.residence,
+      birthplace: info.birthplace,
+      attr,
+      derived,
+      skillValues: buildSkillsPayload(),
+      equipment,
+      occupationName: selectedOcc?.name ?? null,
+      background,
+      notes,
+      backgroundDetail,
+    })
+  }
+
+  const handleUseRollAttributes = async () => {
+    if (!roomId) { setGenerationError('请先创建/加入房间，才能使用服务端掷骰'); return }
+    setGenerationBusy(true)
+    setGenerationError('')
+    try {
+      const characterId = await ensureCharacterId()
+      const result = await rollAttributes(roomId, characterId)
+      setAttr(result.attributes)
+      setAttrInputs(Object.fromEntries(pointBuyAttributes.map(a => [a.key, String(result.attributes[a.key] ?? '')])))
+      setGenerationMethod('roll')
+      setAttributePoolTotal(null)
+      setPoolRolls([])
+    } catch (err) {
+      setGenerationError(friendlyErrorMessage(err, '掷骰失败'))
+    } finally {
+      setGenerationBusy(false)
+    }
+  }
+
+  const handleUseRollPool = async () => {
+    if (!roomId) { setGenerationError('请先创建/加入房间，才能使用掷点池'); return }
+    setGenerationBusy(true)
+    setGenerationError('')
+    try {
+      const characterId = await ensureCharacterId()
+      const result = await rollAttributePool(roomId, characterId)
+      setAttributePoolTotal(result.total)
+      setPoolRolls(result.rolls)
+      setGenerationMethod('roll_pool')
+      // 沿用上一次（可能是另一种生成方式，或者另一次掷点池）遗留的属性值，
+      // 加总很可能对不上这次新掷出的总值——重置到单项下限，让玩家从零开始
+      // 分配这次的池子，而不是显示一堆立刻超预算的旧数字。
+      if (pointBuyRules) {
+        const reset = Object.fromEntries(pointBuyAttributes.map(a => [a.key, pointBuyRules.minValue]))
+        setAttr(prev => ({ ...prev, ...reset }))
+        setAttrInputs(Object.fromEntries(pointBuyAttributes.map(a => [a.key, String(pointBuyRules.minValue)])))
+      }
+    } catch (err) {
+      setGenerationError(friendlyErrorMessage(err, '掷点池失败'))
+    } finally {
+      setGenerationBusy(false)
+    }
+  }
+
+  // 属性是否已经确定（非空/非全零）——年龄调整步骤要求属性已经生成过，
+  // 否则没有可修正的对象（后端也会用同样的理由拒绝：ATTRIBUTES_NOT_SET）。
+  const attributesReady = pointBuyAttributes.length > 0 && pointBuyAttributes.every(a => (attr[a.key] ?? 0) > 0)
+
+  const handleApplyAgeAdjustment = async () => {
+    if (!roomId) { setAgeAdjustError('房间信息丢失，请重新创建/加入房间'); return }
+    const ageNum = parseInt(info.age, 10)
+    if (Number.isNaN(ageNum)) { setAgeAdjustError('请先在"信息"步骤填写有效年龄'); return }
+    setAgeAdjusting(true)
+    setAgeAdjustError('')
+    try {
+      const characterId = await ensureCharacterId()
+      await syncCurrentStateToBackend(roomId, characterId)
+      const result = await applyAgeAdjustment(roomId, characterId, ageNum)
+      setAttr(result.attributesAfter)
+      setAttrInputs(
+        Object.fromEntries(pointBuyAttributes.map(a => [a.key, String(result.attributesAfter[a.key] ?? '')]))
+      )
+      setAgeResult(result)
+    } catch (err) {
+      setAgeAdjustError(friendlyErrorMessage(err, '年龄调整失败'))
+    } finally {
+      setAgeAdjusting(false)
+    }
+  }
+
+  // ── 导出面板：只格式化后端已经算好的权威数据（preview），不重新计算任何
+  // 规则数值。构造的这个 SdkCharacter 只是给格式化函数用的临时视图对象，
+  // 不发给后端——它跟 handleSubmit 提交的数据同源（同一份 attr/skillAlloc/
+  // preview），但故意不等提交成功：完成步这里本来就是"确认最终结果"的地方，
+  // 等提交成功再显示的话，导出面板要么整个不可用（先完成创建这个动作本身
+  // 就有代价——已经开始建卡，中途想先看看骰娘格式没法回头），要么得再多包一
+  // 个"提交后才显示"的状态，复杂度不成比例。
+  const exportCharacter = useMemo<SdkCharacter | null>(() => {
+    if (!preview) return null
+    return {
+      id: useRoomStore.getState().characterId ?? '',
+      status: 'draft',
+      generationMethod,
+      name: info.name,
+      age: info.age ? Number(info.age) : null,
+      gender: info.gender || null,
+      residence: info.residence,
+      birthplace: info.birthplace,
+      attributes: attr,
+      derivedStats: preview.derivedStats,
+      skills: Object.fromEntries(preview.skillView.map(v => [v.id, v.current])),
+      equipment: equipment
+        ? equipment.split(/[,，\n]/).map(s => s.trim()).filter(Boolean)
+        : [],
+      occupation: selectedOcc?.name ?? null,
+      background,
+      notes,
+      backgroundDetail: backgroundDetail as unknown as Record<string, string>,
+    }
+  }, [preview, generationMethod, info, attr, equipment, selectedOcc, background, notes, backgroundDetail])
+
+  const exportText = useMemo(() => {
+    if (!exportCharacter || !preview || !ruleset) return ''
+    switch (exportFormat) {
+      case 'dicebotFull': return formatDicebotFull(exportCharacter, preview, ruleset.skills)
+      case 'dicebotShort': return formatDicebotShort(exportCharacter, preview, ruleset.skills)
+      case 'textCard': return formatTextCard(exportCharacter, preview, ruleset.skills)
+      case 'json': return formatCharacterJson(exportCharacter, preview)
+      default: return ''
+    }
+  }, [exportCharacter, preview, ruleset, exportFormat])
+
+  const handleCopyExport = async () => {
+    if (!exportText) return
+    try {
+      await navigator.clipboard.writeText(exportText)
+      setCopyStatus('已复制')
+    } catch {
+      setCopyStatus('复制失败，请手动选择文本')
+    }
+    setTimeout(() => setCopyStatus(''), 2000)
+  }
 
   const handleSubmit = async () => {
     if (!roomId) {
@@ -637,12 +903,7 @@ export default function CharacterPage() {
       // 最终提交前再拉一次权威计算：用当前 base（来自 skillComputeMap）把
       // 已分配点数换算成"最终值"，连同属性/职业一起发给后端拿回完整的
       // skillView（79 项技能的最终值）和衍生值，两边都以这次结果为准落库。
-      const skillsPayload: Record<string, number> = {}
-      for (const [id, pts] of Object.entries(skillAlloc)) {
-        if (!pts) continue
-        const base = skillComputeMap.get(id)?.base ?? 0
-        skillsPayload[id] = base + pts
-      }
+      const skillsPayload = buildSkillsPayload()
       const finalPreview = await previewCharacter({
         attributes: attr,
         occupationId: info.occupationId,
@@ -671,6 +932,7 @@ export default function CharacterPage() {
         occupationName: selectedOcc?.name ?? null,
         background,
         notes,
+        backgroundDetail,
       })
       await completeCharacter(roomId, characterId)
       setCharacterId(characterId)
@@ -682,6 +944,7 @@ export default function CharacterPage() {
           skillFinalValues,
           equipment, background, notes,
           derived: finalDerived,
+          backgroundDetail,
         },
         roomId
       )
@@ -871,6 +1134,49 @@ export default function CharacterPage() {
           {/* ═══════════════ Step 1: Attributes ═══════════════ */}
           {step === 1 && (
             <div className="px-5 pb-20 animate-screen-in">
+              {/* 属性生成方式（character-build-migration）：点数购买法之外，另外
+                  暴露服务端权威掷骰 / 掷点池两条路径——两者都要先创建草稿才能
+                  调用后端端点，房间信息缺失时禁用按钮。 */}
+              <div className="bg-card border border-border-light rounded-md p-[18px] mb-3">
+                <h4 className="text-[12px] font-semibold text-brass-dark uppercase tracking-[0.08em] mb-1.5">属性生成方式</h4>
+                <p className="text-[11px] text-text-muted mb-2.5">
+                  {generationMethod === 'roll' && '属性已由服务端掷骰生成，下方仅供查看，不可手动调整。'}
+                  {generationMethod === 'roll_pool' && attributePoolTotal != null &&
+                    `已掷出总点数 ${attributePoolTotal}，请手动分配到下方八项属性。`}
+                  {generationMethod === 'pointbuy' && '默认按点数购买法手动分配；也可以改用服务端掷骰或掷点池。'}
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <button onClick={() => setGenerationMethod('pointbuy')} disabled={generationBusy}
+                    className={`py-2 text-[12px] font-semibold rounded-[6px] transition-all disabled:opacity-50 ${
+                      generationMethod === 'pointbuy' ? 'bg-brass text-white' : 'bg-input border border-border-light text-text-muted'
+                    }`}>
+                    点数购买
+                  </button>
+                  <button onClick={() => void handleUseRollAttributes()} disabled={generationBusy || !roomId}
+                    className={`py-2 text-[12px] font-semibold rounded-[6px] transition-all disabled:opacity-50 ${
+                      generationMethod === 'roll' ? 'bg-brass text-white' : 'bg-input border border-border-light text-text-muted'
+                    }`}>
+                    {generationBusy ? '掷骰中…' : '服务端掷骰'}
+                  </button>
+                  <button onClick={() => void handleUseRollPool()} disabled={generationBusy || !roomId}
+                    className={`py-2 text-[12px] font-semibold rounded-[6px] transition-all disabled:opacity-50 ${
+                      generationMethod === 'roll_pool' ? 'bg-brass text-white' : 'bg-input border border-border-light text-text-muted'
+                    }`}>
+                    {generationBusy ? '掷骰中…' : '掷点池'}
+                  </button>
+                </div>
+                {generationError && <p className="text-[11px] text-[#c04040] mt-2">{generationError}</p>}
+                {generationMethod === 'roll_pool' && poolRolls.length > 0 && (
+                  <div className="mt-2.5 grid grid-cols-2 gap-1.5">
+                    {poolRolls.map((r, i) => (
+                      <div key={i} className="text-[10px] text-text-dim font-mono bg-panel rounded px-2 py-1">
+                        {r.kind} [{r.dice.join(',')}] = {r.value}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="bg-card border border-border-light rounded-md p-[18px]">
                 <h4 className="text-[12px] font-semibold text-brass-dark uppercase tracking-[0.08em] mb-1.5">属性分配</h4>
                 <p className="text-[11px] text-text-muted mb-2">点击 +/- 调整属性值（范围 {pointBuyRules?.minValue ?? '—'}-{pointBuyRules?.maxValue ?? '—'}，每次 ±5）</p>
@@ -878,13 +1184,13 @@ export default function CharacterPage() {
                   <div className="flex-1">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-[11px] font-medium text-text-muted">总点数</span>
-                      <span className="text-[12px] font-bold font-mono text-text-primary">{attrPointsTotal}<span className="text-text-dim font-normal">/{pointBuyRules?.budget ?? '—'}</span></span>
+                      <span className="text-[12px] font-bold font-mono text-text-primary">{attrPointsTotal}<span className="text-text-dim font-normal">/{currentBudget || '—'}</span></span>
                     </div>
                     <div className="h-1.5 rounded-full bg-border-light overflow-hidden">
-                      <div className="h-full rounded-full bg-brass transition-all duration-300" style={{ width: `${pointBuyRules ? Math.min(100, (attrPointsTotal / pointBuyRules.budget) * 100) : 0}%` }} />
+                      <div className="h-full rounded-full bg-brass transition-all duration-300" style={{ width: `${currentBudget ? Math.min(100, (attrPointsTotal / currentBudget) * 100) : 0}%` }} />
                     </div>
                   </div>
-                  <span className="text-[10px] text-text-dim">{pointBuyRules ? pointBuyRules.budget - attrPointsTotal : 0} 点剩余</span>
+                  <span className="text-[10px] text-text-dim">{currentBudget - attrPointsTotal} 点剩余</span>
                 </div>
                 <div className="grid grid-cols-1 gap-2">
                   {pointBuyAttributes.map(attribute => {
@@ -906,8 +1212,8 @@ export default function CharacterPage() {
                             <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, val)}%`, backgroundColor: color }} />
                           </div>
                         </div>
-                        <button onClick={() => handleAttrChange(key, -5)}
-                          className="w-7 h-7 rounded-full bg-card border border-border-light text-text-muted flex items-center justify-center active:bg-panel active:scale-90 transition-all"
+                        <button onClick={() => handleAttrChange(key, -5)} disabled={!attrEditable}
+                          className="w-7 h-7 rounded-full bg-card border border-border-light text-text-muted flex items-center justify-center active:bg-panel active:scale-90 transition-all disabled:opacity-30 disabled:active:scale-100"
                         >
                           <Minus className="w-3.5 h-3.5" />
                         </button>
@@ -916,13 +1222,14 @@ export default function CharacterPage() {
                           inputMode="numeric"
                           min={pointBuyRules?.minValue}
                           max={pointBuyRules?.maxValue}
+                          readOnly={!attrEditable}
                           value={attrInputs[key]}
-                          onChange={e => setAttrInputs(inputs => ({ ...inputs, [key]: e.target.value }))}
+                          onChange={e => attrEditable && setAttrInputs(inputs => ({ ...inputs, [key]: e.target.value }))}
                           onBlur={() => commitAttrInput(key)}
                           className="text-[17px] font-bold font-mono text-text-primary min-w-[36px] w-[36px] text-center bg-transparent outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         />
-                        <button onClick={() => handleAttrChange(key, 5)}
-                          className="w-7 h-7 rounded-full bg-card border border-border-light text-text-muted flex items-center justify-center active:bg-panel active:scale-90 transition-all"
+                        <button onClick={() => handleAttrChange(key, 5)} disabled={!attrEditable}
+                          className="w-7 h-7 rounded-full bg-card border border-border-light text-text-muted flex items-center justify-center active:bg-panel active:scale-90 transition-all disabled:opacity-30 disabled:active:scale-100"
                         >
                           <Plus className="w-3.5 h-3.5" />
                         </button>
@@ -943,7 +1250,10 @@ export default function CharacterPage() {
                         {attribute.label}
                         <span className="text-[10px] font-mono text-text-dim font-normal">{attribute.key}</span>
                       </div>
-                      <div className="text-[10px] text-text-dim mt-0.5">不占属性点数（规则为独立掷 {attribute.generation}，掷骰生成待接入，暂为默认值）</div>
+                      <div className="text-[10px] text-text-dim mt-0.5">
+                        不占属性点数（规则为独立掷 {attribute.generation}）
+                        {generationMethod === 'roll' ? '，已由服务端掷骰生成' : '，点数购买/掷点池模式下暂为默认值'}
+                      </div>
                     </div>
                     <span className="text-[17px] font-bold font-mono text-text-primary min-w-[36px] text-center">{attr[attribute.key] ?? '—'}</span>
                   </div>
@@ -972,8 +1282,124 @@ export default function CharacterPage() {
             </div>
           )}
 
-          {/* ═══════════════ Step 2: Skills ═══════════════ */}
+          {/* ═══════════════ Step 2: Age Adjustment ═══════════════ */}
           {step === 2 && (
+            <div className="px-5 pb-20 animate-screen-in">
+              {!attributesReady ? (
+                <div className="bg-card border border-border-light rounded-md p-[18px] text-center">
+                  <p className="text-sm text-text-muted mb-3">请先在上一步完成属性分配，再进行年龄调整。</p>
+                  <button onClick={() => setStep(1)}
+                    className="px-5 py-2 rounded-sm bg-card border border-border-light text-text-body text-sm font-semibold">
+                    返回属性分配
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="bg-card border border-border-light rounded-md p-[18px] mb-3">
+                    <h4 className="text-[12px] font-semibold text-brass-dark uppercase tracking-[0.08em] mb-1.5">年龄调整（可跳过）</h4>
+                    <p className="text-[11px] text-text-muted mb-3">
+                      当前年龄 {info.age || '—'} 岁。COC7 规则里不同年龄段会对属性产生对应修正，应用后会直接覆盖当前属性——不想套用可以直接跳过这一步。
+                    </p>
+                    <div className="overflow-x-auto -mx-1">
+                      <table className="w-full text-[11px] border-collapse min-w-[420px]">
+                        <thead>
+                          <tr className="text-text-dim">
+                            <th className="text-left py-1.5 px-1.5 font-semibold">年龄段</th>
+                            <th className="text-left py-1.5 px-1.5 font-semibold">EDU</th>
+                            <th className="text-left py-1.5 px-1.5 font-semibold">身体/外貌</th>
+                            <th className="text-left py-1.5 px-1.5 font-semibold">其他</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {AGE_MODIFIER_TABLE.map(row => (
+                            <tr key={row.range} className="border-t border-border-light">
+                              <td className="py-1.5 px-1.5 font-mono text-text-primary">{row.range}</td>
+                              <td className="py-1.5 px-1.5 text-text-body">{row.edu}</td>
+                              <td className="py-1.5 px-1.5 text-text-body">{row.body}</td>
+                              <td className="py-1.5 px-1.5 text-text-body">{row.other}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {ageAdjustError && <p className="text-[11px] text-[#c04040] mb-2">{ageAdjustError}</p>}
+
+                  <div className="flex gap-2.5 mb-3">
+                    <button onClick={() => setStep(3)}
+                      className="flex-1 py-2.5 rounded-sm text-sm font-semibold border border-border-mid bg-card text-text-body active:bg-panel transition-all">
+                      跳过
+                    </button>
+                    <button onClick={() => void handleApplyAgeAdjustment()} disabled={ageAdjusting}
+                      className="flex-1 py-2.5 rounded-sm text-sm font-semibold bg-brass text-white active:bg-brass-dark transition-all disabled:opacity-60">
+                      {ageAdjusting ? '调整中…' : '应用年龄调整'}
+                    </button>
+                  </div>
+
+                  {ageResult && (
+                    <div className="bg-card border border-border-light rounded-md p-[18px] space-y-3">
+                      <h4 className="text-[12px] font-semibold text-brass-dark uppercase tracking-[0.08em]">调整结果 · {ageResult.ageLabel} 岁段</h4>
+
+                      {ageResult.eduChecks && ageResult.eduChecks.length > 0 && (
+                        <div>
+                          <div className="text-[11px] font-semibold text-text-muted mb-1.5">EDU 改进检定</div>
+                          <div className="space-y-1">
+                            {ageResult.eduChecks.map((c, i) => (
+                              <div key={i} className={`text-[11px] font-mono px-2.5 py-1.5 rounded ${c.success ? 'bg-[#eef6ea] text-[#3a7a3a]' : 'bg-panel text-text-dim'}`}>
+                                第{i + 1}次：d100={c.roll}
+                                {c.success ? ` ＞ ${c.eduBefore}，成功 +${c.gain}（${c.eduBefore}→${c.eduAfter}）` : ` ≤ ${c.eduBefore}，失败`}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {!!ageResult.eduFlatAdjustment && (
+                        <div className="text-[11px] text-text-body">EDU 固定调整：{ageResult.eduFlatAdjustment}</div>
+                      )}
+                      {ageResult.luckRerolled && (
+                        <div className="text-[11px] text-text-body">幸运已按青年档规则双掷取高</div>
+                      )}
+                      {!!ageResult.scdLoss && (
+                        <div className="text-[11px] text-text-body">
+                          {(ageResult.scdAffectedAttributes ?? []).join('/')} 合计减值 {ageResult.scdLoss}
+                        </div>
+                      )}
+                      {!!ageResult.appLoss && (
+                        <div className="text-[11px] text-text-body">APP 减值 {ageResult.appLoss}</div>
+                      )}
+                      {!!ageResult.movPenalty && (
+                        <div className="text-[11px] text-text-body">MOV 惩罚 −{ageResult.movPenalty}</div>
+                      )}
+
+                      <div>
+                        <div className="text-[11px] font-semibold text-text-muted mb-1.5">属性调整前后对比</div>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {Object.keys(ageResult.attributesAfter).map(key => {
+                            const before = ageResult.attributesBefore[key]
+                            const after = ageResult.attributesAfter[key]
+                            const changed = before !== after
+                            return (
+                              <div key={key} className={`flex items-center justify-between px-2.5 py-1.5 rounded text-[11px] font-mono ${changed ? 'bg-[#fdf3e0]' : 'bg-panel'}`}>
+                                <span className="text-text-muted">{key}</span>
+                                <span className={changed ? 'text-brass-dark font-bold' : 'text-text-dim'}>
+                                  {before}{changed && ` → ${after}`}
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ═══════════════ Step 3: Skills ═══════════════ */}
+          {step === 3 && (
             <div className="px-5 pb-20 animate-screen-in">
               {/* Point counters */}
               <div className="flex gap-2.5 mb-3">
@@ -1098,8 +1524,8 @@ export default function CharacterPage() {
             </div>
           )}
 
-          {/* ═══════════════ Step 3: Summary ═══════════════ */}
-          {step === 3 && (
+          {/* ═══════════════ Step 4: Summary ═══════════════ */}
+          {step === 4 && (
             <div className="px-5 pb-20 animate-screen-in">
               {/* Equipment */}
               <div className="bg-card border border-border-light rounded-md p-[18px] mb-3">
@@ -1125,7 +1551,50 @@ export default function CharacterPage() {
                   className="w-full px-3.5 py-2.5 rounded-[6px] bg-input border border-border-light text-text-primary text-[14px] outline-none focus:border-brass resize-none" />
               </div>
 
+              {/* Background Detail — 结构化背景故事（character-build-migration），
+                  是"背景故事"自由文本之外新增的一组更细的引导字段，两者都保留，
+                  互不替换。 */}
+              <div className="bg-card border border-border-light rounded-md p-[18px] mb-3">
+                <h4 className="text-[12px] font-semibold text-brass-dark uppercase tracking-[0.08em] mb-3">背景故事细节（可选）</h4>
+                <div className="space-y-3">
+                  {BACKGROUND_DETAIL_FIELDS.map(({ key, label, placeholder }) => (
+                    <div key={key}>
+                      <label className="text-[11px] font-medium text-text-muted mb-1 block">{label}</label>
+                      <textarea value={backgroundDetail[key]} onChange={e => updateBackgroundDetail(key, e.target.value)}
+                        placeholder={placeholder} rows={2}
+                        className="w-full px-3.5 py-2.5 rounded-[6px] bg-input border border-border-light text-text-primary text-[13px] outline-none focus:border-brass resize-none" />
+                    </div>
+                  ))}
+                </div>
+              </div>
 
+              {/* Export — 导出角色卡（character-build-migration）：只格式化本地
+                  已经算好的权威数据（preview），不需要等提交成功。 */}
+              <div className="bg-card border border-border-light rounded-md p-[18px] mb-3">
+                <h4 className="text-[12px] font-semibold text-brass-dark uppercase tracking-[0.08em] mb-3">导出角色卡</h4>
+                {!preview ? (
+                  <p className="text-[11px] text-text-muted">等待规则计算完成后可导出…</p>
+                ) : (
+                  <>
+                    <div className="flex gap-1.5 mb-2.5">
+                      {EXPORT_FORMATS.map(f => (
+                        <button key={f.key} onClick={() => setExportFormat(f.key)}
+                          className={`flex-1 py-1.5 text-[11px] font-semibold rounded-[6px] transition-all ${
+                            exportFormat === f.key ? 'bg-brass text-white' : 'bg-input border border-border-light text-text-muted'
+                          }`}>
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                    <textarea readOnly value={exportText} rows={6}
+                      className="w-full px-3 py-2.5 rounded-[6px] bg-input border border-border-light text-text-primary text-[11px] font-mono outline-none resize-none" />
+                    <button onClick={() => void handleCopyExport()}
+                      className="mt-2 w-full py-2 rounded-sm text-[12px] font-semibold border border-border-mid bg-panel text-text-body active:bg-card transition-all">
+                      {copyStatus || '复制到剪贴板'}
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           )}
 
@@ -1205,7 +1674,7 @@ export default function CharacterPage() {
                 上一步
               </button>
               <button onClick={() => {
-                if (step < 3) {
+                if (step < 4) {
                   setStep(s => s + 1)
                   return
                 }
@@ -1213,7 +1682,7 @@ export default function CharacterPage() {
               }}
                 disabled={submitting}
                 className="flex-1 flex items-center justify-center gap-1.5 px-5 py-3 rounded-sm text-sm font-semibold transition-all bg-brass text-white active:bg-brass-dark active:scale-[0.97] disabled:opacity-60">
-                {submitting ? '提交中…' : step === 3 ? '完成创建' : '下一步'} →
+                {submitting ? '提交中…' : step === 4 ? '完成创建' : '下一步'} →
               </button>
             </div>
           </div>

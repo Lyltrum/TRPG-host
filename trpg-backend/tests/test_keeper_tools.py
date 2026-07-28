@@ -242,6 +242,20 @@ async def test_roll_check_unknown_skill(deps: KeeperDeps) -> None:
         await roll_check_impl(deps, "量子力学")
 
 
+async def test_roll_check_compound_skill_short_name(deps: KeeperDeps) -> None:
+    """真人实测 09-#5：裁决器/玩家说人话用短名（"斗殴"），规则表存的是复合名
+    （"格斗：斗殴"）。短名唯一定位到一个子类时应直接命中，不能静默报错。"""
+    text = await roll_check_impl(deps, "斗殴")
+    assert "目标值" in text
+    assert "未知的技能" not in text
+
+
+async def test_roll_check_compound_skill_ambiguous_prefix(deps: KeeperDeps) -> None:
+    """裸的大类前缀（"驾驶"对应 5 个子类）不能瞎猜，必须报错列出候选。"""
+    with pytest.raises(KeeperToolError, match="对应多个细分技能"):
+        await roll_check_impl(deps, "驾驶")
+
+
 async def test_roll_check_player_without_character(deps: KeeperDeps) -> None:
     with pytest.raises(KeeperToolError, match="还没有角色卡"):
         await roll_check_impl(deps, "侦察", player_name="小明")

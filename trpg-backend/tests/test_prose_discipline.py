@@ -111,6 +111,35 @@ def test_scrub_confused_keeps_soft_guidance() -> None:
     assert "窗前" in out2
 
 
+def test_scrub_drops_mechanic_announcement() -> None:
+    """真人实测 09-#3：正文末尾直接播报「该掷 XX 了」——检定卡片已经承担这个
+    提示功能，正文说第二遍是机制播报泄露，不是叙事。精确匹配「该/请/需要 +
+    掷/过/来一次/进行 + 短技能名 + (检定)?了?」，不按「检定」整句砍。"""
+    text = "科比特先生侧身探出，眼神锐利地盯着你。该掷侦察了。"
+    out = scrub_kp_anti_patterns(text, action_intent=True)
+    assert "该掷" not in out
+    assert "科比特先生" in out
+
+    text2 = "你扑上去想制服他，两人扭打在一起，桌椅被撞翻。该掷斗殴了。"
+    out2 = scrub_kp_anti_patterns(text2, action_intent=True)
+    assert "该掷" not in out2
+    assert "扭打" in out2
+
+    text3 = "他压低声音说了些什么。请掷一次侦查检定。"
+    out3 = scrub_kp_anti_patterns(text3, action_intent=False, confused=False)
+    assert "请掷" not in out3
+    assert "压低声音" in out3
+
+
+def test_scrub_keeps_legit_dialogue_mentioning_check() -> None:
+    """不能按「检定」关键词粗暴整句砍——NPC 台词/氛围描写合理提到调查/检定
+    时必须保留，只有「该/请/需要+掷/进行+…+了/检定」这种赤裸机制播报才砍。"""
+    text = "警官提醒你，警察随后会来做笔录调查。这次调查需要你冷静地完成检定。"
+    out = scrub_kp_anti_patterns(text, action_intent=True)
+    assert "警察随后会来做笔录调查" in out
+    assert "这次调查需要你冷静地完成检定" in out
+
+
 def test_inject_guidance_idempotent() -> None:
     g1 = inject_confusion_guidance("原有指引")
     assert "强制引导" in g1

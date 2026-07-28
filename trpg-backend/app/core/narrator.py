@@ -91,6 +91,20 @@ class CheckResultNotice:
     san_remaining: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class StatChangeNotice:
+    """一次 HP 修改的结构化通知（真人实测 09-#4：HP 变化此前只被拼进叙事
+    正文当纯文本广播，前端角色卡拿不到任何结构化数据，HP 从进房间起就是
+    建卡快照，永不更新）。San 已经有 `san.check.result` 事件携带
+    `san_remaining`，不需要这个——San 走"检定→掷骰→广播结果"这条路，HP 是
+    裁决直接判定伤害后立即执行，没有对应的检定/掷骰事件可以携带新值。"""
+
+    player_id: str
+    hp: int
+    hp_max: int | None = None
+    reason: str = ""
+
+
 @dataclass
 class NarrationOutcome:
     """`Narrator.narrate()`/`resolve_check()` 的统一返回形状。
@@ -98,12 +112,14 @@ class NarrationOutcome:
     `text` 是要广播的叙事（两段式掷骰的"重发请求"分支可能为空串——彼时不该
     广播一条空 narration.push）；`check_requests`/`check_results` 是本轮新
     发起/新结算的检定通知，调用方（WS 层）负责把它们各自广播成
-    `check.request`/`check.result` 事件。非 keeper 的单轮叙事实现两个列表
+    `check.request`/`check.result` 事件。`stat_changes` 是本轮发生的 HP
+    变更（`character.stat_changed` 事件）。非 keeper 的单轮叙事实现三个列表
     恒为空。"""
 
     text: str
     check_requests: list[CheckRequestNotice] = field(default_factory=list)
     check_results: list[CheckResultNotice] = field(default_factory=list)
+    stat_changes: list[StatChangeNotice] = field(default_factory=list)
 
 
 class Narrator(ABC):

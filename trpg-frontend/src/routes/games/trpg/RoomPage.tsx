@@ -538,7 +538,11 @@ export default function RoomPage() {
   //   守秘人裁决需要检定后推的"待掷"通知。是自己的检定就出现掷骰卡片，
   //   否则只提示"等待谁来掷"。
   // - check.result/san.check.result：服务端权威生成的骰值，渲染成一条掷骰
-  //   消息；命中当前待掷卡片的 id 就把卡片收起。
+  //   消息；命中当前待掷卡片的 id 就把卡片收起。san.check.result 顺带把
+  //   sanRemaining 写回角色卡 store（真人实测 09-#4：此前只渲染消息，从不
+  //   更新角色卡，San 值永远是建卡快照）。
+  // - character.stat_changed：HP 变更的结构化广播（同上 09-#4），只更新
+  //   自己的角色卡（targetId === playerId）。
   // - error：ACTION_IN_PROGRESS（有人正在等守秘人回应）/CHECK_NOT_PENDING
   //   （待掷检定已失效）等，转成友好的系统提示。
   useEffect(() => {
@@ -617,7 +621,7 @@ export default function RoomPage() {
           setPendingCheck(prev => (prev && prev.id === checkRequestId ? null : prev))
         }
       } else if (envelope.type === 'san.check.result') {
-        const { playerId: rollerId, rollValue, sanLoss, result, checkRequestId } = envelope.payload
+        const { playerId: rollerId, rollValue, sanLoss, result, checkRequestId, sanRemaining } = envelope.payload
         setMessages(prev => [...prev, {
           type: 'dice',
           sender: nicknameFor(rollerId),
@@ -628,6 +632,18 @@ export default function RoomPage() {
         setTyping(false)
         if (checkRequestId) {
           setPendingCheck(prev => (prev && prev.id === checkRequestId ? null : prev))
+        }
+        // 角色卡的 San 此前一直是建卡快照，从不随检定结果更新（真人实测
+        // 09-#4）——sanRemaining 后端早就带了，只是没人读。
+        if (rollerId === playerId && roomId && typeof sanRemaining === 'number') {
+          useCharacterStore.getState().updateDerived(roomId, { san: sanRemaining })
+        }
+      } else if (envelope.type === 'character.stat_changed') {
+        // HP 变更的结构化广播（真人实测 09-#4）：此前 HP 变化只被拼进叙事
+        // 正文当纯文本，前端角色卡拿不到任何数据可读，只更新自己的角色卡。
+        const { playerId: targetId, hp } = envelope.payload
+        if (targetId === playerId && roomId) {
+          useCharacterStore.getState().updateDerived(roomId, { hp })
         }
       } else if (envelope.type === 'error') {
         setTyping(false)
@@ -648,7 +664,7 @@ export default function RoomPage() {
       }
     })
     return off
-  }, [playerId, senderName, roomInfo])
+  }, [playerId, senderName, roomInfo, roomId])
 
   // 讨论区历史：进房拉一次（倒序返回，反转成时间正序渲染）。实时增量走上面
   // 的 chat.message 广播，历史和增量之间的重复靠 messageId 去重兜住。

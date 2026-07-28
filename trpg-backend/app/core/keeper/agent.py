@@ -384,6 +384,7 @@ class KeeperAgent(Narrator):
             return NarrationOutcome(
                 text=narration,
                 check_requests=[_pending_to_notice(c) for c in pending_checks],
+                stat_changes=deps.stat_changes,
             )
 
         # 阶段3·叙事：只写故事 + 长度硬裁 + 去菜单/软挡。
@@ -408,7 +409,7 @@ class KeeperAgent(Narrator):
         if deps.check_results:
             dice_lines = "\n".join(f"🎲 {line}" for line in deps.check_results)
             narration = f"{narration}\n\n{dice_lines}" if narration else dice_lines
-        return NarrationOutcome(text=narration)
+        return NarrationOutcome(text=narration, stat_changes=deps.stat_changes)
 
     async def resolve_check(
         self, room_id: str, player_id: str, check_request_id: str

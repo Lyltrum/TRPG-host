@@ -69,6 +69,8 @@ const PAYLOAD_VALIDATORS: {
     typeof p.sanLoss === 'number' &&
     typeof p.result === 'string',
   'clue.granted': (p) => typeof p.playerId === 'string' && typeof p.clueName === 'string',
+  // HP 结构化广播（feat/keeper-agent，真人实测 09-#4 修复）
+  'character.stat_changed': (p) => typeof p.playerId === 'string' && typeof p.hp === 'number',
   error: (p) => typeof p.code === 'string' && typeof p.message === 'string',
 };
 

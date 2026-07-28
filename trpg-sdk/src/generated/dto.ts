@@ -198,6 +198,7 @@ export interface CharacterRead {
   id: string;
   status: string;
   generationMethod: string;
+  attributePoolTotal?: number | null;
   name?: string | null;
   age?: number | null;
   gender?: string | null;

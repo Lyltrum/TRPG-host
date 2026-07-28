@@ -57,6 +57,11 @@ class CharacterRead(CamelModel):
     id: str
     status: str
     generation_method: str
+    # 掷点池法（roll_pool）掷出的权威总值，其余两种生成方法恒为 None——前端
+    # 编辑一张已保存的掷点池角色卡时要靠这个字段精确恢复预算分母，不能退而
+    # 求其次拿"当前已保存的八维总和"去猜（那个数字在玩家后续手动改动过属性
+    # 后会跟真正掷出来的池子值不一致）。
+    attribute_pool_total: int | None = None
     name: str | None = None
     age: int | None = None
     gender: str | None = None

@@ -205,18 +205,25 @@ def load_module(path: str | Path) -> ScenarioModule:
 def public_story_from_module(
     module: ScenarioModule,
 ) -> tuple[str | None, str | None, list[str]]:
-    """抽取玩家可见前情（player_intro + opening.script），去重为段落列表。
+    """抽取玩家可见前情，供建卡前的 story 界面展示。
 
     仅返回可直接给玩家看的文本；不含 kp_notes / kp_truth。
+
+    🔴 真人实测 2026-07-28（神秘渡轮）复现：`pages` 曾经把 `player_intro`
+    和 `opening.script` 拼在一起展示，但 `opening.script` 同时又被"开场
+    仪式"复用为游戏正式开始后守秘人的第一句话——玩家会把同一段场景描写
+    读两遍。`pages`（进而 `story_pages`）现在**只收 `player_intro`**：
+    这个界面的定位是建卡前的简短钩子（类比 COC 模组书里"读给玩家听"的
+    引子，不是完整开场戏），`opening.script` 专门留给开场仪式那一步，
+    经 LLM 叙事层改写后才广播给玩家（见 `agent.py` 的 `is_opening_ceremony`
+    分支）。`opening` 这个返回值仍然保留给调用方（`opening_script` 字段），
+    不在这里删除——只是不再混进 `pages`。
     """
     intro = (module.player_intro or "").strip() or None
     opening: str | None = None
     if module.opening is not None:
         opening = (module.opening.script or "").strip() or None
-    pages: list[str] = []
-    for text in (intro, opening):
-        if text and text not in pages:
-            pages.append(text)
+    pages = [intro] if intro else []
     return intro, opening, pages
 
 

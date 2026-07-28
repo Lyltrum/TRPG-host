@@ -146,6 +146,39 @@ def test_scrub_drops_mechanic_announcement_in_comma_clause() -> None:
     assert out.endswith("。")
 
 
+def test_scrub_drops_mechanic_announcement_after_em_dash() -> None:
+    """真人实测 10-#6(神秘渡轮):机制播报还有破折号分句这种形态("……朝你的
+    后背砸来——该掷躲闪了。"),不是逗号。_CLAUSE_SPLIT 必须同时认识破折号,
+    不能假设分隔符宽度是 1 个字符(破折号"——"是两个字符)。"""
+    text = "金井在铁门边挥手大喊：“快！这边！”怪物灰绿色的身躯朝你的后背砸来——该掷躲闪了。"
+    out = scrub_kp_anti_patterns(text, action_intent=True)
+    assert "该掷" not in out
+    assert "躲闪了" not in out
+    assert "怪物灰绿色的身躯朝你的后背砸来" in out
+
+
+def test_scrub_drops_fabricated_stat_change_leak() -> None:
+    """真人实测 10-#5(神秘渡轮):比机制播报更严重——KP 编造了从未真实发生
+    的检定结果("[理智] 压测员 0/1d3 → 损失 2，当前 San 52"),格式神似内部
+    历史记账行(agent.py::_load_room_memory),数据库里查无此次真实损失。
+    这种整句必须整句丢弃,不能只砍尾巴(内容本身就是伪造的,没有可保留的
+    部分)。"""
+    text = (
+        "打撒大转身狂奔的瞬间，头顶扑下几团灰绿色的胶状影子——蝙蝠翅膀扇出"
+        "腥风，章鱼般的触手朝你后颈扫来。[理智] 压测员 0/1d3 → 损失 2，"
+        "当前 San 52"
+    )
+    out = scrub_kp_anti_patterns(text, action_intent=True)
+    assert "[理智]" not in out
+    assert "损失 2" not in out
+    assert "触手朝你后颈扫来" in out
+
+    text2 = "你被章鱼怪物撞飞。[生命] 压测员 → 损失 3，当前 HP 5。"
+    out2 = scrub_kp_anti_patterns(text2, action_intent=True)
+    assert "[生命]" not in out2
+    assert "当前 HP" not in out2
+
+
 def test_scrub_keeps_legit_dialogue_mentioning_check() -> None:
     """不能按「检定」关键词粗暴整句砍——NPC 台词/氛围描写合理提到调查/检定
     时必须保留，只有「该/请/需要+掷/进行+…+了/检定」这种赤裸机制播报才砍。"""

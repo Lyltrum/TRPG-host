@@ -225,11 +225,17 @@ async def test_roll_check_trained_skill(deps: KeeperDeps) -> None:
 
     # 「侦查」同义写法必须解析到同一技能（模组文本常用写法）
     assert "目标值 70" in await roll_check_impl(deps, "侦查")
+    # 「观察」同义写法（10-#6 真人实测：神秘渡轮裁决器用"观察"，规则表规范
+    # 名是"侦察"，精确匹配失败导致检定静默丢失）
+    assert "目标值 70" in await roll_check_impl(deps, "观察")
 
 
 async def test_roll_check_untrained_falls_back_to_base(deps: KeeperDeps) -> None:
     # 闪避没点过 → 基础值 DEX/2 = 35
     assert "目标值 35" in await roll_check_impl(deps, "闪避")
+    # 「闪躲」同义写法（10-#6 真人实测：叙事写"该掷躲闪了"却从未生成待掷
+    # 卡片，规则表规范名是"闪避"，不是"闪躲"）
+    assert "目标值 35" in await roll_check_impl(deps, "闪躲")
 
 
 async def test_roll_check_attribute_and_luck(deps: KeeperDeps) -> None:

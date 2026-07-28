@@ -19,7 +19,12 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.decision import KeeperDecision, execute_side_effects
-from app.core.keeper.module_loader import load_module, render_agenda, render_full
+from app.core.keeper.module_loader import (
+    load_module,
+    public_story_from_module,
+    render_agenda,
+    render_full,
+)
 from app.core.keeper.prompts import format_agenda_status, format_turn_input
 from app.core.keeper.tools import (
     AGENDA_FIRED_KEY,
@@ -131,6 +136,20 @@ def test_fixture_loads_agenda_and_opening() -> None:
     assert module.opening is not None
     assert module.opening.scene == "庄园门厅"
     assert module.endings[0].trigger == "玩家当众指认管家且出示钥匙或手套证据"
+
+
+def test_public_story_pages_only_include_player_intro() -> None:
+    """真人实测 10-#1(神秘渡轮):story 界面(`pages`/`story_pages`)以前把
+    `player_intro` 和 `opening.script` 拼在一起展示，但 `opening.script`
+    同时又被开场仪式复用为游戏正式开始后守秘人的第一句话——玩家会把同一段
+    场景描写读两遍。`pages` 现在只收 `player_intro`；`opening` 这个返回值
+    仍然要给出来（调用方的 `opening_script` 字段还要用），只是不再混进
+    `pages`。"""
+    module = load_module(_FIXTURE_MODULE)
+    intro, opening, pages = public_story_from_module(module)
+    assert intro == "你们受雇调查庄园失窃案。"
+    assert opening == "管家把你们迎进门厅，说昨夜银器失窃，主人希望尽快查出窃贼。"
+    assert pages == [intro]
 
 
 # ── 3. render_full 块与空块省略 ─────────────────────

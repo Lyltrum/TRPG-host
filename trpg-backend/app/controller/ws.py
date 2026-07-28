@@ -112,10 +112,12 @@ async def _run_opening_ceremony(
     """设计 05：game.start 后给出**唯一**开场旁白，并初始化 opening 阶段。
 
     全模组统一（禁止双重引导）：
-    1. structured 已有 opening.script/player_intro → 只用这一段 + 写 phase
-       （不 LLM 扩写；前情页与对局同源）
-    2. 无脚本 → narrate 生成一段
-    3. 仍失败 → 中性兜底
+    1. narrate 生成一段——有 structured 开场脚本时，`agent.py` 会把它当
+       **素材**喂给叙事阶段的 LLM 改写，不再原样粘贴（真人实测 09-#2：原样
+       粘贴等于让 AI 主持人"照本宣科"念模组书的背景说明，模组数据里混进的
+       GM 指导语等缺陷也会被原样带进游戏，见神秘渡轮的真实案例）。
+    2. LLM 失败/空结果（含 Fallback 无 key 场景）→ structured 脚本原样兜底。
+    3. 都没有 → 中性兜底。
     """
     from app.core.narrator import NarrationContext
 
@@ -143,15 +145,15 @@ async def _run_opening_ceremony(
         logger.warning("opening_ceremony_failed", room_id=room_id, error=str(exc))
         text = ""
 
-    # 权威顺序：structured 脚本 > narrate 结果 > 中性兜底（全模组只推一段）
-    if script:
+    # 权威顺序：narrate 结果 > structured 脚本 > 中性兜底（全模组只推一段）
+    if text and not text.startswith("守秘人正在等待掷骰"):
+        used_llm = True
+    elif script:
         text = script
         used_llm = False
-    elif not text or text.startswith("守秘人正在等待掷骰"):
+    else:
         text = room_service.opening_narration_for_scenario(None)
         used_llm = False
-    else:
-        used_llm = True
 
     try:
         from app.core.keeper.heartbeat import touch_activity

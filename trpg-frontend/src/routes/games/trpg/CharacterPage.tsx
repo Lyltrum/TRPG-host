@@ -11,7 +11,7 @@ import type {
 import { formatCharacterJson, formatDicebotFull, formatDicebotShort, formatTextCard } from 'trpg-sdk'
 import { OCCUPATION_ICONS, OCCUPATION_GROUPS } from '@/data/occupations'
 import type { Attributes, BackgroundDetail, GenerationMethod, InvestigatorInfo } from '@/data/character-model'
-import { emptyBackgroundDetail } from '@/data/character-model'
+import { BACKGROUND_DETAIL_FIELDS, emptyBackgroundDetail } from '@/data/character-model'
 import { useCharacterStore } from '@/stores/character-store'
 import { useRoomStore } from '@/stores/room-store'
 import {
@@ -41,19 +41,6 @@ const AGE_MODIFIER_TABLE: Array<{ range: string; edu: string; body: string; othe
   { range: '80–89', edu: '改进检定 ×4', body: '共 −80，APP−25', other: 'MOV−5' },
 ]
 
-// 结构化背景故事的 8 个引导字段（迁移自 coc-char-gen），字段本身是这次产品
-// 设计定的固定字段，不是规则数据，写死在这里符合 character-model.ts 的
-// BackgroundDetail 类型注释。
-const BACKGROUND_DETAIL_FIELDS: Array<{ key: keyof BackgroundDetail; label: string; placeholder: string }> = [
-  { key: 'personalDescription', label: '个人描述', placeholder: '外貌、习惯、说话方式…' },
-  { key: 'ideology', label: '信念 / 思想', placeholder: '角色的信仰、价值观、人生哲学…' },
-  { key: 'significantPeople', label: '重要之人', placeholder: '对角色而言最重要的人是谁，为什么…' },
-  { key: 'meaningfulLocations', label: '意义非凡的地点', placeholder: '角色心中特殊的地方…' },
-  { key: 'treasuredPossessions', label: '珍视的物品', placeholder: '角色随身携带或格外珍惜的东西…' },
-  { key: 'traits', label: '特质', placeholder: '性格特点、怪癖…' },
-  { key: 'injuries', label: '外伤', placeholder: '角色身上留下的伤痕或旧疾…' },
-  { key: 'phobias', label: '恐惧症', placeholder: '角色特有的恐惧或心理阴影…' },
-]
 
 type ExportFormatKey = 'dicebotFull' | 'dicebotShort' | 'textCard' | 'json'
 const EXPORT_FORMATS: Array<{ key: ExportFormatKey; label: string }> = [

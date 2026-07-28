@@ -108,6 +108,15 @@ _HISTORY_LIMIT = 200
 # 空响应常见于模型偶发不返回 content；多给一次机会，仍失败则兜底决策。
 _ADJUDICATE_RETRIES = 2
 
+# 🔴 deepseek-v4-pro 默认开启隐藏推理（message.reasoning_content），推理 token
+# 与可见正文共享同一个 max_tokens 预算——实测简单请求推理耗 77~119 token，复杂
+# 真实局面耗更多，曾把正文预算挤到只剩 51 字就被硬砍断（真人实测 2026-07-28
+# 复现）。裁决/叙事两阶段的设计（低温稳定输出 / 固定字数上限）都是在
+# deepseek-chat（无隐藏推理）上定的，v4-pro 的隐藏推理与这套预算模型不兼容，
+# 关掉即可——本项目不需要模型的链式思考，需要判断力的地方已经是独立的裁决
+# 阶段。已用真实请求验证：加此参数后 reasoning_tokens 归零，正文按预算完整生成。
+_DISABLE_THINKING: dict = {"thinking": {"type": "disabled"}}
+
 _FALLBACK_ADJUDICATE_GUIDANCE = (
     "【系统兜底】裁决模型未返回合法 JSON。"
     "请用一两句世界内文字回应玩家本轮意图：能推进就写行动结果，"
@@ -271,11 +280,19 @@ class KeeperAgent(Narrator):
         weird = is_weird_or_meta_utterance(context.utterance)
         action_intent = is_clear_action_intent(context.utterance)
         if confused:
+            # 🔴 裁决走兜底（_FALLBACK_ADJUDICATE_GUIDANCE）时不要把它和迷茫引导拼
+            # 一起——兜底文案说"别编造+可请玩家重说一遍"，迷茫引导说"必须给 1-2
+            # 个具体方向"，两句话方向相反，叙事模型会各退一步、缩回复述已知信息
+            # 这个最安全选项（真人实测 2026-07-28 复现：玩家问"该做什么"，回复是
+            # 前情复述而非建议）。迷茫引导本身已自洽（给方向不需要先问清楚），
+            # 兜底走这条分支时直接丢弃、不拼接。
+            is_adjudicate_fallback = decision.narration_guidance == _FALLBACK_ADJUDICATE_GUIDANCE
+            base_guidance = "" if is_adjudicate_fallback else decision.narration_guidance
             decision = decision.model_copy(
                 update={
                     "checks": [],
                     "san_checks": [],
-                    "narration_guidance": inject_confusion_guidance(decision.narration_guidance),
+                    "narration_guidance": inject_confusion_guidance(base_guidance),
                 }
             )
         elif weird and not is_heartbeat and not is_opening_ceremony:
@@ -490,6 +507,7 @@ class KeeperAgent(Narrator):
                 messages=messages,
                 response_format={"type": "json_object"},
                 temperature=0.3,
+                extra_body=_DISABLE_THINKING,
             )
             raw = (response.choices[0].message.content or "").strip()
             if not raw:
@@ -557,8 +575,17 @@ class KeeperAgent(Narrator):
             ],
             temperature=0.8,
             max_tokens=max_tokens,
+            extra_body=_DISABLE_THINKING,
         )
         raw = response.choices[0].message.content or ""
+        if response.choices[0].finish_reason == "length":
+            # 即便关了隐藏推理，正文本身也可能写超——这里留痕方便以后一眼看出
+            # 是被 max_tokens 硬砍的，而不是 clip_narration 的优雅裁切。
+            logger.warning(
+                "keeper_narration_hit_token_limit",
+                max_tokens=max_tokens,
+                raw_len=len(raw.strip()),
+            )
         clipped = clip_narration(raw, max_chars)
         if len(raw.strip()) > max_chars:
             logger.info(

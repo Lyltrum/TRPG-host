@@ -403,12 +403,10 @@ class KeeperAgent(Narrator):
             max_chars=char_limit,
         )
 
-        # 🔴 掷骰可见性的硬保证：本轮发生过的伤害由代码强制附加在叙事末尾——
-        # 骰子/数值当众认账是机制不是要求（实测模型会把数字藏进叙事）。
-        # 附加在 clip 之后，避免 🎲 行被裁掉。
-        if deps.check_results:
-            dice_lines = "\n".join(f"🎲 {line}" for line in deps.check_results)
-            narration = f"{narration}\n\n{dice_lines}" if narration else dice_lines
+        # HP 变化的可见性不再靠拼进叙事正文保证——那样等于让守秘人的嘴说了句
+        # 不该它说的系统台词（真人实测 2026-07-28 反馈）。现在 deps.stat_changes
+        # 走 character.stat_changed 结构化广播，前端渲染成独立的系统提示，
+        # 和叙事气泡分开。
         return NarrationOutcome(text=narration, stat_changes=deps.stat_changes)
 
     async def resolve_check(

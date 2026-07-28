@@ -541,8 +541,9 @@ export default function RoomPage() {
   //   消息；命中当前待掷卡片的 id 就把卡片收起。san.check.result 顺带把
   //   sanRemaining 写回角色卡 store（真人实测 09-#4：此前只渲染消息，从不
   //   更新角色卡，San 值永远是建卡快照）。
-  // - character.stat_changed：HP 变更的结构化广播（同上 09-#4），只更新
-  //   自己的角色卡（targetId === playerId）。
+  // - character.stat_changed：HP 变更的结构化广播（同上 09-#4），渲染成
+  //   独立的系统提示（不再混进守秘人的叙事气泡，09-#6），全房间可见；只有
+  //   目标是自己时才更新本地角色卡（targetId === playerId）。
   // - error：ACTION_IN_PROGRESS（有人正在等守秘人回应）/CHECK_NOT_PENDING
   //   （待掷检定已失效）等，转成友好的系统提示。
   useEffect(() => {
@@ -639,12 +640,25 @@ export default function RoomPage() {
           useCharacterStore.getState().updateDerived(roomId, { san: sanRemaining })
         }
       } else if (envelope.type === 'character.stat_changed') {
-        // HP 变更的结构化广播（真人实测 09-#4）：此前 HP 变化只被拼进叙事
-        // 正文当纯文本，前端角色卡拿不到任何数据可读，只更新自己的角色卡。
-        const { playerId: targetId, hp } = envelope.payload
-        if (targetId === playerId && roomId) {
+        // HP 变更的结构化广播（真人实测 09-#4/#6）：此前 HP 变化只被拼进
+        // 叙事正文当纯文本、混在守秘人的话里（09-#6 指出这不该是它说的话）。
+        // 现在渲染成独立的系统提示（跟 check.request 的"守秘人请求你进行
+        // XX检定"同一类气泡），只更新**自己**的角色卡，但提示对全房间可见——
+        // HP 变化在 COC 里本来就是桌面上大家都看得见的公开信息。
+        const { playerId: targetId, hp, reason } = envelope.payload
+        const isSelf = targetId === playerId
+        const prevHp = isSelf && roomId ? useCharacterStore.getState().getForRoom(roomId)?.derived.hp : undefined
+        if (isSelf && roomId) {
           useCharacterStore.getState().updateDerived(roomId, { hp })
         }
+        const label = prevHp !== undefined && prevHp !== hp
+          ? `${nicknameFor(targetId)} · HP ${prevHp} → ${hp}`
+          : `${nicknameFor(targetId)} · HP → ${hp}`
+        setMessages(prev => [...prev, {
+          type: 'system',
+          content: reason ? `🎲 ${label}（${reason}）` : `🎲 ${label}`,
+          time: now,
+        }])
       } else if (envelope.type === 'error') {
         setTyping(false)
         const friendly =
@@ -842,7 +856,7 @@ export default function RoomPage() {
                     <div className={`text-[11px] font-semibold mb-0.5 ${isSelf ? 'text-mold' : 'text-text-muted'}`}>
                       {msg.nickname}
                     </div>
-                    <div className={`text-sm leading-[1.65] text-text-body inline-block max-w-full px-3.5 py-2.5 rounded-md ${isSelf ? 'bg-[#eef6ee]' : 'bg-panel'}`}>
+                    <div className={`text-sm leading-[1.65] text-text-body inline-block max-w-full px-3.5 py-2.5 rounded-md text-left ${isSelf ? 'bg-[#eef6ee]' : 'bg-panel'}`}>
                       {msg.text}
                     </div>
                     <div className="text-[10px] text-text-dim mt-0.5">
@@ -870,7 +884,7 @@ export default function RoomPage() {
                 </div>
                 <div className="flex-1 min-w-0 text-right">
                   <div className="text-[11px] font-semibold text-mold mb-0.5">{msg.sender} · 掷骰</div>
-                  <div className="text-sm leading-[1.65] text-text-body inline-block max-w-full px-3.5 py-2.5 bg-[#eef6ee] rounded-md font-mono">
+                  <div className="text-sm leading-[1.65] text-text-body inline-block max-w-full px-3.5 py-2.5 bg-[#eef6ee] rounded-md font-mono text-left">
                     {msg.content}
                   </div>
                   <div className="text-[10px] text-text-dim mt-0.5">{msg.time}</div>
@@ -892,9 +906,9 @@ export default function RoomPage() {
                   {msg.sender}
                 </div>
                 <div className={`
-                  text-sm leading-[1.65] text-text-body inline-block max-w-full px-3.5 py-2.5
+                  text-sm leading-[1.65] text-text-body inline-block max-w-full px-3.5 py-2.5 text-left
                   ${isPlayer ? 'bg-[#eef6ee] rounded-md' : ''}
-                  ${isNarr ? 'bg-[#fdfaf4] border-l-[3px] border-brass rounded-r-sm rounded-l-none italic text-[#4a4030] text-left' : ''}
+                  ${isNarr ? 'bg-[#fdfaf4] border-l-[3px] border-brass rounded-r-sm rounded-l-none italic text-[#4a4030]' : ''}
                   ${!isPlayer && !isNarr ? 'bg-panel rounded-md' : ''}
                 `}>
                   {msg.content}

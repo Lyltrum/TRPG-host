@@ -1,7 +1,10 @@
 import type { ApiClient } from '../client';
 import type {
+  AgeAdjustmentResult,
+  ApplyAgeAdjustmentInput,
   Character,
   CharacterDraftResult,
+  RollAttributePoolResult,
   RollAttributesResult,
   UpdateCharacterInput,
 } from '../types';
@@ -71,6 +74,38 @@ export class CharactersResource {
     return this.client.post<RollAttributesResult>(
       `/rooms/${roomId}/characters/${characterId}/roll-attributes`,
       null,
+      this.authenticated(reconnectToken)
+    );
+  }
+
+  /** POST /api/v1/rooms/{roomId}/characters/{characterId}/roll-attribute-pool —
+   * 掷点池生成法：服务端权威掷出一个总点数池，玩家再手动分配到八维
+   * （迁移自 coc-char-gen）。 */
+  rollAttributePool(
+    roomId: string,
+    characterId: string,
+    reconnectToken: string
+  ): Promise<RollAttributePoolResult> {
+    return this.client.post<RollAttributePoolResult>(
+      `/rooms/${roomId}/characters/${characterId}/roll-attribute-pool`,
+      null,
+      this.authenticated(reconnectToken)
+    );
+  }
+
+  /** POST /api/v1/rooms/{roomId}/characters/{characterId}/apply-age-adjustment —
+   * 套用 COC7 建卡期年龄修正（EDU 改进检定/身体减值/外貌减值/青年幸运双掷），
+   * 迁移自 coc-char-gen。必须先生成过属性，否则 409 `ATTRIBUTES_NOT_SET`。 */
+  applyAgeAdjustment(
+    roomId: string,
+    characterId: string,
+    age: number,
+    reconnectToken: string
+  ): Promise<AgeAdjustmentResult> {
+    const payload: ApplyAgeAdjustmentInput = { age };
+    return this.client.post<AgeAdjustmentResult>(
+      `/rooms/${roomId}/characters/${characterId}/apply-age-adjustment`,
+      payload,
       this.authenticated(reconnectToken)
     );
   }

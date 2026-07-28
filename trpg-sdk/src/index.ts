@@ -13,6 +13,7 @@ import { RoomSocket } from './resources/room-socket';
 import { RoomsResource } from './resources/rooms';
 
 export * from './types';
+export * from './format/character-export';
 export { ApiClient, ApiError } from './client';
 export type { ApiClientOptions } from './client';
 export { RoomSocket } from './resources/room-socket';

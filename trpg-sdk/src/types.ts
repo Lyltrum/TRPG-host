@@ -33,6 +33,13 @@ export type {
   CharacterUpdateBody as UpdateCharacterInput,
   CharacterDraftResult,
   RollAttributesResult,
+  // 年龄调整 / 掷点池生成法（迁移自 coc-char-gen，character-build-migration）
+  // —— 对应后端 dto/character.py
+  AgeAdjustmentRequest as ApplyAgeAdjustmentInput,
+  AgeAdjustmentResult,
+  EduImprovementCheckView,
+  AttributePoolRollView,
+  RollAttributePoolResult,
   // 我的卡库（issue #77 决策 5）—— 对应后端 dto/character.py
   CharacterTemplateCreateBody as SaveCharacterTemplateInput,
   CharacterTemplateRead as CharacterTemplate,
@@ -47,6 +54,7 @@ export type {
   GameSystemRead as GameSystem,
   CharacterRead as Character,
   RulesetRead as Ruleset,
+  SkillSpec,
   // 模组详情 / 导入（issue #77）—— 对应后端 dto/module.py
   ModuleDetailRead as ModuleDetail,
   ModuleImportRequestBody as ImportModuleInput,

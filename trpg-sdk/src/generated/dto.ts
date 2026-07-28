@@ -52,6 +52,36 @@ export interface ActionSubmitPayload {
 }
 
 /**
+ * POST /api/v1/rooms/{roomId}/characters/{characterId}/apply-age-adjustment
+ * 请求体。
+ */
+export interface AgeAdjustmentRequest {
+  age: number;
+}
+
+/**
+ * apply-age-adjustment 的响应：调整前后的完整属性 + 每一步的掷骰/减值
+ * 明细，供前端展示"发生了什么"而不只是甩最终数字。
+ */
+export interface AgeAdjustmentResult {
+  age: number;
+  ageLabel: string;
+  attributesBefore: {
+    [k: string]: number;
+  };
+  attributesAfter: {
+    [k: string]: number;
+  };
+  eduChecks?: EduImprovementCheckView[];
+  eduFlatAdjustment?: number;
+  scdLoss?: number;
+  scdAffectedAttributes?: string[];
+  appLoss?: number;
+  luckRerolled?: boolean;
+  movPenalty?: number;
+}
+
+/**
  * 调查员年龄的合法区间（issue #96）。
  *
  * COC7 的年龄档从 15-19 起、到 80-89 止，所以合法区间是 [15, 89]。此前前端
@@ -81,6 +111,16 @@ export interface AttributePointBuyRules {
   minValue: number;
   maxValue: number;
   defaultValue: number;
+}
+
+/**
+ * 掷点池法里的一次骰子明细：`kind` 是骰子公式（`3d6x5`/`2d6+6x5`），
+ * `dice` 是原始骰子值，`value` 是这一项换算后的最终点数。
+ */
+export interface AttributePoolRollView {
+  kind: string;
+  dice: number[];
+  value: number;
 }
 
 /**
@@ -176,22 +216,9 @@ export interface CharacterRead {
   occupation?: string | null;
   background?: string;
   notes?: string;
-}
-
-/**
- * character.stat_changed 推送 payload（feat/keeper-agent，真人实测 09-#4
- * 修复）——HP 变更的结构化广播。
- *
- * San 已经有 `san.check.result` 携带 `san_remaining`（走"检定→掷骰→广播
- * 结果"这条路），不需要这个事件；HP 变化是裁决直接判定伤害后立即执行，
- * 没有对应的检定/掷骰事件可以携带新值，此前只把结果拼进叙事正文当纯文本，
- * 前端角色卡拿不到任何结构化数据、HP 从进房间起就是建卡快照、永不更新。
- */
-export interface CharacterStatChangedPayload {
-  playerId: string;
-  hp: number;
-  hpMax?: number | null;
-  reason?: string | null;
+  backgroundDetail?: {
+    [k: string]: string;
+  } | null;
 }
 
 /**
@@ -241,6 +268,9 @@ export interface CharacterUpdateBody {
   occupation?: string | null;
   background?: string;
   notes?: string;
+  backgroundDetail?: {
+    [k: string]: string;
+  } | null;
 }
 
 /**
@@ -290,29 +320,19 @@ export interface ChatSendPayload {
 }
 
 /**
- * check.request 推送 payload（issue #77 新增；feat/keeper-agent 起在
- * keeper 模式下真的会发出——守秘人裁决需要检定后，不立即掷骰，而是随叙事
- * 一起推这条通知，玩家在前端点击「掷骰」确认后才真正生成骰值）。
- *
- * `check_request_id` 是这次待掷检定的标识，玩家确认时原样带回
- * （`check.roll`/`san.check.roll` 的 payload）。非 keeper 模式（Fallback/
- * DeepSeekNarrator）不会发出这个事件。
+ * check.request 推送 payload（issue #77 新增，本期不会真的发出）。
  */
 export interface CheckRequestPayload {
   playerId: string;
   skill: string;
   targetValue?: number | null;
-  checkRequestId: string;
-  reason?: string | null;
 }
 
 /**
- * check.result 推送 payload（issue #77 新增；feat/keeper-agent 起真的
- * 会发出）。
+ * check.result 推送 payload（issue #77 新增）。
  *
  * 直接返回终值，不做两段式初步结果（issue 决策 4：幸运消耗机制推迟，
- * 协议一并简化）——这里的"两段式"指的是幸运消耗，不要和"两段式玩家掷骰"
- * （裁决/掷骰分离）混淆。
+ * 协议一并简化）。本期不会真的发出。
  */
 export interface CheckResultPayload {
   playerId: string;
@@ -320,20 +340,18 @@ export interface CheckResultPayload {
   rollValue: number;
   targetValue?: number | null;
   result: string;
-  checkRequestId?: string | null;
 }
 
 /**
- * check.roll 事件 payload（issue #77 新增，feat/keeper-agent 两段式玩家
- * 掷骰实现）——玩家确认并结算一次守秘人已发起的待掷检定。
+ * check.roll 事件 payload（issue #77 新增）——玩家请求做一次技能检定。
  *
- * `check_request_id` 必填：标识具体是哪一次待掷检定（守秘人裁决"需要
- * 检定"后随叙事一起广播的 `check.request` 事件带的那个 id）。骰值由服务端
- * 权威生成——这条消息本身不带任何"掷什么/掷多少"的信息，纯粹是"我确认
- * 掷这一个"。
+ * `skill` 必填：说清楚要检定哪个技能是这个动作本身的意义所在。这条链路
+ * 本期是 NOT_IMPLEMENTED 桩（见 issue"三处原型取舍"表格——真正的服务端
+ * 权威掷骰依赖规则引擎裁决，归 #48/#68），handler 校验完这个 payload 就
+ * 直接回 `error` 事件，不会真的掷骰或读写 `check_results` 表。
  */
 export interface CheckRollPayload {
-  checkRequestId: string;
+  skill: string;
 }
 
 /**
@@ -343,6 +361,18 @@ export interface ClueGrantedPayload {
   playerId: string;
   clueName: string;
   description?: string | null;
+}
+
+/**
+ * 一次 EDU 改进检定的掷骰明细：服务端权威 `d100`，`roll > eduBefore`
+ * 才算成功，成功再掷 `1d10` 当增量（上限 99）。
+ */
+export interface EduImprovementCheckView {
+  success: boolean;
+  roll: number;
+  gain: number;
+  eduBefore: number;
+  eduAfter: number;
 }
 
 export interface EquipmentItem {
@@ -380,7 +410,7 @@ export type ErrorCode =
   | "NOT_IMPLEMENTED"
   | "CHARACTER_INVALID"
   | "RULESET_NOT_CONFIGURED"
-  | "CHECK_NOT_PENDING";
+  | "ATTRIBUTES_NOT_SET";
 
 /**
  * 错误信息的具体内容，只在 success=false 时出现在 error 字段里。
@@ -469,12 +499,7 @@ export interface MeRead {
 }
 
 /**
- * GET /api/v1/modules/{moduleId} 返回——列表字段 + 玩家可见前情。
- *
- * - synopsis：目录简介（Scenario 表，选模组用）
- * - player_intro / opening_script：来自 structured JSON 的玩家可见开场
- *   （绝不含 kp_truth；文件缺失时为 null）
- * - story_pages：前端前情页直接渲染的段落列表（intro + opening 去重）
+ * GET /api/v1/modules/{moduleId} 返回——在 ModuleRead 基础上补充简介。
  */
 export interface ModuleDetailRead {
   id: string;
@@ -486,9 +511,6 @@ export interface ModuleDetailRead {
   difficulty: number;
   estimatedDuration?: string | null;
   synopsis?: string | null;
-  playerIntro?: string | null;
-  openingScript?: string | null;
-  storyPages?: string[];
 }
 
 /**
@@ -541,7 +563,6 @@ export interface MyRoomSummary {
   roomCode: string;
   roomName: string;
   phase: string;
-  moduleId?: string | null;
   moduleTitle?: string | null;
   playerCount: number;
   maxPlayers: number;
@@ -612,6 +633,17 @@ export interface ReplayEventRead {
     [k: string]: unknown;
   };
   createdAt: string;
+}
+
+/**
+ * POST /api/v1/rooms/{roomId}/characters/{characterId}/roll-attribute-pool
+ * 返回：8 次掷骰明细 + 求和后的总点数池。分配到八维由玩家在前端完成，
+ * 最终结果走 PATCH 保存——`total` 就是 `complete` 时校验分配总和用的权威值
+ * （`character.attribute_pool_total`）。
+ */
+export interface RollAttributePoolResult {
+  rolls: AttributePoolRollView[];
+  total: number;
 }
 
 /**
@@ -696,7 +728,6 @@ export interface RoomPreview {
   roomName: string;
   phase: string;
   storyStarted: boolean;
-  moduleId?: string | null;
   moduleTitle?: string | null;
   playerCount: number;
   maxPlayers: number;
@@ -748,36 +779,31 @@ export interface RulesetRead {
 }
 
 /**
- * san.check.request 推送 payload（issue #77 新增；feat/keeper-agent 起
- * 真的会发出，同 CheckRequestPayload 的理智检定版本）。
+ * san.check.request 推送 payload（issue #77 新增，本期不会真的发出）。
  */
 export interface SanCheckRequestPayload {
   playerId: string;
   currentSan?: number | null;
-  checkRequestId: string;
-  reason?: string | null;
 }
 
 /**
  * san.check.result 推送 payload（issue #77 新增，同 CheckResultPayload
- * 直接返回终值；feat/keeper-agent 起真的会发出）。
+ * 直接返回终值，本期不会真的发出）。
  */
 export interface SanCheckResultPayload {
   playerId: string;
   rollValue: number;
   sanLoss: number;
   result: string;
-  checkRequestId?: string | null;
-  sanRemaining?: number | null;
 }
 
 /**
- * san.check.roll 事件 payload（issue #77 新增，feat/keeper-agent 两段式
- * 玩家掷骰实现）——同 CheckRollPayload，理智检定版本。
+ * san.check.roll 事件 payload（issue #77 新增）。
+ *
+ * 定义一个空模型（而不是完全跳过校验）理由同 GameStartPayload：让它也走
+ * 跟其它事件一致的"接收端过一次模型校验"路径。本期同样是 NOT_IMPLEMENTED 桩。
  */
-export interface SanCheckRollPayload {
-  checkRequestId: string;
-}
+export interface SanCheckRollPayload {}
 
 /**
  * POST /api/v1/rooms/{roomId}/module 请求体

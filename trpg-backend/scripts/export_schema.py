@@ -62,6 +62,12 @@ _MODELS: list[type[BaseModel]] = [
     character.SkillComputeView,
     character.ValidationIssueView,
     character.CharacterComputeResult,
+    # 年龄调整 / 掷点池生成法（迁移自 coc-char-gen，character-build-migration）
+    character.AgeAdjustmentRequest,
+    character.AgeAdjustmentResult,
+    character.EduImprovementCheckView,
+    character.AttributePoolRollView,
+    character.RollAttributePoolResult,
     # 游戏目录 / 规则数据（issue #77 新增，issue #84 S1 加厚 ruleset 结构）
     game.GameRead,
     game.GameSystemRead,

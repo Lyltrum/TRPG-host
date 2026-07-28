@@ -218,6 +218,7 @@ async def get_character(
         id=character.id,
         status=character.status,
         generation_method=character.generation_method,
+        attribute_pool_total=character.attribute_pool_total,
         name=character.name,
         age=character.age,
         gender=character.gender,

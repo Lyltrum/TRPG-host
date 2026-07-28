@@ -19,6 +19,7 @@ COC7 毫无关系的最小 ruleset 证明这一点。
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.coc7_rules import (
+    GENERATION_ROLL_POOL,
     SkillPointsBudget,
     compute_derived_stats,
     compute_preview,
@@ -52,8 +53,10 @@ ACCOUNTANT_NAME = "会计师"
 
 
 def test_derived_stats_formulas() -> None:
+    # DB 是字符串（"0"），Build 是整数（0）——两者由同一张表查出但值不同，
+    # 旧实现曾把两者塞成同一个字符串，这里顺带钉死类型不会退化回去。
     stats = compute_derived_stats(ATTRS)
-    assert stats == {"HP": 10, "MP": 10, "SAN": 50, "DB": "0", "Build": "0", "MOV": 8}
+    assert stats == {"HP": 10, "MP": 10, "SAN": 50, "DB": "0", "Build": 0, "MOV": 8}
 
 
 def test_derived_stats_move_small_and_large() -> None:
@@ -66,9 +69,40 @@ def test_derived_stats_move_small_and_large() -> None:
 
 
 def test_damage_bonus_build_table() -> None:
-    assert compute_derived_stats({**ATTRS, "STR": 10, "SIZ": 10})["DB"] == "-2"
-    assert compute_derived_stats({**ATTRS, "STR": 90, "SIZ": 90})["DB"] == "+1D6"
-    assert compute_derived_stats({**ATTRS, "STR": 150, "SIZ": 150})["DB"] == "+1D8"
+    stats_low = compute_derived_stats({**ATTRS, "STR": 10, "SIZ": 10})
+    assert (stats_low["DB"], stats_low["Build"]) == ("-2", -2)
+
+    stats_mid = compute_derived_stats({**ATTRS, "STR": 90, "SIZ": 90})
+    assert (stats_mid["DB"], stats_mid["Build"]) == ("+1D6", 2)
+
+
+def test_damage_bonus_build_table_beyond_1d6_is_not_hardcoded_1d8() -> None:
+    """🔴 回归用例：旧实现里 `total > 204` 无条件返回 "+1D8"——COC7 官方表里
+    根本没有这一档，204 之后应该按 coc-char-gen `engine.js::damageBonusAndBuild`
+    的完整表继续延伸（+2D6/+3D6/+4D6/……），不是卡死在一个不存在的值上。"""
+    # sum = 240，落在 (204, 284] 这一档：应该是 +2D6/build 3，不是 +1D8。
+    stats_2d6 = compute_derived_stats({**ATTRS, "STR": 120, "SIZ": 120})
+    assert (stats_2d6["DB"], stats_2d6["Build"]) == ("+2D6", 3)
+
+    # sum = 300，落在 (284, 364] 这一档：+3D6/build 4。
+    stats_3d6 = compute_derived_stats({**ATTRS, "STR": 150, "SIZ": 150})
+    assert (stats_3d6["DB"], stats_3d6["Build"]) == ("+3D6", 4)
+
+    # sum = 500，超出表格列出的最后一档（+4D6/build 5，上限 444），按公式
+    # 每 80 点再 +1D6、build+1 延伸：extra = (500-445)//80 + 1 = 1。
+    stats_extended = compute_derived_stats({**ATTRS, "STR": 250, "SIZ": 250})
+    assert (stats_extended["DB"], stats_extended["Build"]) == ("+5D6", 6)
+
+
+def test_derived_stats_mov_age_penalty() -> None:
+    """MOV 要扣年龄惩罚（coc-char-gen `engine.js::movementRate`）：不传 age
+    时保持旧行为（不扣），传了 age 就按年龄档扣，且不会扣到 0 以下。"""
+    base = {**ATTRS, "STR": 80, "DEX": 80, "SIZ": 40}  # MOV 基础值 9
+
+    assert compute_derived_stats(base)["MOV"] == 9
+    assert compute_derived_stats(base, age=25)["MOV"] == 9  # 20-39 档无 MOV 惩罚
+    assert compute_derived_stats(base, age=45)["MOV"] == 8  # 40-49 档 MOV-1
+    assert compute_derived_stats(base, age=85)["MOV"] == 4  # 80-89 档 MOV-5
 
 
 def test_evaluate_skill_base_handles_fixed_formula_and_divisor() -> None:
@@ -395,6 +429,76 @@ def test_rolled_attribute_below_point_buy_min_is_allowed() -> None:
     不该拿点数购买法的下限去卡骰子结果。"""
     issues = validate_character(RULESET, {**ATTRS, "STR": 5}, ACCOUNTANT_NAME, {}, "roll")
     assert "INVALID_ATTRIBUTES" not in [issue.code for issue in issues]
+
+
+def test_roll_pool_allows_a_valid_allocation() -> None:
+    """掷点池法：8 项可购买属性总和正好等于池子总值，单项落在
+    [ROLL_POOL_ATTRIBUTE_MIN, ROLL_POOL_ATTRIBUTE_MAX] 且是 5 的倍数——合法。
+
+    ATTRS 里 8 项可购买属性（不含幸运）都是 50，总和 400。
+    """
+    issues = validate_character(
+        RULESET,
+        ATTRS,
+        ACCOUNTANT_NAME,
+        {},
+        generation_method=GENERATION_ROLL_POOL,
+        attribute_pool_total=400,
+    )
+    assert "ATTRIBUTE_POOL_MISMATCH" not in [issue.code for issue in issues]
+    assert "INVALID_ATTRIBUTES" not in [issue.code for issue in issues]
+
+
+def test_roll_pool_total_mismatch_is_rejected() -> None:
+    """分配总和跟服务端权威记下的池子总值对不上要拒——这条校验存在的意义
+    就是不能只信任客户端报的分配结果。"""
+    issues = validate_character(
+        RULESET,
+        ATTRS,  # 8 项总和 400
+        ACCOUNTANT_NAME,
+        {},
+        generation_method=GENERATION_ROLL_POOL,
+        attribute_pool_total=450,
+    )
+    assert "ATTRIBUTE_POOL_MISMATCH" in [issue.code for issue in issues]
+
+
+def test_roll_pool_without_a_known_total_skips_the_sum_check() -> None:
+    """`attribute_pool_total` 为 None（调用方没有这份权威总值）时跳过总和
+    校验，同 `ruleset.attribute_point_buy` 为 None 时的处理——没有约束数据
+    就没法裁决，不能瞎编一个值出来卡人。"""
+    issues = validate_character(
+        RULESET, ATTRS, ACCOUNTANT_NAME, {}, generation_method=GENERATION_ROLL_POOL
+    )
+    assert "ATTRIBUTE_POOL_MISMATCH" not in [issue.code for issue in issues]
+
+
+def test_roll_pool_attribute_out_of_dice_range_is_rejected() -> None:
+    """掷点池的单项区间是骰子公式本身的产出范围 [15, 90]，不是点数购买法的
+    [10, 90]——15 以下不可能由 3d6*5/2d6+6*5 掷出来。"""
+    issues = validate_character(
+        RULESET,
+        {**ATTRS, "STR": 10},
+        ACCOUNTANT_NAME,
+        {},
+        generation_method=GENERATION_ROLL_POOL,
+        attribute_pool_total=360,
+    )
+    assert "INVALID_ATTRIBUTES" in [issue.code for issue in issues]
+
+
+def test_roll_pool_attribute_not_multiple_of_five_is_rejected() -> None:
+    """掷点池分配的单项必须是 5 的倍数——骰子公式（3d6*5、(2d6+6)*5）的产出
+    本来就只能是 5 的倍数，玩家手动分配不该凭空造出一个非法值。"""
+    issues = validate_character(
+        RULESET,
+        {**ATTRS, "STR": 52},
+        ACCOUNTANT_NAME,
+        {},
+        generation_method=GENERATION_ROLL_POOL,
+        attribute_pool_total=402,
+    )
+    assert "INVALID_ATTRIBUTES" in [issue.code for issue in issues]
 
 
 def test_age_outside_coc7_range_is_rejected() -> None:

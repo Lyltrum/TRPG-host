@@ -11,10 +11,17 @@ from dataclasses import asdict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.coc7_age import (
+    apply_app_loss,
+    distribute_scd_loss,
+    get_age_modifiers,
+    roll_edu_improvement,
+)
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.coc7_rules import (
     GENERATION_POINT_BUY,
     GENERATION_ROLL,
+    GENERATION_ROLL_POOL,
     ValidationIssue,
     compute_derived_stats,
     compute_preview,
@@ -23,6 +30,8 @@ from app.core.coc7_rules import (
 )
 from app.core.errors import not_implemented
 from app.dto.character import (
+    AgeAdjustmentResult,
+    AttributePoolRollView,
     CharacterComputeResult,
     CharacterDraftResult,
     CharacterPreviewRequest,
@@ -30,6 +39,8 @@ from app.dto.character import (
     CharacterTemplateCreateBody,
     CharacterTemplateRead,
     CharacterUpdateBody,
+    EduImprovementCheckView,
+    RollAttributePoolResult,
     RollAttributesResult,
 )
 from app.dto.game import RulesetRead
@@ -44,6 +55,11 @@ from app.service.room import (
 
 class CharacterNotFoundError(ValueError):
     """角色不存在。"""
+
+
+class AttributesNotSetError(ValueError):
+    """还没生成过属性（掷骰/点数购买/掷点池都没跑过）就调用需要属性的操作
+    （比如 apply-age-adjustment）——没有可扣减的对象。"""
 
 
 class CharacterInvalidError(ValueError):
@@ -127,6 +143,7 @@ async def update_character(
     character.occupation = payload.occupation
     character.background = payload.background
     character.notes = payload.notes
+    character.background_detail = payload.background_detail
     await db.commit()
 
 
@@ -168,14 +185,18 @@ async def complete_character(
         occupation_name=character.occupation,
         skills=character.skills or {},
         generation_method=character.generation_method,
+        attribute_pool_total=character.attribute_pool_total,
     )
     if issues:
         raise CharacterInvalidError(issues)
 
     # PR #85 review #3：校验通过后属性一定合法，衍生值改成服务端权威重算
     # 并覆盖——不再信任客户端 PATCH 上来的 `derived_stats`，避免属性合法但
-    # HP/SAN 被客户端乱填过关。
-    character.derived_stats = compute_derived_stats(character.attributes or {})
+    # HP/SAN 被客户端乱填过关。`character.age` 一并传入：MOV 要扣年龄惩罚
+    # （见 coc7_rules.compute_derived_stats），角色卡本来就存了 age，这里
+    # 是唯一真正落定衍生值的地方，不传的话年龄调整端点算出的 MOV 惩罚永远
+    # 不会体现在角色卡上。
+    character.derived_stats = compute_derived_stats(character.attributes or {}, character.age)
     character.status = "complete"
     player = await db.get(Player, character.player_id)
     if player is not None:
@@ -209,6 +230,7 @@ async def get_character(
         occupation=character.occupation,
         background=character.background or "",
         notes=character.notes or "",
+        background_detail=character.background_detail,
     )
 
 
@@ -278,6 +300,118 @@ async def roll_attributes(
     character.generation_method = GENERATION_ROLL
     await db.commit()
     return RollAttributesResult(attributes=attributes, derived_stats=derived_stats)
+
+
+def _roll_dice(n: int, sides: int) -> list[int]:
+    """跟 `_roll` 一样服务端权威掷骰，但保留每个骰子的原始点数——掷点池法
+    要把明细（不只是求和结果）返回给玩家核对。"""
+    return [random.randint(1, sides) for _ in range(n)]
+
+
+async def roll_attribute_pool(
+    db: AsyncSession, room_id: str, character_id: str, reconnect_token: str | None
+) -> RollAttributePoolResult:
+    """POST /rooms/{roomId}/characters/{characterId}/roll-attribute-pool ——
+    掷点池生成法（迁移自 coc-char-gen `js/core/dice.js::rollAttributePointPool`）：
+    5 次 3d6×5 + 3 次 (2d6+6)×5 求和成一个总点数池，玩家再手动分配到八维。
+
+    跟 `roll_attributes` 的区别：这里**不写** `character.attributes`——分配
+    是后续 PATCH 完成的，这里只记下服务端权威的总值（`attribute_pool_total`），
+    complete 时据此校验"玩家分配的总和是否等于池子总值"。
+    """
+    character = await _get_own_character(db, room_id, character_id, reconnect_token)
+
+    rolls: list[AttributePoolRollView] = []
+    total = 0
+    for _ in range(5):
+        dice = _roll_dice(3, 6)
+        value = sum(dice) * 5
+        rolls.append(AttributePoolRollView(kind="3d6x5", dice=dice, value=value))
+        total += value
+    for _ in range(3):
+        dice = _roll_dice(2, 6)
+        value = (sum(dice) + 6) * 5
+        rolls.append(AttributePoolRollView(kind="2d6+6x5", dice=dice, value=value))
+        total += value
+
+    character.generation_method = GENERATION_ROLL_POOL
+    character.attribute_pool_total = total
+    await db.commit()
+    return RollAttributePoolResult(rolls=rolls, total=total)
+
+
+async def apply_age_adjustment(
+    db: AsyncSession,
+    room_id: str,
+    character_id: str,
+    age: int,
+    reconnect_token: str | None,
+) -> AgeAdjustmentResult:
+    """POST /rooms/{roomId}/characters/{characterId}/apply-age-adjustment ——
+    按 COC7 年龄表（`app/core/coc7_age.py`，迁移自 coc-char-gen
+    `js/plugins/age.js`）套用建卡期年龄修正：EDU 改进检定 / STR-SIZ 或
+    STR-CON-DEX 减值 / APP 减值 / 青年幸运双掷。
+
+    必须先有属性（掷骰/点数购买/掷点池三条路径之一产出的八维）才能套用——
+    没有属性就没有可扣减的对象，直接拒绝而不是套用到一份空字典上。
+
+    这个操作按"当前存的属性"应用一次修正并写回，不是幂等的——同一张卡
+    重复调用（比如玩家改了年龄又调一次）会在已经扣过的基础上再扣一次。
+    这跟 coc-char-gen 前端向导的行为不同（它缓存了"年龄调整前"的快照，
+    换年龄时从快照重新算），本期为了不新增快照列先按最简单的"一次性应用"
+    实现，前端向导只在属性刚生成、还没调整过时调用一次即可规避这个问题。
+    """
+    character = await _get_own_character(db, room_id, character_id, reconnect_token)
+    if not character.attributes:
+        raise AttributesNotSetError("必须先生成属性才能应用年龄调整")
+
+    attributes_before = dict(character.attributes)
+    attributes = dict(attributes_before)
+    modifiers = get_age_modifiers(age)
+
+    edu_checks: list[EduImprovementCheckView] = []
+    for _ in range(modifiers.edu_checks):
+        edu_before = attributes.get("EDU", 0)
+        success, roll, gain, edu_after = roll_edu_improvement(edu_before)
+        edu_checks.append(
+            EduImprovementCheckView(
+                success=success, roll=roll, gain=gain, edu_before=edu_before, edu_after=edu_after
+            )
+        )
+        attributes["EDU"] = edu_after
+
+    if modifiers.edu_flat:
+        attributes["EDU"] = max(1, attributes.get("EDU", 0) + modifiers.edu_flat)
+
+    if modifiers.luck_twice and "LUCK" in attributes:
+        attributes["LUCK"] = max(_roll(3, 6) * 5, _roll(3, 6) * 5)
+
+    if modifiers.scd_loss:
+        attributes = distribute_scd_loss(attributes, modifiers.scd_loss, modifiers.str_siz_only)
+
+    if modifiers.app_loss:
+        attributes = apply_app_loss(attributes, modifiers.app_loss)
+
+    character.attributes = attributes
+    character.age = age
+    await db.commit()
+
+    scd_affected: list[str] = []
+    if modifiers.scd_loss:
+        scd_affected = ["STR", "SIZ"] if modifiers.str_siz_only else ["STR", "CON", "DEX"]
+    return AgeAdjustmentResult(
+        age=age,
+        age_label=modifiers.label,
+        attributes_before=attributes_before,
+        attributes_after=attributes,
+        edu_checks=edu_checks,
+        edu_flat_adjustment=modifiers.edu_flat,
+        scd_loss=modifiers.scd_loss,
+        scd_affected_attributes=scd_affected,
+        app_loss=modifiers.app_loss,
+        luck_rerolled=modifiers.luck_twice,
+        mov_penalty=modifiers.mov_penalty,
+    )
 
 
 # ── 我的常用角色卡库（issue 决策 5：本期只铺表与接口，不实现真实读写） ──

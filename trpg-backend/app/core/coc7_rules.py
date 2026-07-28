@@ -26,6 +26,7 @@ issue #112：此前本模块直接 import `app/core/coc7_content.py` 的模块�
 import re
 from dataclasses import dataclass, field
 
+from app.core.coc7_age import get_age_modifiers
 from app.dto.game import OccupationSpec, RulesetRead
 
 SKILL_CAP = 99
@@ -47,8 +48,19 @@ NON_ALLOCATABLE_SKILL_IDS = frozenset({"cthulhu-mythos"})
 ROLLED_ATTRIBUTE_MIN = 1
 ROLLED_ATTRIBUTE_MAX = 99
 
+# 掷点池法（roll_pool）：玩家把服务端权威掷出的总点数（见
+# service/character.py::roll_attribute_pool）手动分配到八维。单项区间/步进
+# 沿用掷点池骰子公式本身的产出范围——3d6*5 最低 15、2d6+6*5 最高 90，都是
+# 5 的整数倍。这两个数字来自骰子公式本身，不是某个 ruleset 声明的约束，跟
+# 上面 ROLLED_ATTRIBUTE_MIN/MAX 是同一种处理方式（骰子结果不受某个 ruleset
+# 约束），所以同样以本地常量兜底、不塞进 RulesetRead。
+ROLL_POOL_ATTRIBUTE_MIN = 15
+ROLL_POOL_ATTRIBUTE_MAX = 90
+ROLL_POOL_ATTRIBUTE_STEP = 5
+
 GENERATION_POINT_BUY = "pointbuy"
 GENERATION_ROLL = "roll"
+GENERATION_ROLL_POOL = "roll_pool"
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,32 +99,51 @@ class ComputeResult:
     validation: list[ValidationIssue] = field(default_factory=list)
 
 
-def _damage_bonus_and_build(str_: int, siz: int) -> str:
-    """伤害加值 DB 和体格 Build 是同一张表查出来的同一个值（COC7 规则）。"""
+def _damage_bonus_and_build(str_: int, siz: int) -> tuple[str, int]:
+    """伤害加值 DB 和体格 Build 由同一张表查出，但两者的值并不相同——DB 是
+    加骰字符串（如 "+1D4"），Build 是整数（如 1）。
+
+    旧实现把两者塞成同一个字符串值，且 `total > 204` 时硬编码返回 "+1D8"——
+    COC7 官方表里根本没有这一档，204 之后应该延伸到 +2D6/+3D6/+4D6/……，
+    这里照 coc-char-gen `engine.js::damageBonusAndBuild` 的完整表重写，两个
+    问题一并修正。"""
     total = str_ + siz
     if total <= 64:
-        return "-2"
+        return "-2", -2
     if total <= 84:
-        return "-1"
+        return "-1", -1
     if total <= 124:
-        return "0"
+        return "0", 0
     if total <= 164:
-        return "+1D4"
+        return "+1D4", 1
     if total <= 204:
-        return "+1D6"
-    return "+1D8"
+        return "+1D6", 2
+    if total <= 284:
+        return "+2D6", 3
+    if total <= 364:
+        return "+3D6", 4
+    if total <= 444:
+        return "+4D6", 5
+    extra = (total - 445) // 80 + 1
+    return f"+{4 + extra}D6", 5 + extra
 
 
-def compute_derived_stats(attributes: dict[str, int]) -> dict[str, int | str]:
+def compute_derived_stats(
+    attributes: dict[str, int], age: int | None = None
+) -> dict[str, int | str]:
     """HP = floor((SIZ+CON)/10)；MP = floor(POW/5)；SAN = POW；
-    DB/Build 查表；MOV 按 STR/DEX 相对 SIZ 的大小判定。"""
+    DB/Build 查表；MOV 按 STR/DEX 相对 SIZ 的大小判定，再扣年龄惩罚。
+
+    `age` 默认 `None`——不传就是旧行为（不扣年龄惩罚），调用方（比如
+    `compute_preview`，请求体里没有年龄字段）不受影响；`complete_character`
+    落库前重算衍生值时会传入 `character.age`。"""
     str_ = attributes.get("STR", 0)
     con = attributes.get("CON", 0)
     pow_ = attributes.get("POW", 0)
     dex = attributes.get("DEX", 0)
     siz = attributes.get("SIZ", 0)
 
-    db_build = _damage_bonus_and_build(str_, siz)
+    db, build = _damage_bonus_and_build(str_, siz)
 
     if str_ < siz and dex < siz:
         move = 7
@@ -121,12 +152,15 @@ def compute_derived_stats(attributes: dict[str, int]) -> dict[str, int | str]:
     else:
         move = 8
 
+    if age is not None:
+        move = max(1, move - get_age_modifiers(age).mov_penalty)
+
     return {
         "HP": (siz + con) // 10,
         "MP": pow_ // 5,
         "SAN": pow_,
-        "DB": db_build,
-        "Build": db_build,
+        "DB": db,
+        "Build": build,
         "MOV": move,
     }
 
@@ -254,17 +288,30 @@ def _assign_choice_slots(occupation: OccupationSpec | None, candidates: dict[str
 
 
 def _validate_attributes(
-    ruleset: RulesetRead, attributes: dict[str, int], generation_method: str
+    ruleset: RulesetRead,
+    attributes: dict[str, int],
+    generation_method: str,
+    attribute_pool_total: int | None = None,
 ) -> list[ValidationIssue]:
     """属性必须正好是 ruleset 声明的那些键、每项都是整数且落在合法区间；点数
-    购买法还要额外校验总点数不超预算。
+    购买法还要额外校验总点数不超预算，掷点池法要额外校验总点数正好等于池子
+    总值。
 
     **区间和总预算都取决于生成方法**（issue #96 决策 1）：
     - `pointbuy`：参与点数购买的属性走 `ruleset.attribute_point_buy` 声明的
       `[min_value, max_value]`，且它们的总和不能超过 `budget`；
     - `roll`：只做宽松兜底 `[1, 99]`，不校验总和——骰子结果本来就不受点数
       购买法约束（8 项总和均值约 457、范围 195–720），拿预算去卡它会把合法
-      掷出来的角色卡判成非法。
+      掷出来的角色卡判成非法；
+    - `roll_pool`：参与点数购买的属性走 `[ROLL_POOL_ATTRIBUTE_MIN,
+      ROLL_POOL_ATTRIBUTE_MAX]` 且必须是 `ROLL_POOL_ATTRIBUTE_STEP` 的倍数
+      （骰子公式本身的产出范围），总和必须**正好等于**
+      `attribute_pool_total`（服务端掷池子时记下的权威总值，见
+      `service/character.py::roll_attribute_pool`）——不是"不超过"，因为
+      掷点池法的规则就是把掷出来的点数全部分配完。`attribute_pool_total`
+      为 `None`（调用方没有这份权威总值，比如 `compute_preview` 目前不接
+      `generation_method`/池子总值，走不到这个分支）时，同 `attribute_point_buy`
+      为 `None` 的处理：跳过总和校验，只做单项区间/步进检查。
 
     `ruleset.attribute_point_buy` 为 `None`（自定义系统还没配置点数购买约束）
     时，点数购买法也退回宽松兜底区间、且不校验总预算——issue #112：没有约束
@@ -296,6 +343,7 @@ def _validate_attributes(
 
     point_buy_keys = frozenset(a.key for a in ruleset.attributes if a.point_buy)
     is_point_buy = generation_method == GENERATION_POINT_BUY
+    is_roll_pool = generation_method == GENERATION_ROLL_POOL
     for key in sorted(attribute_keys):
         value = attributes[key]
         if not isinstance(value, int) or isinstance(value, bool):
@@ -310,6 +358,8 @@ def _validate_attributes(
 
         if is_point_buy and key in point_buy_keys and ruleset.attribute_point_buy is not None:
             low, high = ruleset.attribute_point_buy.min_value, ruleset.attribute_point_buy.max_value
+        elif is_roll_pool and key in point_buy_keys:
+            low, high = ROLL_POOL_ATTRIBUTE_MIN, ROLL_POOL_ATTRIBUTE_MAX
         else:
             low, high = ROLLED_ATTRIBUTE_MIN, ROLLED_ATTRIBUTE_MAX
         if not (low <= value <= high):
@@ -318,6 +368,14 @@ def _validate_attributes(
                     code="INVALID_ATTRIBUTES",
                     field=f"attributes.{key}",
                     message=f"{key} 的值 {value} 不在合法范围 [{low}, {high}] 内",
+                )
+            )
+        elif is_roll_pool and key in point_buy_keys and value % ROLL_POOL_ATTRIBUTE_STEP != 0:
+            issues.append(
+                ValidationIssue(
+                    code="INVALID_ATTRIBUTES",
+                    field=f"attributes.{key}",
+                    message=f"{key} 的值 {value} 必须是 {ROLL_POOL_ATTRIBUTE_STEP} 的倍数",
                 )
             )
 
@@ -329,6 +387,16 @@ def _validate_attributes(
                     code="ATTRIBUTE_POINTS_EXCEEDED",
                     field="attributes",
                     message=(f"属性点总数 {spent} 超出预算 {ruleset.attribute_point_buy.budget}"),
+                )
+            )
+    if is_roll_pool and not issues and attribute_pool_total is not None:
+        spent = sum(attributes[key] for key in point_buy_keys)
+        if spent != attribute_pool_total:
+            issues.append(
+                ValidationIssue(
+                    code="ATTRIBUTE_POOL_MISMATCH",
+                    field="attributes",
+                    message=f"属性点总数 {spent} 与掷出的点数池总值 {attribute_pool_total} 不一致",
                 )
             )
     return issues
@@ -367,6 +435,7 @@ def _compute(
     *,
     occupation_not_found: bool,
     generation_method: str = GENERATION_POINT_BUY,
+    attribute_pool_total: int | None = None,
 ) -> ComputeResult:
     issues: list[ValidationIssue] = []
     if occupation_not_found:
@@ -376,7 +445,9 @@ def _compute(
             )
         )
 
-    attribute_issues = _validate_attributes(ruleset, attributes, generation_method)
+    attribute_issues = _validate_attributes(
+        ruleset, attributes, generation_method, attribute_pool_total
+    )
     if attribute_issues:
         issues.extend(attribute_issues)
         # 属性本身不合法，后面的衍生值/技能点预算算出来也是垃圾数据，直接
@@ -583,6 +654,7 @@ def validate_character(
     occupation_name: str | None,
     skills: dict[str, int],
     generation_method: str = GENERATION_POINT_BUY,
+    attribute_pool_total: int | None = None,
 ) -> list[ValidationIssue]:
     """`complete_character` 的校验核心：角色卡存的是职业名字符串，按名字查。
 
@@ -590,6 +662,9 @@ def validate_character(
 
     `generation_method` 决定属性区间与是否校验总预算，见 `_validate_attributes`。
     默认按点数购买法校验——这是更严的那条路径，调用方忘记传时宁可误拦也不漏放。
+
+    `attribute_pool_total`：`generation_method="roll_pool"` 时的权威总值
+    （`character.attribute_pool_total`），只有这条路径会用到。
     """
     occupation, not_found = find_occupation_by_name(ruleset.occupations, occupation_name)
     return _compute(
@@ -599,4 +674,5 @@ def validate_character(
         skills,
         occupation_not_found=not_found,
         generation_method=generation_method,
+        attribute_pool_total=attribute_pool_total,
     ).validation

@@ -15,10 +15,13 @@ from app.controller.dependencies import get_current_user
 from app.core.db import get_db
 from app.core.errors import AppException, ErrorCode
 from app.dto.character import (
+    AgeAdjustmentRequest,
+    AgeAdjustmentResult,
     CharacterCreateBody,
     CharacterDraftResult,
     CharacterRead,
     CharacterUpdateBody,
+    RollAttributePoolResult,
     RollAttributesResult,
 )
 from app.dto.chat import ChatMessageRead
@@ -59,6 +62,10 @@ _ERROR_MAP: dict[type[Exception], tuple[ErrorCode, int]] = {
     room_service.RoomAuthenticationError: (ErrorCode.UNAUTHORIZED, status.HTTP_401_UNAUTHORIZED),
     room_service.RoomAuthorizationError: (ErrorCode.FORBIDDEN, status.HTTP_403_FORBIDDEN),
     character_service.CharacterNotFoundError: (ErrorCode.NOT_FOUND, status.HTTP_404_NOT_FOUND),
+    character_service.AttributesNotSetError: (
+        ErrorCode.ATTRIBUTES_NOT_SET,
+        status.HTTP_409_CONFLICT,
+    ),
 }
 
 
@@ -378,6 +385,65 @@ async def roll_attributes(
         result = await character_service.roll_attributes(db, room_id, character_id, reconnect_token)
     except (
         character_service.CharacterNotFoundError,
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+    ) as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(result)
+
+
+@router.post(
+    "/{room_id}/characters/{character_id}/roll-attribute-pool",
+    response_model=ApiResponse[RollAttributePoolResult],
+    tags=["characters"],
+)
+async def roll_attribute_pool(
+    room_id: str,
+    character_id: str,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[RollAttributePoolResult]:
+    """POST /api/v1/rooms/{roomId}/characters/{characterId}/roll-attribute-pool
+    —— 掷点池生成法：服务端权威掷出一个总点数池，玩家再手动分配到八维
+    （迁移自 coc-char-gen，见 docs/character-build-migration/design.md）。
+    """
+    try:
+        result = await character_service.roll_attribute_pool(
+            db, room_id, character_id, reconnect_token
+        )
+    except (
+        character_service.CharacterNotFoundError,
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+    ) as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(result)
+
+
+@router.post(
+    "/{room_id}/characters/{character_id}/apply-age-adjustment",
+    response_model=ApiResponse[AgeAdjustmentResult],
+    tags=["characters"],
+)
+async def apply_age_adjustment(
+    room_id: str,
+    character_id: str,
+    payload: AgeAdjustmentRequest,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[AgeAdjustmentResult]:
+    """POST /api/v1/rooms/{roomId}/characters/{characterId}/apply-age-adjustment
+    —— 套用 COC7 建卡期年龄修正（EDU 改进检定/身体减值/外貌减值/青年幸运
+    双掷），迁移自 coc-char-gen。必须先生成过属性，否则 409
+    `ATTRIBUTES_NOT_SET`。
+    """
+    try:
+        result = await character_service.apply_age_adjustment(
+            db, room_id, character_id, payload.age, reconnect_token
+        )
+    except (
+        character_service.CharacterNotFoundError,
+        character_service.AttributesNotSetError,
         room_service.RoomAuthenticationError,
         room_service.RoomAuthorizationError,
     ) as exc:

@@ -54,6 +54,10 @@ class ErrorCode(StrEnum):
     # 不在待掷队列里（已被结算/id 错误），或不是本人的检定 → 409。
     CHECK_NOT_PENDING = "CHECK_NOT_PENDING"
 
+    # 建卡年龄调整/掷点池迁移新增：还没生成过属性（掷骰/点数购买都没跑过）
+    # 就调用需要属性的操作（比如 apply-age-adjustment）→ 409。
+    ATTRIBUTES_NOT_SET = "ATTRIBUTES_NOT_SET"
+
 
 class AppException(Exception):
     """业务代码显式抛出的异常，携带错误码/状态码/用户可见信息。

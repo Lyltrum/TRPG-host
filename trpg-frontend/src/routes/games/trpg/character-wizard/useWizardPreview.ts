@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { CharacterComputeResult, Ruleset } from 'trpg-sdk'
 import { friendlyErrorMessage } from '@/services/api-client'
 import { previewCharacter } from '@/services/character/ruleset-api'
-import { sumValues } from './wizard-selectors'
+import { buildSkillComputeMap, sumValues } from './wizard-selectors'
+import { buildSkillsPayload } from './wizard-network'
 import type { WizardState } from './wizard-state'
 
 /**
@@ -21,15 +22,30 @@ export function useWizardPreview(ruleset: Ruleset | null, state: WizardState) {
   const [confirmedAllocTotal, setConfirmedAllocTotal] = useState(0)
   const previewGenRef = useRef(0)
 
+  // 属性还没配齐（尤其是幸运没掷）之前，这份草稿本来就注定不完整，对它跑
+  // 规则校验没有意义——不发请求，也不该产出任何"问题"提示给用户看（#11）。
+  const attrsReady = !!ruleset && ruleset.attributes.every((a) => typeof state.attr[a.key] === 'number')
+
   useEffect(() => {
-    if (!ruleset) return
+    if (!ruleset || !attrsReady) {
+      // 让飞行中的旧请求作废，避免它在属性配齐前就把 preview 设回一个陈旧值。
+      previewGenRef.current += 1
+      setPreview(null)
+      setPreviewError('')
+      return
+    }
     const timer = setTimeout(() => {
       const gen = ++previewGenRef.current
       const allocTotalAtRequest = sumValues(state.skillAlloc)
+      // state.skillAlloc 存的是"加了多少点"的增量，后端 skills 字段要的是
+      // 最终绝对值——用 hook 自己上一次成功响应的 preview 构造 base 映射转换
+      // （核心 bug 修复：此前这里直接把增量当绝对值发出去）。
+      const skillComputeMap = buildSkillComputeMap(preview)
+      const skillsPayload = buildSkillsPayload(state.skillAlloc, skillComputeMap)
       previewCharacter({
         attributes: state.attr,
         occupationId: state.occupationId,
-        skills: state.skillAlloc,
+        skills: skillsPayload,
         age: state.age,
         generationMethod: state.generationMethod,
         attributePoolTotal: state.attributePoolTotal,
@@ -46,8 +62,10 @@ export function useWizardPreview(ruleset: Ruleset | null, state: WizardState) {
         })
     }, 400)
     return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     ruleset,
+    attrsReady,
     state.attr,
     state.occupationId,
     state.skillAlloc,

@@ -276,6 +276,94 @@ async def test_roll_attribute_pool_then_mismatched_allocation_is_rejected(
     assert "ATTRIBUTE_POOL_MISMATCH" in codes
 
 
+async def test_roll_attribute_pool_then_explicit_pointbuy_downgrade_completes(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """掷池子后玩家点了前端"点数购买"按钮改回手动分配——PATCH 显式带
+    generationMethod=pointbuy，即使总和不等于当初掷出的池子总值，也应该按
+    点数购买法（预算 480，不要求精确匹配）校验通过，而不是被当成"掷点池
+    分配对不上"拒绝（已知缺口的修复）。"""
+    room = await create_room(client)
+    character_id = await _create_draft(client, room)
+
+    await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/roll-attribute-pool",
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    # 400 点，明显不等于掷出来的池子总值（195-720 区间但几乎不可能恰好是
+    # 400），但落在点数购买法预算 480 以内、每项都在 [10,90] 内。
+    attributes = {
+        **BASE_ATTRIBUTES,
+        "STR": 50,
+        "CON": 50,
+        "POW": 50,
+        "DEX": 50,
+        "APP": 50,
+        "SIZ": 50,
+        "INT": 50,
+        "EDU": 50,
+    }
+
+    await client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+        json={**MINIMAL_CHARACTER_UPDATE, "attributes": attributes, "generationMethod": "pointbuy"},
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    character = await db_session.get(Character, character_id)
+    assert character is not None
+    assert character.generation_method == "pointbuy"
+    assert character.attribute_pool_total is None
+
+    completed = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/complete",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert completed.status_code == 200, completed.text
+
+
+async def test_generation_method_field_only_trusts_pointbuy_downgrade(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """反过来：客户端不能靠这个字段自称 roll/roll_pool 来绕开点数购买法的
+    预算上限——只有 pointbuy 这一个方向被信任，其余值一律忽略。"""
+    room = await create_room(client)
+    character_id = await _create_draft(client, room)
+    # 默认就是 pointbuy（草稿刚创建时的 generation_method），这里直接 PATCH
+    # 一份全部顶满 90 的属性（远超预算 480），同时谎称 generationMethod=roll
+    # 想绕开预算校验。
+    maxed = {
+        **BASE_ATTRIBUTES,
+        "STR": 90,
+        "CON": 90,
+        "POW": 90,
+        "DEX": 90,
+        "APP": 90,
+        "SIZ": 90,
+        "INT": 90,
+        "EDU": 90,
+    }
+
+    await client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+        json={**MINIMAL_CHARACTER_UPDATE, "attributes": maxed, "generationMethod": "roll"},
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    character = await db_session.get(Character, character_id)
+    assert character is not None
+    assert character.generation_method == "pointbuy"  # 自称 roll 被忽略
+
+    completed = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/complete",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert completed.status_code == 422
+    codes = [issue["code"] for issue in completed.json()["error"]["details"]]
+    assert "ATTRIBUTE_POINTS_EXCEEDED" in codes
+
+
 # ── 结构化背景故事 ──────────────────────────────────────────────────────────
 
 

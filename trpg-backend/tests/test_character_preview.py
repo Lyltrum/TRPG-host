@@ -90,6 +90,29 @@ async def test_preview_returns_authoritative_compute_result(client: AsyncClient)
     assert data["validation"] == []
 
 
+async def test_preview_applies_mov_age_penalty_when_age_is_provided(client: AsyncClient) -> None:
+    """已知缺口修复：`age` 不传时预览按旧行为不扣 MOV 惩罚；传了就跟
+    `complete_character` 落库时用的同一份公式对齐（45 岁落在 40-49 档，
+    mov_penalty=1）。"""
+    session = await register(client)
+
+    without_age = await client.post(
+        PREVIEW_URL,
+        json={"attributes": ATTRS, "skills": {}},
+        headers=bearer(session["token"]),
+    )
+    assert without_age.status_code == 200
+    assert without_age.json()["data"]["derivedStats"]["MOV"] == 8
+
+    with_age = await client.post(
+        PREVIEW_URL,
+        json={"attributes": ATTRS, "skills": {}, "age": 45},
+        headers=bearer(session["token"]),
+    )
+    assert with_age.status_code == 200
+    assert with_age.json()["data"]["derivedStats"]["MOV"] == 7
+
+
 async def test_preview_surfaces_issues_for_invalid_draft(client: AsyncClient) -> None:
     """预览接口即使卡不合法也应该返回 200 + 校验报告，不是抛错——它是渲染用
     的接口，前端要能实时看到"哪里超了"，不是等 complete 才知道。"""

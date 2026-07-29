@@ -25,7 +25,7 @@ function CharacterSheetModal({ character, onClose }: { character: NonNullable<Re
   return (
     <>
       <div className="fixed inset-0 bg-black/50 z-30 animate-fade-in" onClick={onClose} />
-      <div className="fixed inset-x-0 bottom-0 z-40 bg-card rounded-t-2xl animate-slide-up max-h-[80vh] overflow-y-auto">
+      <div className="fixed inset-x-0 bottom-0 z-40 bg-card rounded-t-2xl animate-slide-up min-h-[60vh] max-h-[80vh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 pt-4 pb-2">
           <h3 className="text-base font-bold text-text-primary">调查员 · {character.info.name}</h3>
           <button onClick={onClose} className="w-7 h-7 rounded-full bg-panel flex items-center justify-center">

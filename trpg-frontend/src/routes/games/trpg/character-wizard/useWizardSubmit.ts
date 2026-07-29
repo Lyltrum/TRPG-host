@@ -31,13 +31,24 @@ export function useWizardSubmit(
       return
     }
     if (!ruleset) return
+
+    // 转换失败（skillComputeMap 还没有某个技能的权威 base）绝不能静默丢掉
+    // 玩家的加点、也不能把加点当绝对值发出去（exec/12 #19）——中止提交，明确
+    // 提示，让玩家重试。
+    let skillsPayload: Record<string, number>
+    try {
+      skillsPayload = buildSkillsPayload(state.skillAlloc, skillComputeMap)
+    } catch {
+      setSubmitError('规则数据还没加载完，请稍候重试')
+      return
+    }
+
     setSubmitting(true)
     setSubmitError('')
     try {
       // 最终提交前再拉一次权威计算：用当前 base（来自 skillComputeMap）把
       // 已分配点数换算成"最终值"，连同属性/职业一起发给后端拿回完整的
       // skillView 和衍生值，两边都以这次结果为准落库。
-      const skillsPayload = buildSkillsPayload(state.skillAlloc, skillComputeMap)
       const finalPreview = await previewCharacter({
         attributes: state.attr,
         occupationId: state.occupationId,

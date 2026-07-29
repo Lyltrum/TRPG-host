@@ -19,6 +19,16 @@ export async function ensureCharacterId(roomId: string): Promise<string> {
   return id
 }
 
+/** `buildSkillsPayload` 拿不到某个技能的权威 base 时抛出——绝不用 0
+ * 兜底（那会把"加了多少点"直接当成"最终值"发出去，见
+ * wizard-bugfix-round3.md）。 */
+export class MissingSkillBaseError extends Error {
+  constructor(public readonly skillId: string) {
+    super(`技能 ${skillId} 还没有后端权威的基础值，无法换算成最终值`)
+    this.name = 'MissingSkillBaseError'
+  }
+}
+
 /**
  * skillAlloc（本地记的"加了多少点"）换算成"最终值"（base + 加点）——
  * 后端 PATCH/preview 要的是最终值，不是加点数。
@@ -30,7 +40,8 @@ export function buildSkillsPayload(
   const payload: Record<string, number> = {}
   for (const [id, pts] of Object.entries(skillAlloc)) {
     if (!pts) continue
-    const base = skillComputeMap.get(id)?.base ?? 0
+    const base = skillComputeMap.get(id)?.base
+    if (base == null) throw new MissingSkillBaseError(id)
     payload[id] = base + pts
   }
   return payload

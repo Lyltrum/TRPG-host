@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { CharacterComputeResult, Ruleset } from 'trpg-sdk'
+import { ChevronDown } from 'lucide-react'
 import { useRoomStore } from '@/stores/room-store'
 import { applyAgeAdjustment } from '@/services/character/character-api'
 import { friendlyErrorMessage } from '@/services/api-client'
@@ -27,6 +28,7 @@ export function AgeStep({
   const [ageInput, setAgeInput] = useState(String(state.age))
   const [applying, setApplying] = useState(false)
   const [error, setError] = useState('')
+  const [tableExpanded, setTableExpanded] = useState(false)
   const roomId = useRoomStore((s) => s.roomId)
 
   useEffect(() => {
@@ -116,11 +118,26 @@ export function AgeStep({
               className="w-full px-3.5 py-2.5 rounded-[6px] bg-input border border-border-light text-text-primary text-[15px] outline-none focus:border-brass"
             />
             <p className="text-[11px] text-text-muted mt-2">{describeAgeBand(previewAge)}</p>
+            {state.ageApplied && state.ageAppliedFor === state.age && (
+              <p className="text-[11px] text-[#4a8a4a] font-semibold mt-1">✓ 已套用</p>
+            )}
           </StepSection>
 
-          <StepSection title="年龄档对照表">
-            <AgeBandTable age={previewAge} />
-          </StepSection>
+          <div className="bg-card border border-border-light rounded-md p-[18px]">
+            <button
+              type="button"
+              onClick={() => setTableExpanded((v) => !v)}
+              className="w-full flex items-center justify-between"
+            >
+              <h4 className="text-[12px] font-semibold text-brass-dark uppercase tracking-[0.08em]">年龄档对照表</h4>
+              <ChevronDown className={`w-4 h-4 text-text-dim transition-transform ${tableExpanded ? 'rotate-180' : ''}`} />
+            </button>
+            {tableExpanded && (
+              <div className="mt-2.5">
+                <AgeBandTable age={previewAge} />
+              </div>
+            )}
+          </div>
 
           {error && <p className="text-[11px] text-[#c04040]">{error}</p>}
 
@@ -130,7 +147,7 @@ export function AgeStep({
               disabled={applying}
               className="w-full py-2.5 rounded-sm text-sm font-semibold border border-border-mid bg-card text-text-body active:bg-panel transition-all disabled:opacity-60"
             >
-              {applying ? '重新套用中…' : '重新套用（EDU 改进检定会重掷，可能变差）'}
+              {applying ? '重掷中…' : '🎲 同年龄重掷教育检定（结果可能变差）'}
             </button>
           )}
           {!state.ageApplied && applying && <p className="text-[12px] text-text-muted text-center">套用中…</p>}

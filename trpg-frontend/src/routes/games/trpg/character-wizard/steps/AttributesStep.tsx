@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { CharacterComputeResult, Ruleset } from 'trpg-sdk'
 import { BookOpen, Brain, Eye, Heart, Lightbulb, Maximize2, Shield, Zap } from 'lucide-react'
 import { useRoomStore } from '@/stores/room-store'
-import { rollAttributePool, rollAttributes, rollLuck } from '@/services/character/character-api'
+import { rollAttributePool, rollLuck } from '@/services/character/character-api'
 import { friendlyErrorMessage } from '@/services/api-client'
 import { StepShell, StepSection } from '../components/StepShell'
 import { PoolBar } from '../components/PoolBar'
@@ -54,7 +54,16 @@ const ATTR_MEANINGS: Record<string, string> = {
 
 const PRESETS = [40, 50, 60, 70]
 
-/** 步 1 · 属性与幸运（重制设计 v2 §6-步骤1）：生成方式 / 分配 / 幸运 / 衍生值四节。 */
+// 老角色卡（点数购买/服务端掷骰）编辑时不提供重新掷骰入口，只给一句说明
+// 用的方法名（§4①"兼容旧角色卡"分支）。
+const GENERATION_METHOD_LABELS: Record<string, string> = {
+  pointbuy: '点数购买',
+  roll: '服务端掷骰',
+}
+
+/** 步 1 · 属性与幸运（重制设计 v2 §6-步骤1）：分配 / 幸运 / 衍生值三节。
+ * 新建角色固定走掷点池，掷骰入口只允许用一次（§4①④）；老角色卡沿用
+ * 建卡时的生成方式，保留手动编辑但同样不提供重掷。 */
 export function AttributesStep({
   state,
   dispatch,
@@ -72,7 +81,6 @@ export function AttributesStep({
   const [generationError, setGenerationError] = useState('')
   const [luckBusy, setLuckBusy] = useState(false)
   const [luckError, setLuckError] = useState('')
-  const [confirmReroll, setConfirmReroll] = useState<'roll' | 'roll_pool' | null>(null)
 
   const attrs = pointBuyAttributes(ruleset)
   const { min: attrMin, max: attrMax } = attrRange(ruleset, state.generationMethod)
@@ -80,31 +88,8 @@ export function AttributesStep({
   const total = attrPointsTotal(state.attr, attrs)
   const attrEditable = state.generationMethod !== 'roll'
   const roomId = useRoomStore((s) => s.roomId)
-  const hasRolledOnce = state.generationMethod !== 'pointbuy' || state.poolRolls.length > 0
 
   const sumOther = (key: string) => attrs.reduce((sum, a) => (a.key === key ? sum : sum + (state.attr[a.key] ?? 0)), 0)
-
-  const doRollAttributes = async () => {
-    if (!roomId) {
-      setGenerationError('请先创建/加入房间，才能使用服务端掷骰')
-      return
-    }
-    setGenerationBusy(true)
-    setGenerationError('')
-    try {
-      const characterId = await ensureCharacterId(roomId)
-      const result = await rollAttributes(roomId, characterId)
-      dispatch({
-        type: 'ROLL_ATTRIBUTES_SUCCESS',
-        attributes: result.attributes,
-        attrInputs: Object.fromEntries(attrs.map((a) => [a.key, String(result.attributes[a.key] ?? '')])),
-      })
-    } catch (err) {
-      setGenerationError(friendlyErrorMessage(err, '掷骰失败'))
-    } finally {
-      setGenerationBusy(false)
-    }
-  }
 
   const doRollPool = async () => {
     if (!roomId) {
@@ -129,25 +114,6 @@ export function AttributesStep({
     } finally {
       setGenerationBusy(false)
     }
-  }
-
-  const handlePickMethod = (method: 'pointbuy' | 'roll' | 'roll_pool') => {
-    if (method === 'pointbuy') {
-      dispatch({ type: 'SET_GENERATION_METHOD', method: 'pointbuy' })
-      return
-    }
-    if (hasRolledOnce) {
-      setConfirmReroll(method)
-      return
-    }
-    void (method === 'roll' ? doRollAttributes() : doRollPool())
-  }
-
-  const confirmRerollNow = () => {
-    const method = confirmReroll
-    setConfirmReroll(null)
-    if (!method) return
-    void (method === 'roll' ? doRollAttributes() : doRollPool())
   }
 
   const handleAdjust = (key: string, delta: number) => {
@@ -210,9 +176,12 @@ export function AttributesStep({
 
   const derived = normalizeDerivedStats(preview?.derivedStats)
   const ageStale = state.ageResult != null && !state.ageApplied
+  // 掷点池模式没掷过时，只给一个掷骰按钮，不提供 PoolBar/属性分配 UI 这些
+  // 其它入口（§4①）；老角色卡（非 roll_pool）或已掷过则直接显示。
+  const showAllocationUI = !(state.generationMethod === 'roll_pool' && state.attributePoolTotal == null)
 
   return (
-    <StepShell title="属性与幸运" lead="先决定属性怎么来，再分配到八项属性上，最后单独掷一次幸运。">
+    <StepShell title="属性与幸运" lead="掷骰生成属性点，再分配到八项属性上，最后单独掷一次幸运。">
       {ageStale && (
         <div className="px-3.5 py-2.5 bg-[#fdf3e0] border border-[#e0c088] rounded-[6px] text-[12px] text-[#8a6a2a]">
           改属性会取消已套用的年龄调整，之后要回第 3 步重新套用。
@@ -220,59 +189,25 @@ export function AttributesStep({
       )}
 
       <StepSection
-        title="生成方式"
+        title="属性生成"
         tip={
           state.generationMethod === 'roll'
             ? '属性已由服务端掷骰生成，下方仅供查看，不可手动调整。'
-            : state.generationMethod === 'roll_pool' && state.attributePoolTotal != null
-              ? `已掷出总点数 ${state.attributePoolTotal}，请手动分配到下方八项属性。`
-              : '默认按点数购买法手动分配；也可以改用服务端掷骰或掷点池。'
+            : state.generationMethod === 'roll_pool'
+              ? state.attributePoolTotal != null
+                ? `已掷出总点数 ${state.attributePoolTotal}，请手动分配到下方八项属性。掷骰只能进行一次，不提供重掷。`
+                : '点击下方按钮为八项属性掷点池（总点数由骰子决定），掷骰只能进行一次。'
+              : `该角色卡使用「${GENERATION_METHOD_LABELS[state.generationMethod] ?? state.generationMethod}」生成，可手动调整，但不提供重新掷骰。`
         }
       >
-        <div className="grid grid-cols-3 gap-2">
+        {state.generationMethod === 'roll_pool' && state.attributePoolTotal == null && (
           <button
-            onClick={() => handlePickMethod('pointbuy')}
-            disabled={generationBusy}
-            className={`py-2 text-[12px] font-semibold rounded-[6px] transition-all disabled:opacity-50 ${
-              state.generationMethod === 'pointbuy' ? 'bg-brass text-white' : 'bg-input border border-border-light text-text-muted'
-            }`}
-          >
-            点数购买
-          </button>
-          <button
-            onClick={() => handlePickMethod('roll')}
+            onClick={() => void doRollPool()}
             disabled={generationBusy || !roomId}
-            className={`py-2 text-[12px] font-semibold rounded-[6px] transition-all disabled:opacity-50 ${
-              state.generationMethod === 'roll' ? 'bg-brass text-white' : 'bg-input border border-border-light text-text-muted'
-            }`}
+            className="w-full py-2.5 text-[13px] font-semibold rounded-[6px] bg-brass text-white active:bg-brass-dark transition-all disabled:opacity-50"
           >
-            {generationBusy ? '掷骰中…' : '服务端掷骰'}
+            {generationBusy ? '掷骰中…' : '🎲 掷骰生成属性点'}
           </button>
-          <button
-            onClick={() => handlePickMethod('roll_pool')}
-            disabled={generationBusy || !roomId}
-            className={`py-2 text-[12px] font-semibold rounded-[6px] transition-all disabled:opacity-50 ${
-              state.generationMethod === 'roll_pool' ? 'bg-brass text-white' : 'bg-input border border-border-light text-text-muted'
-            }`}
-          >
-            {generationBusy ? '掷骰中…' : '掷点池'}
-          </button>
-        </div>
-        {confirmReroll && (
-          <div className="mt-2.5 px-3 py-2.5 bg-[#fdf3e0] border border-[#e0c088] rounded-[6px]">
-            <p className="text-[11px] text-[#8a6a2a] mb-2">重新掷点会清空已分配的属性，并作废已套用的年龄调整。</p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setConfirmReroll(null)}
-                className="flex-1 py-1.5 text-[11px] font-semibold rounded-[6px] border border-border-mid bg-card text-text-body"
-              >
-                取消
-              </button>
-              <button onClick={confirmRerollNow} className="flex-1 py-1.5 text-[11px] font-semibold rounded-[6px] bg-brass text-white">
-                确认重掷
-              </button>
-            </div>
-          </div>
         )}
         {generationError && <p className="text-[11px] text-[#c04040] mt-2">{generationError}</p>}
         {state.generationMethod === 'roll_pool' && state.poolRolls.length > 0 && (
@@ -286,7 +221,7 @@ export function AttributesStep({
         )}
       </StepSection>
 
-      {state.generationMethod !== 'roll' && (
+      {showAllocationUI && state.generationMethod !== 'roll' && (
         <div className="sticky top-[54px] z-10">
           <PoolBar
             label="属性总点数"
@@ -297,52 +232,54 @@ export function AttributesStep({
         </div>
       )}
 
-      <StepSection title="分配" tip="可以先「平均分配」，再用 +/− 按角色想法微调。">
-        {attrEditable && (
-          <div className="grid grid-cols-2 gap-2 mb-3">
-            <button
-              onClick={handleEvenDistribute}
-              className="py-2 text-[12px] font-semibold rounded-[6px] border border-border-mid bg-card text-text-body active:bg-panel transition-all"
-            >
-              平均分配
-            </button>
-            <button
-              onClick={handleClear}
-              className="py-2 text-[12px] font-semibold rounded-[6px] border border-border-mid bg-card text-text-body active:bg-panel transition-all"
-            >
-              清空
-            </button>
+      {showAllocationUI && (
+        <StepSection title="分配" tip="可以先「平均分配」，再用 +/− 按角色想法微调。">
+          {attrEditable && (
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <button
+                onClick={handleEvenDistribute}
+                className="py-2 text-[12px] font-semibold rounded-[6px] border border-border-mid bg-card text-text-body active:bg-panel transition-all"
+              >
+                平均分配
+              </button>
+              <button
+                onClick={handleClear}
+                className="py-2 text-[12px] font-semibold rounded-[6px] border border-border-mid bg-card text-text-body active:bg-panel transition-all"
+              >
+                清空
+              </button>
+            </div>
+          )}
+          <div className="space-y-2">
+            {attrs.map((attribute) => {
+              const key = attribute.key
+              const value = state.attr[key] ?? 0
+              return (
+                <AttributeAllocCard
+                  key={key}
+                  attrKey={key}
+                  label={attribute.label}
+                  icon={ATTR_ICONS[key] ?? Shield}
+                  color={ATTR_COLORS[key] ?? '#b8976a'}
+                  value={value}
+                  inputValue={state.attrInputs[key] ?? String(value)}
+                  min={attrMin}
+                  max={attrMax}
+                  step5Only={state.generationMethod === 'roll_pool'}
+                  presets={attrEditable ? PRESETS : []}
+                  presetDisabled={(p) => sumOther(key) + p > budget}
+                  editable={attrEditable}
+                  meaning={ATTR_MEANINGS[key]}
+                  onAdjust={(delta) => handleAdjust(key, delta)}
+                  onSetValue={(v) => handleSetValue(key, v)}
+                  onInputChange={(raw) => dispatch({ type: 'SET_ATTR_INPUT', key, value: raw })}
+                  onInputCommit={() => handleInputCommit(key)}
+                />
+              )
+            })}
           </div>
-        )}
-        <div className="space-y-2">
-          {attrs.map((attribute) => {
-            const key = attribute.key
-            const value = state.attr[key] ?? 0
-            return (
-              <AttributeAllocCard
-                key={key}
-                attrKey={key}
-                label={attribute.label}
-                icon={ATTR_ICONS[key] ?? Shield}
-                color={ATTR_COLORS[key] ?? '#b8976a'}
-                value={value}
-                inputValue={state.attrInputs[key] ?? String(value)}
-                min={attrMin}
-                max={attrMax}
-                step5Only={state.generationMethod === 'roll_pool'}
-                presets={attrEditable ? PRESETS : []}
-                presetDisabled={(p) => sumOther(key) + p > budget}
-                editable={attrEditable}
-                meaning={ATTR_MEANINGS[key]}
-                onAdjust={(delta) => handleAdjust(key, delta)}
-                onSetValue={(v) => handleSetValue(key, v)}
-                onInputChange={(raw) => dispatch({ type: 'SET_ATTR_INPUT', key, value: raw })}
-                onInputCommit={() => handleInputCommit(key)}
-              />
-            )
-          })}
-        </div>
-      </StepSection>
+        </StepSection>
+      )}
 
       <StepSection title="幸运">
         <LuckCard

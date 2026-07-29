@@ -1,6 +1,10 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import type { SkillChoiceSlot, SkillSpec } from '@/data/types'
+
+/** 下拉菜单的 `max-h`（见下方 `max-h-[220px]`），用作判断触发按钮下方
+ * 空间是否足够展开的阈值——不需要精确测量实际渲染高度，够用即可。 */
+const MENU_MAX_HEIGHT = 220
 
 interface SkillOption {
   id: string
@@ -23,8 +27,21 @@ function SkillCombobox({
   searchable: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const [openUpward, setOpenUpward] = useState(false)
   const [query, setQuery] = useState('')
   const selected = options.find((o) => o.id === value)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+
+  const handleToggle = () => {
+    if (open) {
+      setOpen(false)
+      return
+    }
+    const rect = buttonRef.current?.getBoundingClientRect()
+    const spaceBelow = rect ? window.innerHeight - rect.bottom : Infinity
+    setOpenUpward(spaceBelow < MENU_MAX_HEIGHT)
+    setOpen(true)
+  }
 
   if (!searchable) {
     return (
@@ -48,8 +65,9 @@ function SkillCombobox({
   return (
     <div className="relative">
       <button
+        ref={buttonRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={handleToggle}
         className="w-full flex items-center justify-between px-3 py-2 text-[13px] rounded-[6px] bg-input border border-border-light text-left text-text-primary"
       >
         <span className={selected ? '' : 'text-text-dim'}>{selected?.label ?? placeholder}</span>
@@ -58,7 +76,11 @@ function SkillCombobox({
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-card border border-border-light rounded-md shadow-lg max-h-[220px] overflow-y-auto">
+          <div
+            className={`absolute left-0 right-0 z-20 bg-card border border-border-light rounded-md shadow-lg max-h-[220px] overflow-y-auto ${
+              openUpward ? 'bottom-full mb-1' : 'top-full mt-1'
+            }`}
+          >
             <input
               autoFocus
               value={query}

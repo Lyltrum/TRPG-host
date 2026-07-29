@@ -6,6 +6,7 @@ export function PoolBar({
   spent,
   budget,
   exactMatchRequired,
+  remainingOverride,
 }: {
   label: string
   spent: number
@@ -13,8 +14,15 @@ export function PoolBar({
   /** 掷点池模式下总和必须精确等于总值，而不是"不超过即可"——这里决定
    * 剩余 !== 0 时是否也算超支样式（§6-步骤1，两种模式校验口径不同）。 */
   exactMatchRequired?: boolean
+  /** 职业/兴趣技能两步共用一个"剩余点数"口径（issue #21）：默认按
+   * `budget - spent` 算的是"这一个池子自己还剩多少"，但底部确认按钮显示
+   * 的是两池合计——同一句"还剩 X 点"文案两种口径会让人以为数字对不上。
+   * 传入这个值后，右侧的"还剩 X 点"文案和超支样式改用它，不再用本池
+   * 自己的 budget-spent；进度条的填充比例仍然按本池自己的 spent/budget
+   * 画（展示"这个池子花了多少"依然有意义），不受这个覆盖值影响。 */
+  remainingOverride?: number
 }) {
-  const remaining = budget - spent
+  const remaining = remainingOverride ?? budget - spent
   const pct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0
   const isOver = remaining < 0 || (exactMatchRequired && remaining !== 0)
   return (

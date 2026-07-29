@@ -212,6 +212,23 @@ def inject_confusion_guidance(guidance: str) -> str:
     return f"{_CONFUSION_GUIDANCE_PREFIX}\n{g}"
 
 
+_SCENE_TRANSITION_GUIDANCE_PREFIX = (
+    "【场景切换·代码注入】本轮「当前场景」从上一轮的位置切换到了新位置。"
+    "正文开头先用半句到一句话交代离开当前情境（结束对话/转身/穿过……），"
+    "再落到目的地的行动结果——不是展开成完整赶路描写，只补这一拍，"
+    "避免读起来像凭空瞬移到目的地。"
+)
+
+
+def inject_scene_transition_guidance(guidance: str) -> str:
+    g = (guidance or "").strip()
+    if _SCENE_TRANSITION_GUIDANCE_PREFIX in g:
+        return g
+    if not g:
+        return _SCENE_TRANSITION_GUIDANCE_PREFIX
+    return f"{_SCENE_TRANSITION_GUIDANCE_PREFIX}\n{g}"
+
+
 # ── scrub：菜单 / 虚拟挡 ──────────────────────────────────
 
 _BRACKET_MENU = re.compile(r"[\[【][^\]】]{0,120}(?:你可以|你也可以|选择|或者)[^\]】]{0,120}[\]】]")

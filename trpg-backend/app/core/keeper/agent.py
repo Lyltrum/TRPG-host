@@ -62,6 +62,7 @@ from app.core.keeper.prose_discipline import (
     clip_narration,
     inject_action_resolution_guidance,
     inject_confusion_guidance,
+    inject_scene_transition_guidance,
     inject_weird_response_guidance,
     is_clear_action_intent,
     is_player_confused,
@@ -368,6 +369,30 @@ class KeeperAgent(Narrator):
                 }
             )
 
+        # 场景切换：独立于上面迷茫/怪话/明确行动三选一，两者可叠加生效。
+        # 判断信号是「当前场景」这个字段本身的变化（上一轮 keeper_state 里的
+        # 旧值 vs 这轮裁决刚写入 state_updates 的新值），不靠模型自己判断
+        # "是不是在对话中途离场"——覆盖所有位置跳变，不止离开 NPC 对话这
+        # 一种。真人实测 2026-07-29：玩家还在跟邻居对话，宣告去书房，回复
+        # 直接是"钥匙已经转了半圈、门已经推开"，完全跳过了道别+赶路这段，
+        # 读起来像瞬移。心跳/开场仪式各自已有独立的内容约束，跳过这条。
+        prev_scene = (keeper_state or {}).get("当前场景")
+        new_scene = next((u.value for u in decision.state_updates if u.key == "当前场景"), None)
+        if (
+            not is_heartbeat
+            and not is_opening_ceremony
+            and prev_scene is not None
+            and new_scene is not None
+            and prev_scene != new_scene
+        ):
+            decision = decision.model_copy(
+                update={
+                    "narration_guidance": inject_scene_transition_guidance(
+                        decision.narration_guidance
+                    ),
+                }
+            )
+
         logger.info(
             "keeper_decision",
             thinking=decision.thinking,
@@ -384,6 +409,9 @@ class KeeperAgent(Narrator):
             player_confused=confused,
             clear_action_intent=action_intent,
             weird_or_meta=weird,
+            scene_transition=prev_scene != new_scene
+            if prev_scene is not None and new_scene is not None
+            else False,
         )
 
         char_limit = narration_limit(

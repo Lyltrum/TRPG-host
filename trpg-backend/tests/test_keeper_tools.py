@@ -287,6 +287,39 @@ async def test_character_sheet_contents(deps: KeeperDeps) -> None:
     assert "侦探福" in await get_character_sheet_impl(deps, player_name="侦探福")
 
 
+async def test_character_sheet_includes_filled_background_detail(deps: KeeperDeps) -> None:
+    """结构化背景故事 8 个字段（character-build-migration）此前没有出现在
+    agent 看到的角色卡摘要里——只读了旧的自由文本 `background`。真人实测
+    追书人时用户指出这个缺口，见 docs/keeper-design/exec/12。只展示真正
+    填过的字段，空字段不出现（跟"已训练技能"同样的降噪原则）。"""
+    async with _session_factory() as db:
+        character = (
+            (await db.execute(select(Character).where(Character.room_id == deps.room_id)))
+            .scalars()
+            .one()
+        )
+        character.background_detail = {
+            "personalDescription": "瘦削，总叼着烟斗",
+            "significantPeople": "",  # 空字段不该出现
+            "phobias": "怕黑",
+        }
+        await db.commit()
+
+    text = await get_character_sheet_impl(deps)
+    assert "背景细节：" in text
+    assert "个人描述：瘦削，总叼着烟斗" in text
+    assert "恐惧症：怕黑" in text
+    assert "重要之人" not in text  # 空字段被过滤
+
+
+async def test_character_sheet_omits_background_detail_line_when_all_empty(
+    deps: KeeperDeps,
+) -> None:
+    """建卡时 8 个字段可以全空，此时不该出现"背景细节："这行空壳。"""
+    text = await get_character_sheet_impl(deps)
+    assert "背景细节：" not in text
+
+
 # ── read_module ─────────────────────────────────────
 
 

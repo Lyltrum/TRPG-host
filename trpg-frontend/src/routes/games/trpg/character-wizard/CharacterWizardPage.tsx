@@ -167,16 +167,35 @@ export default function CharacterWizardPage() {
       {stepMeta.id === 'age' && <AgeStep state={state} dispatch={dispatch} ruleset={ruleset} preview={preview} />}
       {stepMeta.id === 'occupation' && <OccupationStep state={state} dispatch={dispatch} ruleset={ruleset} preview={preview} />}
       {stepMeta.id === 'occPoints' && (
-        <OccupationPointsStep state={state} dispatch={dispatch} ruleset={ruleset} preview={preview} pendingDelta={pendingDelta} />
+        <OccupationPointsStep
+          state={state}
+          dispatch={dispatch}
+          ruleset={ruleset}
+          preview={preview}
+          pendingDelta={pendingDelta}
+          previewError={previewError}
+        />
       )}
       {stepMeta.id === 'intPoints' && (
-        <InterestPointsStep state={state} dispatch={dispatch} ruleset={ruleset} preview={preview} pendingDelta={pendingDelta} />
+        <InterestPointsStep
+          state={state}
+          dispatch={dispatch}
+          ruleset={ruleset}
+          preview={preview}
+          pendingDelta={pendingDelta}
+          previewError={previewError}
+        />
       )}
       {stepMeta.id === 'background' && <BackgroundStep state={state} dispatch={dispatch} />}
       {stepMeta.id === 'finish' && <FinishStep state={state} ruleset={ruleset} preview={preview} />}
 
       <div className="fixed bottom-0 left-0 right-0 bg-page border-t border-border-light px-5 py-3 max-w-[430px] mx-auto z-20">
         {submitError && <p className="text-[11px] text-[#c04040] text-center mb-2">{submitError}</p>}
+        {stepMeta.id !== 'finish' && (preview?.validation.length ?? 0) > 0 && (
+          <p className="text-[11px] text-[#8a6a2a] text-center mb-2">
+            ⚠️ 当前存在 {preview?.validation.length} 处规则校验问题，可在完成页查看详情
+          </p>
+        )}
         {blockers.length > 0 && !isSoftGateStep && (
           <p className="text-[11px] text-[#8a6a2a] text-center mb-2">{blockers[0]}</p>
         )}

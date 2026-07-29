@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { CharacterComputeResult, Ruleset } from 'trpg-sdk'
-import { BookOpen, Brain, Eye, Heart, Lightbulb, Maximize2, Shield, Zap } from 'lucide-react'
+import { BookOpen, Brain, ChevronDown, ChevronUp, Eye, Heart, Lightbulb, Maximize2, Shield, Zap } from 'lucide-react'
 import { useRoomStore } from '@/stores/room-store'
 import { rollAttributePool, rollLuck } from '@/services/character/character-api'
 import { friendlyErrorMessage } from '@/services/api-client'
@@ -81,6 +81,7 @@ export function AttributesStep({
   const [generationError, setGenerationError] = useState('')
   const [luckBusy, setLuckBusy] = useState(false)
   const [luckError, setLuckError] = useState('')
+  const [rollDetailOpen, setRollDetailOpen] = useState(false)
 
   const attrs = pointBuyAttributes(ruleset)
   const { min: attrMin, max: attrMax } = attrRange(ruleset, state.generationMethod)
@@ -211,12 +212,23 @@ export function AttributesStep({
         )}
         {generationError && <p className="text-[11px] text-[#c04040] mt-2">{generationError}</p>}
         {state.generationMethod === 'roll_pool' && state.poolRolls.length > 0 && (
-          <div className="mt-2.5 grid grid-cols-2 gap-1.5">
-            {state.poolRolls.map((r, i) => (
-              <div key={i} className="text-[10px] text-text-dim font-mono bg-panel rounded px-2 py-1">
-                {r.kind} [{r.dice.join(',')}] = {r.value}
+          <div className="mt-2.5">
+            <button
+              onClick={() => setRollDetailOpen((v) => !v)}
+              className="w-full flex items-center justify-between text-[11px] text-text-dim px-2 py-1"
+            >
+              <span>🎲 掷骰明细（{rollDetailOpen ? '点击收起' : '点击展开'}）</span>
+              {rollDetailOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+            {rollDetailOpen && (
+              <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                {state.poolRolls.map((r, i) => (
+                  <div key={i} className="text-[10px] text-text-dim font-mono bg-panel rounded px-2 py-1">
+                    {r.kind} [{r.dice.join(',')}] = {r.value}
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         )}
       </StepSection>
@@ -270,7 +282,7 @@ export function AttributesStep({
                   inputValue={state.attrInputs[key] ?? String(value)}
                   min={attrMin}
                   max={attrMax}
-                  step5Only={state.generationMethod === 'roll_pool'}
+                  step5Only={false}
                   presets={attrEditable ? PRESETS : []}
                   presetDisabled={(p) => sumOther(key) + p > budget}
                   editable={attrEditable}

@@ -183,6 +183,8 @@ export interface CharacterPreviewRequest {
     [k: string]: number;
   };
   age?: number | null;
+  generationMethod?: string | null;
+  attributePoolTotal?: number | null;
 }
 
 /**
@@ -443,7 +445,8 @@ export type ErrorCode =
   | "CHARACTER_INVALID"
   | "RULESET_NOT_CONFIGURED"
   | "CHECK_NOT_PENDING"
-  | "ATTRIBUTES_NOT_SET";
+  | "ATTRIBUTES_NOT_SET"
+  | "ALREADY_ROLLED";
 
 /**
  * 错误信息的具体内容，只在 success=false 时出现在 error 字段里。
@@ -627,6 +630,7 @@ export interface NarrationPushPayload {
 export interface OccupationSpec {
   id: number;
   name: string;
+  category: string;
   creditMin: number;
   creditMax: number;
   skillPointsFormula: string;

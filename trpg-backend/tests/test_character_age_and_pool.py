@@ -23,6 +23,11 @@ BASE_ATTRIBUTES = {
     "LUCK": 50,
 }
 
+# roll-luck 测试专用：不含 LUCK 键——wizard-bugfix-round1 #4④ 起 roll-luck
+# 只允许在 `character.attributes` 里还没有 LUCK 键时调用一次，PATCH 阶段就先
+# 把 LUCK 写进去会让后续 roll-luck 断言落空（AlreadyRolledError）。
+ATTRIBUTES_WITHOUT_LUCK = {key: value for key, value in BASE_ATTRIBUTES.items() if key != "LUCK"}
+
 MINIMAL_CHARACTER_UPDATE = {
     "name": "无业游民",
     "attributes": BASE_ATTRIBUTES,
@@ -185,6 +190,28 @@ async def test_roll_attribute_pool_writes_total_and_generation_method(
     assert character.attribute_pool_total == data["total"]
     # 掷点池不直接写 attributes——分配是后续 PATCH 完成的。
     assert character.attributes is None
+
+
+async def test_roll_attribute_pool_twice_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """wizard-bugfix-round1 #4④：掷点池只允许掷一次——第二次调用要被服务端
+    拒绝（前端隐藏重掷按钮防不住绕过 UI 直接重放请求）。"""
+    room = await create_room(client)
+    character_id = await _create_draft(client, room)
+
+    first = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/roll-attribute-pool",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert first.status_code == 200, first.text
+
+    second = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/roll-attribute-pool",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert second.status_code == 409, second.text
+    assert second.json()["error"]["code"] == "ALREADY_ROLLED"
 
 
 def _distribute_pool_total(total: int, keys: list[str]) -> dict[str, int]:
@@ -376,7 +403,7 @@ async def test_roll_luck_writes_luck_attribute(
     character_id = await _create_draft(client, room)
     await client.patch(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
-        json=MINIMAL_CHARACTER_UPDATE,
+        json={**MINIMAL_CHARACTER_UPDATE, "attributes": ATTRIBUTES_WITHOUT_LUCK},
         headers=reconnect(room["reconnectToken"]),
     )
 
@@ -407,7 +434,7 @@ async def test_roll_luck_does_not_touch_other_attributes(
     character_id = await _create_draft(client, room)
     await client.patch(
         f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
-        json=MINIMAL_CHARACTER_UPDATE,
+        json={**MINIMAL_CHARACTER_UPDATE, "attributes": ATTRIBUTES_WITHOUT_LUCK},
         headers=reconnect(room["reconnectToken"]),
     )
 
@@ -426,6 +453,31 @@ async def test_roll_luck_does_not_touch_other_attributes(
         assert character.attributes[key] == value
     # generation_method 不受影响——roll-luck 不改变属性生成方式。
     assert character.generation_method == "pointbuy"
+
+
+async def test_roll_luck_twice_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    """wizard-bugfix-round1 #4④：幸运只允许掷一次——第二次调用要被服务端
+    拒绝（前端隐藏重掷按钮防不住绕过 UI 直接重放请求）。"""
+    room = await create_room(client)
+    character_id = await _create_draft(client, room)
+    await client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+        json={**MINIMAL_CHARACTER_UPDATE, "attributes": ATTRIBUTES_WITHOUT_LUCK},
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    first = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/roll-luck",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert first.status_code == 200, first.text
+
+    second = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/roll-luck",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert second.status_code == 409, second.text
+    assert second.json()["error"]["code"] == "ALREADY_ROLLED"
 
 
 # ── 结构化背景故事 ──────────────────────────────────────────────────────────

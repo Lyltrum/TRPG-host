@@ -129,3 +129,33 @@ def test_occupation_ids_are_unique_and_contiguous() -> None:
     ids = sorted(o.id for o in COC7_OCCUPATIONS)
     assert len(ids) == len(set(ids)), "职业 id 有重复"
     assert ids == list(range(1, len(COC7_OCCUPATIONS) + 1)), "职业 id 不是 1..N 连续编号"
+
+
+# wizard-bugfix-round1 #6：`OccupationSpec.category` 是纯 UI 导航用的分组
+# 标签（12 类 taxonomy），本身不参与任何规则计算——这里只做结构性保证：
+# 229 项全部非空且值都在白名单内，不断言"某个具体职业分类对不对"。
+_OCCUPATION_CATEGORY_WHITELIST = {
+    "学术研究",
+    "执法安全",
+    "医疗保健",
+    "法律商业",
+    "文化艺术",
+    "媒体传播",
+    "宗教哲学",
+    "户外探险",
+    "技术工艺",
+    "政府政治",
+    "社会边缘",
+    "服务劳工",
+}
+
+
+def test_all_occupations_have_a_valid_category() -> None:
+    """全部 229 个职业的 `category` 字段非空、且值都在 12 类白名单里——防止
+    漏填/拼错，不验证具体归类是否精确。"""
+    invalid: list[str] = []
+    for occupation in COC7_OCCUPATIONS:
+        if not occupation.category or occupation.category not in _OCCUPATION_CATEGORY_WHITELIST:
+            invalid.append(f"{occupation.name}({occupation.id}) -> {occupation.category!r}")
+
+    assert invalid == [], f"存在缺失/非法的职业分类: {invalid}"

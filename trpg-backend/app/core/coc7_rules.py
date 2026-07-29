@@ -637,6 +637,7 @@ def compute_preview(
     skills: dict[str, int],
     generation_method: str = GENERATION_POINT_BUY,
     age: int | None = None,
+    attribute_pool_total: int | None = None,
 ) -> ComputeResult:
     """`POST /systems/{systemId}/character/preview` 的计算核心：职业按 id 查。
 
@@ -650,6 +651,13 @@ def compute_preview(
     `age` 同理：不传就是不扣 MOV 年龄惩罚，传了就跟 `complete_character` 落库
     时用的同一份 `compute_derived_stats` 公式对齐，避免向导内预览的 MOV 和
     完成建卡后角色卡上的 MOV 对不上（character-build-migration 已知缺口）。
+
+    `attribute_pool_total` 同理对齐 `validate_character`：`generation_method=
+    "roll_pool"` 时不传这个权威总值，`_validate_attributes` 会跳过总和校验，
+    但点数购买法的预算校验依旧会按默认 `generation_method` 误判——这是
+    wizard-bugfix-round1 修的核心 bug：调用方此前完全不传 `generation_method`/
+    `attribute_pool_total`，预览请求永远按点数购买法（预算 480）校验掷点池
+    玩家的属性总和，几乎必然误判为超预算，导致衍生值/技能点预算整体退化成空。
     """
     occupation, not_found = find_occupation_by_id(ruleset.occupations, occupation_id)
     return _compute(
@@ -660,6 +668,7 @@ def compute_preview(
         occupation_not_found=not_found,
         generation_method=generation_method,
         age=age,
+        attribute_pool_total=attribute_pool_total,
     )
 
 

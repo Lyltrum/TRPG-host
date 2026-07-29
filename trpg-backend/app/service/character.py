@@ -63,6 +63,12 @@ class AttributesNotSetError(ValueError):
     （比如 apply-age-adjustment）——没有可扣减的对象。"""
 
 
+class AlreadyRolledError(ValueError):
+    """已经掷过一次，不允许重掷（wizard-bugfix-round1 #4④）：`roll_attribute_pool`/
+    `roll_luck` 各自只允许成功调用一次，前端隐藏重掷按钮防不住绕过 UI 直接
+    重放请求，服务端才是权威。"""
+
+
 class CharacterInvalidError(ValueError):
     """建卡数据未通过 COC7 权威校验（issue #84 S2）：`complete_character`
     落库前的最后一道闸门，不能只靠前端本地拦——S3 阶段前端本地规则计算会被
@@ -263,6 +269,8 @@ def compute_character_preview(
         occupation_id=payload.occupation_id,
         skills=payload.skills,
         age=payload.age,
+        generation_method=payload.generation_method or GENERATION_POINT_BUY,
+        attribute_pool_total=payload.attribute_pool_total,
     )
     return CharacterComputeResult(**asdict(result))
 
@@ -334,6 +342,8 @@ async def roll_attribute_pool(
     complete 时据此校验"玩家分配的总和是否等于池子总值"。
     """
     character = await _get_own_character(db, room_id, character_id, reconnect_token)
+    if character.attribute_pool_total is not None:
+        raise AlreadyRolledError("属性点数池已经掷过一次，不允许重掷。")
 
     rolls: list[AttributePoolRollView] = []
     total = 0
@@ -371,6 +381,8 @@ async def roll_luck(
     （`luckRerolled` 字段），这里不判年龄，避免同一条规则两处实现。
     """
     character = await _get_own_character(db, room_id, character_id, reconnect_token)
+    if "LUCK" in (character.attributes or {}):
+        raise AlreadyRolledError("幸运已经掷过一次，不允许重掷。")
 
     dice = _roll_dice(3, 6)
     value = sum(dice) * 5

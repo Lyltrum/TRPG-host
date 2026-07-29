@@ -67,6 +67,7 @@ _ERROR_MAP: dict[type[Exception], tuple[ErrorCode, int]] = {
         ErrorCode.ATTRIBUTES_NOT_SET,
         status.HTTP_409_CONFLICT,
     ),
+    character_service.AlreadyRolledError: (ErrorCode.ALREADY_ROLLED, status.HTTP_409_CONFLICT),
 }
 
 
@@ -416,6 +417,7 @@ async def roll_attribute_pool(
         character_service.CharacterNotFoundError,
         room_service.RoomAuthenticationError,
         room_service.RoomAuthorizationError,
+        character_service.AlreadyRolledError,
     ) as exc:
         _raise_service_error(exc)
     return ApiResponse.ok(result)
@@ -443,6 +445,7 @@ async def roll_luck(
         character_service.CharacterNotFoundError,
         room_service.RoomAuthenticationError,
         room_service.RoomAuthorizationError,
+        character_service.AlreadyRolledError,
     ) as exc:
         _raise_service_error(exc)
     return ApiResponse.ok(result)

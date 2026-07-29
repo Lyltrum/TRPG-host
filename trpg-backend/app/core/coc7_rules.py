@@ -49,14 +49,14 @@ ROLLED_ATTRIBUTE_MIN = 1
 ROLLED_ATTRIBUTE_MAX = 99
 
 # 掷点池法（roll_pool）：玩家把服务端权威掷出的总点数（见
-# service/character.py::roll_attribute_pool）手动分配到八维。单项区间/步进
-# 沿用掷点池骰子公式本身的产出范围——3d6*5 最低 15、2d6+6*5 最高 90，都是
-# 5 的整数倍。这两个数字来自骰子公式本身，不是某个 ruleset 声明的约束，跟
-# 上面 ROLLED_ATTRIBUTE_MIN/MAX 是同一种处理方式（骰子结果不受某个 ruleset
-# 约束），所以同样以本地常量兜底、不塞进 RulesetRead。
+# service/character.py::roll_attribute_pool）手动分配到八维。单项区间沿用
+# 掷点池骰子公式本身的产出范围——3d6*5 最低 15、2d6+6*5 最高 90。这两个数字
+# 来自骰子公式本身（掷骰当次汇总总值受此约束），不是某个 ruleset 声明的
+# 约束，跟上面 ROLLED_ATTRIBUTE_MIN/MAX 是同一种处理方式，所以同样以本地
+# 常量兜底、不塞进 RulesetRead。分配到单项之后不再要求是 5 的倍数——玩家
+# 拿到的是一个总点数池，只要总和不变，±1 调整不违反任何真实规则约束。
 ROLL_POOL_ATTRIBUTE_MIN = 15
 ROLL_POOL_ATTRIBUTE_MAX = 90
-ROLL_POOL_ATTRIBUTE_STEP = 5
 
 GENERATION_POINT_BUY = "pointbuy"
 GENERATION_ROLL = "roll"
@@ -311,8 +311,8 @@ def _validate_attributes(
       购买法约束（8 项总和均值约 457、范围 195–720），拿预算去卡它会把合法
       掷出来的角色卡判成非法；
     - `roll_pool`：参与点数购买的属性走 `[ROLL_POOL_ATTRIBUTE_MIN,
-      ROLL_POOL_ATTRIBUTE_MAX]` 且必须是 `ROLL_POOL_ATTRIBUTE_STEP` 的倍数
-      （骰子公式本身的产出范围），总和必须**正好等于**
+      ROLL_POOL_ATTRIBUTE_MAX]`（骰子公式本身的产出范围，单项分配值不要求
+      是 5 的倍数），总和必须**正好等于**
       `attribute_pool_total`（服务端掷池子时记下的权威总值，见
       `service/character.py::roll_attribute_pool`）——不是"不超过"，因为
       掷点池法的规则就是把掷出来的点数全部分配完。`attribute_pool_total`
@@ -375,14 +375,6 @@ def _validate_attributes(
                     code="INVALID_ATTRIBUTES",
                     field=f"{field_prefix}.{key}",
                     message=f"{key} 的值 {value} 不在合法范围 [{low}, {high}] 内",
-                )
-            )
-        elif is_roll_pool and key in point_buy_keys and value % ROLL_POOL_ATTRIBUTE_STEP != 0:
-            issues.append(
-                ValidationIssue(
-                    code="INVALID_ATTRIBUTES",
-                    field=f"{field_prefix}.{key}",
-                    message=f"{key} 的值 {value} 必须是 {ROLL_POOL_ATTRIBUTE_STEP} 的倍数",
                 )
             )
 

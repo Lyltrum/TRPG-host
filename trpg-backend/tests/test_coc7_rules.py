@@ -577,7 +577,7 @@ def test_rolled_attribute_below_point_buy_min_is_allowed() -> None:
 
 def test_roll_pool_allows_a_valid_allocation() -> None:
     """掷点池法：8 项可购买属性总和正好等于池子总值，单项落在
-    [ROLL_POOL_ATTRIBUTE_MIN, ROLL_POOL_ATTRIBUTE_MAX] 且是 5 的倍数——合法。
+    [ROLL_POOL_ATTRIBUTE_MIN, ROLL_POOL_ATTRIBUTE_MAX] 内——合法。
 
     ATTRS 里 8 项可购买属性（不含幸运）都是 50，总和 400。
     """
@@ -631,18 +631,19 @@ def test_roll_pool_attribute_out_of_dice_range_is_rejected() -> None:
     assert "INVALID_ATTRIBUTES" in [issue.code for issue in issues]
 
 
-def test_roll_pool_attribute_not_multiple_of_five_is_rejected() -> None:
-    """掷点池分配的单项必须是 5 的倍数——骰子公式（3d6*5、(2d6+6)*5）的产出
-    本来就只能是 5 的倍数，玩家手动分配不该凭空造出一个非法值。"""
+def test_roll_pool_attribute_not_multiple_of_five_is_allowed() -> None:
+    """掷点池分配的单项不要求是 5 的倍数——掷骰只决定总点数池，重新分配到
+    单项时"骰子产出是 5 的倍数"这个特征跟"分配时每项还要不要保持 5 的倍数"
+    脱钩，只要总和跟池子总值精确对得上，±1 调整不违反任何真实规则约束。"""
     issues = validate_character(
         RULESET,
-        {**ATTRS, "STR": 52},
+        {**ATTRS, "STR": 61, "CON": 39},
         ACCOUNTANT_NAME,
-        {},
+        {"credit-rating": 30},  # 下限，避免信用未填触发 CREDIT_OUT_OF_RANGE 掩盖了本测试要验的错误
         generation_method=GENERATION_ROLL_POOL,
-        attribute_pool_total=402,
+        attribute_pool_total=400,
     )
-    assert "INVALID_ATTRIBUTES" in [issue.code for issue in issues]
+    assert issues == []
 
 
 def test_age_outside_coc7_range_is_rejected() -> None:
@@ -919,9 +920,9 @@ def test_private_investigator_rulebook_skills_not_rejected_as_interest() -> None
 # ── 分配值 vs 有效值（wizard-bugfix-round4，方案 A，#18/#20）───────────────
 #
 # 背景：`attributes` 存的是**有效值**（年龄修正之后的最终属性）；点数预算/
-# 掷点池总和/步进为 5 这三条生成方法约束只对**分配值**（年龄修正之前）成立。
-# 传 `allocated_attributes` 之后，校验改盯分配值，`attributes` 只做宽松兜底
-# + 承担计算职责（衍生值/技能基础值/职业技能点公式）。
+# 掷点池总和这两条生成方法约束只对**分配值**（年龄修正之前）成立。传
+# `allocated_attributes` 之后，校验改盯分配值，`attributes` 只做宽松兜底 +
+# 承担计算职责（衍生值/技能基础值/职业技能点公式）。
 
 _POOL_KEYS = ["STR", "CON", "DEX", "APP", "POW", "SIZ", "INT", "EDU"]
 _ALLOCATED_60 = {**ATTRS, **dict.fromkeys(_POOL_KEYS, 60)}  # 8 项各 60，总和 480
@@ -933,7 +934,7 @@ def test_allocated_attributes_lets_effective_values_skip_generation_method_check
     `allocated_attributes` 之后校验改盯分配值，有效值只做宽松兜底，不再被
     整体拒绝；衍生值/两个技能点预算都基于**有效值**算出正常数字。"""
     # 模拟一次年龄修正的效果（40-49 档量级）：STR/CON/DEX 合计 -5、APP -5、
-    # EDU 改进检定 +8——结果既不是 5 的倍数，总和也不再等于池值 480。
+    # EDU 改进检定 +8——总和不再等于池值 480。
     effective = {**_ALLOCATED_60, "STR": 58, "CON": 58, "DEX": 59, "APP": 55, "EDU": 68}
 
     result = compute_preview(

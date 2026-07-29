@@ -295,6 +295,23 @@ async def roll_check_impl(deps: KeeperDeps, skill_name: str, player_name: str | 
     return text
 
 
+# 结构化背景故事（character-build-migration）8 个引导字段的中文标签。后端把
+# `background_detail` 当透明存取的 opaque dict（键的含义是前端表单的事，见
+# `CharacterUpdateBody.background_detail` 的字段说明），但这里是"读给 LLM 看"
+# 的展示层，跟前端 `character-model.ts::BACKGROUND_DETAIL_FIELDS` 一样需要
+# 人类可读的标签——两边各自维护一份，改字段要同步改这里。
+_BACKGROUND_DETAIL_LABELS: dict[str, str] = {
+    "personalDescription": "个人描述",
+    "ideology": "信念/思想",
+    "significantPeople": "重要之人",
+    "meaningfulLocations": "意义非凡的地点",
+    "treasuredPossessions": "珍视的物品",
+    "traits": "特质",
+    "injuries": "外伤",
+    "phobias": "恐惧症",
+}
+
+
 async def get_character_sheet_impl(deps: KeeperDeps, player_name: str | None = None) -> str:
     async with deps.session_factory() as db:
         player, character = await _resolve_character(db, deps, player_name)
@@ -320,6 +337,18 @@ async def get_character_sheet_impl(deps: KeeperDeps, player_name: str | None = N
     ]
     if character.background:
         lines.append(f"背景：{character.background[:200]}")
+
+    # 结构化背景故事：只列玩家真的填过的字段，跟"已训练技能"同样的降噪原则
+    # ——8 个字段建卡时可以全空，全空塞给 LLM 是纯噪音。
+    detail = character.background_detail or {}
+    filled = [
+        f"{_BACKGROUND_DETAIL_LABELS.get(key, key)}：{value[:100]}"
+        for key, value in detail.items()
+        if value and value.strip()
+    ]
+    if filled:
+        lines.append("背景细节：" + "；".join(filled))
+
     return "\n".join(lines)
 
 

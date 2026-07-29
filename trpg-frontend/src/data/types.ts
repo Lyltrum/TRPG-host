@@ -11,3 +11,6 @@ export type { Ruleset } from 'trpg-sdk'
 export type OccupationSpec = Ruleset['occupations'][number]
 export type SkillSpec = Ruleset['skills'][number]
 export type AttributeSpec = Ruleset['attributes'][number]
+// 职业技能自选槽（issue #114）——同样不是 trpg-sdk 顶层导出的类型，从
+// OccupationSpec 的字段上索引出元素类型。
+export type SkillChoiceSlot = NonNullable<OccupationSpec['choiceSlots']>[number]

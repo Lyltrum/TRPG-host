@@ -2,6 +2,7 @@ import type {
   AgeAdjustmentResult,
   RollAttributePoolResult,
   RollAttributesResult,
+  RollLuckResult,
 } from 'trpg-sdk';
 import type { BackgroundDetail, GenerationMethod } from '@/data/character-model';
 import { useRoomStore } from '@/stores/room-store';
@@ -108,6 +109,12 @@ export async function rollAttributePool(
   characterId: string
 ): Promise<RollAttributePoolResult> {
   return sdk.characters.rollAttributePool(roomId, characterId, requireReconnectToken());
+}
+
+/** 幸运单掷（character-build-migration redesign-v2 §4-A）：独立于生成方式，
+ * 点数购买/掷骰/掷点池三种生成法都能调这个端点掷幸运。 */
+export async function rollLuck(roomId: string, characterId: string): Promise<RollLuckResult> {
+  return sdk.characters.rollLuck(roomId, characterId, requireReconnectToken());
 }
 
 /** 套用 COC7 建卡期年龄修正（EDU 改进检定/身体减值/外貌减值/青年幸运双掷）。 */

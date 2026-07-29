@@ -377,6 +377,10 @@ export default function RoomPage() {
   const { ruleset } = useRuleset()
   const roomInfo = useRoomPlayers(roomCode)
   const isHost = roomInfo?.players.find((p) => p.playerId === playerId)?.isHost ?? false
+  // 房主选模组时落在 game-store；访客/刷新后优先 room-store.moduleId（同 StoryPage 的取值口径）
+  const roomModuleId = useRoomStore((s) => s.moduleId)
+  const sceneModuleId = useGameStore((s) => s.sceneId)
+  const moduleId = roomModuleId || sceneModuleId || null
   const [confirmEnd, setConfirmEnd] = useState(false)
   const [ending, setEnding] = useState(false)
   const [endError, setEndError] = useState('')
@@ -413,6 +417,9 @@ export default function RoomPage() {
     () => (notesKey && localStorage.getItem(notesKey)) || ''
   )
   const [lastSaved, setLastSaved] = useState<string | null>(() => (notesKey ? localStorage.getItem(notesKey) : null) ? new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : null)
+  // 案件简报（player_intro）：建卡前的 StoryPage 展示过一次，进房后无处可查
+  // （真人实测问题清单 #1）。在这里缓存一份，供「速记本」面板常驻展示。
+  const [playerIntro, setPlayerIntro] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -442,6 +449,21 @@ export default function RoomPage() {
       cancelled = true
     }
   }, [roomId, playerId, roomCode, nickname, reconnectToken])
+
+  // player_intro 建卡前就已固定不变，只需要请求一次并缓存，不用跟着 WS 事件刷新。
+  useEffect(() => {
+    if (!moduleId) return
+    let cancelled = false
+    sdk.modules
+      .getDetail(moduleId)
+      .then((detail) => {
+        if (!cancelled && detail.playerIntro) setPlayerIntro(detail.playerIntro)
+      })
+      .catch(() => { /* 拿不到就不展示这块区域，笔记面板照常可用 */ })
+    return () => {
+      cancelled = true
+    }
+  }, [moduleId])
 
   // 进房回补主持人时间线（开场旁白 + 已发生的行动/叙事），避免只靠 WS 漏消息。
   useEffect(() => {
@@ -1240,6 +1262,12 @@ export default function RoomPage() {
 
       {/* Panel: 速记 */}
       <BottomPanel open={openPanel === 'notes'} onClose={() => setOpenPanel(null)} title="速记本">
+        {playerIntro && (
+          <div className="mb-3 bg-[#f2efe8] border border-border-light rounded-md px-3.5 py-3">
+            <p className="text-xs font-bold text-text-primary mb-1.5">📋 案件简报</p>
+            <p className="text-xs text-text-body leading-relaxed whitespace-pre-wrap">{playerIntro}</p>
+          </div>
+        )}
         <div className="flex gap-2 mb-3">
           <button onClick={() => setNotes(prev => prev + `\n\n[🔍 新线索 ${new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})}]\n`)}
             className="flex-1 py-2 rounded-sm bg-panel border border-border-light text-text-muted text-xs font-medium flex items-center justify-center gap-1 active:bg-border-light">

@@ -192,9 +192,13 @@ export default function CharacterWizardPage() {
       <div className="fixed bottom-0 left-0 right-0 bg-page border-t border-border-light px-5 py-3 max-w-[430px] mx-auto z-20">
         {submitError && <p className="text-[11px] text-[#c04040] text-center mb-2">{submitError}</p>}
         {stepMeta.id !== 'finish' && (preview?.validation.length ?? 0) > 0 && (
-          <p className="text-[11px] text-[#8a6a2a] text-center mb-2">
-            ⚠️ 当前存在 {preview?.validation.length} 处规则校验问题，可在完成页查看详情
-          </p>
+          <div className="mb-2 space-y-1">
+            {preview!.validation.map((issue, i) => (
+              <p key={i} className="text-[11px] text-[#c04040] text-center">
+                ⚠️ {issue.message}
+              </p>
+            ))}
+          </div>
         )}
         {blockers.length > 0 && !isSoftGateStep && (
           <p className="text-[11px] text-[#8a6a2a] text-center mb-2">{blockers[0]}</p>

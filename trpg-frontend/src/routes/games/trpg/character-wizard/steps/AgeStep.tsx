@@ -77,6 +77,16 @@ export function AgeStep({
     }
   }
 
+  // 年龄默认 28 岁，属性配齐后应自动套用一次，不需要用户主动碰输入框
+  // 才触发（#12）。`applyNow` 内部本来就有幂等判断（同一年龄套用过就跳过），
+  // 重复调用是安全的。
+  useEffect(() => {
+    if (roomId && attributesReady && !state.ageApplied) {
+      void applyNow(state.age)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, attributesReady, state.ageApplied, state.age])
+
   const commitAge = () => {
     const typed = parseInt(ageInput, 10)
     const clamped = Number.isNaN(typed)
@@ -141,15 +151,6 @@ export function AgeStep({
 
           {error && <p className="text-[11px] text-[#c04040]">{error}</p>}
 
-          {state.ageApplied && (
-            <button
-              onClick={() => void applyNow(state.age)}
-              disabled={applying}
-              className="w-full py-2.5 rounded-sm text-sm font-semibold border border-border-mid bg-card text-text-body active:bg-panel transition-all disabled:opacity-60"
-            >
-              {applying ? '重掷中…' : '🎲 同年龄重掷教育检定（结果可能变差）'}
-            </button>
-          )}
           {!state.ageApplied && applying && <p className="text-[12px] text-text-muted text-center">套用中…</p>}
 
           {state.ageResult && <AgeAdjustmentReport result={state.ageResult} />}

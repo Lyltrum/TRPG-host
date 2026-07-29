@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { CharacterComputeResult, Ruleset } from 'trpg-sdk'
 import { StepShell, StepSection } from '../components/StepShell'
-import { normalizeDerivedStats } from '../wizard-selectors'
+import { effectiveAttr, normalizeDerivedStats } from '../wizard-selectors'
 import type { WizardState } from '../wizard-state'
 
 /** 步 7 · 完成（重制设计 v2 §6-步骤7）：摘要 + 校验结果 + 主要技能。
@@ -18,6 +18,7 @@ export function FinishStep({
 }) {
   const selectedOcc = useMemo(() => ruleset.occupations.find((o) => o.id === state.occupationId) ?? null, [ruleset, state.occupationId])
   const derived = normalizeDerivedStats(preview?.derivedStats)
+  const attrs = effectiveAttr(state)
 
   const mainSkills = useMemo(() => {
     if (!preview) return []
@@ -44,7 +45,7 @@ export function FinishStep({
           {ruleset.attributes.map((a) => (
             <div key={a.key} className="bg-panel rounded px-2 py-1.5 text-center">
               <div className="text-[9px] text-text-dim">{a.key}</div>
-              <div className="text-[13px] font-bold font-mono text-text-primary">{state.attr[a.key] ?? '—'}</div>
+              <div className="text-[13px] font-bold font-mono text-text-primary">{attrs[a.key] ?? '—'}</div>
             </div>
           ))}
         </div>

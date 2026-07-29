@@ -15,6 +15,13 @@ export function sumValues(record: Record<string, number>): number {
   return Object.values(record).reduce((a, b) => a + b, 0)
 }
 
+/** 角色的**有效属性**：年龄修正之后的最终值；还没套用过年龄修正时就是
+ * 分配值本身。衍生值/技能基础值/职业技能点公式/角色卡展示一律用它；
+ * 属性分配 UI 和三条生成方法约束（预算/池值/步进）用 `state.attr`。 */
+export function effectiveAttr(state: WizardState): Record<string, number> {
+  return state.attrAfterAge ?? state.attr
+}
+
 export function normalizeDerivedStats(d: CharacterComputeResult['derivedStats'] | undefined) {
   const num = (v: unknown) => (typeof v === 'number' ? v : 0)
   const str = (v: unknown) => (v == null ? '0' : String(v))

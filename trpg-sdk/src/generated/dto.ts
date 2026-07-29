@@ -185,6 +185,9 @@ export interface CharacterPreviewRequest {
   age?: number | null;
   generationMethod?: string | null;
   attributePoolTotal?: number | null;
+  allocatedAttributes?: {
+    [k: string]: number;
+  } | null;
 }
 
 /**
@@ -211,6 +214,9 @@ export interface CharacterRead {
   attributes?: {
     [k: string]: number;
   };
+  allocatedAttributes?: {
+    [k: string]: number;
+  } | null;
   derivedStats?: {
     [k: string]: number | string;
   };
@@ -279,6 +285,9 @@ export interface CharacterUpdateBody {
   attributes: {
     [k: string]: number;
   };
+  allocatedAttributes?: {
+    [k: string]: number;
+  } | null;
   derivedStats: {
     [k: string]: number;
   };

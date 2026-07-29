@@ -5,7 +5,7 @@ import { useCharacterStore } from '@/stores/character-store'
 import { useRoomStore } from '@/stores/room-store'
 import { completeCharacter, createCharacterDraft, saveCharacter } from '@/services/character/character-api'
 import { previewCharacter, translateCharacterValidationError } from '@/services/character/ruleset-api'
-import { normalizeDerivedStats } from './wizard-selectors'
+import { effectiveAttr, normalizeDerivedStats } from './wizard-selectors'
 import { buildSkillsPayload } from './wizard-network'
 import type { WizardState } from './wizard-state'
 
@@ -50,7 +50,8 @@ export function useWizardSubmit(
       // 已分配点数换算成"最终值"，连同属性/职业一起发给后端拿回完整的
       // skillView 和衍生值，两边都以这次结果为准落库。
       const finalPreview = await previewCharacter({
-        attributes: state.attr,
+        attributes: effectiveAttr(state),
+        allocatedAttributes: state.attr,
         occupationId: state.occupationId,
         skills: skillsPayload,
         age: state.age,
@@ -66,7 +67,8 @@ export function useWizardSubmit(
         gender: state.info.gender || null,
         residence: state.info.residence,
         birthplace: state.info.birthplace,
-        attr: state.attr,
+        attr: effectiveAttr(state),
+        allocatedAttributes: state.attr,
         derived: { hp: finalDerived.hp, san: finalDerived.san, mp: finalDerived.mp },
         skillValues: skillsPayload,
         equipment: state.equipment,
@@ -89,7 +91,7 @@ export function useWizardSubmit(
             birthplace: state.info.birthplace,
             occupationId: state.occupationId,
           },
-          attr: { ...state.attr },
+          attr: { ...effectiveAttr(state) },
           skillAlloc: { ...state.skillAlloc },
           skillFinalValues,
           equipment: state.equipment,

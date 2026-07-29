@@ -26,7 +26,7 @@ issue #112：此前本模块直接 import `app/core/coc7_content.py` 的模块�
 import re
 from dataclasses import dataclass, field
 
-from app.core.coc7_age import get_age_modifiers
+from app.core.coc7_age import get_age_modifiers, max_total_adjustment_magnitude
 from app.dto.game import OccupationSpec, RulesetRead
 
 SKILL_CAP = 99
@@ -298,6 +298,7 @@ def _validate_attributes(
     attributes: dict[str, int],
     generation_method: str,
     attribute_pool_total: int | None = None,
+    field_prefix: str = "attributes",
 ) -> list[ValidationIssue]:
     """属性必须正好是 ruleset 声明的那些键、每项都是整数且落在合法区间；点数
     购买法还要额外校验总点数不超预算，掷点池法要额外校验总点数正好等于池子
@@ -341,7 +342,7 @@ def _validate_attributes(
         issues.append(
             ValidationIssue(
                 code="INVALID_ATTRIBUTES",
-                field="attributes",
+                field=field_prefix,
                 message=f"属性字段不正确：{'；'.join(parts)}",
             )
         )
@@ -356,7 +357,7 @@ def _validate_attributes(
             issues.append(
                 ValidationIssue(
                     code="INVALID_ATTRIBUTES",
-                    field=f"attributes.{key}",
+                    field=f"{field_prefix}.{key}",
                     message=f"{key} 必须是整数",
                 )
             )
@@ -372,7 +373,7 @@ def _validate_attributes(
             issues.append(
                 ValidationIssue(
                     code="INVALID_ATTRIBUTES",
-                    field=f"attributes.{key}",
+                    field=f"{field_prefix}.{key}",
                     message=f"{key} 的值 {value} 不在合法范围 [{low}, {high}] 内",
                 )
             )
@@ -380,7 +381,7 @@ def _validate_attributes(
             issues.append(
                 ValidationIssue(
                     code="INVALID_ATTRIBUTES",
-                    field=f"attributes.{key}",
+                    field=f"{field_prefix}.{key}",
                     message=f"{key} 的值 {value} 必须是 {ROLL_POOL_ATTRIBUTE_STEP} 的倍数",
                 )
             )
@@ -391,7 +392,7 @@ def _validate_attributes(
             issues.append(
                 ValidationIssue(
                     code="ATTRIBUTE_POINTS_EXCEEDED",
-                    field="attributes",
+                    field=field_prefix,
                     message=(f"属性点总数 {spent} 超出预算 {ruleset.attribute_point_buy.budget}"),
                 )
             )
@@ -401,7 +402,7 @@ def _validate_attributes(
             issues.append(
                 ValidationIssue(
                     code="ATTRIBUTE_POOL_MISMATCH",
-                    field="attributes",
+                    field=field_prefix,
                     message=f"属性点总数 {spent} 与掷出的点数池总值 {attribute_pool_total} 不一致",
                 )
             )
@@ -443,6 +444,7 @@ def _compute(
     generation_method: str = GENERATION_POINT_BUY,
     attribute_pool_total: int | None = None,
     age: int | None = None,
+    allocated_attributes: dict[str, int] | None = None,
 ) -> ComputeResult:
     issues: list[ValidationIssue] = []
     if occupation_not_found:
@@ -452,9 +454,52 @@ def _compute(
             )
         )
 
-    attribute_issues = _validate_attributes(
-        ruleset, attributes, generation_method, attribute_pool_total
-    )
+    if allocated_attributes is not None:
+        # 分配值走完整的生成方法约束（预算/池值总和/步进为 5）。
+        attribute_issues = _validate_attributes(
+            ruleset,
+            allocated_attributes,
+            generation_method,
+            attribute_pool_total,
+            field_prefix="allocatedAttributes",
+        )
+        # 有效值（年龄修正后）只做宽松兜底：键齐全 + 落在 [1, 99]。
+        # 借用 GENERATION_ROLL 这条已有分支——它恰好就是"只查结构和宽松区间、
+        # 不查任何总和"，不需要新写一套校验。
+        # 这一步不能省：`attributes` 是客户端可控输入，只校验分配值的话，
+        # 客户端可以传一份合法分配 + 一份全 99 的有效值，把衍生值和职业
+        # 技能点预算撑上天。
+        attribute_issues += _validate_attributes(
+            ruleset, attributes, GENERATION_ROLL, None, field_prefix="attributes"
+        )
+        # 🔴 上面这道宽松校验拦不住"分配值合法 + 有效值每项都拉到 99"这种
+        # 客户端伪造——99 本身就落在 [1,99] 区间里。追加一道总偏离上限：
+        # 有效值相对分配值的总变动不能超过年龄修正理论上能造成的最大值。
+        # 只在两边结构都合法（没有缺键/多键/越界）之后才算，避免拿一份已经
+        # 破损的数据凑出一个没有意义的偏离量、跟结构性错误一起堆给前端。
+        if not attribute_issues:
+            point_buy_keys_for_bound = frozenset(a.key for a in ruleset.attributes if a.point_buy)
+            total_delta = sum(
+                abs(attributes.get(k, 0) - allocated_attributes.get(k, 0))
+                for k in point_buy_keys_for_bound
+            )
+            if total_delta > max_total_adjustment_magnitude():
+                attribute_issues.append(
+                    ValidationIssue(
+                        code="EFFECTIVE_ATTRIBUTES_IMPLAUSIBLE",
+                        field="attributes",
+                        message=(
+                            f"有效属性相对分配值的总偏离 {total_delta} 超出年龄修正"
+                            f"理论上限 {max_total_adjustment_magnitude()}"
+                        ),
+                    )
+                )
+    else:
+        # 没传分配值：保持原行为，`attributes` 既当校验基准又当计算基准
+        # （向后兼容——本列之前建的卡、以及不关心年龄修正的调用方）。
+        attribute_issues = _validate_attributes(
+            ruleset, attributes, generation_method, attribute_pool_total
+        )
     if attribute_issues:
         issues.extend(attribute_issues)
         # 属性本身不合法，后面的衍生值/技能点预算算出来也是垃圾数据，直接
@@ -638,6 +683,7 @@ def compute_preview(
     generation_method: str = GENERATION_POINT_BUY,
     age: int | None = None,
     attribute_pool_total: int | None = None,
+    allocated_attributes: dict[str, int] | None = None,
 ) -> ComputeResult:
     """`POST /systems/{systemId}/character/preview` 的计算核心：职业按 id 查。
 
@@ -658,6 +704,11 @@ def compute_preview(
     wizard-bugfix-round1 修的核心 bug：调用方此前完全不传 `generation_method`/
     `attribute_pool_total`，预览请求永远按点数购买法（预算 480）校验掷点池
     玩家的属性总和，几乎必然误判为超预算，导致衍生值/技能点预算整体退化成空。
+
+    `allocated_attributes`（wizard-bugfix-round4，方案 A）：玩家分配的原始
+    属性（年龄修正之前）。传了就让 `attributes`（有效值）只承担计算职责，
+    校验改盯 `allocated_attributes`——不传则退回旧行为，`attributes` 一身
+    二任（向后兼容）。
     """
     occupation, not_found = find_occupation_by_id(ruleset.occupations, occupation_id)
     return _compute(
@@ -669,6 +720,7 @@ def compute_preview(
         generation_method=generation_method,
         age=age,
         attribute_pool_total=attribute_pool_total,
+        allocated_attributes=allocated_attributes,
     )
 
 
@@ -679,6 +731,7 @@ def validate_character(
     skills: dict[str, int],
     generation_method: str = GENERATION_POINT_BUY,
     attribute_pool_total: int | None = None,
+    allocated_attributes: dict[str, int] | None = None,
 ) -> list[ValidationIssue]:
     """`complete_character` 的校验核心：角色卡存的是职业名字符串，按名字查。
 
@@ -689,6 +742,9 @@ def validate_character(
 
     `attribute_pool_total`：`generation_method="roll_pool"` 时的权威总值
     （`character.attribute_pool_total`），只有这条路径会用到。
+
+    `allocated_attributes`：语义同 `compute_preview`（wizard-bugfix-round4，
+    方案 A）。
     """
     occupation, not_found = find_occupation_by_name(ruleset.occupations, occupation_name)
     return _compute(
@@ -699,4 +755,5 @@ def validate_character(
         occupation_not_found=not_found,
         generation_method=generation_method,
         attribute_pool_total=attribute_pool_total,
+        allocated_attributes=allocated_attributes,
     ).validation

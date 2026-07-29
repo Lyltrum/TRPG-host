@@ -154,6 +154,19 @@ _UNDER_15 = AgeModifiers(
 )
 
 
+def max_total_adjustment_magnitude() -> int:
+    """年龄修正理论上能让「分配值→有效值」总共偏离多少点——取全表最坏
+    一档的 `EDU 改进检定总增量的上限（次数×10）+ |EDU 固定调整| + 身体
+    减值 scd_loss + APP 减值 app_loss` 之和（同一档的 edu_checks 和
+    edu_flat 互斥，不会同时非零，直接相加不会重复计）。这不是逐属性逐档
+    精确重放（那需要另外跟踪"这一档到底能动哪几个属性"），而是一个保守
+    的**总预算上限**：只要"有效值相对分配值的总偏离"不超过这个预算，
+    客户端就不可能靠伪造有效值凭空多拿到规则允许范围之外的属性点，够
+    堵住"全部属性怼到 99"这类粗暴伪造。"""
+    rows = [m for _, _, m in _AGE_TABLE] + [_UNDER_15]
+    return max(r.edu_checks * 10 + abs(r.edu_flat) + r.scd_loss + r.app_loss for r in rows)
+
+
 def get_age_modifiers(age: int) -> AgeModifiers:
     """按年龄查表返回修正参数。90 岁以上沿用 80–89 档（age.js 同款处理）。"""
     if age < 15:

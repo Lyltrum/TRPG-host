@@ -234,6 +234,11 @@ export function AttributesStep({
 
       {showAllocationUI && (
         <StepSection title="分配" tip="可以先「平均分配」，再用 +/− 按角色想法微调。">
+          {state.attrAfterAge != null && (
+            <p className="text-[11px] text-text-muted mb-2">
+              这里是你分配的原始点数；年龄修正后的最终值见「年龄」步骤和完成页。
+            </p>
+          )}
           {attrEditable && (
             <div className="grid grid-cols-2 gap-2 mb-3">
               <button

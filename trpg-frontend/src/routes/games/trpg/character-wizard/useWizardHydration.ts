@@ -28,13 +28,25 @@ export function useWizardHydration(ruleset: Ruleset | null, dispatch: (action: W
       .then(async (saved) => {
         if (cancelled || !saved.attributes || Object.keys(saved.attributes).length === 0) return
         const savedAttrs = saved.attributes
+        // 分配值：老角色卡没有 allocatedAttributes，回落到 attributes——此时
+        // 两者视为相同，跟 attrAfterAge 保持 null 是一致的（wizard-bugfix-
+        // round4.md 方案 A）。
+        const savedAllocated = saved.allocatedAttributes ?? saved.attributes
         const matched = saved.occupation ? (ruleset.occupations.find((o) => o.name === saved.occupation) ?? null) : null
 
         const view = await previewCharacter({
           attributes: savedAttrs,
+          allocatedAttributes: saved.allocatedAttributes ?? null,
           occupationId: matched?.id ?? null,
           skills: saved.skills ?? {},
           age: saved.age ?? null,
+          // 这条调用漏传这两个字段会导致 roll_pool/roll 角色卡在水合阶段
+          // 就退化成空 skillView（跟 wizard-bugfix-round1 修的核心 bug
+          // 同一个根因，只是这条独立的 previewCharacter 调用当时没被
+          // 一起改到）——编辑一张已保存的掷点池角色卡时，技能加点会在
+          // 水合时静默丢失。
+          generationMethod: saved.generationMethod,
+          attributePoolTotal: saved.attributePoolTotal ?? null,
         })
         if (cancelled) return
 
@@ -44,10 +56,11 @@ export function useWizardHydration(ruleset: Ruleset | null, dispatch: (action: W
         }
 
         const patch: WizardHydratePatch = {
-          attr: { ...savedAttrs },
+          attr: { ...savedAllocated },
           attrInputs: Object.fromEntries(
-            ruleset.attributes.filter((a) => a.pointBuy).map((a) => [a.key, String(savedAttrs[a.key] ?? '')])
+            ruleset.attributes.filter((a) => a.pointBuy).map((a) => [a.key, String(savedAllocated[a.key] ?? '')])
           ),
+          attrAfterAge: saved.allocatedAttributes ? { ...savedAttrs } : null,
           info: {
             name: saved.name ?? '',
             gender: saved.gender ?? '',

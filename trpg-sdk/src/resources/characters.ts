@@ -6,6 +6,7 @@ import type {
   CharacterDraftResult,
   RollAttributePoolResult,
   RollAttributesResult,
+  RollLuckResult,
   UpdateCharacterInput,
 } from '../types';
 
@@ -88,6 +89,17 @@ export class CharactersResource {
   ): Promise<RollAttributePoolResult> {
     return this.client.post<RollAttributePoolResult>(
       `/rooms/${roomId}/characters/${characterId}/roll-attribute-pool`,
+      null,
+      this.authenticated(reconnectToken)
+    );
+  }
+
+  /** POST /api/v1/rooms/{roomId}/characters/{characterId}/roll-luck —
+   * 幸运单掷（character-build-migration redesign-v2 §4-A）：独立于属性生成
+   * 方式，点数购买/掷骰/掷点池三种生成法都能调这个端点掷幸运。 */
+  rollLuck(roomId: string, characterId: string, reconnectToken: string): Promise<RollLuckResult> {
+    return this.client.post<RollLuckResult>(
+      `/rooms/${roomId}/characters/${characterId}/roll-luck`,
       null,
       this.authenticated(reconnectToken)
     );

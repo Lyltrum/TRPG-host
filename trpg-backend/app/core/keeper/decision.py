@@ -16,6 +16,7 @@ agent 的"自由工具调用"，实测被模型的写作本能碾压（该掷不
 """
 
 import uuid
+from typing import Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
@@ -94,6 +95,10 @@ class KeeperDecision(_DecisionModel):
     ending_reached: str | None = Field(default=None, description="本轮命中的结局 id；None=未收束")
     narration_guidance: str = Field(
         default="", description="给叙事阶段的指引：可揭示什么/须保密什么/NPC 如何反应"
+    )
+    player_state: Literal["confused", "weird_or_meta", "clear_action", "normal"] = Field(
+        default="normal",
+        description="玩家本轮发言的分类：迷茫求指引/怪话或元指令/明确行动/都不是",
     )
 
 

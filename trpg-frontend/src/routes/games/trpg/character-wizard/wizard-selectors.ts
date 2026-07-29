@@ -179,17 +179,8 @@ export function stepBlockers(stepId: WizardStepId, state: WizardState, ctx: Wiza
     case 'age':
       return state.ageApplied ? [] : ['请先套用年龄调整']
 
-    case 'occupation': {
-      if (state.occupationId == null) return ['请先选择职业']
-      const occ = ctx.ruleset?.occupations.find((o) => o.id === state.occupationId)
-      const slots = occ?.choiceSlots ?? []
-      const filled = slots.every((slot, i) => {
-        const picks = state.slotPicks[i] ?? []
-        return picks.length === slot.count && picks.every(Boolean)
-      })
-      return filled ? [] : ['请选满全部自选技能槽']
-
-    }
+    case 'occupation':
+      return state.occupationId == null ? ['请先选择职业'] : []
 
     case 'occPoints':
     case 'intPoints':

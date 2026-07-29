@@ -6,8 +6,6 @@ import { OccupationListItem } from '../components/OccupationListItem'
 import { ChoiceSlotPicker } from '../components/ChoiceSlotPicker'
 import type { WizardAction, WizardState } from '../wizard-state'
 
-const LIST_LIMIT = 40
-
 /** 职业技能点公式里的 `MAX(DEX, APP)` 这类二选一——系统自动取对玩家有利的
  * 一项，不需要下拉选择（重制设计 v2 §9 不做清单第 1 条）。这里只做展示：
  * 解析出候选属性键，标出当前取的是哪一项。 */
@@ -36,6 +34,14 @@ export function OccupationStep({
   preview: CharacterComputeResult | null
 }) {
   const [search, setSearch] = useState(state.ui.occSearch)
+  const [category, setCategory] = useState<string | null>(null)
+
+  // 分类 tab 从 ruleset.occupations 已有的 category 字段去重生成，不硬编码
+  // 12 类目名单——分类调整时前端不用跟着改（重制设计 v2 §6-步骤3）。
+  const categories = useMemo(
+    () => Array.from(new Set(ruleset.occupations.map((o) => o.category))).sort(),
+    [ruleset]
+  )
 
   const selectedOcc = useMemo(
     () => ruleset.occupations.find((o) => o.id === state.occupationId) ?? null,
@@ -62,13 +68,19 @@ export function OccupationStep({
   const filtered = useMemo(() => {
     const q = search.trim()
     let list = ruleset.occupations
+    if (category) {
+      list = list.filter((o) => o.category === category)
+    }
     if (q) {
       list = list.filter((o) => o.name.includes(q) || o.description.includes(q))
     }
     return list
-  }, [ruleset, search])
+  }, [ruleset, search, category])
 
-  const visible = filtered.slice(0, LIST_LIMIT)
+  // 不再截断——分类+搜索组合后每类最多几十个，列表容器本身已经有滚动
+  // （重制设计 v2 §6-步骤3：任何一个职业都必须能被精确找到，不能因为排序
+  // 靠后而永久不可达）。
+  const showAllHint = category == null && !search.trim()
 
   const handleSelect = (occId: number) => {
     const occ = ruleset.occupations.find((o) => o.id === occId)
@@ -99,7 +111,10 @@ export function OccupationStep({
   }, [state.slotPicks])
 
   return (
-    <StepShell title="选职业" lead="搜索并选择一个职业；带自选槽的职业选完槽后才算选满。">
+    <StepShell
+      title="选职业"
+      lead="搜索并选择一个职业；自选槽可以先留空，后续在技能加点步骤里直接给对应技能加点即可自动占槽。"
+    >
       <StepSection title="搜索职业">
         <div className="relative mb-3">
           <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-text-dim" />
@@ -113,14 +128,35 @@ export function OccupationStep({
             className="w-full pl-8 pr-3 py-2 text-[12px] rounded-[6px] bg-input border border-border-light outline-none focus:border-brass text-text-primary"
           />
         </div>
+        <div className="flex gap-1.5 overflow-x-auto pb-1.5 mb-1">
+          <button
+            onClick={() => setCategory(null)}
+            className={`flex-shrink-0 px-2.5 py-1.5 text-[11px] font-semibold rounded-[6px] transition-all ${
+              category === null ? 'bg-brass text-white' : 'bg-card border border-border-light text-text-muted'
+            }`}
+          >
+            全部
+          </button>
+          {categories.map((c) => (
+            <button
+              key={c}
+              onClick={() => setCategory(c)}
+              className={`flex-shrink-0 px-2.5 py-1.5 text-[11px] font-semibold rounded-[6px] transition-all ${
+                category === c ? 'bg-brass text-white' : 'bg-card border border-border-light text-text-muted'
+              }`}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
         <div className="space-y-1.5 max-h-[360px] overflow-y-auto pr-0.5">
-          {visible.map((occ) => (
+          {filtered.map((occ) => (
             <OccupationListItem key={occ.id} occ={occ} selected={state.occupationId === occ.id} onSelect={() => handleSelect(occ.id)} />
           ))}
         </div>
-        {filtered.length > LIST_LIMIT && (
+        {showAllHint && (
           <p className="text-[10px] text-text-dim text-center mt-1.5">
-            已显示 {LIST_LIMIT} / {filtered.length}，请搜索缩小范围
+            已显示全部 {filtered.length} 项，试试按分类或搜索缩小范围
           </p>
         )}
       </StepSection>

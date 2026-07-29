@@ -14,12 +14,14 @@ export function OccupationPointsStep({
   ruleset,
   preview,
   pendingDelta,
+  previewError,
 }: {
   state: WizardState
   dispatch: (action: WizardAction) => void
   ruleset: Ruleset
   preview: CharacterComputeResult | null
   pendingDelta: number
+  previewError: string
 }) {
   const selectedOcc = useMemo(() => ruleset.occupations.find((o) => o.id === state.occupationId) ?? null, [ruleset, state.occupationId])
   const skillComputeMap = useMemo(() => buildSkillComputeMap(preview), [preview])
@@ -36,6 +38,9 @@ export function OccupationPointsStep({
 
   const occBudget = preview?.occupationSkillPoints.budget ?? 0
   const occSpent = preview?.occupationSkillPoints.spent ?? 0
+  // preview 为空或技能视图为空时，预算/base/cap 全部是退化的默认值——给一句
+  // 人能看懂的解释，不能让"预算显示 0/—"沉默地出现（重制设计 v2 bugfix #8）。
+  const attrNotValidated = !preview || preview.skillView.length === 0
 
   const creditValue = state.skillAlloc['credit-rating'] ?? selectedOcc?.creditMin ?? 0
 
@@ -66,6 +71,10 @@ export function OccupationPointsStep({
 
   return (
     <StepShell title="职业技能" lead={`${selectedOcc.name} 的职业技能点数（${selectedOcc.skillPointsFormula}）加点。`}>
+      {previewError && <p className="text-[11px] text-[#c04040] mb-2">{previewError}</p>}
+      {!previewError && attrNotValidated && (
+        <p className="text-[11px] text-[#8a6a2a] mb-2">属性还没通过校验，预算暂时无法计算。</p>
+      )}
       <PoolBar label={`职业技能点 (${selectedOcc.skillPointsFormula})`} spent={occSpent} budget={occBudget} />
 
       <StepSection title="信用评级 (Credit Rating) · 必填" accent tip="下限那部分算职业点，超出下限的部分算兴趣点（Chaosium 官方裁定）。">

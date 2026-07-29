@@ -97,6 +97,12 @@ class ComputeResult:
     interest_skill_points: SkillPointsBudget
     skill_view: list[SkillView] = field(default_factory=list)
     validation: list[ValidationIssue] = field(default_factory=list)
+    # 哪些非固定本职技能占用了职业自选槽（character-build-migration
+    # redesign-v2 §4-B）：`_assign_choice_slots` 内部本来就算出了这份集合，
+    # 此前只用来记账、没有带出去。前端需要它在编辑已保存的卡时重建 ★ 列表
+    # （`slotPicks` 不持久化），以及让"这项技能占了一个职业槽"的徽标跟真实
+    # 记账一致——只读展示，不参与任何校验语义。
+    slot_occupied_skill_ids: list[str] = field(default_factory=list)
 
 
 def _damage_bonus_and_build(str_: int, siz: int) -> tuple[str, int]:
@@ -459,6 +465,7 @@ def _compute(
             interest_skill_points=SkillPointsBudget(budget=0, spent=0, remaining=0),
             skill_view=[],
             validation=issues,
+            slot_occupied_skill_ids=[],
         )
 
     derived_stats = compute_derived_stats(attributes, age)
@@ -619,6 +626,7 @@ def _compute(
         ),
         skill_view=skill_view,
         validation=issues,
+        slot_occupied_skill_ids=sorted(slot_occupied_ids),
     )
 
 

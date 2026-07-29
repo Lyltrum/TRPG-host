@@ -193,6 +193,11 @@ class CharacterComputeResult(CamelModel):
     interest_skill_points: SkillPointsBudgetView
     skill_view: list[SkillComputeView]
     validation: list[ValidationIssueView]
+    # 哪些非固定本职技能占用了职业自选槽（character-build-migration
+    # redesign-v2 §4-B）：只读展示字段，前端用它在编辑已保存的卡时重建
+    # ★ 列表、渲染"占槽"徽标，不参与任何校验语义，值来自
+    # `coc7_rules.ComputeResult.slot_occupied_skill_ids`。
+    slot_occupied_skill_ids: list[str] = Field(default_factory=list)
 
 
 # ── 年龄调整（迁移自 coc-char-gen `js/plugins/age.js`） ─────────────────────
@@ -253,3 +258,21 @@ class RollAttributePoolResult(CamelModel):
 
     rolls: list[AttributePoolRollView]
     total: int
+
+
+# ── 幸运单掷（character-build-migration redesign-v2 §4-A） ──────────────────
+
+
+class RollLuckResult(CamelModel):
+    """POST /api/v1/rooms/{roomId}/characters/{characterId}/roll-luck 返回：
+    单独掷一次幸运（3d6×5），不占八维分配的预算。`kind`/`dice` 命名口径对齐
+    `AttributePoolRollView`。服务端把 `value` 写进
+    `character.attributes["LUCK"]`（只改这一个键，不动其它属性、不动
+    `generation_method`）。
+
+    15–19 岁的"幸运掷两次取高"由 `apply-age-adjustment` 负责（`luckRerolled`
+    字段），这个端点不判年龄，避免同一条规则两处实现。"""
+
+    kind: str
+    dice: list[int]
+    value: int

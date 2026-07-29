@@ -160,6 +160,7 @@ export interface CharacterComputeResult {
   interestSkillPoints: SkillPointsBudgetView;
   skillView: SkillComputeView[];
   validation: ValidationIssueView[];
+  slotOccupiedSkillIds?: string[];
 }
 
 /**
@@ -701,6 +702,22 @@ export interface RollAttributesResult {
   derivedStats: {
     [k: string]: number;
   };
+}
+
+/**
+ * POST /api/v1/rooms/{roomId}/characters/{characterId}/roll-luck 返回：
+ * 单独掷一次幸运（3d6×5），不占八维分配的预算。`kind`/`dice` 命名口径对齐
+ * `AttributePoolRollView`。服务端把 `value` 写进
+ * `character.attributes["LUCK"]`（只改这一个键，不动其它属性、不动
+ * `generation_method`）。
+ *
+ * 15–19 岁的"幸运掷两次取高"由 `apply-age-adjustment` 负责（`luckRerolled`
+ * 字段），这个端点不判年龄，避免同一条规则两处实现。
+ */
+export interface RollLuckResult {
+  kind: string;
+  dice: number[];
+  value: number;
 }
 
 /**

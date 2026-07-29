@@ -68,6 +68,7 @@ _MODELS: list[type[BaseModel]] = [
     character.EduImprovementCheckView,
     character.AttributePoolRollView,
     character.RollAttributePoolResult,
+    character.RollLuckResult,
     # 游戏目录 / 规则数据（issue #77 新增，issue #84 S1 加厚 ruleset 结构）
     game.GameRead,
     game.GameSystemRead,

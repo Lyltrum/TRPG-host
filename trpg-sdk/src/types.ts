@@ -40,6 +40,8 @@ export type {
   EduImprovementCheckView,
   AttributePoolRollView,
   RollAttributePoolResult,
+  // 幸运单掷（character-build-migration redesign-v2 §4-A）—— 对应后端 dto/character.py
+  RollLuckResult,
   // 我的卡库（issue #77 决策 5）—— 对应后端 dto/character.py
   CharacterTemplateCreateBody as SaveCharacterTemplateInput,
   CharacterTemplateRead as CharacterTemplate,

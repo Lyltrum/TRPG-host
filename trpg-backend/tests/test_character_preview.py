@@ -131,3 +131,25 @@ async def test_preview_surfaces_issues_for_invalid_draft(client: AsyncClient) ->
     assert response.status_code == 200
     codes = [issue["code"] for issue in response.json()["data"]["validation"]]
     assert "SKILL_ABOVE_CAP" in codes
+
+
+async def test_preview_reports_slot_occupied_skill_ids(client: AsyncClient) -> None:
+    """character-build-migration redesign-v2 §4-B：自选槽实际占用的技能 id
+    要透传给前端。私家侦探（occupationId=90）有两个自选槽——一项社交技能
+    （话术/取悦/恐吓/说服）+ 一项任意特长；只给"charm"（取悦）加了点，它
+    不在固定 `skillIds` 里，应该被判定占用了第一个槽。"""
+    session = await register(client)
+
+    response = await client.post(
+        PREVIEW_URL,
+        json={
+            "attributes": ATTRS,
+            "occupationId": 90,  # 私家侦探，见 coc7_content.py
+            "skills": {"charm": 40, "credit-rating": 9},
+        },
+        headers=bearer(session["token"]),
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["slotOccupiedSkillIds"] == ["charm"]

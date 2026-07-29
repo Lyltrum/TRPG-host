@@ -364,6 +364,70 @@ async def test_generation_method_field_only_trusts_pointbuy_downgrade(
     assert "ATTRIBUTE_POINTS_EXCEEDED" in codes
 
 
+# ── 幸运单掷（character-build-migration redesign-v2 §4-A） ──────────────────
+
+
+async def test_roll_luck_writes_luck_attribute(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """掷出的值真的写进了 attributes.LUCK，且落库；`kind`/`dice`/`value`
+    三个字段自洽（3d6×5）。"""
+    room = await create_room(client)
+    character_id = await _create_draft(client, room)
+    await client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+        json=MINIMAL_CHARACTER_UPDATE,
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    response = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/roll-luck",
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["kind"] == "3d6x5"
+    assert len(data["dice"]) == 3
+    assert all(1 <= die <= 6 for die in data["dice"])
+    assert data["value"] == sum(data["dice"]) * 5
+    assert 15 <= data["value"] <= 90
+
+    character = await db_session.get(Character, character_id)
+    assert character is not None
+    assert character.attributes is not None
+    assert character.attributes["LUCK"] == data["value"]
+
+
+async def test_roll_luck_does_not_touch_other_attributes(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """只改 LUCK 这一个键——其它 8 项属性原样保留。"""
+    room = await create_room(client)
+    character_id = await _create_draft(client, room)
+    await client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+        json=MINIMAL_CHARACTER_UPDATE,
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    response = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/roll-luck",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert response.status_code == 200, response.text
+
+    character = await db_session.get(Character, character_id)
+    assert character is not None
+    assert character.attributes is not None
+    for key, value in BASE_ATTRIBUTES.items():
+        if key == "LUCK":
+            continue
+        assert character.attributes[key] == value
+    # generation_method 不受影响——roll-luck 不改变属性生成方式。
+    assert character.generation_method == "pointbuy"
+
+
 # ── 结构化背景故事 ──────────────────────────────────────────────────────────
 
 

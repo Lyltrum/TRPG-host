@@ -42,6 +42,7 @@ from app.dto.character import (
     EduImprovementCheckView,
     RollAttributePoolResult,
     RollAttributesResult,
+    RollLuckResult,
 )
 from app.dto.game import RulesetRead
 from app.models.room import Character, Player, Room
@@ -351,6 +352,34 @@ async def roll_attribute_pool(
     character.attribute_pool_total = total
     await db.commit()
     return RollAttributePoolResult(rolls=rolls, total=total)
+
+
+async def roll_luck(
+    db: AsyncSession, room_id: str, character_id: str, reconnect_token: str | None
+) -> RollLuckResult:
+    """POST /rooms/{roomId}/characters/{characterId}/roll-luck —— 幸运单掷
+    （character-build-migration redesign-v2 §4-A）：3d6×5，独立于属性生成
+    方式——点数购买法的玩家同样需要掷幸运（`AttributeSpec.pointBuy=false`
+    已经说明它不参与购买），塞进 `roll_attribute_pool` 的话点数购买法玩家
+    就掷不到，所以单开一个端点服务三种生成方式。
+
+    只改 `character.attributes["LUCK"]` 这一个键，不动其它属性、不动
+    `generation_method`——跟 `roll_attributes`/`roll_attribute_pool` 不同，
+    这里不改变这张卡的属性生成方式。
+
+    15–19 岁的"幸运掷两次取高"由 `apply_age_adjustment` 负责
+    （`luckRerolled` 字段），这里不判年龄，避免同一条规则两处实现。
+    """
+    character = await _get_own_character(db, room_id, character_id, reconnect_token)
+
+    dice = _roll_dice(3, 6)
+    value = sum(dice) * 5
+
+    attributes = dict(character.attributes or {})
+    attributes["LUCK"] = value
+    character.attributes = attributes
+    await db.commit()
+    return RollLuckResult(kind="3d6x5", dice=dice, value=value)
 
 
 async def apply_age_adjustment(

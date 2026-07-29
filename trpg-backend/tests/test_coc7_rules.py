@@ -828,3 +828,115 @@ def test_private_investigator_rulebook_skills_not_rejected_as_interest() -> None
     issues = validate_character(ruleset, ATTRS, "私家侦探", skills)
 
     assert issues == [], "私家侦探把点加在规则书本职技能（心理学/图书馆）上应当合法"
+
+
+# ── 分配值 vs 有效值（wizard-bugfix-round4，方案 A，#18/#20）───────────────
+#
+# 背景：`attributes` 存的是**有效值**（年龄修正之后的最终属性）；点数预算/
+# 掷点池总和/步进为 5 这三条生成方法约束只对**分配值**（年龄修正之前）成立。
+# 传 `allocated_attributes` 之后，校验改盯分配值，`attributes` 只做宽松兜底
+# + 承担计算职责（衍生值/技能基础值/职业技能点公式）。
+
+_POOL_KEYS = ["STR", "CON", "DEX", "APP", "POW", "SIZ", "INT", "EDU"]
+_ALLOCATED_60 = {**ATTRS, **dict.fromkeys(_POOL_KEYS, 60)}  # 8 项各 60，总和 480
+
+
+def test_allocated_attributes_lets_effective_values_skip_generation_method_checks() -> None:
+    """#20 回归：掷点池角色年龄修正后，有效值（`attributes`）不再满足"总和
+    精确等于池值 / 步进为 5"这两条只对分配值成立的约束——传
+    `allocated_attributes` 之后校验改盯分配值，有效值只做宽松兜底，不再被
+    整体拒绝；衍生值/两个技能点预算都基于**有效值**算出正常数字。"""
+    # 模拟一次年龄修正的效果（40-49 档量级）：STR/CON/DEX 合计 -5、APP -5、
+    # EDU 改进检定 +8——结果既不是 5 的倍数，总和也不再等于池值 480。
+    effective = {**_ALLOCATED_60, "STR": 58, "CON": 58, "DEX": 59, "APP": 55, "EDU": 68}
+
+    result = compute_preview(
+        RULESET,
+        effective,
+        ACCOUNTANT_ID,
+        {"credit-rating": 30},
+        generation_method=GENERATION_ROLL_POOL,
+        attribute_pool_total=480,
+        allocated_attributes=_ALLOCATED_60,
+    )
+
+    assert result.validation == []
+    assert result.derived_stats != {}
+    # 职业技能点预算按**有效值** EDU=68 算（EDU*4=272），不是分配值 EDU=60
+    # （240）——证明衍生计算确实用的是有效值，不是分配值。
+    assert result.occupation_skill_points.budget == 272
+
+    # 对照：不传 allocated_attributes 时，同样的有效值仍然会被判非法——证明
+    # 上面那条测试真的在测新加的分支，不是碰巧过。
+    without_allocation = compute_preview(
+        RULESET,
+        effective,
+        ACCOUNTANT_ID,
+        {"credit-rating": 30},
+        generation_method=GENERATION_ROLL_POOL,
+        attribute_pool_total=480,
+    )
+    codes = [issue.code for issue in without_allocation.validation]
+    assert "INVALID_ATTRIBUTES" in codes or "ATTRIBUTE_POOL_MISMATCH" in codes
+
+
+def test_allocated_attributes_does_not_bypass_effective_attribute_range_check() -> None:
+    """越权兜底：即使分配值合法，有效值本身仍然要过"结构完整 + 落在 [1,99]"
+    这道宽松校验——不能靠传一份合法分配值让越界的有效值蒙混过关。"""
+    effective = {**_ALLOCATED_60, "STR": 999}
+
+    result = compute_preview(
+        RULESET,
+        effective,
+        ACCOUNTANT_ID,
+        {},
+        generation_method=GENERATION_ROLL_POOL,
+        attribute_pool_total=480,
+        allocated_attributes=_ALLOCATED_60,
+    )
+
+    assert "INVALID_ATTRIBUTES" in [issue.code for issue in result.validation]
+
+
+def test_effective_attributes_implausible_deviation_is_rejected() -> None:
+    """🔴 (d) 安全加固：宽松的 [1,99] 区间拦不住"分配值合法 + 有效值全部拉满
+    99"这种客户端伪造——99 本身就落在 [1,99] 里。追加的总偏离上限应该拦住
+    这种偏离量远超年龄修正理论上限（`max_total_adjustment_magnitude()`）的
+    伪造数据。"""
+    all_maxed = {**_ALLOCATED_60, **dict.fromkeys(_POOL_KEYS, 99)}
+
+    result = compute_preview(
+        RULESET,
+        all_maxed,
+        ACCOUNTANT_ID,
+        {},
+        generation_method=GENERATION_ROLL_POOL,
+        attribute_pool_total=480,
+        allocated_attributes=_ALLOCATED_60,
+    )
+
+    assert [issue.code for issue in result.validation] == ["EFFECTIVE_ATTRIBUTES_IMPLAUSIBLE"]
+
+
+def test_effective_attributes_within_age_adjustment_magnitude_is_not_flagged() -> None:
+    """对照：总偏离在 `max_total_adjustment_magnitude()` 以内（模拟真实年龄
+    修正量级）不应该触发上面那条伪造检测。"""
+    from app.core.coc7_age import max_total_adjustment_magnitude
+
+    # STR/SIZ 各 -20、APP -15、EDU +30：总偏离 85，在上限（145，80-89 档最坏
+    # 情形）以内。
+    effective = {**_ALLOCATED_60, "STR": 40, "SIZ": 40, "APP": 45, "EDU": 90}
+    total_delta = sum(abs(effective[k] - _ALLOCATED_60[k]) for k in _POOL_KEYS)
+    assert total_delta <= max_total_adjustment_magnitude()
+
+    result = compute_preview(
+        RULESET,
+        effective,
+        ACCOUNTANT_ID,
+        {"credit-rating": 30},
+        generation_method=GENERATION_ROLL_POOL,
+        attribute_pool_total=480,
+        allocated_attributes=_ALLOCATED_60,
+    )
+
+    assert result.validation == []

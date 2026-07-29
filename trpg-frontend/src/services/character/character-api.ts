@@ -19,6 +19,10 @@ export interface BuiltCharacter {
   residence: string;
   birthplace: string;
   attr: Record<string, number>; // 后端属性键，如 { STR: 50, CON: 60, ... }
+  // 分配值（wizard-bugfix-round4.md 方案 A）：玩家分配的原始属性，年龄
+  // 修正/规则校验的计算基准；`attr` 存的是有效值（年龄修正后）。不传即
+  // 退回"两者相同"的旧行为（后端语义，见 CharacterUpdateBody 字段说明）。
+  allocatedAttributes?: Record<string, number> | null;
   derived: { hp: number; san: number; mp: number };
   skillValues: Record<string, number>; // skillId -> 最终值（base+分配）
   equipment: string;
@@ -61,6 +65,7 @@ export async function saveCharacter(
       residence: built.residence,
       birthplace: built.birthplace,
       attributes: built.attr,
+      allocatedAttributes: built.allocatedAttributes ?? null,
       derivedStats: { HP: built.derived.hp, SAN: built.derived.san, MP: built.derived.mp },
       skills: built.skillValues,
       equipment: built.equipment

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { CharacterComputeResult, Ruleset } from 'trpg-sdk'
 import { friendlyErrorMessage } from '@/services/api-client'
 import { previewCharacter } from '@/services/character/ruleset-api'
-import { buildSkillComputeMap, sumValues } from './wizard-selectors'
+import { buildSkillComputeMap, effectiveAttr, sumValues } from './wizard-selectors'
 import { buildSkillsPayload } from './wizard-network'
 import type { WizardState } from './wizard-state'
 
@@ -55,7 +55,11 @@ export function useWizardPreview(ruleset: Ruleset | null, state: WizardState) {
         skillsPayload = {}
       }
       previewCharacter({
-        attributes: state.attr,
+        // 衍生值/技能点预算/base·cap 一律基于有效值算（wizard-bugfix-round4.md
+        // 方案 A）；分配值单独传，后端拿它跑预算/池值/步进这三条生成方法约束、
+        // 以及"有效值相对分配值的总偏离"上限校验。
+        attributes: effectiveAttr(state),
+        allocatedAttributes: state.attr,
         occupationId: state.occupationId,
         skills: skillsPayload,
         age: state.age,
@@ -80,6 +84,7 @@ export function useWizardPreview(ruleset: Ruleset | null, state: WizardState) {
     attrsReady,
     baseMapReady,
     state.attr,
+    state.attrAfterAge,
     state.occupationId,
     state.skillAlloc,
     state.age,

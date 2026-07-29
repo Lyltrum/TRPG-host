@@ -66,7 +66,12 @@ export async function syncCurrentStateToBackend(
     gender: state.info.gender || null,
     residence: state.info.residence,
     birthplace: state.info.birthplace,
+    // 年龄调整端点基于后端已保存的 character.allocated_attributes 重算
+    // （wizard-bugfix-round4.md 方案 A）——这里必须同步分配值，不能是
+    // 已经套过一次修正的有效值，否则 apply-age-adjustment 会在修正结果
+    // 上再修一次。
     attr: state.attr,
+    allocatedAttributes: state.attr,
     derived,
     skillValues: buildSkillsPayload(state.skillAlloc, skillComputeMap),
     equipment: state.equipment,

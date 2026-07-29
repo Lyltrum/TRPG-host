@@ -188,6 +188,13 @@ class Character(Base):
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     occupation: Mapped[str | None] = mapped_column(String(100), nullable=True)
     attributes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 玩家在属性步骤分配出来的原始属性（年龄修正之前）。
+    # `attributes` 存的是**有效值**（年龄修正之后的最终属性，衍生值/技能基础值
+    # /职业技能点公式都基于它算）；而点数预算、掷点池总和、步进为 5 这三条
+    # 生成方法约束天然只对**分配值**成立——年龄修正必然把它们破坏掉
+    # （见 wizard-bugfix-round4.md #20）。两者拆开存，校验各取所需。
+    # 可空：本列之前建的角色卡没有这份数据，读取处一律回落到 `attributes`。
+    allocated_attributes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     derived_stats: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     skills: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     equipment: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)

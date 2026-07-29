@@ -29,6 +29,10 @@ class CharacterUpdateBody(CamelModel):
     residence: str = Field(default="", max_length=100)
     birthplace: str = Field(default="", max_length=100)
     attributes: dict[str, int]
+    # 玩家分配的原始属性（年龄修正之前），语义见 `character.
+    # allocated_attributes`（wizard-bugfix-round4，方案 A）。可选：不传就是
+    # 没有这份数据（比如还没走到年龄步骤，或不关心年龄修正的调用方）。
+    allocated_attributes: dict[str, int] | None = None
     derived_stats: dict[str, int]
     skills: dict[str, int]
     equipment: list[EquipmentItem] = Field(default_factory=list)
@@ -76,6 +80,10 @@ class CharacterRead(CamelModel):
     residence: str = ""
     birthplace: str = ""
     attributes: dict[str, int] = Field(default_factory=dict)
+    # 玩家分配的原始属性（年龄修正之前，wizard-bugfix-round4 方案 A）——编辑
+    # 已有角色卡时前端要靠它恢复"玩家原本分配了多少"，不能拿套用过年龄修正
+    # 的 `attributes` 去猜。本列之前建的卡没有这份数据，恒为 `None`。
+    allocated_attributes: dict[str, int] | None = None
     derived_stats: dict[str, int | str] = Field(default_factory=dict)
     skills: dict[str, int] = Field(default_factory=dict)
     equipment: list[str] = Field(default_factory=list)
@@ -166,6 +174,12 @@ class CharacterPreviewRequest(CamelModel):
     # attribute_pool_total`），语义同 `validate_character` 的同名参数——只有
     # 这条路径会用到，其余生成方法传了也会被忽略。
     attribute_pool_total: int | None = None
+    # 可选：玩家分配的原始属性（年龄修正之前），语义见 `character.
+    # allocated_attributes`（wizard-bugfix-round4，方案 A）。传了之后
+    # `attributes` 只承担计算职责（衍生值/技能基础值/职业技能点公式），生成
+    # 方法约束（预算/池值总和/步进为 5）改校验这份分配值；不传就退回旧行为，
+    # `attributes` 一身二任。
+    allocated_attributes: dict[str, int] | None = None
 
 
 class SkillPointsBudgetView(CamelModel):

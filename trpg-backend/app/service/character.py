@@ -155,6 +155,9 @@ async def update_character(
     character.residence = payload.residence
     character.birthplace = payload.birthplace
     character.attributes = payload.attributes
+    # 玩家分配的原始属性（年龄修正之前，wizard-bugfix-round4 方案 A）。直接
+    # 赋值，`None` 也照写——客户端明确不带就是没有这份数据。
+    character.allocated_attributes = payload.allocated_attributes
     character.derived_stats = payload.derived_stats
     character.skills = payload.skills
     character.equipment = [item.name for item in payload.equipment]
@@ -204,6 +207,11 @@ async def complete_character(
         skills=character.skills or {},
         generation_method=character.generation_method,
         attribute_pool_total=character.attribute_pool_total,
+        # wizard-bugfix-round4（方案 A，#20 的修复）：年龄修正后的有效值不能
+        # 再拿去跑只对分配值成立的预算/池值总和/步进校验，见 `validate_character`
+        # 的 `allocated_attributes` 参数说明。没有分配值的老角色卡传 None，
+        # 退回旧行为。
+        allocated_attributes=character.allocated_attributes,
     )
     if issues:
         raise CharacterInvalidError(issues)
@@ -243,6 +251,7 @@ async def get_character(
         residence=character.residence or "",
         birthplace=character.birthplace or "",
         attributes=character.attributes or {},
+        allocated_attributes=character.allocated_attributes,
         derived_stats=character.derived_stats or {},
         skills=character.skills or {},
         equipment=list(character.equipment or []),
@@ -271,6 +280,7 @@ def compute_character_preview(
         age=payload.age,
         generation_method=payload.generation_method or GENERATION_POINT_BUY,
         attribute_pool_total=payload.attribute_pool_total,
+        allocated_attributes=payload.allocated_attributes,
     )
     return CharacterComputeResult(**asdict(result))
 
@@ -409,17 +419,23 @@ async def apply_age_adjustment(
     必须先有属性（掷骰/点数购买/掷点池三条路径之一产出的八维）才能套用——
     没有属性就没有可扣减的对象，直接拒绝而不是套用到一份空字典上。
 
-    这个操作按"当前存的属性"应用一次修正并写回，不是幂等的——同一张卡
-    重复调用（比如玩家改了年龄又调一次）会在已经扣过的基础上再扣一次。
-    这跟 coc-char-gen 前端向导的行为不同（它缓存了"年龄调整前"的快照，
-    换年龄时从快照重新算），本期为了不新增快照列先按最简单的"一次性应用"
-    实现，前端向导只在属性刚生成、还没调整过时调用一次即可规避这个问题。
+    wizard-bugfix-round4（方案 A，#18 的修复）：年龄修正永远基于「分配值」
+    （`character.allocated_attributes`）重算，而不是在上一次修正的结果上
+    再修一次——后者会把扣减累加（实测 45 岁套两次：STR+CON+DEX 共扣 10，
+    规则规定 5）。这样一来同一张卡重复调用（比如玩家改了年龄又调一次）就是
+    幂等的：每次都从干净的分配值出发。没有分配值的老角色卡回落到
+    `character.attributes`，保持原行为（不幂等，前端只调用一次即可规避）。
     """
     character = await _get_own_character(db, room_id, character_id, reconnect_token)
-    if not character.attributes:
+    source_attributes = (
+        character.allocated_attributes
+        if character.allocated_attributes is not None
+        else character.attributes
+    )
+    if not source_attributes:
         raise AttributesNotSetError("必须先生成属性才能应用年龄调整")
 
-    attributes_before = dict(character.attributes)
+    attributes_before = dict(source_attributes)
     attributes = dict(attributes_before)
     modifiers = get_age_modifiers(age)
 

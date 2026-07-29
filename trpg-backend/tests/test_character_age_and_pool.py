@@ -163,6 +163,51 @@ async def test_apply_age_adjustment_youth_band_is_fully_deterministic(
     assert after["LUCK"] % 5 == 0
 
 
+async def test_apply_age_adjustment_is_idempotent_when_allocated_attributes_is_set(
+    client: AsyncClient,
+) -> None:
+    """wizard-bugfix-round4 #18 回归：年龄修正永远基于「分配值」
+    （`allocatedAttributes`）重算，同一张卡连续调用两次（同一个年龄）应该
+    产出相同的扣减量，而不是在上一次结果基础上再扣一次。40-49 档的
+    STR+CON+DEX 合计 -5、APP -5 都是确定性的（不涉及掷骰），不断言 EDU
+    （改进检定随机）。"""
+    room = await create_room(client)
+    character_id = await _create_draft(client, room)
+    await client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+        json={**MINIMAL_CHARACTER_UPDATE, "allocatedAttributes": BASE_ATTRIBUTES},
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    first = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/apply-age-adjustment",
+        json={"age": 45},
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert first.status_code == 200, first.text
+    first_after = first.json()["data"]["attributesAfter"]
+
+    second = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/apply-age-adjustment",
+        json={"age": 45},
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert second.status_code == 200, second.text
+    second_after = second.json()["data"]["attributesAfter"]
+
+    first_scd_delta = sum(BASE_ATTRIBUTES[k] - first_after[k] for k in ["STR", "CON", "DEX"])
+    second_scd_delta = sum(BASE_ATTRIBUTES[k] - second_after[k] for k in ["STR", "CON", "DEX"])
+    assert second_scd_delta == first_scd_delta == 5, (
+        "第二次调用的 STR+CON+DEX 扣减量应该跟第一次相同（不能在已经扣过的基础上再扣一次）"
+    )
+
+    first_app_delta = BASE_ATTRIBUTES["APP"] - first_after["APP"]
+    second_app_delta = BASE_ATTRIBUTES["APP"] - second_after["APP"]
+    assert second_app_delta == first_app_delta == 5, (
+        "第二次调用的 APP 扣减量应该跟第一次相同（不能在已经扣过的基础上再扣一次）"
+    )
+
+
 # ── 掷点池生成法 ────────────────────────────────────────────────────────────
 
 
@@ -263,6 +308,59 @@ async def test_roll_attribute_pool_then_matching_allocation_completes(
     )
 
     assert completed.status_code == 200, completed.text
+
+
+async def test_roll_pool_with_age_adjustment_then_complete_succeeds(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """wizard-bugfix-round4 #20 端到端回归：掷点池角色套用年龄修正后此前无法
+    完成建卡（有效值被拿去跑只对分配值成立的总和/步进校验，见
+    docs/character-build-migration/wizard-bugfix-round4.md）。PATCH 带
+    `allocatedAttributes` 之后，apply-age-adjustment 改的是 `attributes`
+    （有效值），`allocatedAttributes` 保持不变，complete 应该成功。"""
+    room = await create_room(client)
+    character_id = await _create_draft(client, room)
+
+    rolled = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/roll-attribute-pool",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    total = rolled.json()["data"]["total"]
+
+    point_buy_keys = ["STR", "CON", "DEX", "APP", "POW", "SIZ", "INT", "EDU"]
+    attributes = _distribute_pool_total(total, point_buy_keys)
+    attributes["LUCK"] = 50
+
+    await client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+        json={
+            **MINIMAL_CHARACTER_UPDATE,
+            "attributes": attributes,
+            "allocatedAttributes": attributes,
+        },
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    age_response = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/apply-age-adjustment",
+        json={"age": 45},
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert age_response.status_code == 200, age_response.text
+
+    completed = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/complete",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert completed.status_code == 200, completed.text
+
+    character = await db_session.get(Character, character_id)
+    assert character is not None
+    # 分配值原封不动地保留（年龄修正不改它），有效值确实被年龄修正动过——
+    # 40-49 档 APP 必定 -5（除非已经在 1 这个地板，但掷点池分配的单项下限是
+    # 15，不可能触发），这个差异证明 complete 成功不是因为两份数据碰巧一致。
+    assert character.allocated_attributes == attributes
+    assert character.attributes != attributes
 
 
 async def test_roll_attribute_pool_then_mismatched_allocation_is_rejected(

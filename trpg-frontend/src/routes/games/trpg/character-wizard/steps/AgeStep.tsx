@@ -65,11 +65,7 @@ export function AgeStep({
         occupationName
       )
       const result = await applyAgeAdjustment(roomId, characterId, age)
-      dispatch({
-        type: 'APPLY_AGE_SUCCESS',
-        result,
-        attrInputs: Object.fromEntries(attrs.map((a) => [a.key, String(result.attributesAfter[a.key] ?? '')])),
-      })
+      dispatch({ type: 'APPLY_AGE_SUCCESS', result })
     } catch (err) {
       // syncCurrentStateToBackend 可能因为规则 base 还没到位抛
       // MissingSkillBaseError（exec/12 #19）——这种情况不写库，给一个比

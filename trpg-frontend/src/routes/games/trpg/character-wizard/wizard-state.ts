@@ -44,6 +44,10 @@ export interface WizardState {
   step: number
   info: WizardInfo
   age: number
+  // 分配值：玩家在属性步骤分配出来的原始点数（wizard-bugfix-round4.md
+  // 方案 A）。点数预算 / 掷点池总和 / 步进为 5 这三条生成方法约束，以及
+  // 年龄修正的计算基准，都只对这份数据成立——`APPLY_AGE_SUCCESS` 不再
+  // 覆盖它，年龄修正的结果单独存进 `attrAfterAge`。
   attr: Record<string, number>
   attrInputs: Record<string, string>
   generationMethod: GenerationMethod
@@ -53,6 +57,14 @@ export interface WizardState {
   ageApplied: boolean
   ageAppliedFor: number | null
   ageResult: AgeAdjustmentResult | null
+  // 有效值：年龄修正之后的最终属性（wizard-bugfix-round4.md 方案 A）。
+  // 衍生值（HP/SAN/MP/DB/MOV）、技能基础值、职业技能点公式、角色卡展示
+  // 一律该用它，不用 `attr`——两者不能合并成一份，否则要么年龄修正的
+  // "分配值→有效值"变换被反复套用（#18：属性被越扣越多），要么有效值被
+  // 拿去跑只对分配值成立的预算/池值/步进校验（#20：掷点池角色年龄修正后
+  // 永远无法完成建卡）。还没套用过年龄修正、或年龄状态被作废时为 `null`，
+  // 消费方应回落到 `attr`（见 `effectiveAttr` 选择器）。
+  attrAfterAge: Record<string, number> | null
   occupationId: number | null
   // 纯 UI 状态，不提交给后端（重制设计 v2 §3）——玩家在自选槽里"选的"技能，
   // 只用于决定职业技能步骤 ★ 列表显示哪些技能，提交时依旧只发 skillAlloc。
@@ -94,6 +106,7 @@ export function createInitialWizardState(): WizardState {
     ageApplied: false,
     ageAppliedFor: null,
     ageResult: null,
+    attrAfterAge: null,
     occupationId: null,
     slotPicks: [],
     skillAlloc: {},
@@ -124,7 +137,7 @@ export type WizardAction =
       resetAttrInputs: Record<string, string>
     }
   | { type: 'SET_LUCK_ROLL'; luckRoll: LuckRoll }
-  | { type: 'APPLY_AGE_SUCCESS'; result: AgeAdjustmentResult; attrInputs: Record<string, string> }
+  | { type: 'APPLY_AGE_SUCCESS'; result: AgeAdjustmentResult }
   | { type: 'SET_OCCUPATION'; occupationId: number; slotCounts: number[]; creditMin: number; creditMax: number }
   | { type: 'SET_SLOT_PICK'; slotIndex: number; pickIndex: number; skillId: string }
   | { type: 'SET_SKILL_ALLOC'; skillId: string; value: number }
@@ -137,9 +150,10 @@ export type WizardAction =
 
 // 改任何一项影响属性的动作都要作废年龄调整（§11 风险 2：改单项/平均分配/
 // 清空/重掷/切生成方式全部要归到这里，漏一条就会让玩家带着套在旧属性上的
-// 年龄修正提交）。
-function invalidateAge(): Pick<WizardState, 'ageApplied' | 'ageAppliedFor'> {
-  return { ageApplied: false, ageAppliedFor: null }
+// 年龄修正提交）。`attrAfterAge` 是上一次年龄修正的结果，分配值一变它就
+// 不再对应当前的 `attr`，一并清空（方案 A）。
+function invalidateAge(): Pick<WizardState, 'ageApplied' | 'ageAppliedFor' | 'attrAfterAge'> {
+  return { ageApplied: false, ageAppliedFor: null, attrAfterAge: null }
 }
 
 export function wizardReducer(state: WizardState, action: WizardAction): WizardState {
@@ -233,10 +247,12 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
       }
 
     case 'APPLY_AGE_SUCCESS':
+      // 分配值（attr/attrInputs）不变——年龄修正的结果只写进 attrAfterAge
+      // （方案 A）。此前这里直接把 attributesAfter 覆盖回 attr，导致下一次
+      // 套用会在已经修正过的值上再修一次（#18：属性被越扣越多）。
       return {
         ...state,
-        attr: action.result.attributesAfter,
-        attrInputs: action.attrInputs,
+        attrAfterAge: action.result.attributesAfter,
         ageApplied: true,
         ageAppliedFor: action.result.age,
         ageResult: action.result,

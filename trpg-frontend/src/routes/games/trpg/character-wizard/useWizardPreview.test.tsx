@@ -80,4 +80,38 @@ describe('useWizardPreview：加点增量必须换算成绝对值再发给后端
 
     root.unmount()
   })
+
+  // wizard-bugfix-round3.md / exec/12 #19：round2 的换算只在"两次连续渲染、
+  // 中间 preview 已经有值"这条路径下成立。编辑已有角色卡时，水合会一次性把
+  // 完整 attr + 非空 skillAlloc（增量）塞进 state，此时 preview 还是初始的
+  // null——这条用例锁定这个洞已经堵上：第一次请求（引导请求）不带 skills，
+  // 拿到 base 之后自动补发第二次请求，换算成正确的绝对值。
+  it('水合场景：属性一次性从缺失到完整时，最终请求仍换算成绝对值', async () => {
+    const incompleteState: WizardState = { ...createInitialWizardState(), attr: { STR: 50 } } // 缺 LUCK
+
+    root.render(<Harness state={incompleteState} />)
+    await new Promise((resolve) => setTimeout(resolve, 450))
+    expect(previewCharacterMock).not.toHaveBeenCalled()
+
+    // 模拟 HYDRATE：一次性把完整属性 + 已有加点（增量）塞进 state。
+    const hydratedState: WizardState = {
+      ...incompleteState,
+      attr: { STR: 50, LUCK: 50 },
+      skillAlloc: { 'fast-talk': 5 },
+    }
+    previewCharacterMock.mockResolvedValueOnce(fakeComputeResult()) // 第一次：引导请求，拿 base
+    previewCharacterMock.mockResolvedValueOnce(fakeComputeResult()) // 第二次：补发请求，换算绝对值
+    root.render(<Harness state={hydratedState} />)
+    await new Promise((resolve) => setTimeout(resolve, 950))
+
+    expect(previewCharacterMock).toHaveBeenCalledTimes(2)
+    // 第一次请求此时还没有权威 base——绝不能把增量当绝对值发出去，只能不带
+    // skills（核心 bug 修复前：这里会直接是 { 'fast-talk': 5 }）。
+    expect(previewCharacterMock.mock.calls[0][0].skills).toEqual({})
+    // 最后一次请求换算成了 base(20) + 加点(5) = 25 的绝对值。
+    const lastCall = previewCharacterMock.mock.calls[previewCharacterMock.mock.calls.length - 1]
+    expect(lastCall[0].skills).toEqual({ 'fast-talk': 25 })
+
+    root.unmount()
+  })
 })

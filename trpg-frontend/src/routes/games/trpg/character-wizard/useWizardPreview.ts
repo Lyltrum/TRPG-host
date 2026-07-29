@@ -25,6 +25,10 @@ export function useWizardPreview(ruleset: Ruleset | null, state: WizardState) {
   // 属性还没配齐（尤其是幸运没掷）之前，这份草稿本来就注定不完整，对它跑
   // 规则校验没有意义——不发请求，也不该产出任何"问题"提示给用户看（#11）。
   const attrsReady = !!ruleset && ruleset.attributes.every((a) => typeof state.attr[a.key] === 'number')
+  // preview 从 null 翻成非 null 意味着"权威 base 映射第一次到位"——加进依赖
+  // 数组，让水合场景里那次没带 skills 的引导请求之后，自动补发一次带正确
+  // 绝对值的请求（exec/12 #19）。
+  const baseMapReady = preview !== null
 
   useEffect(() => {
     if (!ruleset || !attrsReady) {
@@ -41,7 +45,15 @@ export function useWizardPreview(ruleset: Ruleset | null, state: WizardState) {
       // 最终绝对值——用 hook 自己上一次成功响应的 preview 构造 base 映射转换
       // （核心 bug 修复：此前这里直接把增量当绝对值发出去）。
       const skillComputeMap = buildSkillComputeMap(preview)
-      const skillsPayload = buildSkillsPayload(state.skillAlloc, skillComputeMap)
+      let skillsPayload: Record<string, number>
+      try {
+        skillsPayload = buildSkillsPayload(state.skillAlloc, skillComputeMap)
+      } catch {
+        // 还没有任何权威 base（首次请求 / 水合刚落地）——这次只用来把 base 取
+        // 回来，不带技能分配，避免把增量当绝对值发出去。下面 baseMapReady 翻真
+        // 后会自动补发一次带正确绝对值的请求。
+        skillsPayload = {}
+      }
       previewCharacter({
         attributes: state.attr,
         occupationId: state.occupationId,
@@ -66,6 +78,7 @@ export function useWizardPreview(ruleset: Ruleset | null, state: WizardState) {
   }, [
     ruleset,
     attrsReady,
+    baseMapReady,
     state.attr,
     state.occupationId,
     state.skillAlloc,

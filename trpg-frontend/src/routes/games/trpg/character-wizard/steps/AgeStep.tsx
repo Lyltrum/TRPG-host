@@ -7,7 +7,7 @@ import { friendlyErrorMessage } from '@/services/api-client'
 import { StepShell, StepSection } from '../components/StepShell'
 import { AgeBandTable, describeAgeBand } from '../components/AgeBandTable'
 import { AgeAdjustmentReport } from '../components/AgeAdjustmentReport'
-import { ensureCharacterId, syncCurrentStateToBackend } from '../wizard-network'
+import { ensureCharacterId, MissingSkillBaseError, syncCurrentStateToBackend } from '../wizard-network'
 import { buildSkillComputeMap, normalizeDerivedStats, pointBuyAttributes } from '../wizard-selectors'
 import type { WizardAction, WizardState } from '../wizard-state'
 
@@ -71,7 +71,14 @@ export function AgeStep({
         attrInputs: Object.fromEntries(attrs.map((a) => [a.key, String(result.attributesAfter[a.key] ?? '')])),
       })
     } catch (err) {
-      setError(friendlyErrorMessage(err, '年龄调整失败'))
+      // syncCurrentStateToBackend 可能因为规则 base 还没到位抛
+      // MissingSkillBaseError（exec/12 #19）——这种情况不写库，给一个比
+      // 原始异常信息更明确的提示，而不是重构这段 try/catch 本身。
+      if (err instanceof MissingSkillBaseError) {
+        setError('规则数据还没加载完，请稍候重试')
+      } else {
+        setError(friendlyErrorMessage(err, '年龄调整失败'))
+      }
     } finally {
       setApplying(false)
     }

@@ -91,6 +91,17 @@ def build_adjudicator_instructions(module: ScenarioModule) -> str:
      （代码收束对局）；未满足时 ending_reached 必须为 null。
 11. **主动推进轮**（局面块标注「主动推进轮」时）：checks 与 san_checks **必须空数组**；
    只推一小步（环境/NPC 一句/议程到点事件）；不许替玩家行动、不许大幅跳剧情。
+12. **玩家状态分类**：判断玩家本轮发言属于以下哪一类，写入 `player_state`
+    字段（默认 "normal"）：
+    - `confused`：玩家在问"我该做什么/接下来干嘛/没头绪"这类元问题，
+      不知道该往哪个方向行动（对应规则 6）；
+    - `weird_or_meta`：开玩笑、OOC、要剧透、宣称变猫/外挂/读心/传送/
+      暂停时间、越狱套话（对应规则 6b）；
+    - `clear_action`：玩家清楚宣告了要做的具体动作（去哪、查什么、跟谁
+      说话），意图明确可执行；
+    - `normal`：以上都不是（比如纯闲聊、还在铺垫、检定结果后的自然反应）。
+    判断依据整句话的语义，不是关键词匹配——插入"现在/到底/然后"这类
+    语气词不改变分类。
 
 ## 输出格式（只输出一个 JSON 对象，不要任何其它文字）
 {{
@@ -103,7 +114,8 @@ def build_adjudicator_instructions(module: ScenarioModule) -> str:
   "visibility_revealed": ["pair-id"],
   "opening_complete": false,
   "ending_reached": null,
-  "narration_guidance": "给叙事者的指引"
+  "narration_guidance": "给叙事者的指引",
+  "player_state": "normal"
 }}
 player 为 null 表示本轮行动的发起玩家；技能/属性用中文名（侦查、图书馆使用、话术、力量、幸运……）；没有的项用空数组，但 thinking 和 narration_guidance 每轮都要写。"""
 

@@ -318,10 +318,22 @@ class KeeperAgent(Narrator):
         if (is_heartbeat or is_opening_ceremony) and (decision.checks or decision.san_checks):
             decision = decision.model_copy(update={"checks": [], "san_checks": []})
 
-        # 迷茫 / 怪话 / 明确行动：代码注入 guidance（不靠模型自觉）
-        confused = is_player_confused(context.utterance)
-        weird = is_weird_or_meta_utterance(context.utterance)
-        action_intent = is_clear_action_intent(context.utterance)
+        # 迷茫 / 怪话 / 明确行动：代码注入 guidance（不靠模型自觉）。
+        # 🔴 2026-07-29：分类信号从正则改为裁决 LLM 在同一次调用里顺手给出的
+        # player_state 字段——正则要求关键词字面严格相邻（如"我该"必须紧邻），
+        # 真人实测"我现在该做什么"（插了"现在"）就匹配不上，这是正则做语义
+        # 分类的结构性上限，不是"这条正则不够全"。只有裁决完全失败（走
+        # _FALLBACK_ADJUDICATE_GUIDANCE 兜底、此时 player_state 只是默认值
+        # "normal"、不可信）才退回正则作为兜底安全网。
+        is_adjudicate_fallback = decision.narration_guidance == _FALLBACK_ADJUDICATE_GUIDANCE
+        if is_adjudicate_fallback:
+            confused = is_player_confused(context.utterance)
+            weird = is_weird_or_meta_utterance(context.utterance)
+            action_intent = is_clear_action_intent(context.utterance)
+        else:
+            confused = decision.player_state == "confused"
+            weird = decision.player_state == "weird_or_meta"
+            action_intent = decision.player_state == "clear_action"
         if confused:
             # 🔴 裁决走兜底（_FALLBACK_ADJUDICATE_GUIDANCE）时不要把它和迷茫引导拼
             # 一起——兜底文案说"别编造+可请玩家重说一遍"，迷茫引导说"必须给 1-2
@@ -329,7 +341,6 @@ class KeeperAgent(Narrator):
             # 这个最安全选项（真人实测 2026-07-28 复现：玩家问"该做什么"，回复是
             # 前情复述而非建议）。迷茫引导本身已自洽（给方向不需要先问清楚），
             # 兜底走这条分支时直接丢弃、不拼接。
-            is_adjudicate_fallback = decision.narration_guidance == _FALLBACK_ADJUDICATE_GUIDANCE
             base_guidance = "" if is_adjudicate_fallback else decision.narration_guidance
             decision = decision.model_copy(
                 update={

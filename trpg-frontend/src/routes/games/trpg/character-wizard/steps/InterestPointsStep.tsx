@@ -73,7 +73,12 @@ export function InterestPointsStep({
       {!previewError && attrNotValidated && (
         <p className="text-[11px] text-[#8a6a2a] mb-2">属性还没通过校验，预算暂时无法计算。</p>
       )}
-      <PoolBar label="兴趣点数 (INT×2)" spent={intSpent} budget={intBudget} />
+      <PoolBar
+        label="兴趣点数 (INT×2)"
+        spent={intSpent}
+        budget={intBudget}
+        remainingOverride={remaining}
+      />
 
       <StepSection title="筛选">
         <SkillFilterBar

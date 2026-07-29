@@ -75,7 +75,12 @@ export function OccupationPointsStep({
       {!previewError && attrNotValidated && (
         <p className="text-[11px] text-[#8a6a2a] mb-2">属性还没通过校验，预算暂时无法计算。</p>
       )}
-      <PoolBar label={`职业技能点 (${selectedOcc.skillPointsFormula})`} spent={occSpent} budget={occBudget} />
+      <PoolBar
+        label={`职业技能点 (${selectedOcc.skillPointsFormula})`}
+        spent={occSpent}
+        budget={occBudget}
+        remainingOverride={remaining}
+      />
 
       <StepSection title="信用评级 (Credit Rating) · 必填" accent tip="下限那部分算职业点，超出下限的部分算兴趣点（Chaosium 官方裁定）。">
         <div className="flex items-center justify-between mb-1">

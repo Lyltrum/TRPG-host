@@ -31,6 +31,8 @@ export function useWizardPreview(ruleset: Ruleset | null, state: WizardState) {
         occupationId: state.occupationId,
         skills: state.skillAlloc,
         age: state.age,
+        generationMethod: state.generationMethod,
+        attributePoolTotal: state.attributePoolTotal,
       })
         .then((result) => {
           if (gen !== previewGenRef.current) return
@@ -44,7 +46,15 @@ export function useWizardPreview(ruleset: Ruleset | null, state: WizardState) {
         })
     }, 400)
     return () => clearTimeout(timer)
-  }, [ruleset, state.attr, state.occupationId, state.skillAlloc, state.age])
+  }, [
+    ruleset,
+    state.attr,
+    state.occupationId,
+    state.skillAlloc,
+    state.age,
+    state.generationMethod,
+    state.attributePoolTotal,
+  ])
 
   const pendingDelta = Math.max(0, sumValues(state.skillAlloc) - confirmedAllocTotal)
 

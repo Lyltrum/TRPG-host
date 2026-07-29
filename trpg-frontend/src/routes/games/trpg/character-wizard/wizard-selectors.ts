@@ -149,8 +149,12 @@ export interface WizardContext {
  * 交给 CharacterWizardPage 的确认条处理，这里不返回拦截项。 */
 export function stepBlockers(stepId: WizardStepId, state: WizardState, ctx: WizardContext): string[] {
   switch (stepId) {
-    case 'concept':
-      return state.info.name.trim() ? [] : ['请填写角色姓名']
+    case 'concept': {
+      const reasons: string[] = []
+      if (!state.info.name.trim()) reasons.push('请填写角色姓名')
+      if (!state.info.gender) reasons.push('请选择性别')
+      return reasons
+    }
 
     case 'attrs': {
       const reasons: string[] = []

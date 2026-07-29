@@ -35,6 +35,9 @@ export function ConceptStep({
               onChange={(e) => dispatch({ type: 'SET_INFO', patch: { gender: e.target.value } })}
               className="w-full px-3.5 py-2.5 rounded-[6px] bg-input border border-border-light text-text-primary text-[15px] outline-none focus:border-brass"
             >
+              <option value="" disabled>
+                请选择性别
+              </option>
               <option>男</option>
               <option>女</option>
               <option>其他</option>

@@ -83,11 +83,11 @@ export const DEFAULT_AGE = 28
 export function createInitialWizardState(): WizardState {
   return {
     step: 0,
-    info: { name: '', playerName: '', gender: '男', residence: '阿卡姆', birthplace: '阿卡姆' },
+    info: { name: '', playerName: '', gender: '', residence: '', birthplace: '' },
     age: DEFAULT_AGE,
     attr: {},
     attrInputs: {},
-    generationMethod: 'pointbuy',
+    generationMethod: 'roll_pool',
     attributePoolTotal: null,
     poolRolls: [],
     luckRoll: null,

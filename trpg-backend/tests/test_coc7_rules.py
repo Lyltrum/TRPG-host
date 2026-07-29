@@ -150,12 +150,15 @@ def test_valid_card_has_empty_validation_report() -> None:
     result = compute_preview(RULESET, ATTRS, ACCOUNTANT_ID, skills)
 
     assert result.validation == []
-    # 职业技能 200（accounting/law/library-use/listen 各分配 50）+ 信用下限 30
-    # + dodge/occult 各 25（issue #114：会计师按规则书带「任意其他两项」自选槽，
-    # 这两项非固定技能占住了槽，改吃职业点）= 280
-    assert result.occupation_skill_points == SkillPointsBudget(budget=200, spent=280, remaining=-80)
-    # 兴趣技能只剩信用超出下限的部分 20（dodge/occult 已被槽吸收）
-    assert result.interest_skill_points == SkillPointsBudget(budget=100, spent=20, remaining=80)
+    # 职业技能原始需求 250（accounting/law/library-use/listen 各分配 50，
+    # dodge/occult 各 25——issue #114：会计师按规则书带「任意其他两项」自选槽，
+    # 这两项非固定技能占住了槽，改吃职业点）+ 信用下限 30 = 280，超出职业
+    # 预算 200 达 80 点。issue #22/wizard-bugfix-round5：瀑布式记账下这 80
+    # 点溢出转记进兴趣桶，职业桶被封顶在预算 200（不再像旧实现那样直接显示
+    # 280/-80 这种"超支"的记账）。
+    assert result.occupation_skill_points == SkillPointsBudget(budget=200, spent=200, remaining=0)
+    # 兴趣桶 = 信用超出下限的 20 + 职业桶溢出的 80 = 100，同样打满预算。
+    assert result.interest_skill_points == SkillPointsBudget(budget=100, spent=100, remaining=0)
     # 76 前端原有 +3 悬空引用补齐 +1 信用评级 −1 重复的导航
     # +8 目录缺口 +3 学识族 +2 链锯/热气球（issue #114）
     assert len(result.skill_view) == 76 + 3 + 1 - 1 + 8 + 3 + 2
@@ -165,6 +168,12 @@ def test_valid_card_has_empty_validation_report() -> None:
 
 
 def test_skill_points_exceeded_alone() -> None:
+    # issue #22/wizard-bugfix-round5：瀑布式记账下，职业技能超出职业预算的
+    # 部分会先转记进兴趣桶——当总花费本身也超出总预算时，这部分溢出会把
+    # 兴趣桶也一并推过预算，所以这里现在会同时触发 INTEREST_POINTS_EXCEEDED
+    # 和 SKILL_POINTS_EXCEEDED（两个数学上是等价条件，见 coc7_rules.py 里
+    # 瀑布分配那段注释的推导：total_spent > total_budget 时两条同时成立）。
+    # 这不改变这张卡"不合法"的最终结论，只是多暴露了一条同样成立的校验。
     skills = {
         "accounting": 99,
         "law": 99,
@@ -174,7 +183,7 @@ def test_skill_points_exceeded_alone() -> None:
     }
     issues = validate_character(RULESET, ATTRS, ACCOUNTANT_NAME, skills)
     codes = [issue.code for issue in issues]
-    assert codes == ["SKILL_POINTS_EXCEEDED"]
+    assert codes == ["INTEREST_POINTS_EXCEEDED", "SKILL_POINTS_EXCEEDED"]
 
 
 def test_occupation_skills_may_overflow_into_interest_points() -> None:
@@ -184,26 +193,100 @@ def test_occupation_skills_may_overflow_into_interest_points() -> None:
     不是拒绝理由——闸门是总预算。这条和上一条互为对照：上一条超的是总预算
     必须拒，这一条只超职业池、总预算没超，必须放行。
 
-    少了这条的话，把闸门改成「按职业池单独卡」照样能让上一条通过，却会把
-    这种合法的卡判成非法（前端职业技能加点用完职业池后自动溢出到兴趣池，
-    走的正是这条路径）。
+    issue #22/wizard-bugfix-round5 之前，这种情况下 `occupation_spent` 会
+    直接超过 `occupation_budget`（记账"超支"）；瀑布式记账落地后，职业桶
+    恒被封顶在预算内，超出部分改为转记进兴趣桶——用例改成直接验证这个
+    "恰好高出溢出量"的瀑布行为，而不是允许职业桶本身超支。
     """
-    # 会计师：职业点 EDU*4 = 280，兴趣点 INT*2 = 100，总预算 380
-    skills = {
-        "accounting": 99,  # base 5  → 94
-        "law": 99,  # base 5  → 94
-        "library-use": 99,  # base 20 → 79
-        "credit-rating": 30,  # 下限，全额记职业点
+    # 会计师：职业点 EDU*4=200，兴趣点 INT*2=100。accounting/law 都是固定
+    # 职业技能（不涉及自选槽，避免槽分配影响这里要验的纯瀑布记账）。
+    baseline_skills = {
+        "accounting": 90,  # base 5  → allocated 85
+        "law": 60,  # base 5  → allocated 55
+        "credit-rating": 30,  # 下限，全额记职业点，不产生兴趣负担
     }
-    result = compute_preview(RULESET, attributes=ATTRS, occupation_id=ACCOUNTANT_ID, skills=skills)
+    overflow_skills = {
+        "accounting": 99,  # base 5  → allocated 94
+        "law": 99,  # base 5  → allocated 94
+        "credit-rating": 30,
+    }
 
-    # 职业池记账已经超了（267 + 信用下限 30 = 297 > 280），但总花费没超总预算
-    assert result.occupation_skill_points.spent > result.occupation_skill_points.budget
-    assert (
-        result.occupation_skill_points.spent + result.interest_skill_points.spent
-        <= result.occupation_skill_points.budget + result.interest_skill_points.budget
+    baseline = compute_preview(
+        RULESET, attributes=ATTRS, occupation_id=ACCOUNTANT_ID, skills=baseline_skills
     )
-    assert result.validation == []
+    overflow = compute_preview(
+        RULESET, attributes=ATTRS, occupation_id=ACCOUNTANT_ID, skills=overflow_skills
+    )
+
+    # 基线：职业技能原始需求 85+55=140，信用下限 30，合计 170，没有超过职业
+    # 预算 200——不触发瀑布，职业桶=170，兴趣桶=0，跟瀑布式改动前的行为
+    # 完全一致（没有溢出就没有行为变化）。
+    assert baseline.occupation_skill_points == SkillPointsBudget(
+        budget=200, spent=170, remaining=30
+    )
+    assert baseline.interest_skill_points == SkillPointsBudget(budget=100, spent=0, remaining=100)
+    assert baseline.validation == []
+
+    # 溢出：职业技能原始需求 94+94=188，信用下限 30，合计 218；职业预算给
+    # 信用留出 30 后只剩 170 可用，188 用不完，溢出 18 点。职业桶被瀑布封顶
+    # 在预算 200（不再像旧实现那样显示"超支"），溢出的 18 点转记进兴趣桶。
+    assert overflow.occupation_skill_points == SkillPointsBudget(budget=200, spent=200, remaining=0)
+    assert overflow.interest_skill_points == SkillPointsBudget(budget=100, spent=18, remaining=82)
+    assert overflow.validation == []
+
+    # 核心断言（对应 wizard-bugfix-round5 的要求）：溢出场景的兴趣桶，恰好
+    # 比"不溢出"的基线场景高出 18 点——一分不多一分不少，正是从职业桶瀑布
+    # 转移过来的那部分，而不是凭空多算出来的。
+    assert overflow.interest_skill_points.spent - baseline.interest_skill_points.spent == 18
+    # 职业桶恒被瀑布分配封顶在预算内，不会再出现"spent > budget"这种旧行为。
+    assert overflow.occupation_skill_points.spent <= overflow.occupation_skill_points.budget
+    # 总花费不变的不变量：两个场景各自的两桶之和，跟"总预算够不够"这条闸门
+    # 依然一致（这条闸门本身不受瀑布式记账影响，见 test_skill_points_exceeded_alone）。
+    assert (
+        overflow.occupation_skill_points.spent + overflow.interest_skill_points.spent
+        <= overflow.occupation_skill_points.budget + overflow.interest_skill_points.budget
+    )
+
+
+def test_waterfall_conserves_total_skill_points_regardless_of_bucket() -> None:
+    """瀑布式记账（issue #22/wizard-bugfix-round5）只是把同一笔总花费在
+    职业桶/兴趣桶之间重新分配，不应该改变"总共花了多少技能点"这个数——这
+    个数恒等于「每一项技能实际分配了多少点」的直接算术和，跟最终落进哪个
+    桶无关（哪个桶只是记账口径，不改变玩家实际花掉的点数）。
+
+    这里刻意**不**通过对比"旧实现"来证明（旧的按技能身份二选一记账已经被
+    这次改动整个替换掉，仓库里已经没有它可以拿来跑），而是直接从 `skills`
+    输入用 `evaluate_skill_base` 独立算出预期总和——这笔总和的计算完全不
+    依赖 `_compute` 内部怎么分桶（无论技能占不占自选槽、算不算职业技能，
+    每一分点数都必然被计入 occupation_spent 或 interest_spent 二者之一，
+    绝不会漏计或重复计），所以拿它跟 `_compute` 实际算出的两桶之和比较，
+    就是对"瀑布式记账不改变总和"这条不变量最直接的证明。
+    """
+    skills = {
+        "accounting": 99,  # 固定职业技能，故意分配到顶，制造溢出
+        "law": 99,  # 同上
+        "dodge": 70,  # 非职业技能候选（可能被自选槽吸收，但不影响总和）
+        "credit-rating": 50,  # 会计师下限 30，超出的 20 点算兴趣，但仍计入总和
+    }
+
+    def _skill_base(skill_id: str) -> int:
+        spec = next(s for s in RULESET.skills if s.id == skill_id)
+        return evaluate_skill_base(spec.base, ATTRS)
+
+    expected_total = (
+        max(0, 99 - _skill_base("accounting"))
+        + max(0, 99 - _skill_base("law"))
+        + max(0, 70 - _skill_base("dodge"))
+        + 50  # credit-rating=50 >= credit_min(30)，全额（不只是超出部分）计入总花费
+    )
+
+    result = compute_preview(RULESET, ATTRS, ACCOUNTANT_ID, skills)
+    actual_total = result.occupation_skill_points.spent + result.interest_skill_points.spent
+
+    assert actual_total == expected_total
+    # 职业桶恒被瀑布分配封顶在预算内——这是瀑布式记账的直接结果，不再出现
+    # 旧实现里"spent > budget"那种记账口径上的"超支"。
+    assert result.occupation_skill_points.spent <= result.occupation_skill_points.budget
 
 
 def test_compute_preview_respects_roll_pool_generation_method() -> None:
@@ -244,8 +327,11 @@ def test_compute_preview_respects_roll_pool_generation_method() -> None:
     # 跟点数购买法算出来的一样（同一组属性/技能，只是生成方法不同，规则
     # 计算本身不受影响）。
     assert result.derived_stats != {}
-    assert result.occupation_skill_points == SkillPointsBudget(budget=200, spent=280, remaining=-80)
-    assert result.interest_skill_points == SkillPointsBudget(budget=100, spent=20, remaining=80)
+    # 数值口径见 test_valid_card_has_empty_validation_report（同一组 skills，
+    # 瀑布式记账下职业/兴趣两桶都被打满在各自预算上）——这里只是确认换了
+    # 生成方法之后规则计算本身不受影响，不重复推导。
+    assert result.occupation_skill_points == SkillPointsBudget(budget=200, spent=200, remaining=0)
+    assert result.interest_skill_points == SkillPointsBudget(budget=100, spent=100, remaining=0)
     assert len(result.skill_view) > 0
 
 

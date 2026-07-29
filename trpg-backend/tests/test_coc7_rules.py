@@ -206,6 +206,64 @@ def test_occupation_skills_may_overflow_into_interest_points() -> None:
     assert result.validation == []
 
 
+def test_compute_preview_respects_roll_pool_generation_method() -> None:
+    """wizard-bugfix-round1 核心发现：`compute_preview()` 此前完全不接
+    `generation_method`/`attribute_pool_total`，建卡向导的实时预览请求永远
+    按点数购买法（预算 480）校验属性总和——掷点池玩家的池子总值几乎从不是
+    480，几乎必然被误判为 `ATTRIBUTE_POINTS_EXCEEDED`，进而让
+    `derived_stats`/两个技能点预算/`skill_view` 全部退化成空（`_compute` 属性
+    校验失败时整体短路，见 `_compute` 里 `if attribute_issues: return ...`）。
+
+    这里复用 `test_valid_card_has_empty_validation_report` 那组 ATTRS/skills
+    （8 项可购买属性总和 400，≠480），只是把生成方法换成 `roll_pool` 并带上
+    权威池子总值 400——回归此前完全没有测试覆盖这条路径的空白。
+    """
+    skills = {
+        "accounting": 55,
+        "law": 55,
+        "library-use": 70,
+        "listen": 70,
+        "dodge": 50,
+        "occult": 30,
+        "credit-rating": 50,
+    }
+    result = compute_preview(
+        RULESET,
+        ATTRS,
+        ACCOUNTANT_ID,
+        skills,
+        generation_method=GENERATION_ROLL_POOL,
+        attribute_pool_total=400,
+    )
+
+    codes = [issue.code for issue in result.validation]
+    assert "ATTRIBUTE_POINTS_EXCEEDED" not in codes
+    assert "ATTRIBUTE_POOL_MISMATCH" not in codes
+    assert result.validation == []
+    # 属性校验没有短路：衍生值/两个技能点预算/技能列表都是正常非退化的值，
+    # 跟点数购买法算出来的一样（同一组属性/技能，只是生成方法不同，规则
+    # 计算本身不受影响）。
+    assert result.derived_stats != {}
+    assert result.occupation_skill_points == SkillPointsBudget(budget=200, spent=280, remaining=-80)
+    assert result.interest_skill_points == SkillPointsBudget(budget=100, spent=20, remaining=80)
+    assert len(result.skill_view) > 0
+
+
+def test_compute_preview_respects_roll_generation_method() -> None:
+    """同一个 bug 的另一条分支：服务端掷骰法（`generation_method="roll"`）
+    8 项属性总和常年超过点数购买法的预算 480（均值约 457、范围 195–720），
+    此前预览同样会被误判成 `ATTRIBUTE_POINTS_EXCEEDED` 而整体退化——此前也
+    完全没有测试覆盖这条路径。"""
+    attrs = {**ATTRS, "STR": 90, "CON": 90, "POW": 90, "DEX": 90, "APP": 90}
+    skills = {"accounting": 55, "credit-rating": 30}
+    result = compute_preview(RULESET, attrs, ACCOUNTANT_ID, skills, generation_method="roll")
+
+    codes = [issue.code for issue in result.validation]
+    assert "ATTRIBUTE_POINTS_EXCEEDED" not in codes
+    assert result.derived_stats != {}
+    assert len(result.skill_view) > 0
+
+
 def test_interest_points_exceeded_alone() -> None:
     """非职业技能花费超过兴趣预算。
 
@@ -544,6 +602,7 @@ def test_compute_preview_works_with_a_minimal_non_coc7_ruleset() -> None:
             OccupationSpec(
                 id=1,
                 name="流浪者",
+                category="misc",
                 credit_min=0,
                 credit_max=0,
                 skill_points_formula="WITS*2",

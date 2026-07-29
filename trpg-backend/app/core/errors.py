@@ -58,6 +58,10 @@ class ErrorCode(StrEnum):
     # 就调用需要属性的操作（比如 apply-age-adjustment）→ 409。
     ATTRIBUTES_NOT_SET = "ATTRIBUTES_NOT_SET"
 
+    # wizard-bugfix-round1 #4④ 新增：建卡掷骰只允许一次，重复调用
+    # `roll-attribute-pool`/`roll-luck` → 409。
+    ALREADY_ROLLED = "ALREADY_ROLLED"
+
 
 class AppException(Exception):
     """业务代码显式抛出的异常，携带错误码/状态码/用户可见信息。

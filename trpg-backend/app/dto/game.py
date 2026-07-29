@@ -108,6 +108,10 @@ class OccupationSpec(CamelModel):
 
     id: int
     name: str
+    # 纯 UI 导航用的分组标签（wizard-bugfix-round1 #6），不是 COC7 规则本身
+    # 的一部分——职业目录 229 项后前端选职业步骤需要按类目筛选，不参与任何
+    # 规则计算/校验。
+    category: str
     credit_min: int
     credit_max: int
     skill_points_formula: str

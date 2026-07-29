@@ -156,6 +156,16 @@ class CharacterPreviewRequest(CamelModel):
     # 的衍生值一致——此前只有 complete 传 age，预览页面的 MOV 一直没扣，见
     # character-build-migration 已知缺口。
     age: int | None = None
+    # 可选：不传就退回默认的点数购买法校验（`compute_preview` 的默认行为）。
+    # 掷点池/服务端掷骰玩家的实时预览必须传各自的 `generation_method`，否则
+    # 后端永远按点数购买法（预算 480）校验属性总和——见 wizard-bugfix-round1
+    # 核心发现，此前这两个字段完全不存在，是预览衍生值/技能点预算整体退化成
+    # 空的根因。
+    generation_method: str | None = None
+    # 可选：`generation_method="roll_pool"` 时的权威总值（`character.
+    # attribute_pool_total`），语义同 `validate_character` 的同名参数——只有
+    # 这条路径会用到，其余生成方法传了也会被忽略。
+    attribute_pool_total: int | None = None
 
 
 class SkillPointsBudgetView(CamelModel):

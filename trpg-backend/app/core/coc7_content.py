@@ -455,6 +455,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=1,
         name="会计师",
+        category="法律商业",
         credit_min=30,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -475,6 +476,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=2,
         name="杂技演员",
+        category="文化艺术",
         credit_min=9,
         credit_max=20,
         skill_points_formula="EDU*2+DEX*2",
@@ -494,6 +496,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=3,
         name="演员-戏剧演员",
+        category="文化艺术",
         credit_min=9,
         credit_max=40,
         skill_points_formula="EDU*2+APP*2",
@@ -544,6 +547,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=4,
         name="演员-电影演员",
+        category="文化艺术",
         credit_min=20,
         credit_max=90,
         skill_points_formula="EDU*2+APP*2",
@@ -581,6 +585,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=5,
         name="事务所侦探、保安",
+        category="执法安全",
         credit_min=20,
         credit_max=45,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -615,6 +620,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=6,
         name="精神病医生（古典）",
+        category="医疗保健",
         credit_min=10,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -648,6 +654,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=7,
         name="动物训练师",
+        category="户外探险",
         credit_min=10,
         credit_max=40,
         skill_points_formula="EDU*2+MAX(APP,POW)*2",
@@ -677,6 +684,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=8,
         name="文物学家（原作向）",
+        category="学术研究",
         credit_min=30,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -717,6 +725,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=9,
         name="古董商",
+        category="法律商业",
         credit_min=30,
         credit_max=50,
         skill_points_formula="EDU*4",
@@ -736,6 +745,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=10,
         name="考古学家（原作向）",
+        category="学术研究",
         credit_min=10,
         credit_max=40,
         skill_points_formula="EDU*4",
@@ -790,6 +800,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=11,
         name="建筑师",
+        category="技术工艺",
         credit_min=30,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -825,6 +836,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=12,
         name="艺术家",
+        category="文化艺术",
         credit_min=9,
         credit_max=50,
         skill_points_formula="EDU*2+MAX(DEX,POW)*2",
@@ -870,6 +882,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=13,
         name="精神病院看护",
+        category="医疗保健",
         credit_min=8,
         credit_max=20,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -890,6 +903,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=14,
         name="运动员",
+        category="户外探险",
         credit_min=9,
         credit_max=70,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -917,6 +931,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=15,
         name="作家（原作向）",
+        category="文化艺术",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -957,6 +972,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=16,
         name="酒保",
+        category="服务劳工",
         credit_min=8,
         credit_max=25,
         skill_points_formula="EDU*2+APP*2",
@@ -983,6 +999,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=17,
         name="猎人",
+        category="户外探险",
         credit_min=20,
         credit_max=50,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -1031,6 +1048,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=18,
         name="书商",
+        category="法律商业",
         credit_min=20,
         credit_max=40,
         skill_points_formula="EDU*4",
@@ -1066,6 +1084,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=19,
         name="赏金猎人",
+        category="执法安全",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -1113,6 +1132,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=20,
         name="拳击手、摔跤手",
+        category="户外探险",
         credit_min=9,
         credit_max=60,
         skill_points_formula="EDU*2+STR*2",
@@ -1134,6 +1154,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=21,
         name="管家、男仆、女仆",
+        category="服务劳工",
         credit_min=9,
         credit_max=40,
         skill_points_formula="EDU*4",
@@ -1169,6 +1190,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=22,
         name="神职人员",
+        category="宗教哲学",
         credit_min=9,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -1206,6 +1228,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=23,
         name="程序员、电子工程师（现代）",
+        category="技术工艺",
         credit_min=10,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -1235,6 +1258,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=24,
         name="黑客/骇客（现代）",
+        category="技术工艺",
         credit_min=10,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -1266,6 +1290,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=25,
         name="牛仔",
+        category="户外探险",
         credit_min=9,
         credit_max=20,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -1306,6 +1331,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=26,
         name="工匠",
+        category="技术工艺",
         credit_min=10,
         credit_max=40,
         skill_points_formula="EDU*2+DEX*2",
@@ -1332,6 +1358,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=27,
         name="罪犯-刺客",
+        category="社会边缘",
         credit_min=30,
         credit_max=60,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -1380,6 +1407,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=28,
         name="罪犯-银行劫匪",
+        category="社会边缘",
         credit_min=5,
         credit_max=75,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -1432,6 +1460,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=29,
         name="罪犯-打手、暴徒",
+        category="社会边缘",
         credit_min=5,
         credit_max=30,
         skill_points_formula="EDU*2+STR*2",
@@ -1476,6 +1505,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=30,
         name="罪犯-窃贼",
+        category="社会边缘",
         credit_min=5,
         credit_max=40,
         skill_points_formula="EDU*2+DEX*2",
@@ -1506,6 +1536,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=31,
         name="罪犯-欺诈师",
+        category="社会边缘",
         credit_min=10,
         credit_max=65,
         skill_points_formula="EDU*2+APP*2",
@@ -1540,6 +1571,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=32,
         name="罪犯-独行罪犯",
+        category="社会边缘",
         credit_min=5,
         credit_max=65,
         skill_points_formula="EDU*2+MAX(DEX,APP)*2",
@@ -1591,6 +1623,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=33,
         name="罪犯-女飞贼（古典）",
+        category="社会边缘",
         credit_min=10,
         credit_max=80,
         skill_points_formula="EDU*2+APP*2",
@@ -1626,6 +1659,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=34,
         name="罪犯-赃物贩子",
+        category="社会边缘",
         credit_min=20,
         credit_max=40,
         skill_points_formula="EDU*2+APP*2",
@@ -1656,6 +1690,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=35,
         name="罪犯-赝造者",
+        category="社会边缘",
         credit_min=20,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -1687,6 +1722,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=36,
         name="罪犯-走私者",
+        category="社会边缘",
         credit_min=20,
         credit_max=60,
         skill_points_formula="EDU*2+MAX(APP,DEX)*2",
@@ -1723,6 +1759,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=37,
         name="罪犯-混混",
+        category="社会边缘",
         credit_min=3,
         credit_max=10,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -1767,6 +1804,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=38,
         name="教团首领",
+        category="宗教哲学",
         credit_min=30,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -1796,6 +1834,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=39,
         name="除魅师（现代）",
+        category="宗教哲学",
         credit_min=20,
         credit_max=50,
         skill_points_formula="EDU*4",
@@ -1830,6 +1869,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=40,
         name="设计师",
+        category="文化艺术",
         credit_min=20,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -1860,6 +1900,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=41,
         name="业余艺术爱好者（原作向）",
+        category="文化艺术",
         credit_min=50,
         credit_max=99,
         skill_points_formula="EDU*2+APP*2",
@@ -1915,6 +1956,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=42,
         name="潜水员",
+        category="户外探险",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+DEX*2",
@@ -1941,6 +1983,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=43,
         name="医生（原作向）",
+        category="医疗保健",
         credit_min=30,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -1974,6 +2017,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=44,
         name="流浪者",
+        category="社会边缘",
         credit_min=0,
         credit_max=5,
         skill_points_formula="EDU*2+MAX(APP,DEX,STR)*2",
@@ -2000,6 +2044,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=45,
         name="司机-私人司机",
+        category="服务劳工",
         credit_min=10,
         credit_max=40,
         skill_points_formula="EDU*2+DEX*2",
@@ -2021,6 +2066,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=46,
         name="司机-司机",
+        category="服务劳工",
         credit_min=9,
         credit_max=20,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -2052,6 +2098,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=47,
         name="司机-出租车司机",
+        category="服务劳工",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+DEX*2",
@@ -2080,6 +2127,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=48,
         name="编辑",
+        category="媒体传播",
         credit_min=10,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -2106,6 +2154,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=49,
         name="政府官员",
+        category="政府政治",
         credit_min=50,
         credit_max=90,
         skill_points_formula="EDU*2+APP*2",
@@ -2135,6 +2184,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=50,
         name="工程师",
+        category="技术工艺",
         credit_min=30,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -2166,6 +2216,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=51,
         name="艺人",
+        category="文化艺术",
         credit_min=9,
         credit_max=70,
         skill_points_formula="EDU*2+APP*2",
@@ -2197,6 +2248,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=52,
         name="探险家（古典）",
+        category="户外探险",
         credit_min=55,
         credit_max=80,
         skill_points_formula="EDU*2+MAX(APP,DEX,STR)*2",
@@ -2240,6 +2292,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=53,
         name="农民",
+        category="户外探险",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -2276,6 +2329,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=54,
         name="联邦探员",
+        category="执法安全",
         credit_min=20,
         credit_max=40,
         skill_points_formula="EDU*4",
@@ -2307,6 +2361,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=55,
         name="消防员",
+        category="执法安全",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -2329,6 +2384,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=56,
         name="驻外记者",
+        category="媒体传播",
         credit_min=10,
         credit_max=40,
         skill_points_formula="EDU*4",
@@ -2365,6 +2421,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=57,
         name="法医",
+        category="医疗保健",
         credit_min=40,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -2396,6 +2453,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=58,
         name="赌徒",
+        category="社会边缘",
         credit_min=8,
         credit_max=50,
         skill_points_formula="EDU*2+MAX(APP,DEX)*2",
@@ -2423,6 +2481,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=59,
         name="黑帮-黑帮老大",
+        category="社会边缘",
         credit_min=60,
         credit_max=95,
         skill_points_formula="EDU*2+APP*2",
@@ -2476,6 +2535,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=60,
         name="黑帮-马仔",
+        category="社会边缘",
         credit_min=9,
         credit_max=20,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -2534,6 +2594,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=61,
         name="绅士、淑女",
+        category="户外探险",
         credit_min=40,
         credit_max=90,
         skill_points_formula="EDU*2+APP*2",
@@ -2569,6 +2630,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=62,
         name="游民",
+        category="社会边缘",
         credit_min=0,
         credit_max=5,
         skill_points_formula="EDU*2+MAX(APP,DEX)*2",
@@ -2602,6 +2664,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=63,
         name="勤杂护工",
+        category="医疗保健",
         credit_min=6,
         credit_max=15,
         skill_points_formula="EDU*2+STR*2",
@@ -2629,6 +2692,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=64,
         name="记者(原作向)-调查记者",
+        category="媒体传播",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -2660,6 +2724,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=65,
         name="记者(原作向)-通讯记者",
+        category="媒体传播",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -2688,6 +2753,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=66,
         name="法官",
+        category="法律商业",
         credit_min=50,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -2710,6 +2776,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=67,
         name="实验室助理",
+        category="学术研究",
         credit_min=10,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -2763,6 +2830,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=68,
         name="工人-非熟练工人",
+        category="服务劳工",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -2803,6 +2871,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=69,
         name="工人-伐木工",
+        category="服务劳工",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -2831,6 +2900,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=70,
         name="工人-矿工",
+        category="服务劳工",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -2859,6 +2929,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=71,
         name="律师",
+        category="法律商业",
         credit_min=30,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -2887,6 +2958,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=72,
         name="图书馆管理员（原作向）",
+        category="学术研究",
         credit_min=9,
         credit_max=35,
         skill_points_formula="EDU*4",
@@ -2916,6 +2988,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=73,
         name="技师",
+        category="技术工艺",
         credit_min=9,
         credit_max=40,
         skill_points_formula="EDU*4",
@@ -2947,6 +3020,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=74,
         name="军官",
+        category="执法安全",
         credit_min=20,
         credit_max=70,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -2990,6 +3064,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=75,
         name="传教士",
+        category="宗教哲学",
         credit_min=0,
         credit_max=30,
         skill_points_formula="EDU*2+APP*2",
@@ -3022,6 +3097,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=76,
         name="登山家",
+        category="户外探险",
         credit_min=30,
         credit_max=60,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -3051,6 +3127,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=77,
         name="博物馆管理员",
+        category="学术研究",
         credit_min=10,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -3082,6 +3159,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=78,
         name="音乐家",
+        category="文化艺术",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(POW,DEX)*2",
@@ -3116,6 +3194,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=79,
         name="护士",
+        category="医疗保健",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -3144,6 +3223,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=80,
         name="神秘学家",
+        category="宗教哲学",
         credit_min=9,
         credit_max=65,
         skill_points_formula="EDU*4",
@@ -3180,6 +3260,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=81,
         name="旅行家",
+        category="户外探险",
         credit_min=5,
         credit_max=20,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -3217,6 +3298,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=82,
         name="超心理学家",
+        category="学术研究",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -3252,6 +3334,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=83,
         name="药剂师",
+        category="医疗保健",
         credit_min=35,
         credit_max=75,
         skill_points_formula="EDU*4",
@@ -3287,6 +3370,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=84,
         name="摄影师-摄影师",
+        category="文化艺术",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -3317,6 +3401,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=85,
         name="摄影师-摄影记者",
+        category="媒体传播",
         credit_min=10,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -3356,6 +3441,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=86,
         name="飞行员-飞行员",
+        category="户外探险",
         credit_min=20,
         credit_max=70,
         skill_points_formula="EDU*2+DEX*2",
@@ -3385,6 +3471,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=87,
         name="飞行员-特技飞行员（古典）",
+        category="户外探险",
         credit_min=30,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -3418,6 +3505,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=88,
         name="警方(原作向)-警探",
+        category="执法安全",
         credit_min=20,
         credit_max=50,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -3465,6 +3553,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=89,
         name="警方(原作向)-巡警",
+        category="执法安全",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -3501,6 +3590,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=90,
         name="私家侦探",
+        category="执法安全",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -3529,6 +3619,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=91,
         name="教授（原作向）",
+        category="学术研究",
         credit_min=20,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -3559,6 +3650,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=92,
         name="淘金客",
+        category="户外探险",
         credit_min=0,
         credit_max=10,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -3587,6 +3679,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=93,
         name="性工作者",
+        category="社会边缘",
         credit_min=5,
         credit_max=50,
         skill_points_formula="EDU*2+APP*2",
@@ -3617,6 +3710,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=94,
         name="精神病学家",
+        category="医疗保健",
         credit_min=30,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -3652,6 +3746,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=95,
         name="心理学家、精神分析学家",
+        category="医疗保健",
         credit_min=10,
         credit_max=40,
         skill_points_formula="EDU*4",
@@ -3681,6 +3776,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=96,
         name="研究员",
+        category="学术研究",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -3719,6 +3815,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=97,
         name="海员-军舰海员",
+        category="户外探险",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(DEX,STR)*2",
@@ -3766,6 +3863,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=98,
         name="海员-民船海员",
+        category="户外探险",
         credit_min=20,
         credit_max=40,
         skill_points_formula="EDU*2+MAX(DEX,STR)*2",
@@ -3796,6 +3894,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=99,
         name="推销员",
+        category="法律商业",
         credit_min=9,
         credit_max=40,
         skill_points_formula="EDU*2+APP*2",
@@ -3831,6 +3930,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=100,
         name="科学家",
+        category="学术研究",
         credit_min=9,
         credit_max=50,
         skill_points_formula="EDU*4",
@@ -3887,6 +3987,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=101,
         name="秘书",
+        category="法律商业",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(DEX,APP)*2",
@@ -3924,6 +4025,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=102,
         name="店老板",
+        category="服务劳工",
         credit_min=20,
         credit_max=40,
         skill_points_formula="EDU*2+MAX(APP,DEX)*2",
@@ -3951,6 +4053,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=103,
         name="士兵、海军陆战队士兵",
+        category="执法安全",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -4009,6 +4112,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=104,
         name="间谍",
+        category="执法安全",
         credit_min=20,
         credit_max=60,
         skill_points_formula="EDU*2+MAX(APP,DEX)*2",
@@ -4056,6 +4160,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=105,
         name="学生、实习生",
+        category="学术研究",
         credit_min=5,
         credit_max=10,
         skill_points_formula="EDU*4",
@@ -4088,6 +4193,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=106,
         name="替身演员",
+        category="文化艺术",
         credit_min=10,
         credit_max=50,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -4137,6 +4243,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=107,
         name="部落成员",
+        category="户外探险",
         credit_min=0,
         credit_max=15,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -4168,6 +4275,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=108,
         name="殡葬师",
+        category="服务劳工",
         credit_min=20,
         credit_max=40,
         skill_points_formula="EDU*4",
@@ -4196,6 +4304,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=109,
         name="工会活动家",
+        category="政府政治",
         credit_min=5,
         credit_max=50,
         skill_points_formula="EDU*4",
@@ -4225,6 +4334,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=110,
         name="服务生",
+        category="服务劳工",
         credit_min=9,
         credit_max=20,
         skill_points_formula="EDU*2+MAX(APP,DEX)*2",
@@ -4255,6 +4365,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=111,
         name="白领工人-职员、主管",
+        category="服务劳工",
         credit_min=9,
         credit_max=20,
         skill_points_formula="EDU*4",
@@ -4294,6 +4405,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=112,
         name="白领工人-中高层管理人员",
+        category="法律商业",
         credit_min=20,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -4329,6 +4441,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=113,
         name="狂热者",
+        category="宗教哲学",
         credit_min=0,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(APP,POW)*2",
@@ -4354,6 +4467,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=114,
         name="饲养员",
+        category="户外探险",
         credit_min=9,
         credit_max=40,
         skill_points_formula="EDU*4",
@@ -4375,6 +4489,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=115,
         name="大使",
+        category="政府政治",
         credit_min=50,
         credit_max=90,
         skill_points_formula="EDU*2+APP*2",
@@ -4393,6 +4508,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=116,
         name="运动员（游泳/潜水）",
+        category="户外探险",
         credit_min=9,
         credit_max=20,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -4423,6 +4539,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=117,
         name="运动员（高尔夫）",
+        category="户外探险",
         credit_min=50,
         credit_max=70,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -4444,6 +4561,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=118,
         name="运动员（网球）",
+        category="户外探险",
         credit_min=30,
         credit_max=70,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -4465,6 +4583,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=119,
         name="运动员（田径）",
+        category="户外探险",
         credit_min=9,
         credit_max=20,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -4495,6 +4614,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=120,
         name="发言人",
+        category="媒体传播",
         credit_min=50,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -4525,6 +4645,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=121,
         name="保释担保人",
+        category="法律商业",
         credit_min=50,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -4546,6 +4667,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=122,
         name="神职人员(天主教牧师)",
+        category="宗教哲学",
         credit_min=20,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -4576,6 +4698,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=123,
         name="神职人员(新教牧师)",
+        category="宗教哲学",
         credit_min=9,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -4606,6 +4729,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=124,
         name="神职人员(犹太教拉比)",
+        category="宗教哲学",
         credit_min=9,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -4636,6 +4760,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=125,
         name="专栏作家",
+        category="媒体传播",
         credit_min=30,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -4666,6 +4791,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=126,
         name="社会主义者/激进主义者",
+        category="政府政治",
         credit_min=0,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(APP,POW)*2",
@@ -4696,6 +4822,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=127,
         name="撰稿人",
+        category="媒体传播",
         credit_min=20,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -4717,6 +4844,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=128,
         name="罪犯（赌博庄家）",
+        category="社会边缘",
         credit_min=50,
         credit_max=80,
         skill_points_formula="EDU*2+MAX(DEX,APP)*2",
@@ -4738,6 +4866,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=129,
         name="罪犯（放高利贷者）",
+        category="社会边缘",
         credit_min=50,
         credit_max=80,
         skill_points_formula="EDU*2+MAX(DEX,APP)*2",
@@ -4759,6 +4888,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=130,
         name="罪犯（扒手）",
+        category="社会边缘",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+DEX*2",
@@ -4780,6 +4910,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=131,
         name="罪犯（地下钱庄）",
+        category="社会边缘",
         credit_min=30,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -4796,6 +4927,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=132,
         name="罪犯（黑律师）",
+        category="社会边缘",
         credit_min=30,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -4817,6 +4949,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=133,
         name="牙医",
+        category="医疗保健",
         credit_min=30,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -4842,6 +4975,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=134,
         name="外科医生/内科医生",
+        category="医疗保健",
         credit_min=50,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -4867,6 +5001,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=135,
         name="整形医生",
+        category="医疗保健",
         credit_min=30,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -4892,6 +5027,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=136,
         name="司机-公交司机",
+        category="服务劳工",
         credit_min=30,
         credit_max=50,
         skill_points_formula="EDU*2+DEX*2",
@@ -4920,6 +5056,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=137,
         name="实地调研员",
+        category="学术研究",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -4955,6 +5092,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=138,
         name="电影摄制人员",
+        category="文化艺术",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(POW,DEX)*2",
@@ -4981,6 +5119,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=139,
         name="司法科学家",
+        category="执法安全",
         credit_min=30,
         credit_max=50,
         skill_points_formula="EDU*4",
@@ -5005,6 +5144,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=140,
         name="运动经理",
+        category="法律商业",
         credit_min=20,
         credit_max=70,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -5026,6 +5166,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=141,
         name="商船队船员",
+        category="户外探险",
         credit_min=20,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -5056,6 +5197,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=142,
         name="古典音乐家",
+        category="文化艺术",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(POW,DEX)*2",
@@ -5082,6 +5224,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=143,
         name="赛车手/ 赛艇手",
+        category="户外探险",
         credit_min=30,
         credit_max=70,
         skill_points_formula="EDU*2+DEX*2",
@@ -5105,6 +5248,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=144,
         name="电台播音员",
+        category="媒体传播",
         credit_min=50,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -5126,6 +5270,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=145,
         name="推销员（圣经推销员）",
+        category="法律商业",
         credit_min=9,
         credit_max=40,
         skill_points_formula="EDU*2+APP*2",
@@ -5152,6 +5297,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=146,
         name="推销员（旅行推销员）",
+        category="法律商业",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+APP*2",
@@ -5173,6 +5319,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=147,
         name="小企业家",
+        category="法律商业",
         credit_min=50,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -5194,6 +5341,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=148,
         name="舞台工作人员",
+        category="文化艺术",
         credit_min=9,
         credit_max=20,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -5220,6 +5368,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=149,
         name="证券经纪人",
+        category="法律商业",
         credit_min=60,
         credit_max=90,
         skill_points_formula="EDU*4",
@@ -5241,6 +5390,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=150,
         name="勘测员",
+        category="户外探险",
         credit_min=20,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -5265,6 +5415,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=151,
         name="电话接线员",
+        category="服务劳工",
         credit_min=20,
         credit_max=50,
         skill_points_formula="EDU*4",
@@ -5295,6 +5446,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=152,
         name="星探",
+        category="法律商业",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -5316,6 +5468,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=153,
         name="医疗技术员",
+        category="医疗保健",
         credit_min=30,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -5334,6 +5487,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=154,
         name="队医",
+        category="医疗保健",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -5355,6 +5509,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=155,
         name="寻宝猎人",
+        category="户外探险",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -5381,6 +5536,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=156,
         name="西部治安官",
+        category="执法安全",
         credit_min=20,
         credit_max=50,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -5409,6 +5565,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=157,
         name="暴走族",
+        category="社会边缘",
         credit_min=5,
         credit_max=10,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -5425,6 +5582,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=158,
         name="神职人员(和尚,尼姑)",
+        category="宗教哲学",
         credit_min=5,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -5470,6 +5628,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=159,
         name="神职人员(神官,巫女)",
+        category="宗教哲学",
         credit_min=20,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -5501,6 +5660,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=160,
         name="风水师",
+        category="宗教哲学",
         credit_min=20,
         credit_max=50,
         skill_points_formula="EDU*4",
@@ -5532,6 +5692,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=161,
         name="家传降妖人",
+        category="宗教哲学",
         credit_min=9,
         credit_max=20,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -5553,6 +5714,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=162,
         name="高中生(教育60以下)",
+        category="学术研究",
         credit_min=5,
         credit_max=10,
         skill_points_formula="EDU*4",
@@ -5607,6 +5769,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=163,
         name="市子（盲人）",
+        category="宗教哲学",
         credit_min=5,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -5638,6 +5801,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=164,
         name="言灵师/阴阳师",
+        category="宗教哲学",
         credit_min=9,
         credit_max=20,
         skill_points_formula="EDU*4",
@@ -5669,6 +5833,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=165,
         name="炼丹师",
+        category="宗教哲学",
         credit_min=30,
         credit_max=50,
         skill_points_formula="EDU*4",
@@ -5699,6 +5864,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=166,
         name="外语教师",
+        category="学术研究",
         credit_min=30,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -5720,6 +5886,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=167,
         name="非法移民",
+        category="社会边缘",
         credit_min=0,
         credit_max=5,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -5744,6 +5911,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=168,
         name="相扑力士(SIZ>80,STR>70)",
+        category="户外探险",
         credit_min=9,
         credit_max=60,
         skill_points_formula="EDU*2+STR*2",
@@ -5760,6 +5928,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=169,
         name="渔民",
+        category="户外探险",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -5778,6 +5947,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=170,
         name="心理治疗师",
+        category="医疗保健",
         credit_min=30,
         credit_max=50,
         skill_points_formula="EDU*4",
@@ -5813,6 +5983,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=171,
         name="女学生",
+        category="学术研究",
         credit_min=5,
         credit_max=10,
         skill_points_formula="EDU*4",
@@ -5848,6 +6019,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=172,
         name="寄居学生",
+        category="学术研究",
         credit_min=5,
         credit_max=10,
         skill_points_formula="EDU*4",
@@ -5873,6 +6045,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=173,
         name="动物辅助治疗师",
+        category="医疗保健",
         credit_min=30,
         credit_max=50,
         skill_points_formula="EDU*2+MAX(APP,POW)*2",
@@ -5897,6 +6070,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=174,
         name="急诊医生/救援队员",
+        category="医疗保健",
         credit_min=10,
         credit_max=50,
         skill_points_formula="EDU*4",
@@ -5915,6 +6089,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=175,
         name="密医",
+        category="医疗保健",
         credit_min=10,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -5945,6 +6120,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=176,
         name="科学搜查研究员",
+        category="执法安全",
         credit_min=30,
         credit_max=50,
         skill_points_formula="EDU*4",
@@ -5969,6 +6145,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=177,
         name="山岳救援队员",
+        category="户外探险",
         credit_min=10,
         credit_max=50,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -5989,6 +6166,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=178,
         name="舞者",
+        category="文化艺术",
         credit_min=9,
         credit_max=70,
         skill_points_formula="EDU*2+APP*2",
@@ -6015,6 +6193,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=179,
         name="服装设计师",
+        category="文化艺术",
         credit_min=20,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -6041,6 +6220,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=180,
         name="海上自卫队员",
+        category="执法安全",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*4",
@@ -6082,6 +6262,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=181,
         name="海警",
+        category="执法安全",
         credit_min=20,
         credit_max=40,
         skill_points_formula="EDU*4",
@@ -6106,6 +6287,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=182,
         name="陆上自卫队员",
+        category="执法安全",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -6156,6 +6338,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=183,
         name="私人军事公司成员",
+        category="执法安全",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -6206,6 +6389,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=184,
         name="冒险家教授",
+        category="户外探险",
         credit_min=55,
         credit_max=80,
         skill_points_formula="EDU*2+MAX(APP,DEX,STR)*2",
@@ -6243,6 +6427,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=185,
         name="评论家",
+        category="媒体传播",
         credit_min=30,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -6273,6 +6458,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=186,
         name="偶像",
+        category="文化艺术",
         credit_min=9,
         credit_max=70,
         skill_points_formula="EDU*2+APP*2",
@@ -6299,6 +6485,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=187,
         name="歌手",
+        category="文化艺术",
         credit_min=9,
         credit_max=70,
         skill_points_formula="EDU*2+APP*2",
@@ -6325,6 +6512,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=188,
         name="搞笑艺人",
+        category="文化艺术",
         credit_min=9,
         credit_max=70,
         skill_points_formula="EDU*2+APP*2",
@@ -6351,6 +6539,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=189,
         name="运动员艺人",
+        category="户外探险",
         credit_min=9,
         credit_max=20,
         skill_points_formula="EDU*2+DEX*2",
@@ -6367,6 +6556,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=190,
         name="播音员",
+        category="媒体传播",
         credit_min=50,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -6388,6 +6578,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=191,
         name="主持人",
+        category="媒体传播",
         credit_min=50,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -6409,6 +6600,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=192,
         name="电视解说员",
+        category="媒体传播",
         credit_min=50,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -6430,6 +6622,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=193,
         name="网络明星",
+        category="媒体传播",
         credit_min=9,
         credit_max=70,
         skill_points_formula="EDU*2+APP*2",
@@ -6451,6 +6644,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=194,
         name="经纪人",
+        category="法律商业",
         credit_min=30,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -6472,6 +6666,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=195,
         name="捉鬼人",
+        category="宗教哲学",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+DEX*2",
@@ -6496,6 +6691,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=196,
         name="占卜师、灵媒师",
+        category="宗教哲学",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(EDU,APP)*2",
@@ -6522,6 +6718,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=197,
         name="机械师",
+        category="技术工艺",
         credit_min=9,
         credit_max=40,
         skill_points_formula="EDU*4",
@@ -6549,6 +6746,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=198,
         name="厨师",
+        category="服务劳工",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+DEX*2",
@@ -6585,6 +6783,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=199,
         name="网络犯罪者",
+        category="社会边缘",
         credit_min=10,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -6612,6 +6811,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=200,
         name="佣兵",
+        category="执法安全",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -6662,6 +6862,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=201,
         name="自宅警备员",
+        category="社会边缘",
         credit_min=1,
         credit_max=10,
         skill_points_formula="EDU*4",
@@ -6678,6 +6879,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=202,
         name="壮汉保镖",
+        category="执法安全",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -6711,6 +6913,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=203,
         name="游戏测试员",
+        category="技术工艺",
         credit_min=9,
         credit_max=20,
         skill_points_formula="EDU*4",
@@ -6737,6 +6940,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=204,
         name="交际花",
+        category="社会边缘",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+APP*2",
@@ -6777,6 +6981,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=205,
         name="考古学家",
+        category="学术研究",
         credit_min=30,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -6812,6 +7017,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=206,
         name="贵族",
+        category="户外探险",
         credit_min=70,
         credit_max=99,
         skill_points_formula="EDU*2+MAX(EDU,APP)*2",
@@ -6842,6 +7048,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=207,
         name="艺术家",
+        category="文化艺术",
         credit_min=10,
         credit_max=40,
         skill_points_formula="EDU*2+MAX(DEX,POW)*2",
@@ -6872,6 +7079,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=208,
         name="作家",
+        category="文化艺术",
         credit_min=10,
         credit_max=40,
         skill_points_formula="EDU*4",
@@ -6907,6 +7115,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=209,
         name="马车夫",
+        category="服务劳工",
         credit_min=3,
         credit_max=10,
         skill_points_formula="EDU*2+DEX*2",
@@ -6938,6 +7147,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=210,
         name="牧师",
+        category="宗教哲学",
         credit_min=20,
         credit_max=65,
         skill_points_formula="EDU*2+MAX(APP,POW)*2",
@@ -6968,6 +7178,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=211,
         name="咨询侦探",
+        category="执法安全",
         credit_min=10,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -7005,6 +7216,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=212,
         name="工匠",
+        category="技术工艺",
         credit_min=9,
         credit_max=35,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -7031,6 +7243,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=213,
         name="罪犯",
+        category="社会边缘",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(APP,DEX,STR)*2",
@@ -7065,6 +7278,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=214,
         name="业余艺术爱好者",
+        category="文化艺术",
         credit_min=10,
         credit_max=70,
         skill_points_formula="EDU*2+APP*2",
@@ -7081,6 +7295,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=215,
         name="艺人",
+        category="文化艺术",
         credit_min=10,
         credit_max=40,
         skill_points_formula="EDU*2+MAX(APP,POW)*2",
@@ -7107,6 +7322,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=216,
         name="退役军官",
+        category="执法安全",
         credit_min=40,
         credit_max=75,
         skill_points_formula="EDU*4",
@@ -7147,6 +7363,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=217,
         name="探险家",
+        category="户外探险",
         credit_min=45,
         credit_max=70,
         skill_points_formula="EDU*2+MAX(APP,DEX,STR)*2",
@@ -7186,6 +7403,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=218,
         name="私家侦探",
+        category="执法安全",
         credit_min=9,
         credit_max=40,
         skill_points_formula="EDU*2+MAX(APP,DEX)*2",
@@ -7215,6 +7433,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=219,
         name="记者",
+        category="媒体传播",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(APP,DEX)*2",
@@ -7249,6 +7468,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=220,
         name="劳工",
+        category="服务劳工",
         credit_min=0,
         credit_max=10,
         skill_points_formula="EDU*2+STR*2",
@@ -7275,6 +7495,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=221,
         name="律师",
+        category="法律商业",
         credit_min=20,
         credit_max=80,
         skill_points_formula="EDU*4",
@@ -7313,6 +7534,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=222,
         name="医生",
+        category="医疗保健",
         credit_min=30,
         credit_max=70,
         skill_points_formula="EDU*4",
@@ -7345,6 +7567,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=223,
         name="警察",
+        category="执法安全",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -7371,6 +7594,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=224,
         name="教授/学者",
+        category="学术研究",
         credit_min=20,
         credit_max=50,
         skill_points_formula="EDU*4",
@@ -7401,6 +7625,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=225,
         name="科学家",
+        category="学术研究",
         credit_min=10,
         credit_max=60,
         skill_points_formula="EDU*4",
@@ -7427,6 +7652,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=226,
         name="佣人",
+        category="服务劳工",
         credit_min=0,
         credit_max=10,
         skill_points_formula="EDU*2+MAX(APP,DEX)*2",
@@ -7457,6 +7683,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=227,
         name="店主",
+        category="服务劳工",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(APP,DEX)*2",
@@ -7483,6 +7710,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=228,
         name="士兵",
+        category="执法安全",
         credit_min=9,
         credit_max=30,
         skill_points_formula="EDU*2+MAX(STR,DEX)*2",
@@ -7507,6 +7735,7 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
     OccupationSpec(
         id=229,
         name="密探",
+        category="执法安全",
         credit_min=30,
         credit_max=70,
         skill_points_formula="EDU*2+MAX(APP,DEX)*2",

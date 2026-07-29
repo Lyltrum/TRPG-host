@@ -525,8 +525,18 @@ def _compute(
 
     skills_by_id = {skill.id: skill for skill in ruleset.skills}
 
-    occupation_spent = 0
-    interest_spent = 0
+    # 瀑布式记账（issue 见 exec/12 #22）：职业技能（含占槽技能，不含信用
+    # 评级）的分配点数先记进 `raw_occupation_skill_total`，循环结束后统一
+    # 按"先扣职业预算、扣完溢出转兴趣"做一次性瀑布分配。信用评级的
+    # floor/excess 拆分是 Chaosium 官方裁定，独立生效，不参与瀑布——直接
+    # 记进 `credit_occupation_portion`/`credit_interest_portion`。这只是
+    # 重新分桶，不改变 `occupation_spent + interest_spent` 的总和，也不
+    # 改变任何一条 ValidationIssue 的触发条件（见 test_coc7_rules.py 的
+    # 回归断言）。
+    credit_occupation_portion = 0
+    credit_interest_portion = 0
+    raw_occupation_skill_total = 0
+    raw_interest_skill_total = 0
     skill_view: list[SkillView] = []
 
     # 先把每项技能的分配量算出来，再决定自选槽归属，最后才记账——三件事必须
@@ -587,20 +597,32 @@ def _compute(
             # CREDIT_OUT_OF_RANGE（这里不重复判断，只管记账）。未选职业时没有
             # 区间可言，全部点数按兴趣点算。
             if occupation is not None:
-                occupation_spent += occupation.credit_min
-                interest_spent += max(0, current - occupation.credit_min)
+                credit_occupation_portion += occupation.credit_min
+                credit_interest_portion += max(0, current - occupation.credit_min)
             else:
-                interest_spent += max(0, current)
+                credit_interest_portion += max(0, current)
         elif spec.id in occupation_skill_ids or spec.id in slot_occupied_ids:
-            # 固定本职技能，或者占住了一个自选槽的技能——两者都吃职业技能点。
-            occupation_spent += effective_allocated
+            # 固定本职技能，或者占住了一个自选槽的技能——两者都优先吃职业
+            # 技能点，花完了才瀑布溢出到兴趣点（见循环结束后的一次性分配）。
+            raw_occupation_skill_total += effective_allocated
         else:
-            interest_spent += effective_allocated
+            raw_interest_skill_total += effective_allocated
 
         cap = occupation.credit_max if is_credit and occupation is not None else SKILL_CAP
         skill_view.append(
             SkillView(id=spec.id, base=base, allocated=allocated, current=current, cap=cap)
         )
+
+    # 一次性瀑布分配：职业技能桶先扣职业预算（扣掉信用评级已经占用的部分），
+    # 扣不完的溢出部分转记进兴趣桶。`occupation_spent` 因此恒不超过
+    # `occupation_budget`，多出来的负担全部转嫁到 `interest_spent`——这正是
+    # COC7 规则本身允许的（兴趣点可以花在任何技能上）。
+    occ_budget_remaining_for_skills = max(0, occupation_budget - credit_occupation_portion)
+    occ_spent_for_skills = min(raw_occupation_skill_total, occ_budget_remaining_for_skills)
+    overflow_to_interest = raw_occupation_skill_total - occ_spent_for_skills
+
+    occupation_spent = credit_occupation_portion + occ_spent_for_skills
+    interest_spent = credit_interest_portion + overflow_to_interest + raw_interest_skill_total
 
     for skill_id in skills:
         if skill_id not in skills_by_id:

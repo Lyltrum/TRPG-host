@@ -160,6 +160,35 @@ def _pending_to_notice(pending: PendingCheck) -> CheckRequestNotice:
     )
 
 
+def _build_check_boundary_hint(pending_checks: list[PendingCheck]) -> str:
+    """检定边界硬提醒（真人实测 2026-07-29：恐吓/追踪/潜行三个真实案例）。
+
+    旧版指引只禁止"提前描写检定才能获得的信息"（信息维度），真人实测
+    发现追踪/潜行两个案例抢跑的不是信息，是**检定对应的动作本身**——
+    铺垫文字已经把"沿着痕迹走了十几步""脚步声被夜风吞掉"这类只有检定
+    成功才该出现的执行过程当成既定事实写出来了。这里补齐这第二个维度，
+    用一个技能无关的通用例子锚定理解，不针对具体技能列举——列举会重蹈
+    exec/11 已经记录过的"样本驱动模式匹配，泛化边界不可知"的坑。
+    """
+    check_list = "\n".join(
+        f"- {c.player_nickname} · {'理智' if c.kind == 'san' else c.skill}检定"
+        f"（{c.reason or '无说明'}）"
+        for c in pending_checks
+    )
+    return (
+        "\n\n【检定边界·代码硬提醒】本轮已发起以下检定，正文必须停在"
+        "「结果与动作都还未知」的那一刻：\n"
+        f"{check_list}\n"
+        "① 不得写出这次检定才能揭示的信息（线索/证词/发现），哪怕一个字；\n"
+        "② 不得把这次检定对应的动作本身写成已经在成功进行/已经执行完成——"
+        "比如「沿着痕迹走了很远」「脚步声被夜风吞掉」「三十步后你看见了」"
+        "这类，都已经是在替这次检定预支结果；\n"
+        "③ 正确的停点是「你看见一条隐约的痕迹」「你压低身子准备靠近」"
+        "这种，情境刚具备、行动才要开始、结果完全悬而未决的画面。\n"
+        "超出这个边界会显得逻辑混乱——检定还没掷，故事却已经替玩家决定了结果。"
+    )
+
+
 class KeeperAgent(Narrator):
     def __init__(
         self,
@@ -437,31 +466,42 @@ class KeeperAgent(Narrator):
 
         if pending_checks:
             pending_check_manager.add(room_id, pending_checks)
-            check_list = "\n".join(
-                f"- {c.player_nickname} · {'理智' if c.kind == 'san' else c.skill}检定"
-                f"（{c.reason or '无说明'}）"
-                for c in pending_checks
-            )
-            guidance = (
-                f"{decision.narration_guidance}\n\n"
-                "## 本轮已发起的检定请求（叙事写到需要掷骰为止，渲染紧张时刻，"
-                "由情境示意玩家掷骰；绝不编造检定结果，也**不要提前描写任何"
-                "要靠这次检定才能获得的信息**——线索一个字都留到掷骰之后）\n" + check_list
-            )
-            decision_for_narration = decision.model_copy(update={"narration_guidance": guidance})
+            # 🔴 真人实测 2026-07-29：检定发起前的铺垫文字，不止会提前泄露
+            # 检定结果（"东北角矮墓碑"这类招供内容），还会提前把检定对应的
+            # 动作本身写成已经在成功进行（追踪检定前先写"沿着小径走了十几
+            # 步"、潜行检定前先写"脚步声被夜风吞掉""三十步后你看见了"）——
+            # 这是同一类问题的两个维度，旧版指引只堵了"信息"这一维。
+            # 这段硬提醒改放在 user_content 最末尾（仿 length_hint 的位置，
+            # 近因效应下模型服从概率更高），不再折进 narration_guidance
+            # 中段——没法用代码保证模型一定服从（"这段话有没有替检定预支
+            # 结果"不是能靠代码判断的），只能尽量提高服从概率。
+            check_boundary_hint = _build_check_boundary_hint(pending_checks)
             narration = await self._narrate_prose(
                 situation,
-                decision_for_narration,
+                decision,
                 report,
                 issues,
                 max_tokens=token_limit,
                 max_chars=char_limit,
+                extra_suffix=check_boundary_hint,
             )
             narration = self._finalize_prose(
                 narration,
                 action_intent=action_intent,
                 confused=confused,
                 max_chars=char_limit,
+            )
+            # 可观测性，不做自动拦截：能不能判断"这段话有没有替检定预支结果"
+            # 没有可靠的代码手段（跟其它 scrub 规则不同，这是语义/因果判断，
+            # 不是固定格式），删改有误伤合法对话铺垫的风险。这里只记录信号，
+            # 供以后用批量质检工具（kp-quality-stress.py）专门跑一批"检定
+            # 发起"场景、统计真实发生率，而不是只能靠真人测试偶然撞见。
+            logger.info(
+                "keeper_check_pending_narration",
+                room_id=room_id,
+                checks=[c.skill or "san" for c in pending_checks],
+                narration_len=len(narration),
+                narration_has_quoted_dialogue=("「" in narration or "”" in narration),
             )
             return NarrationOutcome(
                 text=narration,
@@ -638,8 +678,15 @@ class KeeperAgent(Narrator):
         *,
         max_tokens: int,
         max_chars: int,
+        extra_suffix: str = "",
     ) -> str:
-        """阶段3：叙事。max_tokens 限生成；max_chars 代码硬裁（句末优先）。"""
+        """阶段3：叙事。max_tokens 限生成；max_chars 代码硬裁（句末优先）。
+
+        `extra_suffix` 追加在 `length_hint` 之后、整段 user_content 的最
+        末尾——目前唯一的用途是检定边界硬提醒（见 `_build_check_boundary_
+        hint`），放在这个位置是刻意的（近因效应，模型对最后读到的指令
+        服从概率更高，跟 `length_hint` 本身的位置选择同理）。
+        """
         length_hint = (
             f"\n\n【长度硬限】本轮正文不得超过 {max_chars} 字（含标点）。"
             "超长会被系统截断——请一次写完且写短。"
@@ -647,6 +694,7 @@ class KeeperAgent(Narrator):
         user_content = (
             format_narrator_input(situation, decision.narration_guidance, report, issues)
             + length_hint
+            + extra_suffix
         )
         response = await self._client.chat.completions.create(
             model=DEEPSEEK_MODEL,

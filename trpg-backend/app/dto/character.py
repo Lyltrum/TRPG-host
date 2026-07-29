@@ -40,6 +40,14 @@ class CharacterUpdateBody(CamelModel):
     # injuries/phobias 8 个引导字段，值可以是空字符串。不做逐键校验——键的
     # 含义是前端表单的事，后端只透明存取。
     background_detail: dict[str, str] | None = None
+    # 前端"点数购买"按钮想显式告诉后端"我不再用掷骰/掷点池那份属性了"
+    # （否则玩家切回点数购买法重新分配，complete 时仍会被掷点池的总和精确
+    # 匹配校验拦下，见 character-build-migration 已知缺口）。这里只信任
+    # "降级到点数购买"这一个方向——点数购买本身就是校验最严的模式（硬预算
+    # 上限+逐项范围），声明切到它不可能被用来绕过任何约束；服务层不接受
+    # 客户端借这个字段自称 roll/roll_pool（那两个来源标记只能由服务端掷骰
+    # 接口写入，见 PR #97 review [1] 堵住的漏洞），此字段传别的值一律忽略。
+    generation_method: str | None = None
 
 
 class CharacterRead(CamelModel):
@@ -142,6 +150,12 @@ class CharacterPreviewRequest(CamelModel):
     attributes: dict[str, int]
     occupation_id: int | None = None
     skills: dict[str, int] = Field(default_factory=dict)
+    # 可选：不传就是"年龄未知/尚未走到年龄步骤"，衍生值按不扣年龄惩罚算
+    # （向 compute_derived_stats 传 None，这是它本来的默认行为）。传了就用
+    # 同一份权威公式扣 MOV，让建卡向导里的实时预览和 complete 时最终落库
+    # 的衍生值一致——此前只有 complete 传 age，预览页面的 MOV 一直没扣，见
+    # character-build-migration 已知缺口。
+    age: int | None = None
 
 
 class SkillPointsBudgetView(CamelModel):

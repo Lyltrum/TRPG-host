@@ -130,6 +130,17 @@ async def update_character(
         and payload.attributes != character.attributes
     ):
         character.generation_method = GENERATION_POINT_BUY
+    elif payload.generation_method == GENERATION_POINT_BUY:
+        # character-build-migration 已知缺口：`roll_pool` 没有类似上面的
+        # 自动回退——玩家掷完点池池、又点前端"点数购买"按钮改回手动分配，
+        # 此前后端从不知道这次切换，complete 时仍按 roll_pool 的"总和必须
+        # 精确等于池子总值"校验，会把一个正常的点数购买法分配错判成
+        # ATTRIBUTE_POOL_MISMATCH。这里只信任客户端"降级到点数购买"这一个
+        # 方向（见 CharacterUpdateBody.generation_method 的字段说明，点数
+        # 购买本身校验最严，声明切到它不可能绕开任何约束），不接受借这个
+        # 字段自称 roll/roll_pool。
+        character.generation_method = GENERATION_POINT_BUY
+        character.attribute_pool_total = None
 
     character.name = payload.name
     character.age = payload.age
@@ -250,6 +261,7 @@ def compute_character_preview(
         attributes=payload.attributes,
         occupation_id=payload.occupation_id,
         skills=payload.skills,
+        age=payload.age,
     )
     return CharacterComputeResult(**asdict(result))
 

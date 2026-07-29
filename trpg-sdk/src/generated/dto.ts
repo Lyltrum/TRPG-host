@@ -181,6 +181,7 @@ export interface CharacterPreviewRequest {
   skills?: {
     [k: string]: number;
   };
+  age?: number | null;
 }
 
 /**
@@ -288,6 +289,7 @@ export interface CharacterUpdateBody {
   backgroundDetail?: {
     [k: string]: string;
   } | null;
+  generationMethod?: string | null;
 }
 
 /**

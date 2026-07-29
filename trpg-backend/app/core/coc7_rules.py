@@ -436,6 +436,7 @@ def _compute(
     occupation_not_found: bool,
     generation_method: str = GENERATION_POINT_BUY,
     attribute_pool_total: int | None = None,
+    age: int | None = None,
 ) -> ComputeResult:
     issues: list[ValidationIssue] = []
     if occupation_not_found:
@@ -460,7 +461,7 @@ def _compute(
             validation=issues,
         )
 
-    derived_stats = compute_derived_stats(attributes)
+    derived_stats = compute_derived_stats(attributes, age)
 
     occupation_budget = (
         evaluate_skill_points_formula(occupation.skill_points_formula, attributes)
@@ -627,6 +628,7 @@ def compute_preview(
     occupation_id: int | None,
     skills: dict[str, int],
     generation_method: str = GENERATION_POINT_BUY,
+    age: int | None = None,
 ) -> ComputeResult:
     """`POST /systems/{systemId}/character/preview` 的计算核心：职业按 id 查。
 
@@ -636,6 +638,10 @@ def compute_preview(
 
     跟 `validate_character` 一样接受 `generation_method`——预览和最终校验必须
     用同一套判据，否则会出现「预览说没问题、提交被拒」这种最难排查的不一致。
+
+    `age` 同理：不传就是不扣 MOV 年龄惩罚，传了就跟 `complete_character` 落库
+    时用的同一份 `compute_derived_stats` 公式对齐，避免向导内预览的 MOV 和
+    完成建卡后角色卡上的 MOV 对不上（character-build-migration 已知缺口）。
     """
     occupation, not_found = find_occupation_by_id(ruleset.occupations, occupation_id)
     return _compute(
@@ -645,6 +651,7 @@ def compute_preview(
         skills,
         occupation_not_found=not_found,
         generation_method=generation_method,
+        age=age,
     )
 
 

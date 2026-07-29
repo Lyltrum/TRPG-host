@@ -3,7 +3,7 @@ import type {
   RollAttributePoolResult,
   RollAttributesResult,
 } from 'trpg-sdk';
-import type { BackgroundDetail } from '@/data/character-model';
+import type { BackgroundDetail, GenerationMethod } from '@/data/character-model';
 import { useRoomStore } from '@/stores/room-store';
 import { sdk } from '../api-client';
 
@@ -26,6 +26,11 @@ export interface BuiltCharacter {
   notes: string;
   // 结构化背景故事（character-build-migration），可选——不是每次保存都填过。
   backgroundDetail?: BackgroundDetail;
+  // 前端当前显示的生成方式（character-build-migration 已知缺口修复）：只有
+  // 'pointbuy' 会被后端信任并写入（玩家点"点数购买"按钮改回手动分配时，
+  // 让后端知道不用再按掷点池的"总和精确匹配"校验），见
+  // CharacterUpdateBody.generation_method 的字段说明。
+  generationMethod: GenerationMethod;
 }
 
 // 建卡接口跟房间模块一样，靠 X-Reconnect-Token 确认"你是这个房间里的哪个玩家"。
@@ -67,7 +72,8 @@ export async function saveCharacter(
       occupation: built.occupationName,
       background: built.background,
       notes: built.notes,
-      backgroundDetail: (built.backgroundDetail as Record<string, string> | undefined) ?? null
+      backgroundDetail: (built.backgroundDetail as Record<string, string> | undefined) ?? null,
+      generationMethod: built.generationMethod
     },
     requireReconnectToken()
   );

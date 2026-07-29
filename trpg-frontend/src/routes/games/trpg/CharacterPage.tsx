@@ -42,6 +42,14 @@ const AGE_MODIFIER_TABLE: Array<{ range: string; edu: string; body: string; othe
 ]
 
 
+// 掷点池模式下单项属性的合法范围（后端 coc7_rules.py 的
+// ROLL_POOL_ATTRIBUTE_MIN/MAX，骰子公式本身的产出范围，不是 ruleset 里可调的
+// 约束，跟 `ROLLED_ATTRIBUTE_MIN/MAX` 一样只在后端硬编码，见 character.py 的
+// 注释）——比点数购买法的下限（10）更高，两者不能共用 pointBuyRules 的范围
+// 提示/重置默认值（已知缺口修复）。
+const ROLL_POOL_ATTRIBUTE_MIN = 15
+const ROLL_POOL_ATTRIBUTE_MAX = 90
+
 type ExportFormatKey = 'dicebotFull' | 'dicebotShort' | 'textCard' | 'json'
 const EXPORT_FORMATS: Array<{ key: ExportFormatKey; label: string }> = [
   { key: 'dicebotFull', label: '骰娘·完整' },
@@ -203,9 +211,14 @@ export default function CharacterPage() {
   const pointBuyRules = ruleset?.attributePointBuy ?? null
 
   // 属性总预算的来源：掷点池模式下预算是这次掷出来的权威总值，其余两种
-  // 模式沿用 ruleset 的固定预算。单项上下限/step 仍然统一用 pointBuyRules
-  // （设计文档：roll_pool 只是预算来源换了，单项区间校验路径不变）。
+  // 模式沿用 ruleset 的固定预算。
   const currentBudget = generationMethod === 'roll_pool' ? (attributePoolTotal ?? 0) : (pointBuyRules?.budget ?? 0)
+  // 单项下限则两种模式不同（已知缺口修复）：掷点池要求 [15,90]（服务端
+  // ROLL_POOL_ATTRIBUTE_MIN/MAX），比点数购买法的 [10,90] 更紧——沿用
+  // pointBuyRules 的下限会允许玩家把某项留在 10，提交时被后端拒绝。上限两边
+  // 相同，仍统一用 pointBuyRules.maxValue。
+  const attrMinValue = generationMethod === 'roll_pool' ? ROLL_POOL_ATTRIBUTE_MIN : (pointBuyRules?.minValue ?? ROLL_POOL_ATTRIBUTE_MIN)
+  const attrMaxValue = pointBuyRules?.maxValue ?? ROLL_POOL_ATTRIBUTE_MAX
   // 服务端掷骰（`roll`）给的是最终值，不允许再手动调整——继续编辑会让
   // 「这是掷出来的」这个语义失真，且后端 PATCH 一旦发现属性被改过就会把
   // generation_method 悄悄退回点数购买法（见 service/character.py
@@ -252,6 +265,7 @@ export default function CharacterPage() {
           attributes: savedAttrs,
           occupationId: matched?.id ?? null,
           skills: saved.skills ?? {},
+          age: saved.age ?? null,
         })
         if (cancelled) return
 
@@ -475,6 +489,7 @@ export default function CharacterPage() {
         attributes: attr,
         occupationId: info.occupationId,
         skills: skillAlloc,
+        age: info.age ? Number(info.age) : null,
       })
         .then((result) => {
           if (gen !== previewGenRef.current) return
@@ -488,7 +503,7 @@ export default function CharacterPage() {
         })
     }, 400)
     return () => clearTimeout(timer)
-  }, [ruleset, attr, info.occupationId, skillAlloc])
+  }, [ruleset, attr, info.occupationId, skillAlloc, info.age])
 
   const skillComputeMap = useMemo(() => {
     const map = new Map<string, SkillComputeView>()
@@ -672,8 +687,8 @@ export default function CharacterPage() {
     if (!pointBuyRules || !attrEditable) return
     setAttr(prev => {
       const newVal = Math.max(
-        pointBuyRules.minValue,
-        Math.min(pointBuyRules.maxValue, (prev[key] ?? 0) + delta)
+        attrMinValue,
+        Math.min(attrMaxValue, (prev[key] ?? 0) + delta)
       )
       if (delta > 0 && sumOtherPointBuy(prev, key) + newVal > currentBudget) return prev
       setAttrInputs(inputs => ({ ...inputs, [key]: String(newVal) }))
@@ -689,12 +704,12 @@ export default function CharacterPage() {
     const raw = parseInt(attrInputs[key], 10)
     setAttr(prev => {
       const maxAllowed = Math.min(
-        pointBuyRules.maxValue,
+        attrMaxValue,
         currentBudget - sumOtherPointBuy(prev, key)
       )
       const clamped = Number.isNaN(raw)
         ? (prev[key] ?? pointBuyRules.defaultValue)
-        : Math.max(pointBuyRules.minValue, Math.min(maxAllowed, raw))
+        : Math.max(attrMinValue, Math.min(maxAllowed, raw))
       setAttrInputs(inputs => ({ ...inputs, [key]: String(clamped) }))
       return { ...prev, [key]: clamped }
     })
@@ -752,6 +767,7 @@ export default function CharacterPage() {
       background,
       notes,
       backgroundDetail,
+      generationMethod,
     })
   }
 
@@ -786,11 +802,13 @@ export default function CharacterPage() {
       setGenerationMethod('roll_pool')
       // 沿用上一次（可能是另一种生成方式，或者另一次掷点池）遗留的属性值，
       // 加总很可能对不上这次新掷出的总值——重置到单项下限，让玩家从零开始
-      // 分配这次的池子，而不是显示一堆立刻超预算的旧数字。
-      if (pointBuyRules) {
-        const reset = Object.fromEntries(pointBuyAttributes.map(a => [a.key, pointBuyRules.minValue]))
+      // 分配这次的池子，而不是显示一堆立刻超预算的旧数字。掷点池的单项下限
+      // 是 15，不是点数购买法的 10（已知缺口修复：此前误用了 pointBuyRules
+      // 的下限，重置后不动的属性会低于后端要求的 [15,90]，提交时被拒）。
+      if (pointBuyAttributes.length > 0) {
+        const reset = Object.fromEntries(pointBuyAttributes.map(a => [a.key, ROLL_POOL_ATTRIBUTE_MIN]))
         setAttr(prev => ({ ...prev, ...reset }))
-        setAttrInputs(Object.fromEntries(pointBuyAttributes.map(a => [a.key, String(pointBuyRules.minValue)])))
+        setAttrInputs(Object.fromEntries(pointBuyAttributes.map(a => [a.key, String(ROLL_POOL_ATTRIBUTE_MIN)])))
       }
     } catch (err) {
       setGenerationError(friendlyErrorMessage(err, '掷点池失败'))
@@ -895,6 +913,7 @@ export default function CharacterPage() {
         attributes: attr,
         occupationId: info.occupationId,
         skills: skillsPayload,
+        age: info.age ? Number(info.age) : null,
       })
       const finalDerived = normalizeDerivedStats(finalPreview.derivedStats)
       const skillFinalValues = Object.fromEntries(
@@ -920,6 +939,7 @@ export default function CharacterPage() {
         background,
         notes,
         backgroundDetail,
+        generationMethod,
       })
       await completeCharacter(roomId, characterId)
       setCharacterId(characterId)
@@ -1166,7 +1186,7 @@ export default function CharacterPage() {
 
               <div className="bg-card border border-border-light rounded-md p-[18px]">
                 <h4 className="text-[12px] font-semibold text-brass-dark uppercase tracking-[0.08em] mb-1.5">属性分配</h4>
-                <p className="text-[11px] text-text-muted mb-2">点击 +/- 调整属性值（范围 {pointBuyRules?.minValue ?? '—'}-{pointBuyRules?.maxValue ?? '—'}，每次 ±5）</p>
+                <p className="text-[11px] text-text-muted mb-2">点击 +/- 调整属性值（范围 {attrMinValue}-{attrMaxValue}，每次 ±5）</p>
                 <div className="bg-panel rounded-md px-3.5 py-2 mb-3 flex items-center gap-3">
                   <div className="flex-1">
                     <div className="flex items-center justify-between mb-1">
@@ -1207,8 +1227,8 @@ export default function CharacterPage() {
                         <input
                           type="number"
                           inputMode="numeric"
-                          min={pointBuyRules?.minValue}
-                          max={pointBuyRules?.maxValue}
+                          min={attrMinValue}
+                          max={attrMaxValue}
                           readOnly={!attrEditable}
                           value={attrInputs[key]}
                           onChange={e => attrEditable && setAttrInputs(inputs => ({ ...inputs, [key]: e.target.value }))}

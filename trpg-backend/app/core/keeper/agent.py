@@ -206,7 +206,7 @@ class KeeperAgent(Narrator):
         self._client = AsyncOpenAI(
             api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=_REQUEST_TIMEOUT_SECONDS
         )
-        self._adjudicator_instructions = build_adjudicator_instructions(module)
+        self._adjudicator_instructions = build_adjudicator_instructions(module, ruleset)
         self._narrator_instructions = build_narrator_instructions(module)
 
     async def narrate(self, context: NarrationContext) -> NarrationOutcome:

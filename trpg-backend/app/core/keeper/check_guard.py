@@ -1,8 +1,11 @@
 """检定发起护栏（设计 02）：模组标注 checks 优先，发 check.request 前代码校验。
 
 - 收集模组节点上标注的 skill 集合（含 sub_nodes）
-- 若 keeper_state 有「当前场景」且能匹配到节点，且该节点标注了 checks：
-  裁决给出的 skill 必须命中该节点 checks（别名归一后）之一，否则丢弃并记 issue
+- 定位当前节点：优先用结构化的场景节点 id（keeper_state 的「当前场景节点」，
+  见 tools.py::CURRENT_NODE_KEY）做精确查找；id 缺失或未命中时，退回对
+  「当前场景」自由文本人类地名做模糊匹配（兼容尚未产出 node id 的历史房间）。
+- 若能定位到节点，且该节点标注了 checks：裁决给出的 skill 必须命中该节点
+  checks（别名归一后）之一，否则丢弃并记 issue
 - 若节点无 checks 或找不到当前节点：仅要求 skill 能被 ruleset 解析（由调用方
   create_pending_checks 已做）
 """
@@ -36,8 +39,18 @@ def collect_module_check_skills(module: ScenarioModule) -> set[str]:
     return skills
 
 
-def find_node_for_scene(module: ScenarioModule, scene_hint: str | None) -> ModuleNode | None:
-    """用 keeper_state 的「当前场景」对节点 id / title 做模糊匹配。"""
+def find_node_for_scene(
+    module: ScenarioModule,
+    scene_hint: str | None,
+    *,
+    node_id: str | None = None,
+) -> ModuleNode | None:
+    """定位当前节点：结构化 node_id 精确查找优先，退回对「当前场景」自由
+    文本人类地名做模糊匹配（兼容尚未产出 node id 的历史房间/模组）。"""
+    if node_id:
+        node = module.node_by_id(node_id)
+        if node is not None:
+            return node
     if not scene_hint or not scene_hint.strip():
         return None
     hint = scene_hint.strip()
@@ -57,13 +70,14 @@ def filter_checks_against_module(
     check_skills: list[str],
     *,
     current_scene: str | None,
+    current_node_id: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """返回 (保留的 skill 原名列表, issue 文案)。
 
-    仅在「当前场景能匹配到节点且节点有 checks[]」时强制命中模组标注；
+    仅在「能定位到当前节点且节点有 checks[]」时强制命中模组标注；
     否则全部放行（即兴层，设计 02 第二层）。
     """
-    node = find_node_for_scene(module, current_scene)
+    node = find_node_for_scene(module, current_scene, node_id=current_node_id)
     if node is None or not node.checks:
         return list(check_skills), []
 

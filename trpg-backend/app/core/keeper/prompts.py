@@ -18,6 +18,23 @@ v2 仿照真人 KP 的台前/幕后分离：
 
 from app.core.keeper.module_loader import ScenarioModule, render_full
 from app.core.keeper.phase import PHASE_OPENING
+from app.dto.game import RulesetRead
+
+
+def render_skill_reference(ruleset: RulesetRead) -> str:
+    """技能/属性的权威名称表，给裁决器常驻在 prompt 里。
+
+    真人实测反复复现过裁决器凭自己的 COC7 常识编出同义/口语说法（"侦查"→
+    规则表其实是"侦察"、"观察"/"闪躲"同理），这些说法字面上不在这份
+    ruleset 里，`_resolve_skill_target` 精确匹配失败、检定静默丢失——事后
+    维护同义词字典是打地鼠（换个模组、模型换个措辞就又漏一个），字符串
+    模糊匹配也接不住"读音相同、字不同"这类同义词（中文短词编辑距离分辨率
+    太差，评估后判断不值得做）。跟登场 NPC 表同一个道理（"专有名词以此为
+    准，不得另起名字"）：给出权威列表，模型自己的中文语感就能挑对，不需要
+    生成之后再靠字符串匹配去猜它想说哪个。"""
+    skills = "、".join(s.name for s in ruleset.skills)
+    attrs = "、".join(a.label for a in ruleset.attributes)
+    return f"技能：{skills}\n属性：{attrs}"
 
 
 def format_agenda_status(module: ScenarioModule, fired_ids: list[str]) -> str:
@@ -53,12 +70,15 @@ def format_agenda_status(module: ScenarioModule, fired_ids: list[str]) -> str:
     return "\n\n".join(parts)
 
 
-def build_adjudicator_instructions(module: ScenarioModule) -> str:
+def build_adjudicator_instructions(module: ScenarioModule, ruleset: RulesetRead) -> str:
     """裁决阶段 system prompt：守秘人的"规则脑"，只裁决不写故事。"""
     return f"""你是《克苏鲁的呼唤》（COC 第 7 版）守秘人的规则裁决引擎，正在主持模组《{module.meta.title}》。你不写故事——你只针对玩家的最新发言做出裁决，输出一个 JSON 对象。
 
 ## 剧本全文（绝密，裁决的权威依据）
 {render_full(module)}
+
+## 技能/属性权威名称表（checks[].skill 与其它任何提到技能/属性的地方，必须原样使用下表名称，禁止使用同义词/口语说法/简称——如"侦察"不得写成"侦查"或"观察"，"闪避"不得写成"闪躲"）
+{render_skill_reference(ruleset)}
 
 ## 裁决规则（真人 KP 优先：推进行动，不是写风景）
 0. **最高优先级·兑现玩家意图**：玩家说「我去 X / 我想做 Y」且意图可执行时，
@@ -66,7 +86,7 @@ def build_adjudicator_instructions(module: ScenarioModule) -> str:
    **禁止**让叙事者重述开场街景、禁止「如果你穿过马路…」式虚拟语气挡行动、
    禁止只描写「你还站在自家门口」却不执行玩家已宣告的移动/调查。
    像真人 KP：玩家说走过去，你就写走过去之后发生什么。
-1. **检定判定**：玩家不会替你喊技能名——判断"这个行动要不要检定、用哪个技能"是你的职责。玩家行动命中剧本标注的检定点时（搜索房间→侦查；打探/套话→话术/魅惑/信用；查资料→图书馆使用；跟踪痕迹→追踪），**必须**在 checks 里给出检定；"我仔细翻找书房"就是完整的行动宣告，直接裁定侦查，不要求玩家先说明搜索方式。纯对话、无风险移动、观察显而易见之物不检定（checks 留空数组，理由写进 thinking）。**有检定时**：guidance 写到「需要掷骰的那一刻」为止，不要先写检定才能知道的结果。
+1. **检定判定**：玩家不会替你喊技能名——判断"这个行动要不要检定、用哪个技能"是你的职责。玩家行动命中剧本标注的检定点时（搜索房间→侦察；打探/套话→话术/魅惑/信用；查资料→图书馆使用；跟踪痕迹→追踪），**必须**在 checks 里给出检定，技能名从上面的权威名称表里选；"我仔细翻找书房"就是完整的行动宣告，直接裁定侦察，不要求玩家先说明搜索方式。纯对话、无风险移动、观察显而易见之物不检定（checks 留空数组，理由写进 thinking）。**有检定时**：guidance 写到「需要掷骰的那一刻」为止，不要先写检定才能知道的结果。
 2. **玩家宣告技能时的合理性**：玩家点名的技能在当前情境不合理时（如用克苏鲁神话"看穿真相"），不要照单裁定——checks 留空，在 narration_guidance 里说明拒绝理由让叙事者转达。
 3. **理智/伤害**：目击恐怖之物按剧本的损失表达式给 san_checks；受到伤害给 hp_changes。剧本没有要求时不要凭空扣减。
 4. **状态记账**：本轮有实质进展时（进入新场景、关键线索被挣得、NPC 态度变化、游戏内时间流逝）写 state_updates——这是跨轮记忆的唯一来源。玩家移动后**必须**更新「当前场景」（state_updates 里的人类可读地名），**并且**把 current_node_id 设为剧本节点列表中对应的 id（每个节点标题后括号里的"id: xxx"）；找不到精确对应的节点时 current_node_id 留空（null），禁止编造不存在的 id。
@@ -106,7 +126,7 @@ def build_adjudicator_instructions(module: ScenarioModule) -> str:
 ## 输出格式（只输出一个 JSON 对象，不要任何其它文字）
 {{
   "thinking": "裁决理由，一两句（审计用，玩家看不到）",
-  "checks": [{{"skill": "侦查", "player": null, "reason": "搜索书房命中剧本检定点"}}],
+  "checks": [{{"skill": "侦察", "player": null, "reason": "搜索书房命中剧本检定点"}}],
   "san_checks": [{{"player": null, "loss_on_success": "0", "loss_on_failure": "1d6", "reason": "目击食尸鬼"}}],
   "hp_changes": [{{"delta": -2, "player": null, "reason": "被抓伤"}}],
   "state_updates": [{{"key": "当前场景", "value": "书房"}}],
@@ -118,7 +138,7 @@ def build_adjudicator_instructions(module: ScenarioModule) -> str:
   "narration_guidance": "给叙事者的指引",
   "player_state": "normal"
 }}
-player 为 null 表示本轮行动的发起玩家；技能/属性用中文名（侦查、图书馆使用、话术、力量、幸运……）；没有的项用空数组，但 thinking 和 narration_guidance 每轮都要写。"""
+player 为 null 表示本轮行动的发起玩家；技能/属性名必须原样取自上面的权威名称表（如：侦察、图书馆使用、话术、力量、幸运……）；没有的项用空数组，但 thinking 和 narration_guidance 每轮都要写。"""
 
 
 def build_narrator_instructions(module: ScenarioModule) -> str:

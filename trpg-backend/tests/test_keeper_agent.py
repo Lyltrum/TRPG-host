@@ -155,7 +155,7 @@ async def test_load_room_memory_replays_events_in_order() -> None:
     assert keeper_state == {"当前场景": "门厅"}
     assert lines == [
         "阿福：我检查脚印",
-        "[检定] 阿福 侦察：30/70 → 成功",
+        "阿福进行了一次侦察检定，掷出30，目标70，结果成功。",
         "守秘人：脚印通向地下室。",
     ]
     # 在场名单：未建卡的玩家也要出现（agent 不许幻觉出额外的调查员）

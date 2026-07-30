@@ -55,7 +55,25 @@ export function useWizardSubmit(
         occupationId: state.occupationId,
         skills: skillsPayload,
         age: state.age,
+        // 🔴 漏传这两个字段会让后端按点数购买法的 480 预算去校验掷点池角色
+        // （总和常常 >480）→ 校验失败 → `_compute` 整体短路返回全零结果
+        // （derivedStats 空、skillView 空、两个预算 0）→ 全零被写进
+        // character-store → 游戏内 HP/SAN/技能面板全是 0。数据库里反而是对的，
+        // 因为 complete 会服务端重算，掩盖了这个前端 bug。
+        // 这是同一个根因第三次出现（round1 修 useWizardPreview、round4 补
+        // useWizardHydration，都漏了这条提交路径）——三个调用点现在齐了。
+        generationMethod: state.generationMethod,
+        attributePoolTotal: state.attributePoolTotal,
       })
+
+      // 落库路径不接受"降级结果"：validation 非空时后端返回的是全零短路结果，
+      // 写进 store 就是一张废卡。渲染路径（各 step 组件）可以容忍 preview 缺失
+      // 显示 0——那只是加载中；提交路径不行，必须失败要响（round3 判据：
+      // 静默兜底是同一个 bug 反复换皮的元凶）。
+      if (finalPreview.validation.length > 0) {
+        setSubmitError(`角色卡未通过校验：${finalPreview.validation.map((v) => v.message).join('；')}`)
+        return
+      }
       const finalDerived = normalizeDerivedStats(finalPreview.derivedStats)
       const skillFinalValues = Object.fromEntries(finalPreview.skillView.map((v) => [v.id, v.current]))
 

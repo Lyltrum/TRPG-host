@@ -119,6 +119,9 @@ class ValidationReport:
     orphan_errors: list[str] = field(default_factory=list)
     leak_ok: bool = True
     leak_errors: list[str] = field(default_factory=list)
+    # P1（exec/15）：事实表闭合性与可达性
+    facts_ok: bool = True
+    facts_errors: list[str] = field(default_factory=list)
     # 06 新增硬项
     thin_slot_ok: bool = True
     thin_slot_errors: list[str] = field(default_factory=list)
@@ -137,6 +140,7 @@ class ValidationReport:
         out.extend(f"[skill] {e}" for e in self.skill_errors)
         out.extend(f"[orphan] {e}" for e in self.orphan_errors)
         out.extend(f"[leak] {e}" for e in self.leak_errors)
+        out.extend(f"[facts] {e}" for e in self.facts_errors)
         out.extend(f"[thin_slot] {e}" for e in self.thin_slot_errors)
         out.extend(f"[secret_public] {e}" for e in self.secret_public_errors)
         out.extend(f"[structure] {e}" for e in self.structure_errors)
@@ -156,6 +160,7 @@ class ValidationReport:
             "skill": {"ok": self.skill_ok, "errors": self.skill_errors},
             "orphan": {"ok": self.orphan_ok, "errors": self.orphan_errors},
             "leak": {"ok": self.leak_ok, "errors": self.leak_errors},
+            "facts": {"ok": self.facts_ok, "errors": self.facts_errors},
             "thin_slot": {"ok": self.thin_slot_ok, "errors": self.thin_slot_errors},
             "secret_public": {
                 "ok": self.secret_public_ok,
@@ -178,6 +183,7 @@ class ValidationReport:
             f"  技能名可查：{'✓' if self.skill_ok else '✗'} ({len(self.skill_errors)} 条)",
             f"  无孤儿片段：{'✓' if self.orphan_ok else '✗'} ({len(self.orphan_errors)} 条)",
             f"  不泄密：{'✓' if self.leak_ok else '✗'} ({len(self.leak_errors)} 条)",
+            f"  事实表闭合：{'✓' if self.facts_ok else '✗'} ({len(self.facts_errors)} 条)",
             (
                 f"  薄公开槽上限：{'✓' if self.thin_slot_ok else '✗'} "
                 f"({len(self.thin_slot_errors)} 条)"
@@ -349,6 +355,68 @@ def check_refs(module: ScenarioModule) -> list[str]:
             errors.append(f"visibility_pair {pair.id!r} public_ref 悬空：{pair.public_ref!r}")
         if pair.secret_ref not in entity_ids:
             errors.append(f"visibility_pair {pair.id!r} secret_ref 悬空：{pair.secret_ref!r}")
+    return errors
+
+
+_FACT_TIERS = {"diegetic", "meta"}
+_FACT_KINDS = {"clue", "npc_knowledge", "truth"}
+
+
+def check_facts(module: ScenarioModule) -> list[str]:
+    """事实表的闭合性与可达性（exec/15，P1）。
+
+    facts 为空时全部通过——尚未迁移的模组照常可主持（向后兼容是硬要求）。
+    """
+    errors: list[str] = []
+    if not module.facts:
+        return errors
+
+    fact_ids: set[str] = set()
+    for fact in module.facts:
+        if fact.id in fact_ids:
+            errors.append(f"fact id 重复：{fact.id!r}")
+        fact_ids.add(fact.id)
+        if fact.tier not in _FACT_TIERS:
+            errors.append(f"fact {fact.id!r} tier 非法：{fact.tier!r}")
+        if fact.kind not in _FACT_KINDS:
+            errors.append(f"fact {fact.id!r} kind 非法：{fact.kind!r}")
+        if not fact.text.strip():
+            errors.append(f"fact {fact.id!r} text 为空")
+
+    # 引用闭合 + 收集揭开路径
+    revealed: set[str] = set()
+    for node in _iter_nodes(module.nodes):
+        for target in node.reveals:
+            if target not in fact_ids:
+                errors.append(f"node {node.id!r} reveals 悬空：{target!r}")
+            else:
+                revealed.add(target)
+        for i, check in enumerate(node.checks):
+            for target in check.reveals:
+                if target not in fact_ids:
+                    errors.append(f"node {node.id!r} checks[{i}].reveals 悬空：{target!r}")
+                else:
+                    revealed.add(target)
+    for npc in module.npcs:
+        for target in npc.knows:
+            if target not in fact_ids:
+                errors.append(f"npc {npc.id!r} knows 悬空：{target!r}")
+            else:
+                revealed.add(target)
+
+    by_id = {f.id: f for f in module.facts}
+    for fact_id in sorted(revealed):
+        fact = by_id[fact_id]
+        if fact.tier == "meta":
+            # 元层对任何虚构内主体永不可见，不存在"挣得"这回事——被 reveals
+            # 引用说明迁移时把主持指导误当成了线索。
+            errors.append(f"fact {fact_id!r} 是 meta 层，不该出现在 reveals/knows 里")
+
+    # 死线索：玩家永远拿不到的虚构内事实
+    for fact in module.facts:
+        if fact.tier == "diegetic" and fact.id not in revealed:
+            errors.append(f"fact {fact.id!r} 没有任何揭开路径（死线索）")
+
     return errors
 
 
@@ -771,10 +839,12 @@ def validate_assembled(
     ref_errors: list[str] = []
     skill_errors: list[str] = []
     leak_errors: list[str] = []
+    facts_errors: list[str] = []
     if module is not None:
         ref_errors = check_refs(module)
         skill_errors = check_skills(module, ruleset)
         leak_errors = check_leak(module)
+        facts_errors = check_facts(module)
     else:
         schema_errors = schema_errors or ["ScenarioModule.model_validate 失败"]
 
@@ -790,6 +860,7 @@ def validate_assembled(
     skill_ok = not skill_errors
     orphan_ok = not orphan_errors
     leak_ok = not leak_errors
+    facts_ok = not facts_errors
     thin_slot_ok = not thin_slot_errors
     secret_public_ok = not secret_public_errors
     structure_ok = not structure_errors
@@ -799,6 +870,7 @@ def validate_assembled(
         and skill_ok
         and orphan_ok
         and leak_ok
+        and facts_ok
         and thin_slot_ok
         and secret_public_ok
         and structure_ok
@@ -815,6 +887,8 @@ def validate_assembled(
         orphan_errors=orphan_errors,
         leak_ok=leak_ok,
         leak_errors=leak_errors,
+        facts_ok=facts_ok,
+        facts_errors=facts_errors,
         thin_slot_ok=thin_slot_ok,
         thin_slot_errors=thin_slot_errors,
         secret_public_ok=secret_public_ok,

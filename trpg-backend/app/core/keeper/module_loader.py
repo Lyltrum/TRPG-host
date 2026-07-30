@@ -22,6 +22,31 @@ class _LenientModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class ModuleFact(_LenientModel):
+    """一条**可被揭示的断言**——`view(subject)` 管辖的最小单位（exec/15）。
+
+    为什么是模组顶层的表、而不是挂在 node/check 底下（实测结论，别改回去）：
+    同一条 `on_success` 在多个检定下重复出现（神秘渡轮 71→57、死者的顿足舞
+    34→27），这是 COC 的**多路径线索**设计——同一条信息可以用不同技能、在不同
+    地点拿到。挂在 node/check 下面会让同一条线索变成多条 id，于是「谁知道了
+    什么」把一件事记成两笔，线索账本从第一天就是错的。
+
+    判据（exec/14 决策②）：**秘密必须有 id；没有 id 的东西就只能是颜色。**
+    所以只有"可被揭示的断言"进这张表，场景描写/氛围/即兴内容一律不进——
+    全量实体化会把世界变成查表，压死守秘人的即兴空间。
+    """
+
+    id: str
+    text: str
+    # clue（线索）| npc_knowledge（NPC 在虚构内知道的）| truth（真相层）
+    kind: str = "clue"
+    # diegetic：虚构内，可被挣得翻面
+    # meta：元层（结局/议程/主持指导），对**任何**虚构内主体永不可见
+    tier: str = "diegetic"
+    # 迁移出处（如 "node:<id>.checks[2].on_success"），供审计与重放
+    origin: str | None = None
+
+
 class ModuleCheck(_LenientModel):
     """一次检定点：技能、难度与成败后果（都是给 KP 看的自由文本）。"""
 
@@ -31,6 +56,8 @@ class ModuleCheck(_LenientModel):
     on_failure: str | None = None
     on_fumble: str | None = None
     prerequisite: str | None = None
+    # 成功时揭开哪些事实（引用 ScenarioModule.facts 的 id）
+    reveals: list[str] = []
 
 
 class ModuleBranch(_LenientModel):
@@ -66,6 +93,8 @@ class ModuleNode(_LenientModel):
     leads_to: list[str] = []
     exits: list[str] = []
     contains: list[str] = []
+    # 进入/搜索该节点即可得（无需检定）的事实
+    reveals: list[str] = []
 
 
 class ModuleNpcForm(_LenientModel):
@@ -88,6 +117,9 @@ class ModuleNpc(_LenientModel):
     forms: list[ModuleNpcForm] = []
     # 其它 npc id：公开形象行 ↔ 秘密行等「同一实体」链接
     same_as: list[str] = []
+    # 该 NPC 在**虚构内**知道的事实。注意它常常**超过**玩家知道的（教徒知道
+    # 教团、图书管理员知道书库布局）——NPC 缺的不是信息量，是元层（tier=meta）。
+    knows: list[str] = []
 
 
 class AgendaEvent(_LenientModel):
@@ -164,9 +196,25 @@ class ScenarioModule(_LenientModel):
     kp_guidance: dict[str, str] = {}
     # 4b：密级配对表（空列表兼容旧模组）
     visibility_pairs: list[VisibilityPair] = []
+    # P1：可寻址事实表（空列表兼容尚未迁移的模组；迁移在 P1.3）
+    facts: list[ModuleFact] = []
 
     def node_by_id(self, node_id: str) -> ModuleNode | None:
         return _find_node(self.nodes, node_id)
+
+    def fact_by_id(self, fact_id: str) -> ModuleFact | None:
+        for fact in self.facts:
+            if fact.id == fact_id:
+                return fact
+        return None
+
+    def diegetic_fact_ids(self) -> set[str]:
+        """虚构内可挣得的事实——`view(subject)` 的候选全集。
+
+        meta 层不在其中：结局/议程/主持指导对任何虚构内主体永不可见，
+        不存在"挣得"这回事。
+        """
+        return {f.id for f in self.facts if f.tier == "diegetic"}
 
     def npc_by_id(self, npc_id: str) -> ModuleNpc | None:
         for npc in self.npcs:

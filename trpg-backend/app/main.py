@@ -24,6 +24,7 @@ from app.controller.ws import router as ws_router
 from app.core.config import get_settings
 from app.core.db import async_session_factory
 from app.core.errors import AppException, ErrorCode
+from app.core.llm_tape import activate_from_env
 from app.core.logging import configure_logging
 from app.core.narrator import build_narrator
 from app.core.seed import ensure_seed_content
@@ -63,6 +64,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     async with async_session_factory() as db:
         await ensure_seed_content(db)
+
+    # exec/14 P0：`LLM_TAPE_MODE=record` 时把这次进程里的所有 LLM 往返录成磁带，
+    # 用于「起后端 + 真人玩一局 → 得到可回放的基线」。不配就是纯透传。
+    activate_from_env()
 
     settings = get_settings()
     heartbeat_task: asyncio.Task | None = None

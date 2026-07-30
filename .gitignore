@@ -34,3 +34,7 @@ trpg-backend/scripts/coc7_occupations/generated_occupations.py
 # 会带上 gitignored 模组的剧情内容——版权红线同 模组资料/，绝不进公开仓库。
 # （AGENTS.md 写了"勿提交"，但口头约定拦不住 `git add -A`，这里做机制兜底。）
 e2e/artifacts/
+
+# LLM 磁带（exec/14 P0）：真实模组的磁带含剧本正文，版权红线同 模组资料/。
+# 只有原创迷你剧本的磁带允许进 git，放 trpg-backend/tests/tapes/。
+trpg-backend/tapes/

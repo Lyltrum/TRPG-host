@@ -37,39 +37,6 @@ def render_skill_reference(ruleset: RulesetRead) -> str:
     return f"技能：{skills}\n属性：{attrs}"
 
 
-def format_agenda_status(module: ScenarioModule, fired_ids: list[str]) -> str:
-    """每轮注入的议程状态：哪些还没发生、哪些已经发生过。
-
-    为什么代码算而不是让模型从剧本全文里自己推：`once` 语义和"别重复触发"
-    是硬约束，靠模型记忆等于没有。
-    """
-    if not module.agenda:
-        return ""
-
-    fired_set = set(fired_ids)
-    pending_lines: list[str] = []
-    done_lines: list[str] = []
-    for event in module.agenda:
-        title = event.title or "（无标题）"
-        # once=False 的事件即使已触发仍留在"未发生"区——可再次发生。
-        if event.id in fired_set and event.once:
-            done_lines.append(f"- {event.id} · {title}")
-            continue
-        # 未发生区：给首句或全文，方便裁决器判断"本轮是否该触发"。
-        if "。" in event.kp_text:
-            kp_preview = event.kp_text.split("。", 1)[0] + "。"
-        else:
-            kp_preview = event.kp_text
-        pending_lines.append(f"- {event.id} · {title}（{event.trigger}）：{kp_preview}")
-
-    parts: list[str] = []
-    if pending_lines:
-        parts.append("### 尚未发生\n" + "\n".join(pending_lines))
-    if done_lines:
-        parts.append("### 已经发生\n" + "\n".join(done_lines))
-    return "\n\n".join(parts)
-
-
 def build_adjudicator_instructions(module: ScenarioModule, ruleset: RulesetRead) -> str:
     """裁决阶段 system prompt：守秘人的"规则脑"，只裁决不写故事。"""
     return f"""你是《克苏鲁的呼唤》（COC 第 7 版）守秘人的规则裁决引擎，正在主持模组《{module.meta.title}》。你不写故事——你只针对玩家的最新发言做出裁决，输出一个 JSON 对象。

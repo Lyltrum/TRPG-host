@@ -18,21 +18,18 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.decision import KeeperDecision, execute_side_effects
+from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, format_agenda_status, load_fired_agenda
+from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.module_loader import (
     load_module,
     public_story_from_module,
     render_agenda,
     render_full,
 )
-from app.core.keeper.prompts import format_agenda_status, format_turn_input
-from app.core.keeper.tools import (
-    AGENDA_FIRED_KEY,
-    CURRENT_NODE_KEY,
-    KeeperDeps,
-    load_fired_agenda,
-    mark_agenda_fired_impl,
-)
+from app.core.keeper.prompts import format_turn_input
+from app.core.keeper.scene_state import CURRENT_NODE_KEY
+from app.core.keeper.tools import KeeperDeps, mark_agenda_fired_impl
+from app.core.keeper.turn_executor import execute_side_effects
 from app.models.event import Event
 from app.models.room import Character, Player, Room
 

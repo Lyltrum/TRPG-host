@@ -35,11 +35,8 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.keeper.decision import (
-    KeeperDecision,
-    create_pending_checks,
-    execute_side_effects,
-)
+from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, format_agenda_status, load_fired_agenda
+from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.pending import PendingCheck, pending_check_manager
 from app.core.keeper.phase import (
@@ -54,7 +51,6 @@ from app.core.keeper.phase import (
 from app.core.keeper.prompts import (
     build_adjudicator_instructions,
     build_narrator_instructions,
-    format_agenda_status,
     format_narrator_input,
     format_turn_input,
 )
@@ -72,16 +68,15 @@ from app.core.keeper.prose_discipline import (
     narration_max_tokens,
     scrub_kp_anti_patterns,
 )
+from app.core.keeper.scene_state import CURRENT_NODE_KEY, load_current_node_id
 from app.core.keeper.tools import (
-    AGENDA_FIRED_KEY,
-    CURRENT_NODE_KEY,
     KeeperDeps,
     KeeperToolError,
-    load_fired_agenda,
     roll_check_detail,
     san_check_detail,
     set_phase_impl,
 )
+from app.core.keeper.turn_executor import create_pending_checks, execute_side_effects
 from app.core.keeper.visibility import (
     VISIBILITY_REVEALED_KEY,
     format_visibility_status,
@@ -414,7 +409,7 @@ class KeeperAgent(Narrator):
         # 否则退回自由文本比较（兼容尚未产出 node id 的模组/历史房间）。
         prev_scene = (keeper_state or {}).get("当前场景")
         new_scene = next((u.value for u in decision.state_updates if u.key == "当前场景"), None)
-        prev_node_id = (keeper_state or {}).get(CURRENT_NODE_KEY)
+        prev_node_id = load_current_node_id(keeper_state)
         new_node_id = decision.current_node_id
         if prev_node_id is not None and new_node_id is not None:
             scene_changed = prev_node_id != new_node_id

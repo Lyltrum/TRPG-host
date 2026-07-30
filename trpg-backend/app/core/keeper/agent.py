@@ -807,19 +807,25 @@ class KeeperAgent(Narrator):
                     text = text[:_HISTORY_NARRATION_CLIP] + "……"
                 lines.append(f"守秘人：{text}")
             elif event.event_type == "keeper.check":
+                # 🔴 2026-07-30（exec/11 待办2）：曾用 `[检定] 玩家 技能：a/b → 结果`
+                # 这种方括号"记账行"格式喂给叙事 LLM 看历史，真人实测复现过
+                # 叙事正文里编造出一句格式几乎一样但数值全假的"记账"（见
+                # prose_discipline.py 的 _FAKE_STAT_LOG_LEAK）——模型照猫画虎
+                # 模仿了这里看到的模板。改成普通叙述句，不留可逐字复刻的模板。
                 lines.append(
-                    f"[检定] {payload.get('player', '')} {payload.get('skill', '')}："
-                    f"{payload.get('rolled', '?')}/{payload.get('target', '?')} "
-                    f"→ {payload.get('level', '')}"
+                    f"{payload.get('player', '')}进行了一次{payload.get('skill', '')}"
+                    f"检定，掷出{payload.get('rolled', '?')}，目标"
+                    f"{payload.get('target', '?')}，结果{payload.get('level', '')}。"
                 )
             elif event.event_type == "keeper.san":
                 lines.append(
-                    f"[理智] {payload.get('player', '')}：损失 {payload.get('loss', '?')}，"
-                    f"当前 San {payload.get('san', '?')}"
+                    f"{payload.get('player', '')}遭受理智冲击，损失"
+                    f"{payload.get('loss', '?')}点理智，当前理智值{payload.get('san', '?')}。"
                 )
             elif event.event_type == "keeper.hp":
                 lines.append(
-                    f"[生命] {payload.get('player', '')}：{payload.get('delta', '?')}"
-                    f"（{payload.get('reason', '')}），当前 HP {payload.get('hp', '?')}"
+                    f"{payload.get('player', '')}的生命值发生变化："
+                    f"{payload.get('delta', '?')}点（{payload.get('reason', '')}），"
+                    f"当前生命值{payload.get('hp', '?')}。"
                 )
         return keeper_state, lines, roster

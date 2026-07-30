@@ -23,11 +23,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
+from app.core.llm_tape import build_llm_client
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 # 2026-07 DeepSeek 仅支持 v4：deepseek-v4-flash / deepseek-v4-pro（deepseek-chat 已 400）
@@ -182,12 +182,13 @@ class DeepSeekNarrator(Narrator):
     """
 
     def __init__(self, api_key: str) -> None:
-        self._client = AsyncOpenAI(
+        self._client = build_llm_client(
             api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=_REQUEST_TIMEOUT_SECONDS
         )
 
     async def narrate(self, context: NarrationContext) -> NarrationOutcome:
         response = await self._client.chat.completions.create(
+            tape_kind="simple_narrate",
             model=DEEPSEEK_MODEL,
             messages=_build_messages(context),
             # deepseek-v4-pro 默认带隐藏推理（reasoning_content），单轮场景描写不

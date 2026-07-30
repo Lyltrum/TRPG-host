@@ -29,7 +29,6 @@ import random
 from dataclasses import replace
 
 import structlog
-from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -82,6 +81,7 @@ from app.core.keeper.visibility import (
     format_visibility_status,
     load_revealed_visibility,
 )
+from app.core.llm_tape import build_llm_client
 from app.core.narrator import (
     DEEPSEEK_BASE_URL,
     DEEPSEEK_MODEL,
@@ -198,7 +198,7 @@ class KeeperAgent(Narrator):
         self._ruleset = ruleset
         self._session_factory = session_factory
         self._rng = rng if rng is not None else random.Random()
-        self._client = AsyncOpenAI(
+        self._client = build_llm_client(
             api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=_REQUEST_TIMEOUT_SECONDS
         )
         self._adjudicator_instructions = build_adjudicator_instructions(module, ruleset)
@@ -626,6 +626,7 @@ class KeeperAgent(Narrator):
         last_error: Exception | None = None
         for attempt in range(1 + _ADJUDICATE_RETRIES):
             response = await self._client.chat.completions.create(
+                tape_kind="adjudicate",
                 model=DEEPSEEK_MODEL,
                 messages=messages,
                 response_format={"type": "json_object"},
@@ -699,6 +700,7 @@ class KeeperAgent(Narrator):
             + extra_suffix
         )
         response = await self._client.chat.completions.create(
+            tape_kind="narrate",
             model=DEEPSEEK_MODEL,
             messages=[
                 {"role": "system", "content": self._narrator_instructions},

@@ -1,0 +1,335 @@
+"""LLM 调用录制 / 回放（磁带）—— exec/14 的 P0 安全网。
+
+## 为什么要它
+
+keeper 的行为由「模型输出」和「代码逻辑」共同决定，而模型输出不可复现。
+后果是：真人实测撞出来的每个 bug，修完就没有守门人——下次改 prose_discipline
+的正则、改上下文组装、改 schema，都可能让它悄悄退化，而 pytest 全绿。
+
+把 `(请求, 响应)` 录成磁带，就能在**断网**状态下重放同一批模型输出，断言
+代码行为不变。这是 exec/14 里 P1（事实寻址）/ P2（主体与权限）那次大重构
+的前提：重构完必须能证明「同样的模型输出 → 同样的行为」。
+
+## 边界（别高估它）
+
+只保证「给定模型输出，代码行为不变」，**不保证**「新 prompt 生成的内容更好」。
+它是代码的回归网，不是叙事质量的评测器。质量评测是另一件事（要么真人实测，
+要么批量质检脚本）。
+
+## 为什么按序回放，而不是按请求哈希匹配
+
+哈希键在 P1 之后会全部失效：事实寻址会改 `render_full` 的输出 → system prompt
+变 → 哈希全部 miss → 磁带集体作废。按序回放能穿过 prompt 变化继续用，同时把
+digest 差异作为「漂移」如实报出来，供人判断这次 prompt 变化是不是预期内的。
+
+代价是磁带假设调用顺序稳定。因此回放时仍然校验 `kind`（adjudicate / narrate /
+…）：顺序一旦对不上就**立刻报错**，而不是静默返回错位的响应。
+
+⚠️ 单进程内并发对局 / 心跳插队会打乱顺序——录制真实对局时请只开一局、
+关掉心跳（`KEEPER_HEARTBEAT_ENABLED=false`）。
+
+## 🔴 版权
+
+真实模组的磁带里含剧本正文（system prompt 常驻整份 `render_full`），
+**一律落在 gitignored 的 `trpg-backend/tapes/`**。只有原创迷你剧本
+（`tests/fixtures/keeper_module.json`）的磁带才允许进 git，放 `tests/tapes/`，
+并由 `tests/test_llm_tape.py::test_committed_tapes_only_use_original_scenarios`
+兜底——职责兜底在代码，不在提醒。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Literal
+
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+TapeMode = Literal["off", "record", "replay"]
+
+#: 允许进 git 的磁带场景 id。真实模组一律不在此列（版权红线）。
+COMMITTABLE_SCENARIOS = frozenset({"tests/fixtures/keeper_module.json"})
+
+_ENV_MODE = "LLM_TAPE_MODE"
+_ENV_PATH = "LLM_TAPE_PATH"
+_ENV_SCENARIO = "LLM_TAPE_SCENARIO"
+
+
+@dataclass
+class TapeEntry:
+    """一次 LLM 往返。
+
+    `messages` 录制时存全文（人工审阅磁带时要看得懂上下文），回放时不依赖它——
+    回放只按顺序取 `response_text`。
+    """
+
+    index: int
+    kind: str
+    model: str
+    request_digest: str
+    response_text: str
+    finish_reason: str | None = None
+    messages: list[dict[str, Any]] | None = None
+
+
+@dataclass
+class Drift:
+    """回放时发现「请求变了」——不报错，如实记下来供调用方判断。"""
+
+    index: int
+    kind: str
+    recorded_digest: str
+    actual_digest: str
+
+
+@dataclass
+class Tape:
+    scenario: str
+    entries: list[TapeEntry] = field(default_factory=list)
+
+    def dump(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {"scenario": self.scenario, "entries": [asdict(e) for e in self.entries]},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    @classmethod
+    def load(cls, path: Path) -> Tape:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        return cls(
+            scenario=raw["scenario"],
+            entries=[TapeEntry(**e) for e in raw["entries"]],
+        )
+
+
+def request_digest(model: str, messages: list[Any], params: dict[str, Any]) -> str:
+    """请求指纹。只用于漂移检测，不用于查找。"""
+    payload = json.dumps(
+        {"model": model, "messages": messages, "params": params},
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+class TapeSession:
+    """一次录制或回放。进程内全局单例，由上下文管理器装卸。"""
+
+    def __init__(self, mode: TapeMode, tape: Tape, path: Path | None = None) -> None:
+        self.mode = mode
+        self.tape = tape
+        self.path = path
+        self.cursor = 0
+        self.drifts: list[Drift] = []
+
+    def record(
+        self,
+        *,
+        kind: str,
+        model: str,
+        messages: list[Any],
+        params: dict[str, Any],
+        response_text: str,
+        finish_reason: str | None,
+    ) -> None:
+        self.tape.entries.append(
+            TapeEntry(
+                index=len(self.tape.entries),
+                kind=kind,
+                model=model,
+                request_digest=request_digest(model, messages, params),
+                response_text=response_text,
+                finish_reason=finish_reason,
+                messages=[dict(m) for m in messages],
+            )
+        )
+
+    def next_entry(
+        self, *, kind: str, model: str, messages: list[Any], params: dict[str, Any]
+    ) -> TapeEntry:
+        if self.cursor >= len(self.tape.entries):
+            raise TapeExhausted(
+                f"磁带只录了 {len(self.tape.entries)} 次调用，第 {self.cursor + 1} 次"
+                f"（kind={kind}）没有对应录音——代码比录制时多调了一次模型。"
+            )
+        entry = self.tape.entries[self.cursor]
+        self.cursor += 1
+        if entry.kind != kind:
+            raise TapeMismatch(
+                f"第 {entry.index} 次调用录的是 kind={entry.kind}，实际是 kind={kind}"
+                "——调用顺序变了，磁带对不上。"
+            )
+        actual = request_digest(model, messages, params)
+        if actual != entry.request_digest:
+            self.drifts.append(
+                Drift(
+                    index=entry.index,
+                    kind=kind,
+                    recorded_digest=entry.request_digest,
+                    actual_digest=actual,
+                )
+            )
+        return entry
+
+    def flush(self) -> None:
+        if self.mode == "record" and self.path is not None:
+            self.tape.dump(self.path)
+
+
+class TapeExhausted(RuntimeError):
+    """回放时代码要的调用次数超过磁带录的次数。"""
+
+
+class TapeMismatch(RuntimeError):
+    """回放时调用顺序与磁带不符。"""
+
+
+_active: TapeSession | None = None
+
+
+def active_session() -> TapeSession | None:
+    return _active
+
+
+@contextmanager
+def recording(path: str | Path, *, scenario: str) -> Iterator[TapeSession]:
+    """录制：真实打网络，同时把每次往返落盘。"""
+    global _active
+    session = TapeSession("record", Tape(scenario=scenario), Path(path))
+    previous, _active = _active, session
+    try:
+        yield session
+    finally:
+        session.flush()
+        _active = previous
+
+
+@contextmanager
+def replaying(path: str | Path) -> Iterator[TapeSession]:
+    """回放：完全不打网络，按序返回录好的响应。"""
+    global _active
+    session = TapeSession("replay", Tape.load(Path(path)))
+    previous, _active = _active, session
+    try:
+        yield session
+    finally:
+        _active = previous
+
+
+@dataclass
+class _ReplayMessage:
+    content: str | None
+
+
+@dataclass
+class _ReplayChoice:
+    message: _ReplayMessage
+    finish_reason: str | None
+
+
+@dataclass
+class _ReplayResponse:
+    """只实现调用方真正读到的字段（`.choices[0].message.content` /
+    `.finish_reason`），不复刻整个 openai 响应类型。"""
+
+    choices: list[_ReplayChoice]
+
+
+class _TapedCompletions:
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    async def create(self, *, tape_kind: str, **kwargs: Any) -> Any:
+        session = active_session()
+        model = kwargs.get("model", "")
+        messages = list(kwargs.get("messages", []))
+        params = {k: v for k, v in kwargs.items() if k not in ("model", "messages")}
+
+        if session is not None and session.mode == "replay":
+            entry = session.next_entry(
+                kind=tape_kind, model=model, messages=messages, params=params
+            )
+            return _ReplayResponse(
+                choices=[
+                    _ReplayChoice(
+                        message=_ReplayMessage(content=entry.response_text),
+                        finish_reason=entry.finish_reason,
+                    )
+                ]
+            )
+
+        response = await self._inner.create(**kwargs)
+
+        if session is not None and session.mode == "record":
+            choice = response.choices[0]
+            session.record(
+                kind=tape_kind,
+                model=model,
+                messages=messages,
+                params=params,
+                response_text=choice.message.content or "",
+                finish_reason=choice.finish_reason,
+            )
+            session.flush()
+        return response
+
+
+class _TapedChat:
+    def __init__(self, inner: Any) -> None:
+        self.completions = _TapedCompletions(inner.chat.completions)
+
+
+class TapedClient:
+    """包在 `AsyncOpenAI` 外面的一层。没有磁带在录/在放时纯透传。
+
+    调用方式与原客户端一致，只多一个必填的 `tape_kind`（adjudicate /
+    narrate / …）——回放时靠它校验调用顺序没变。
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.chat = _TapedChat(inner)
+
+
+def build_llm_client(*, api_key: str, base_url: str, timeout: float) -> TapedClient:
+    from openai import AsyncOpenAI
+
+    return TapedClient(AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout))
+
+
+def activate_from_env() -> TapeSession | None:
+    """按环境变量启动录制——用于「起后端 + 真人玩一局」录真实对局。
+
+        LLM_TAPE_MODE=record LLM_TAPE_PATH=tapes/xxx.json \\
+        LLM_TAPE_SCENARIO=模组资料/追书人.structured.json \\
+        KEEPER_HEARTBEAT_ENABLED=false .venv/bin/uvicorn app.main:app ...
+
+    进程退出时才落盘不可靠（uvicorn 常被 Ctrl-C 打断），所以录制模式下每次
+    往返都会立即重写整份磁带——磁带很小，代价可以忽略。
+    """
+    global _active
+    mode = os.environ.get(_ENV_MODE)
+    if mode != "record":
+        return None
+    path = os.environ.get(_ENV_PATH)
+    if not path:
+        raise ValueError(f"{_ENV_MODE}=record 时必须同时给 {_ENV_PATH}")
+    session = TapeSession(
+        "record", Tape(scenario=os.environ.get(_ENV_SCENARIO, "unknown")), Path(path)
+    )
+    _active = session
+    logger.info("llm_tape_recording_started", path=path, scenario=session.tape.scenario)
+    return session

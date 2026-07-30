@@ -1,9 +1,16 @@
-"""守秘人的游戏操作层：掷骰/角色卡/剧本/状态的业务实现（keeper agent v2）。
+"""守秘人的游戏操作层（L3 执行）：掷骰/角色卡/剧本/状态的业务实现（keeper agent v2）。
 
-v2（两阶段回合制）里这些 `*_impl` 由 `decision.execute_decision`（纯代码
-执行器）调用，不再是 LLM 的自由工具——v1 的 `@function_tool` 薄壳层已随
-架构推翻整体移除（自由工具调用被实测证明不可靠，见 agent.py 模块 docstring）。
-`*_impl` 保持普通 async 函数形态，可直接单测。
+这是 keeper_state 唯一允许写入的地方——每个 `*_impl` 对应一个"动词"
+（set_phase_impl/mark_agenda_fired_impl/set_current_node_impl 等），由
+`turn_executor.py`（L4 编排）根据 `KeeperDecision`（L1 契约，见 decision.py）
+里哪个字段非空来调度，不再是 LLM 的自由工具——v1 的 `@function_tool` 薄壳层
+已随架构推翻整体移除（自由工具调用被实测证明不可靠，见 agent.py 模块
+docstring）。`*_impl` 保持普通 async 函数形态，可直接单测。
+
+每类保留状态自己的 KEY 常量 + `load_*`/`format_*` 不在本文件——那些是
+L2 状态编解码，各自有独立模块（phase.py/visibility.py/agenda_state.py/
+scene_state.py），本文件只 import 它们的 KEY 常量用于写入 + 拼进
+`_RESERVED_STATE_KEYS`。
 
 服务端权威原则：骰子由 `dice.py` 掷（LLM 只消费结果、改不了点数），
 HP/San 修改真实写 `characters` 表，所有操作都写一行 `events` 表留痕
@@ -24,12 +31,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.coc7_rules import evaluate_skill_base
 from app.core.keeper import dice, module_loader
+from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, load_fired_agenda
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.phase import (
     ENDING_ID_KEY,
     PHASE_KEY,
     VALID_PHASES,
 )
+from app.core.keeper.scene_state import CURRENT_NODE_KEY
 from app.core.keeper.visibility import (
     ROOM_WIDE_OBSERVER,
     VISIBILITY_REVEALED_KEY,
@@ -44,11 +53,9 @@ from app.models.room import Character, Player, Room
 logger = structlog.get_logger()
 
 # keeper_state 里的系统保留 key：由代码写，不交给 LLM 的 state_updates。
-AGENDA_FIRED_KEY = "已触发议程"
-# 场景指针结构化（04 遗留项）：调查员当前所在的模组节点 id，供 check_guard
-# 精确查找——取代此前对「当前场景」自由文本人类地名做的模糊字符串匹配。
-CURRENT_NODE_KEY = "当前场景节点"
-
+# 每个 KEY 常量的权威定义在各自的状态编解码模块（agenda_state.py/
+# scene_state.py/phase.py/visibility.py），这里只汇总成"禁止 state_updates
+# 改写"的集合——本文件（tools.py）是这些 KEY 唯一允许写入的地方。
 _RESERVED_STATE_KEYS = frozenset(
     {
         AGENDA_FIRED_KEY,
@@ -58,21 +65,6 @@ _RESERVED_STATE_KEYS = frozenset(
         CURRENT_NODE_KEY,
     }
 )
-
-
-def load_fired_agenda(keeper_state: dict | None) -> list[str]:
-    """从状态笔记里解析已触发的议程 id（纯函数，无 IO）。
-
-    存储形态是逗号分隔字符串——keeper_state 的值一律是 str（update_state_impl
-    的契约），不为一个列表破例。None / 缺 key / 空串 / 尾逗号都要稳健解析。
-    """
-    if not keeper_state:
-        return []
-    raw = keeper_state.get(AGENDA_FIRED_KEY)
-    if raw is None or raw == "":
-        return []
-    # 去空白、去空项、保序（一旦写入顺序就是触发顺序，审计用得上）。
-    return [part.strip() for part in str(raw).split(",") if part.strip()]
 
 
 @dataclass

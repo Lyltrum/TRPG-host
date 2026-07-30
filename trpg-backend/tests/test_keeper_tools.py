@@ -26,8 +26,6 @@ from app.core.keeper.decision import (
     KeeperDecision,
     SanCheckRequest,
     StateUpdate,
-    create_pending_checks,
-    execute_side_effects,
 )
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.tools import (
@@ -40,6 +38,7 @@ from app.core.keeper.tools import (
     san_check_impl,
     update_state_impl,
 )
+from app.core.keeper.turn_executor import create_pending_checks, execute_side_effects
 from app.models.event import Event
 from app.models.room import Character, Player, Room
 

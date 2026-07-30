@@ -9,7 +9,8 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.decision import KeeperDecision, execute_side_effects
+from app.core.keeper.agenda_state import AGENDA_FIRED_KEY
+from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.phase import (
     ENDING_ID_KEY,
@@ -21,11 +22,11 @@ from app.core.keeper.phase import (
 )
 from app.core.keeper.prompts import format_turn_input
 from app.core.keeper.tools import (
-    AGENDA_FIRED_KEY,
     KeeperDeps,
     KeeperToolError,
     update_state_impl,
 )
+from app.core.keeper.turn_executor import execute_side_effects
 from app.core.keeper.visibility import (
     VISIBILITY_REVEALED_KEY,
     format_visibility_status,

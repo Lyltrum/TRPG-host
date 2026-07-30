@@ -2,12 +2,12 @@
 
 - 收集模组节点上标注的 skill 集合（含 sub_nodes）
 - 定位当前节点：优先用结构化的场景节点 id（keeper_state 的「当前场景节点」，
-  见 tools.py::CURRENT_NODE_KEY）做精确查找；id 缺失或未命中时，退回对
+  见 scene_state.py::CURRENT_NODE_KEY）做精确查找；id 缺失或未命中时，退回对
   「当前场景」自由文本人类地名做模糊匹配（兼容尚未产出 node id 的历史房间）。
 - 若能定位到节点，且该节点标注了 checks：裁决给出的 skill 必须命中该节点
   checks（别名归一后）之一，否则丢弃并记 issue
 - 若节点无 checks 或找不到当前节点：仅要求 skill 能被 ruleset 解析（由调用方
-  create_pending_checks 已做）
+  turn_executor.py::create_pending_checks 已做）
 """
 
 from __future__ import annotations

@@ -27,7 +27,7 @@ from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.decision import KeeperDecision, StateUpdate
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
-from app.core.keeper.tools import CURRENT_NODE_KEY
+from app.core.keeper.scene_state import CURRENT_NODE_KEY
 from app.core.narrator import NarrationContext
 from app.models.room import Player, Room
 

@@ -102,6 +102,12 @@ export default function CharacterWizardPage() {
   const isSoftGateStep = stepMeta.id === 'occPoints' || stepMeta.id === 'intPoints'
   const remaining = totalPointsRemaining(preview, pendingDelta)
   const isLastStep = state.step === WIZARD_STEPS.length - 1
+  // 硬门禁：preview.validation 里的规则校验（比如"非职业技能已用114点兴趣
+  // 点，超过预算110"）此前只在下方渲染成提示文字，从没被"下一步"/"完成
+  // 创建"检查过——两池合计剩余可以是正数（职业池有富余）而兴趣池自己已经
+  // 超支，此时旧逻辑会把它当成"还有剩余点数"的软提醒放行，真人实测撞见。
+  // preview.validation 非空就必须硬拦，不管当前在哪一步。
+  const hasValidationIssues = (preview?.validation.length ?? 0) > 0
 
   const goPrev = () => {
     if (state.step > 0) dispatch({ type: 'SET_STEP', step: state.step - 1 })
@@ -110,26 +116,35 @@ export default function CharacterWizardPage() {
 
   const goNext = () => {
     if (isLastStep) {
+      if (hasValidationIssues) return
       void handleSubmit()
       return
     }
     if (blockers.length > 0) return
-    if (isSoftGateStep && remaining > 0 && !pendingConfirm) {
-      setPendingConfirm(true)
-      return
+    if (isSoftGateStep) {
+      if (hasValidationIssues) return
+      if (remaining > 0 && !pendingConfirm) {
+        setPendingConfirm(true)
+        return
+      }
     }
     setPendingConfirm(false)
     dispatch({ type: 'SET_STEP', step: state.step + 1 })
   }
 
-  const nextDisabled = submitting || (blockers.length > 0 && !isSoftGateStep)
+  const nextDisabled =
+    submitting ||
+    (blockers.length > 0 && !isSoftGateStep) ||
+    ((isSoftGateStep || isLastStep) && hasValidationIssues)
   const nextLabel = submitting
     ? '提交中…'
-    : isSoftGateStep && pendingConfirm
-      ? `还剩 ${remaining} 点，确定继续？`
-      : isLastStep
-        ? '完成创建'
-        : '下一步'
+    : (isSoftGateStep || isLastStep) && hasValidationIssues
+      ? '请先解决上方的超支问题'
+      : isSoftGateStep && pendingConfirm
+        ? `还剩 ${remaining} 点，确定继续？`
+        : isLastStep
+          ? '完成创建'
+          : '下一步'
 
   return (
     <div className="animate-screen-in min-h-screen bg-page">

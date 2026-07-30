@@ -146,6 +146,25 @@ export function totalPointsRemaining(preview: CharacterComputeResult | null, pen
   return Math.max(0, occBudget + intBudget - occSpent - intSpent - pendingDelta)
 }
 
+/**
+ * 兴趣点数自己的剩余——**不夹到 0**，可以是负数（区别于 `totalPointsRemaining`）。
+ *
+ * 后端 `coc7_rules.py::_compute` 的瀑布记账只单向成立：职业技能超出职业
+ * 预算的部分会溢出记进 `interest_spent`（`occupation_spent` 因此恒不超过
+ * `occupation_budget`），但**反向不成立**——非职业技能只能由兴趣点买，
+ * 职业池的剩余额度不能倒过来补贴兴趣池超支。后端对此有独立的硬校验
+ * （`INTEREST_POINTS_EXCEEDED`），不看两池合计够不够。
+ *
+ * 所以合计剩余（`totalPointsRemaining`）为正，不代表兴趣点没有超支——两个
+ * 数字口径不同，不能共用同一个"还剩 X 点"文案，否则会出现"兴趣点数
+ * 114/110 已经超了，但旁边写着还剩 61 点"这种自相矛盾的显示（且据此拦
+ * "下一步"会漏掉这类超支）。 */
+export function interestPointsRemaining(preview: CharacterComputeResult | null, pendingDelta: number): number {
+  const intBudget = preview?.interestSkillPoints.budget ?? 0
+  const intSpent = preview?.interestSkillPoints.spent ?? 0
+  return intBudget - intSpent - pendingDelta
+}
+
 export interface WizardContext {
   ruleset: Ruleset | null
   preview: CharacterComputeResult | null

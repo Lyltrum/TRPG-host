@@ -4,7 +4,13 @@ import { StepShell, StepSection } from '../components/StepShell'
 import { PoolBar } from '../components/PoolBar'
 import { SkillFilterBar } from '../components/SkillFilterBar'
 import { SkillRow } from '../components/SkillRow'
-import { NON_ALLOCATABLE_SKILL_IDS, buildSkillComputeMap, occupationStarSkillIds, totalPointsRemaining } from '../wizard-selectors'
+import {
+  NON_ALLOCATABLE_SKILL_IDS,
+  buildSkillComputeMap,
+  interestPointsRemaining,
+  occupationStarSkillIds,
+  totalPointsRemaining
+} from '../wizard-selectors'
 import type { WizardAction, WizardState } from '../wizard-state'
 
 /** 步 5 · 兴趣技能（重制设计 v2 §6-步骤5）：全部技能（含职业技能，本职排前面
@@ -26,7 +32,14 @@ export function InterestPointsStep({
 }) {
   const selectedOcc = useMemo(() => ruleset.occupations.find((o) => o.id === state.occupationId) ?? null, [ruleset, state.occupationId])
   const skillComputeMap = useMemo(() => buildSkillComputeMap(preview), [preview])
-  const remaining = totalPointsRemaining(preview, pendingDelta)
+  // combinedRemaining 只用来限制★职业技能（它们可以继续吃两池合计——职业
+  // 池溢出会记进兴趣池，见 coc7_rules.py 的瀑布逻辑）；非职业技能只能由
+  // 兴趣点买，职业池的剩余额度补贴不了兴趣池超支，必须单独用 intRemaining
+  // 限制，否则会出现"兴趣点数已经超支，但因为职业池还有剩余，加号仍然
+  // 能点"的漏洞（真人实测撞见：兴趣点用了114，超预算110，但两池合计还剩
+  // 61，于是显示不一致、也拦不住继续加点/继续下一步）。
+  const combinedRemaining = totalPointsRemaining(preview, pendingDelta)
+  const intRemaining = interestPointsRemaining(preview, pendingDelta)
 
   const starIds = useMemo(
     () => occupationStarSkillIds(selectedOcc, state.slotPicks, preview),
@@ -77,7 +90,7 @@ export function InterestPointsStep({
         label="兴趣点数 (INT×2)"
         spent={intSpent}
         budget={intBudget}
-        remainingOverride={remaining}
+        remainingOverride={intRemaining}
       />
 
       <StepSection title="筛选">
@@ -100,6 +113,20 @@ export function InterestPointsStep({
           const cap = compute?.cap ?? null
           const isStar = starIds.has(skill.id)
           const disabled = NON_ALLOCATABLE_SKILL_IDS.has(skill.id)
+          // 信用评级虽然带★（始终是本职必填技能），但它的加点规则跟其它
+          // 职业技能不一样：下限以内固定算职业点，**超出下限的部分永远直接
+          // 记进兴趣点**，不像其它职业技能那样先花职业池、花完才瀑布溢出到
+          // 兴趣池（coc7_rules.py 的 is_credit 分支）。所以它必须跟非职业
+          // 技能一样用 intRemaining 卡上限——用 combinedRemaining 卡正是
+          // 这次真实缺陷的成因（信用评级点到超支时"+"仍可点）。
+          const isCreditRating = skill.id === 'credit-rating'
+          const usesCombinedBudget = isStar && !isCreditRating
+          // 信用评级下限以内不占兴趣点（floor 用 Math.max 顶住，不让
+          // allocation 已经低于 creditMin 时把上限算小了）。
+          const creditFreeFloor = isCreditRating ? (selectedOcc?.creditMin ?? 0) : 0
+          const maxPoints = usesCombinedBudget
+            ? allocation + combinedRemaining
+            : Math.max(allocation, creditFreeFloor) + Math.max(0, intRemaining)
           return (
             <SkillRow
               key={skill.id}
@@ -109,7 +136,7 @@ export function InterestPointsStep({
               allocation={allocation}
               onChange={(d) => handleSkillChange(skill.id, d)}
               onSetAllocation={(v) => handleSkillSet(skill.id, v)}
-              maxPoints={allocation + remaining}
+              maxPoints={maxPoints}
               minPoints={0}
               disabled={disabled}
               disabledReason="建卡阶段不可加点"

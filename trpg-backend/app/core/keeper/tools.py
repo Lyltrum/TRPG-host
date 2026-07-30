@@ -45,6 +45,9 @@ logger = structlog.get_logger()
 
 # keeper_state 里的系统保留 key：由代码写，不交给 LLM 的 state_updates。
 AGENDA_FIRED_KEY = "已触发议程"
+# 场景指针结构化（04 遗留项）：调查员当前所在的模组节点 id，供 check_guard
+# 精确查找——取代此前对「当前场景」自由文本人类地名做的模糊字符串匹配。
+CURRENT_NODE_KEY = "当前场景节点"
 
 _RESERVED_STATE_KEYS = frozenset(
     {
@@ -52,6 +55,7 @@ _RESERVED_STATE_KEYS = frozenset(
         VISIBILITY_REVEALED_KEY,
         PHASE_KEY,
         ENDING_ID_KEY,
+        CURRENT_NODE_KEY,
     }
 )
 
@@ -403,6 +407,27 @@ async def update_state_impl(deps: KeeperDeps, key: str, value: str) -> str:
         room.keeper_state = {**(room.keeper_state or {}), key: value}
         await _record(db, deps, "keeper.state", {"key": key, "value": value})
     return f"已记录：{key} = {value}"
+
+
+async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
+    """写入调查员当前所在的模组场景节点 id（结构化场景指针）。
+
+    校验 node_id 必须真实存在于剧本节点树（module.node_by_id）——拒绝模型
+    编造不存在的 id，与 mark_agenda_fired_impl/mark_visibility_revealed_impl
+    同一套"未知 id 拒绝写入、上报为 issue"原则一致。
+    """
+    node = deps.module.node_by_id(node_id)
+    if node is None:
+        raise KeeperToolError(f"剧本里没有场景节点 id={node_id}")
+    async with deps.write_lock, deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            raise KeeperToolError("房间不存在")
+        current_state = dict(room.keeper_state or {})
+        current_state[CURRENT_NODE_KEY] = node_id
+        room.keeper_state = current_state
+        await _record(db, deps, "keeper.node", {"node_id": node_id, "title": node.title})
+    return f"当前场景节点：{node.title}（{node_id}）"
 
 
 async def mark_agenda_fired_impl(deps: KeeperDeps, event_ids: list[str]) -> str:

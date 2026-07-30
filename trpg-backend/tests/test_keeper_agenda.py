@@ -28,6 +28,7 @@ from app.core.keeper.module_loader import (
 from app.core.keeper.prompts import format_agenda_status, format_turn_input
 from app.core.keeper.tools import (
     AGENDA_FIRED_KEY,
+    CURRENT_NODE_KEY,
     KeeperDeps,
     load_fired_agenda,
     mark_agenda_fired_impl,
@@ -327,6 +328,31 @@ async def test_execute_side_effects_valid_agenda_updates_state(deps: KeeperDeps)
         room = await db.get(Room, deps.room_id)
         assert room is not None
         assert "night-1-footprints" in load_fired_agenda(room.keeper_state)
+
+
+# ── 8b. execute_side_effects 处理 current_node_id（场景指针结构化）──
+
+
+async def test_execute_side_effects_unknown_node_id_is_issue(deps: KeeperDeps) -> None:
+    decision = KeeperDecision(current_node_id="no-such-node")
+    report, issues = await execute_side_effects(deps, decision)
+    assert any("no-such-node" in i for i in issues)
+    assert report == []
+    async with _session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        assert (room.keeper_state or {}).get(CURRENT_NODE_KEY) is None
+
+
+async def test_execute_side_effects_valid_node_id_updates_state(deps: KeeperDeps) -> None:
+    decision = KeeperDecision(current_node_id="hall")
+    report, issues = await execute_side_effects(deps, decision)
+    assert issues == []
+    assert len(report) == 1 and "hall" in report[0]
+    async with _session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        assert (room.keeper_state or {}).get(CURRENT_NODE_KEY) == "hall"
 
 
 # ── 9. KeeperDecision 解析 ──────────────────────────

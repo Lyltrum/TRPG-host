@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.core.keeper.pending import PendingCheck
 from app.core.keeper.phase import PHASE_FINISHED, PHASE_INVESTIGATION
 from app.core.keeper.tools import (
+    CURRENT_NODE_KEY,
     KeeperDeps,
     KeeperToolError,
     _resolve_character,
@@ -31,6 +32,7 @@ from app.core.keeper.tools import (
     adjust_hp_impl,
     mark_agenda_fired_impl,
     mark_visibility_revealed_impl,
+    set_current_node_impl,
     set_phase_impl,
     update_state_impl,
 )
@@ -83,6 +85,17 @@ class KeeperDecision(_DecisionModel):
     san_checks: list[SanCheckRequest] = Field(default_factory=list)
     hp_changes: list[HpChange] = Field(default_factory=list)
     state_updates: list[StateUpdate] = Field(default_factory=list)
+    # 场景指针结构化（04 遗留项）：state_updates 里的「当前场景」是人类可读
+    # 地名，这个字段是同一件事的机器可读版——剧本节点树里真实存在的 id
+    # （见 module_loader.render_full 每个节点标题旁的 `id: xxx`）。取代此前
+    # check_guard 对自由文本地名做的模糊字符串匹配。
+    current_node_id: str | None = Field(
+        default=None,
+        description=(
+            "本轮结束时调查员所在的剧本节点 id；无法对应到已知节点或场景"
+            "未变化时留空，不要编造不存在的 id"
+        ),
+    )
     agenda_fired: list[str] = Field(
         default_factory=list, description="本轮真正发生的议程事件 id（不预告）"
     )
@@ -136,6 +149,14 @@ async def execute_side_effects(
             report.append(await update_state_impl(deps, update.key, update.value))
         except KeeperToolError as exc:
             issues.append(f"状态更新未执行：{exc}")
+
+    # 场景指针结构化（04 遗留项）：node_id 存在性由 set_current_node_impl
+    # 校验（module.node_by_id）——非法 id 不写入、记为 issue，不炸整轮。
+    if decision.current_node_id:
+        try:
+            report.append(await set_current_node_impl(deps, decision.current_node_id))
+        except KeeperToolError as exc:
+            issues.append(f"场景定位未执行：{exc}")
 
     # 议程触发：只校验 id 合法性，once 幂等由 mark_agenda_fired_impl 兜底。
     if decision.agenda_fired:
@@ -206,17 +227,21 @@ async def create_pending_checks(
     pending: list[PendingCheck] = []
     issues: list[str] = []
 
-    # 模组节点护栏：先按当前场景过滤 skill 列表
+    # 模组节点护栏：先按当前场景过滤 skill 列表（node_id 精确定位优先，
+    # 自由文本地名模糊匹配兜底——见 check_guard.find_node_for_scene）。
     current_scene: str | None = None
+    current_node_id: str | None = None
     async with deps.session_factory() as db:
         room = await db.get(Room, deps.room_id)
         if room and isinstance(room.keeper_state, dict):
             raw = room.keeper_state.get("当前场景")
             current_scene = str(raw) if raw is not None else None
+            current_node_id = room.keeper_state.get(CURRENT_NODE_KEY)
     allowed_skills, guard_issues = filter_checks_against_module(
         deps.module,
         [c.skill for c in decision.checks],
         current_scene=current_scene,
+        current_node_id=current_node_id,
     )
     issues.extend(guard_issues)
     allowed_set = set(allowed_skills)

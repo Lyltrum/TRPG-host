@@ -64,3 +64,35 @@ def test_find_node() -> None:
     m = _mod()
     assert find_node_for_scene(m, "科比特宅邸") is not None
     assert find_node_for_scene(m, "house") is not None
+
+
+# ── 场景指针结构化：node_id 精确查找优先于自由文本模糊匹配 ──────
+
+
+def test_find_node_prefers_structured_node_id() -> None:
+    m = _mod()
+    node = find_node_for_scene(m, "跟剧本地名完全对不上的乱写文本", node_id="house")
+    assert node is not None
+    assert node.id == "house"
+
+
+def test_find_node_falls_back_to_scene_hint_when_node_id_missing() -> None:
+    m = _mod()
+    assert find_node_for_scene(m, "科比特宅邸", node_id=None).id == "house"
+
+
+def test_find_node_falls_back_to_scene_hint_when_node_id_unknown() -> None:
+    m = _mod()
+    node = find_node_for_scene(m, "科比特宅邸", node_id="no-such-node")
+    assert node is not None and node.id == "house"
+
+
+def test_filter_checks_against_module_uses_node_id() -> None:
+    kept, issues = filter_checks_against_module(
+        _mod(),
+        ["侦查", "克苏鲁神话"],
+        current_scene="跟剧本地名完全对不上的乱写文本",
+        current_node_id="house",
+    )
+    assert kept == ["侦查"]
+    assert any("克苏鲁神话" in i for i in issues)

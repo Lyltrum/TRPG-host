@@ -27,6 +27,7 @@ from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.decision import KeeperDecision, StateUpdate
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
+from app.core.keeper.tools import CURRENT_NODE_KEY
 from app.core.narrator import NarrationContext
 from app.models.room import Player, Room
 
@@ -55,12 +56,21 @@ def _keeper() -> KeeperAgent:
     )
 
 
-async def _seed_room(room_code: str, scene: str | None, nickname: str = "阿福") -> tuple[str, str]:
+async def _seed_room(
+    room_code: str,
+    scene: str | None,
+    nickname: str = "阿福",
+    *,
+    node_id: str | None = None,
+) -> tuple[str, str]:
     """建一个已处于调查阶段的房间，keeper_state 里预置"当前场景"（scene 为
-    None 时不写这个 key，模拟对局刚开始、还没有任何场景记录的情况）。"""
+    None 时不写这个 key，模拟对局刚开始、还没有任何场景记录的情况）；
+    node_id 非 None 时同时预置结构化的 CURRENT_NODE_KEY。"""
     keeper_state: dict = {PHASE_KEY: PHASE_INVESTIGATION}
     if scene is not None:
         keeper_state["当前场景"] = scene
+    if node_id is not None:
+        keeper_state[CURRENT_NODE_KEY] = node_id
     async with _session_factory() as db:
         room = Room(
             room_code=room_code,
@@ -99,10 +109,11 @@ async def _run(
     decision: KeeperDecision,
     *,
     is_heartbeat: bool = False,
+    prev_node_id: str | None = None,
 ):
     agent = _keeper()
     captured = _stub_agent(agent, decision)
-    room_id, player_id = await _seed_room(room_code, prev_scene)
+    room_id, player_id = await _seed_room(room_code, prev_scene, node_id=prev_node_id)
     context = NarrationContext(
         utterance="我打算先去那个没动过的书房看一下",
         player_nickname="阿福",
@@ -205,3 +216,37 @@ async def test_scene_transition_stacks_with_action_resolution_guidance() -> None
 
     assert "场景切换" in final_decision.narration_guidance
     assert "强制推进" in final_decision.narration_guidance
+
+
+# ── 7. 结构化 node_id 双方都有时是权威信号：node_id 不同 → 注入，
+#      即使自由文本地名恰好相同（04 遗留项：精确比较不受措辞影响）──────
+
+
+async def test_node_id_change_injects_even_when_scene_text_matches() -> None:
+    decision = KeeperDecision(
+        thinking="玩家移动到另一处也叫这个名字的地方",
+        narration_guidance="裁决给出的原始指引",
+        player_state="clear_action",
+        state_updates=[StateUpdate(key="当前场景", value="门厅")],
+        current_node_id="cellar",
+    )
+    final_decision = await _run("SCENE07", "门厅", decision, prev_node_id="hall")
+
+    assert "场景切换" in final_decision.narration_guidance
+
+
+# ── 8. node_id 相同时不该注入，即使自由文本措辞不同（避免同一地点换个
+#      说法被误判成切换——这正是引入 node_id 精确比较要解决的问题）──────
+
+
+async def test_node_id_unchanged_does_not_inject_despite_scene_text_diff() -> None:
+    decision = KeeperDecision(
+        thinking="还在同一个地方，只是这次措辞不同",
+        narration_guidance="裁决给出的原始指引",
+        player_state="clear_action",
+        state_updates=[StateUpdate(key="当前场景", value="惠特利宅书房")],
+        current_node_id="hall",
+    )
+    final_decision = await _run("SCENE08", "门厅", decision, prev_node_id="hall")
+
+    assert "场景切换" not in final_decision.narration_guidance

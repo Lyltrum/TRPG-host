@@ -92,14 +92,26 @@ def resolve_opposed(actor: CheckOutcome, opponent: CheckOutcome) -> bool:
     """COC7 对抗检定：主动方赢了没有（exec/19 #38）。
 
     规则顺序：
-    1. 成功等级高者胜；
+    0. **主动方自己没掷过 → 一定没赢。** 对抗掷骰里失败的一方不可能获胜；
+       双方都失败就是僵局（维持现状），没有赢家。
+    1. 双方都成功 → 成功等级高者胜；
     2. 等级相同 → 目标值（技能/属性值）高者胜；
     3. 仍相同 → **判主动方失败**。
 
     第 3 条是本项目的裁定，不是规则书原文（书上说重掷或由 KP 裁定）：真人在
     等回复，重掷要多一次往返；而"平局时维持现状"对防守方有利，正是对抗检定
     的常见默认。写死在代码里，不交给模型即兴。
+
+    🔴 第 0 条是**试玩实测补上的**（2026-07-31，exec/19 #43）。初版只比成功
+    等级的序号，于是 `失败(rank 1) > 大失败(rank 0)`、以及两边都失败时"技能值
+    高者胜"，都会判出一个赢家。实际发生过：玩家力量 63/60 失败、对手 62/50
+    也失败，系统却记 `won=True`，而给叙事的文本是「63/60（失败） vs 62/50
+    （失败） → 胜」——自相矛盾。**叙事模型选择按"失败"写，它比代码判对了。**
     """
+    if not actor.succeeded:
+        return False
+    if not opponent.succeeded:
+        return True
     actor_rank, opponent_rank = _LEVEL_RANK[actor.level], _LEVEL_RANK[opponent.level]
     if actor_rank != opponent_rank:
         return actor_rank > opponent_rank

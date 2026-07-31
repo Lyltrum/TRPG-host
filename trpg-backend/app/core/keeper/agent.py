@@ -241,6 +241,25 @@ def _build_check_boundary_hint(pending_checks: list[PendingCheck]) -> str:
     )
 
 
+# 本轮**没有**任何待掷检定时由代码强制追加。跟 `_build_check_boundary_hint`
+# 是同一件事的另一半：那个管"有检定时别抢跑"，这个管"没检定时别凭空要求掷骰"。
+#
+# 真人实测 2026-07-31（exec/19 #38）：裁决输出 `checks=[]`，叙事却写出「凌铭辉，
+# 进行一次体质对抗检定，目标 POT 16」——玩家界面上永远不会出现那张掷骰卡片，
+# 他就一直等下去。根因是**对抗检定在 `KeeperDecision` 里无法表达**（`CheckRequest`
+# 只有 skill/player/reason，没有对抗目标值），裁决器想要就只能写进散文里。
+#
+# ⚠️ 这只是止血，是**概率性**的：真正的修法是让 schema 表达得了对抗检定，
+# 否则模型永远有动机把说不出口的东西塞进正文（与 exec/17 同族）。
+_NO_PENDING_CHECK_HINT = (
+    "\n\n【检定纪律·代码硬提醒】本轮**没有任何待掷检定**。因此正文里"
+    "**不得要求任何调查员掷骰或进行检定**——不要写「请进行 XX 检定」"
+    "「目标值 XX」「掷一次 XX」这类话。玩家界面上不会出现掷骰卡片，"
+    "写了他只会一直等一个永远不来的骰子。"
+    "需要不确定性时，直接把结果写成既定事实，或者把局面停在他下一步可以行动的地方。"
+)
+
+
 class KeeperAgent(Narrator):
     def __init__(
         self,
@@ -660,7 +679,7 @@ class KeeperAgent(Narrator):
             issues=issues,
             token_limit=token_limit,
             char_limit=char_limit,
-            extra_suffix="",
+            extra_suffix=_NO_PENDING_CHECK_HINT,
             action_intent=action_intent,
             confused=confused,
             keeper_state=after_state,

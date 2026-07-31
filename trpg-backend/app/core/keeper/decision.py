@@ -173,8 +173,16 @@ class KeeperDecision(_DecisionModel):
         default="", description="给叙事阶段的指引：可揭示什么/须保密什么/NPC 如何反应"
     )
     player_state: Literal[
-        "confused", "weird_or_meta", "clear_action", "question_to_kp", "normal"
+        "confused",
+        "weird_or_meta",
+        "clear_action",
+        "question_to_kp",
+        "physical_conflict",
+        "normal",
     ] = Field(
         default="normal",
-        description="玩家本轮发言的分类：迷茫求指引/怪话或元指令/明确行动/向守秘人问已知信息/都不是",
+        description=(
+            "玩家本轮发言的分类：迷茫求指引/怪话或元指令/明确行动/向守秘人问已知信息/"
+            "对他人动手或强行突破/都不是"
+        ),
     )

@@ -118,7 +118,10 @@ export function useWizardSubmit(
           derived: finalDerived,
           backgroundDetail: state.backgroundDetail,
         },
-        roomId
+        roomId,
+        // 按玩家分片：同一浏览器两个标签页进同一房间时，后建完卡的曾经会
+        // 覆盖先建的，两边面板显示同一张卡。
+        useRoomStore.getState().playerId
       )
       navigate('/room/ready')
     } catch (err) {

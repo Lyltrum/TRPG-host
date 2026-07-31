@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Users, Map, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll, EyeOff } from 'lucide-react'
-import { useState, useRef, useEffect, type FormEvent } from 'react'
+import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react'
 import type { ChatMessage, PartyCharacter } from 'trpg-sdk'
 import { useRoomStore } from '@/stores/room-store'
 import { useGameStore } from '@/stores/game-store'
@@ -9,6 +9,8 @@ import { useCharacterStore } from '@/stores/character-store'
 import { connectWebSocket, waitForWsOpen, sdk, onWsMessage, disconnectWebSocket, friendlyErrorMessage } from '@/services/api-client'
 import { BACKGROUND_DETAIL_FIELDS } from '@/data/character-model'
 import { endGame } from '@/services/room'
+import { fetchCharacter } from '@/services/character/character-api'
+import { toCompletedCharacter } from '@/services/character/character-view'
 import { useRoomPlayers } from '@/hooks/useRoomPlayers'
 import { useRuleset } from '@/hooks/useRuleset'
 import { useSpeechInput } from '@/hooks/useSpeechInput'
@@ -373,11 +375,38 @@ export default function RoomPage() {
   const playerId = useRoomStore((s) => s.playerId)
   const reconnectToken = useRoomStore((s) => s.reconnectToken)
   const nickname = useAuthStore((s) => s.nickname)
-  // 按房间取角色卡，而不是直接读 s.character——本地缓存不按房间区分的话，
-  // 换房间会把上一个房间的角色数据错误地展示出来（见 PR #67 review）。
-  const character = useCharacterStore((s) => (roomId ? s.getForRoom(roomId) : null))
-  const senderName = character?.info.name || nickname || '你'
   const { ruleset } = useRuleset()
+  // 🔴 局内角色卡以**后端**为准（issue #96 加了读接口，但此前只有准备页接上，
+  // 聊天室一直读 localStorage）。本地缓存只作拉回来之前的首屏占位。
+  // 这么改同时解决两件事：
+  //   ① 同一浏览器两个标签页进同一房间时不再串卡（各自按自己的 characterId 拉）；
+  //   ② HP/SAN 不再靠广播增量补写——掉线期间错过的广播以前永远补不回来，现在
+  //      每次变动后重拉一次，数值总是权威值。
+  const characterId = useRoomStore((s) => s.characterId)
+  const cachedCharacter = useCharacterStore((s) =>
+    roomId ? s.getForRoom(roomId, playerId) : null
+  )
+  const [remoteCharacter, setRemoteCharacter] = useState<typeof cachedCharacter>(null)
+  const character = remoteCharacter ?? cachedCharacter
+  // WS 回调里要读"变化前的 HP"来渲染 `12 → 9` 这种提示。用 ref 而不是把
+  // character 放进那个 effect 的依赖——依赖一变就会退订重订阅 WS 消息。
+  const characterRef = useRef(character)
+  characterRef.current = character
+
+  // 从后端重拉自己那张卡。进房拉一次；HP/SAN 被服务端改写后再拉一次。
+  const reloadCharacter = useCallback(() => {
+    if (!roomId || !characterId || !ruleset) return
+    fetchCharacter(roomId, characterId)
+      .then((saved) => setRemoteCharacter(toCompletedCharacter(saved, ruleset)))
+      .catch(() => {
+        // 拉不到不打断对局：继续用手上这份（首屏占位或上一次拉到的）。
+      })
+  }, [roomId, characterId, ruleset])
+
+  useEffect(() => {
+    reloadCharacter()
+  }, [reloadCharacter])
+  const senderName = character?.info.name || nickname || '你'
   const roomInfo = useRoomPlayers(roomCode)
   const isHost = roomInfo?.players.find((p) => p.playerId === playerId)?.isHost ?? false
   // 房主选模组时落在 game-store；访客/刷新后优先 room-store.moduleId（同 StoryPage 的取值口径）
@@ -673,8 +702,10 @@ export default function RoomPage() {
         }
         // 角色卡的 San 此前一直是建卡快照，从不随检定结果更新（真人实测
         // 09-#4）——sanRemaining 后端早就带了，只是没人读。
-        if (rollerId === playerId && roomId && typeof sanRemaining === 'number') {
-          useCharacterStore.getState().updateDerived(roomId, { san: sanRemaining })
+        // 不本地增量改，重拉一次——服务端才是权威，掉线期间错过的广播这样
+        // 也能一并归位（sanRemaining 仍然带在广播里，用来渲染下面的提示）。
+        if (rollerId === playerId && typeof sanRemaining === 'number') {
+          reloadCharacter()
         }
       } else if (envelope.type === 'character.stat_changed') {
         // HP 变更的结构化广播（真人实测 09-#4/#6）：此前 HP 变化只被拼进
@@ -684,9 +715,9 @@ export default function RoomPage() {
         // HP 变化在 COC 里本来就是桌面上大家都看得见的公开信息。
         const { playerId: targetId, hp, reason } = envelope.payload
         const isSelf = targetId === playerId
-        const prevHp = isSelf && roomId ? useCharacterStore.getState().getForRoom(roomId)?.derived.hp : undefined
-        if (isSelf && roomId) {
-          useCharacterStore.getState().updateDerived(roomId, { hp })
+        const prevHp = isSelf ? characterRef.current?.derived.hp : undefined
+        if (isSelf) {
+          reloadCharacter()
         }
         const label = prevHp !== undefined && prevHp !== hp
           ? `${nicknameFor(targetId)} · HP ${prevHp} → ${hp}`
@@ -715,7 +746,7 @@ export default function RoomPage() {
       }
     })
     return off
-  }, [playerId, senderName, roomInfo, roomId])
+  }, [playerId, senderName, roomInfo, roomId, reloadCharacter])
 
   // 讨论区历史：进房拉一次（倒序返回，反转成时间正序渲染）。实时增量走上面
   // 的 chat.message 广播，历史和增量之间的重复靠 messageId 去重兜住。

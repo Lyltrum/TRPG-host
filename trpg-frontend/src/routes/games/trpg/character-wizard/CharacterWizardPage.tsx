@@ -53,7 +53,9 @@ export default function CharacterWizardPage() {
   const { ruleset, loading: rulesetLoading, error: rulesetError } = useRuleset()
   const roomId = useRoomStore((s) => s.roomId)
 
-  const existingCharacter = useCharacterStore.getState().getForRoom(useRoomStore.getState().roomId ?? '')
+  const existingCharacter = useCharacterStore
+    .getState()
+    .getForRoom(useRoomStore.getState().roomId ?? '', useRoomStore.getState().playerId)
   const [state, dispatch] = useReducer(wizardReducer, existingCharacter, buildInitialState)
 
   const { preview, previewError, pendingDelta } = useWizardPreview(ruleset, state)

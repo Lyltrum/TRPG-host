@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, UserPlus, Swords, Eye } from 'lucide-react'
 import { useCharacterStore } from '@/stores/character-store'
 import { fetchCharacter } from '@/services/character/character-api'
+import { toCompletedCharacter } from '@/services/character/character-view'
 import { useRoomStore } from '@/stores/room-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { connectWebSocket, disconnectWebSocket, sdk, waitForWsOpen } from '@/services/api-client'
@@ -153,7 +154,10 @@ export default function CharacterReadyPage() {
   const [showSelfSheet, setShowSelfSheet] = useState(false)
   const [starting, setStarting] = useState(false)
   const roomId = useRoomStore((s) => s.roomId)
-  const cachedCharacter = useCharacterStore((s) => (roomId ? s.getForRoom(roomId) : null))
+  const selfPlayerId = useRoomStore((s) => s.playerId)
+  const cachedCharacter = useCharacterStore((s) =>
+    roomId ? s.getForRoom(roomId, selfPlayerId) : null
+  )
   const characterId = useRoomStore((s) => s.characterId)
   const { ruleset: readyRuleset } = useRuleset()
 
@@ -168,35 +172,8 @@ export default function CharacterReadyPage() {
     let cancelled = false
     fetchCharacter(roomId, characterId)
       .then((saved) => {
-        if (cancelled || !saved.name) return
-        const occupationId =
-          readyRuleset.occupations.find((o) => o.name === saved.occupation)?.id ?? null
-        const derived = saved.derivedStats ?? {}
-        const num = (v: unknown) => (typeof v === 'number' ? v : 0)
-        setRemoteCharacter({
-          info: {
-            name: saved.name,
-            playerName: '',
-            age: saved.age != null ? String(saved.age) : '',
-            gender: saved.gender ?? '',
-            residence: saved.residence ?? '',
-            birthplace: saved.birthplace ?? '',
-            occupationId,
-          },
-          attr: { ...saved.attributes },
-          skillAlloc: {},
-          skillFinalValues: { ...saved.skills },
-          equipment: (saved.equipment ?? []).join('、'),
-          background: saved.background ?? '',
-          notes: saved.notes ?? '',
-          derived: {
-            hp: num(derived.HP),
-            san: num(derived.SAN),
-            mp: num(derived.MP),
-            db: derived.DB == null ? '0' : String(derived.DB),
-            move: num(derived.MOV),
-          },
-        })
+        if (cancelled) return
+        setRemoteCharacter(toCompletedCharacter(saved, readyRuleset))
       })
       .catch(() => {
         // 拉不到就沿用本地缓存（比如还没建过卡），不打断这个页面。

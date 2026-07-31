@@ -162,9 +162,10 @@ async def _audience_at_speaker_location(
     keeper_state = room.keeper_state if room is not None else None
     if private or player_id in load_hidden_players(keeper_state):
         return [player_id]
-    rows = await db.execute(
-        select(Player.id).where(Player.room_id == room_id, Player.is_ai.is_(False))
-    )
+    # AI 玩家算进分组（exec/21 第一层）。**分组用全量玩家、发送用连接**：
+    # 下面 `send_to_players` 按 player_id 找连接，AI 没有连接自然发不到，
+    # 那是对的——算上它是为了让"谁跟谁在一处"算对，不是为了给它发字节。
+    rows = await db.execute(select(Player.id).where(Player.room_id == room_id))
     groups = group_players(keeper_state, list(rows.scalars()))
     if len(groups) <= 1:
         return None

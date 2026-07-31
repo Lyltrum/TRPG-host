@@ -105,6 +105,11 @@ async def _pick_player(
 
     async with session_factory() as db:
         rows = list((await db.execute(select(Player).where(Player.room_id == room_id))).scalars())
+        # 🔴 这里排除 AI 玩家是**有意的语义**，不是"AI 还不存在"时的顺手防御
+        # （exec/21 第一层裁决表里唯一保留排除的一处）：聚光灯的职责是照顾
+        # **被冷落的真人**——四人桌上话多的人会一直占着回合，安静的那位可能
+        # 整场不被点到。AI 玩家不会因为没被点到而觉得无聊，把它算进来只会挤掉
+        # 真人的镜头。
         humans = [p for p in rows if not p.is_ai]
         if not humans:
             return None

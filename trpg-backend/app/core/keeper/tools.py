@@ -530,12 +530,10 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
         if room is None:
             raise KeeperToolError("房间不存在")
         current_state = dict(room.keeper_state or {})
+        # AI 玩家算进名单（exec/21 第一层）："跟你站在一起的人跟你一起走"。
+        # 不算它，AI 会被永久留在原地，下一轮就被判成分头——正是 #37 那类 bug。
         roster = list(
-            (
-                await db.execute(
-                    select(Player.id).where(Player.room_id == deps.room_id, Player.is_ai.is_(False))
-                )
-            ).scalars()
+            (await db.execute(select(Player.id).where(Player.room_id == deps.room_id))).scalars()
         )
         # 用改动**之前**的状态判断"谁跟发言者站在一起"——先写指针再判断会把
         # 所有回落到房间指针的人都算成同处，等于没判。

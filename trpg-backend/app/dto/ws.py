@@ -160,6 +160,10 @@ class NarrationPushPayload(CamelModel):
     """narration.push 推送 payload。"""
 
     text: str
+    # 只给你一个人的私密结果（exec/18 ⑥ 私密行动 / ② 潜行）。前端据此把这条
+    # 折叠成「点按查看」——**线下同桌**时旁人看得见你的屏幕，私密的物理前提
+    # 本来就不成立，这个交互是那种场合下唯一的补救（P5.3）。
+    private: bool = False
 
 
 class ChatMessagePayload(CamelModel):

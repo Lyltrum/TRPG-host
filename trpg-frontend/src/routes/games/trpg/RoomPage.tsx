@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Users, Map, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll, EyeOff } from 'lucide-react'
 import { useState, useRef, useEffect, type FormEvent } from 'react'
-import type { ChatMessage } from 'trpg-sdk'
+import type { ChatMessage, PartyCharacter } from 'trpg-sdk'
 import { useRoomStore } from '@/stores/room-store'
 import { useGameStore } from '@/stores/game-store'
 import { useAuthStore } from '@/stores/auth-store'
@@ -20,6 +20,9 @@ interface Message {
   content: string
   time: string
   isSelf?: boolean
+  // 只给你一个人的私密结果（exec/18 ⑥/②）。**线下同桌时旁人看得见你的屏幕**，
+  // 私密的物理前提本来就不成立——折叠成"点按查看"是那种场合唯一的补救。
+  private?: boolean
 }
 
 // 两段式玩家掷骰（feat/keeper-agent）：守秘人裁决"需要检定"后不直接掷骰，
@@ -402,6 +405,12 @@ export default function RoomPage() {
   const [typing, setTyping] = useState(false)
   const [openPanel, setOpenPanel] = useState<string | null>(null)
   const [sheetPage, setSheetPage] = useState<'info' | 'background'>('info')
+  // 队友角色卡（exec/14 P5.3）：真人桌上卡是互相传阅的，此前系统只能读回
+  // 自己那张，反而比真人桌封闭。展开哪一位由 expandedMemberId 决定。
+  const [partyCharacters, setPartyCharacters] = useState<PartyCharacter[] | null>(null)
+  const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null)
+  // 已点开的私密气泡下标。默认折叠，点一下才显形。
+  const [revealedPrivate, setRevealedPrivate] = useState<Set<number>>(new Set())
   const [skillsTab, setSkillsTab] = useState<'occupation' | 'interest'>('occupation')
   const [showDice, setShowDice] = useState(false)
   const [pendingCheck, setPendingCheck] = useState<PendingCheck | null>(null)
@@ -601,6 +610,7 @@ export default function RoomPage() {
         seenEventKeysRef.current.add(textKey)
         setMessages(prev => [...prev, {
           type: 'narr', sender: '守秘人', content: envelope.payload.text, time: now,
+          private: envelope.payload.private === true,
         }])
       } else if (envelope.type === 'chat.message') {
         setChatMessages(prev =>
@@ -722,6 +732,24 @@ export default function RoomPage() {
       })
       .catch(() => {}) // 历史拉不到不阻塞进房，聊天区从空开始
   }, [roomId, reconnectToken])
+
+  // 队友角色卡：只在成员面板打开时拉一次。每次打开都重拉——队友可能刚建完卡、
+  // HP 也可能刚被扣过，缓存住会展示过期数值。
+  useEffect(() => {
+    if (openPanel !== 'members' || !roomId || !reconnectToken) return
+    let cancelled = false
+    sdk.rooms
+      .listPartyCharacters(roomId, reconnectToken)
+      .then((list) => {
+        if (!cancelled) setPartyCharacters(list)
+      })
+      .catch(() => {
+        if (!cancelled) setPartyCharacters([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [openPanel, roomId, reconnectToken])
 
   // 语音输入（issue #107）：转写文本追加进输入框，用户确认后照常点发送——
   // 发送路径与手动打字完全一致，转写不直接发送（给用户一次改错的机会）。
@@ -942,7 +970,18 @@ export default function RoomPage() {
                   ${isNarr ? 'bg-[#fdfaf4] border-l-[3px] border-brass rounded-r-sm rounded-l-none italic text-[#4a4030]' : ''}
                   ${!isPlayer && !isNarr ? 'bg-panel rounded-md' : ''}
                 `}>
-                  {msg.content}
+                  {msg.private && !revealedPrivate.has(i) ? (
+                    <button
+                      type="button"
+                      onClick={() => setRevealedPrivate(prev => new Set(prev).add(i))}
+                      className="flex items-center gap-1.5 text-[12px] not-italic text-text-muted"
+                    >
+                      <EyeOff className="w-3.5 h-3.5" strokeWidth={2} />
+                      只有你能看到 · 点按查看
+                    </button>
+                  ) : (
+                    msg.content
+                  )}
                 </div>
                 <div className="text-[10px] text-text-dim mt-0.5">{msg.time}</div>
               </div>
@@ -1320,15 +1359,81 @@ export default function RoomPage() {
         {roomInfo ? (
           <div className="space-y-1.5">
             <p className="text-xs text-text-muted mb-2">{roomInfo.players.length}/{roomInfo.maxPlayers} 人</p>
-            {roomInfo.players.map((p) => (
-              <div key={p.playerId} className="flex items-center gap-3 px-3 py-2 bg-panel rounded-md">
-                <div className="w-8 h-8 rounded-full bg-card border border-border-light flex items-center justify-center text-sm flex-shrink-0">🔍</div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-text-primary">{p.nickname}</div>
-                  <div className="text-[11px] text-text-dim">{p.isHost ? '房主' : '玩家'}{p.playerId === playerId ? ' · 你' : ''}</div>
+            {roomInfo.players.map((p) => {
+              const card = partyCharacters?.find((c) => c.playerId === p.playerId)
+              const expanded = expandedMemberId === p.playerId
+              return (
+                <div key={p.playerId} className="bg-panel rounded-md overflow-hidden">
+                  <button
+                    onClick={() => setExpandedMemberId(expanded ? null : p.playerId)}
+                    className="w-full flex items-center gap-3 px-3 py-2 text-left active:bg-border-light"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-card border border-border-light flex items-center justify-center text-sm flex-shrink-0">🔍</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-text-primary">
+                        {card?.name ? `${card.name}` : p.nickname}
+                      </div>
+                      <div className="text-[11px] text-text-dim truncate">
+                        {p.nickname}
+                        {p.isHost ? ' · 房主' : ''}
+                        {p.playerId === playerId ? ' · 你' : ''}
+                        {card?.occupation ? ` · ${card.occupation}` : card ? '' : ' · 未建卡'}
+                      </div>
+                    </div>
+                    <span className="text-[10px] text-text-dim flex-shrink-0">{expanded ? '收起' : '看卡'}</span>
+                  </button>
+
+                  {expanded && (
+                    <div className="px-3 pb-3 border-t border-border-light pt-2.5">
+                      {card && card.name ? (
+                        <>
+                          <div className="grid grid-cols-4 gap-1 mb-2.5">
+                            {(ruleset?.attributes ?? []).map((attr) => (
+                              <div key={attr.key} className="bg-card border border-border-light rounded px-1.5 py-1 text-center">
+                                <div className="text-[10px] text-text-dim">{attr.label}</div>
+                                <div className="text-sm font-bold font-mono text-text-primary">{card.attributes?.[attr.key] ?? '—'}</div>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex gap-1.5 mb-2.5">
+                            {[
+                              { label: 'HP', value: card.derivedStats?.HP },
+                              { label: 'SAN', value: card.derivedStats?.SAN },
+                              { label: 'MP', value: card.derivedStats?.MP },
+                            ].map((s) => (
+                              <div key={s.label} className="flex-1 bg-card border border-border-light rounded px-2 py-1 flex items-center justify-between">
+                                <span className="text-[10px] text-text-muted">{s.label}</span>
+                                <span className="text-sm font-bold font-mono text-text-primary">{s.value ?? '—'}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="space-y-1">
+                            {(ruleset?.skills ?? [])
+                              .map((skill) => ({ skill, value: card.skills?.[skill.id] ?? 0 }))
+                              .filter(({ value }) => value > 0)
+                              .sort((a, b) => b.value - a.value)
+                              .slice(0, 10)
+                              .map(({ skill, value }) => (
+                                <div key={skill.id} className="flex items-center gap-2">
+                                  <span className="text-[11px] text-text-body flex-1 min-w-0 truncate">{skill.name}</span>
+                                  <div className="w-16 h-1.5 rounded-full bg-border-light overflow-hidden">
+                                    <div className="h-full rounded-full bg-brass" style={{ width: `${Math.min(value, 100)}%` }} />
+                                  </div>
+                                  <span className="text-[11px] font-mono text-text-muted min-w-[28px] text-right">{value}</span>
+                                </div>
+                              ))}
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-[11px] text-text-dim py-2 text-center">
+                          {partyCharacters === null ? '正在读取角色卡…' : '这位调查员还没建卡'}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         ) : (
           <p className="text-sm text-text-dim py-6 text-center">正在获取房间成员…</p>

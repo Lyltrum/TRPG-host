@@ -628,6 +628,7 @@ export interface MyRoomSummary {
  */
 export interface NarrationPushPayload {
   text: string;
+  private?: boolean;
 }
 
 /**
@@ -646,6 +647,52 @@ export interface OccupationSpec {
   skillIds: string[];
   choiceSlots?: SkillChoiceSlot[];
   description: string;
+}
+
+/**
+ * GET /api/v1/rooms/{roomId}/characters 里的一张队友卡（exec/14 P5.3）。
+ *
+ * ## 为什么是"放开"而不是"收紧"
+ *
+ * P5.2 那一批（分头探索/潜行/私密行动）都在收紧可见性，这条方向相反：
+ * 真人桌上角色卡是摊在桌面、互相传阅的，队友当然知道你几点力量、会不会
+ * 开锁——此前系统里**只有「读回自己那张」**，反而比真人桌更封闭。
+ *
+ * exec/18 已逐条裁决 ⑦检定过程与结果、⑧HP/SAN 一律公开，所以这里
+ * **不做任何脱敏**：属性、衍生值、技能、装备、背景全给。
+ *
+ * 与 `CharacterRead` 的差别只在两头：
+ * - **去掉**建卡过程字段（`generation_method` / `attribute_pool_total` /
+ *   `allocated_attributes`）——那是"这张卡怎么捏出来的"，只有卡主本人的
+ *   建卡向导需要，队友看了没有意义，给出去还多一份能被误用的权威数字；
+ * - **加上** `player_id` / `nickname`——队友卡面板要能说清"这张是谁的"，
+ *   角色名和玩家昵称是两回事。
+ */
+export interface PartyCharacterRead {
+  playerId: string;
+  nickname: string;
+  id: string;
+  status: string;
+  name?: string | null;
+  age?: number | null;
+  gender?: string | null;
+  residence?: string;
+  birthplace?: string;
+  attributes?: {
+    [k: string]: number;
+  };
+  derivedStats?: {
+    [k: string]: number | string;
+  };
+  skills?: {
+    [k: string]: number;
+  };
+  equipment?: string[];
+  occupation?: string | null;
+  background?: string;
+  backgroundDetail?: {
+    [k: string]: string;
+  } | null;
 }
 
 /**

@@ -9,6 +9,7 @@
 import random
 from dataclasses import asdict
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.coc7_age import (
@@ -40,6 +41,7 @@ from app.dto.character import (
     CharacterTemplateRead,
     CharacterUpdateBody,
     EduImprovementCheckView,
+    PartyCharacterRead,
     RollAttributePoolResult,
     RollAttributesResult,
     RollLuckResult,
@@ -260,6 +262,65 @@ async def get_character(
         notes=character.notes or "",
         background_detail=character.background_detail,
     )
+
+
+async def list_party_characters(
+    db: AsyncSession, room_id: str, reconnect_token: str | None
+) -> list[PartyCharacterRead]:
+    """GET /rooms/{roomId}/characters —— 看队友的角色卡（exec/14 P5.3）。
+
+    鉴权只要求**你是这个房间里的人**（凭证对应的玩家属于该房间），不像
+    `_get_own_character` 那样要求"是你自己那张"。这是有意的：真人桌上角色卡
+    互相传阅，此前系统只能读回自己那张，比真人桌还封闭（exec/18 ⑨）。
+
+    返回房间内**全部**玩家（含自己、含还没建卡的），按加入顺序。没建卡的人
+    也要出现——"谁还没准备好"本身就是队伍面板要回答的问题；此时除
+    `player_id`/`nickname`/`status` 外都是空值，`id` 为空串。
+    """
+    player = await get_player_by_reconnect_token(db, reconnect_token)
+    if player.room_id != room_id:
+        raise RoomAuthorizationError("你不在这个房间里")
+
+    roster_query = (
+        select(Player).where(Player.room_id == room_id).order_by(Player.joined_at, Player.id)
+    )
+    players = list((await db.execute(roster_query)).scalars())
+    characters = list(
+        (await db.execute(select(Character).where(Character.room_id == room_id))).scalars()
+    )
+    by_player = {c.player_id: c for c in characters}
+
+    out: list[PartyCharacterRead] = []
+    for p in players:
+        if p.is_ai:
+            continue
+        c = by_player.get(p.id)
+        if c is None:
+            out.append(
+                PartyCharacterRead(player_id=p.id, nickname=p.nickname, id="", status="absent")
+            )
+            continue
+        out.append(
+            PartyCharacterRead(
+                player_id=p.id,
+                nickname=p.nickname,
+                id=c.id,
+                status=c.status,
+                name=c.name,
+                age=c.age,
+                gender=c.gender,
+                residence=c.residence or "",
+                birthplace=c.birthplace or "",
+                attributes=c.attributes or {},
+                derived_stats=c.derived_stats or {},
+                skills=c.skills or {},
+                equipment=list(c.equipment or []),
+                occupation=c.occupation,
+                background=c.background or "",
+                background_detail=c.background_detail,
+            )
+        )
+    return out
 
 
 def compute_character_preview(

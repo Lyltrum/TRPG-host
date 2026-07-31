@@ -21,6 +21,7 @@ from app.dto.character import (
     CharacterDraftResult,
     CharacterRead,
     CharacterUpdateBody,
+    PartyCharacterRead,
     RollAttributePoolResult,
     RollAttributesResult,
     RollLuckResult,
@@ -272,6 +273,32 @@ async def create_character(
     ) as exc:
         _raise_service_error(exc)
     return ApiResponse.ok(result)
+
+
+@router.get(
+    "/{room_id}/characters",
+    response_model=ApiResponse[list[PartyCharacterRead]],
+    tags=["characters"],
+)
+async def list_party_characters(
+    room_id: str,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[list[PartyCharacterRead]]:
+    """GET /api/v1/rooms/{roomId}/characters —— 看队友的角色卡（exec/14 P5.3）。
+
+    与下面「读回自己那张」的区别是鉴权口径：这里只要求**你是房间里的人**。
+    真人桌上角色卡互相传阅，此前系统只能读自己那张，比真人桌还封闭
+    （exec/18 ⑨）。⑦⑧ 已裁决检定与 HP/SAN 公开，故不做脱敏。
+    """
+    try:
+        party = await character_service.list_party_characters(db, room_id, reconnect_token)
+    except (
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+    ) as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(party)
 
 
 @router.get(

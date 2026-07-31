@@ -143,6 +143,9 @@ class NarrationSegment:
     audience: tuple[str, ...]
     #: 这段发生在哪个剧本节点（审计/落库用，None = 位置未记录）
     node_id: str | None = None
+    #: 这段是「只给你一个人」的隐秘结果（②潜行 / ⑥私密行动），不是"这处的
+    #: 大家都看得见"。前端据此折叠成点按查看——线下同桌旁人看得见你的屏幕。
+    covert: bool = False
 
 
 @dataclass

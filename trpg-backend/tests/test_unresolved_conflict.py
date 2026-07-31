@@ -162,3 +162,32 @@ async def test_non_conflict_without_check_keeps_the_old_hint() -> None:
     suffix = await _run("CFL003", "clear_action", [])
     assert "动手未裁定" not in suffix
     assert "直接把结果写成既定事实" in suffix
+
+
+# ── 护栏豁免：动手那一轮不过模组白名单（exec/19 #49）──────────
+
+
+async def test_conflict_check_is_not_blocked_by_the_module_guard() -> None:
+    """🔴 试玩实测抓到的回归：护栏拦掉格斗 → 零检定 → #44 追问 → 玩家再说一次
+    → 又被拦 → 又追问。连着两轮问"你是要砸他的头？"，这一拳永远打不出去。
+
+    护栏（设计 02）防的是"用模组没标注的调查技能即兴挖线索"，战斗不在此列——
+    模组不可能在每个节点标注格斗检定点，而玩家有权动手。
+
+    门厅只标注了 spot-hidden；`physical_conflict` 轮的格斗检定必须照样发出。
+    """
+    suffix = await _run(
+        "CFL004", "physical_conflict", [CheckRequest(skill_id="fighting-brawl")], node_id="hall"
+    )
+    assert "动手未裁定" not in suffix
+    assert "检定边界" in suffix
+
+
+async def test_non_conflict_check_is_still_blocked_by_the_guard() -> None:
+    """对照组：不是动手的轮次，护栏照常拦——豁免不能扩大成放水。"""
+    suffix = await _run(
+        "CFL005", "clear_action", [CheckRequest(skill_id="library-use")], node_id="hall"
+    )
+    # 被护栏拦掉 → 本轮零检定 → 走「没有待掷检定」那条老提醒
+    assert "直接把结果写成既定事实" in suffix
+    assert "检定边界" not in suffix

@@ -203,3 +203,44 @@ def test_narration_limits_by_mode() -> None:
     assert narration_limit() == LIMIT_NORMAL
     assert LIMIT_NORMAL <= 180
     assert narration_limit(ending_reached=True) == LIMIT_OPENING  # ending uses opening-size cap
+
+
+def test_parenthesized_mechanic_announcement_is_removed() -> None:
+    """括号里的机制播报（试玩实测 2026-07-31，exec/19 #45）。
+
+    连着出现三次：「（请进行图书馆使用检定）」「（请进行侦察检定）」
+    「（请进行理智检定，0/1d4）」——最后那条**连损失公式都泄漏给玩家了**，
+    那是 KP 幕后数据。
+
+    与上面那条整句正则是同一件事的两个形态：那条匹配独立成句的播报，这里的
+    播报寄生在正常句子的尾巴上、包在括号里，整句匹配够不着。
+    """
+    assert (
+        scrub_kp_anti_patterns(
+            "你抽出合订本，在昏黄的台灯下翻开。（请进行图书馆使用检定）",
+            action_intent=True,
+        )
+        == "你抽出合订本，在昏黄的台灯下翻开。"
+    )
+    assert (
+        scrub_kp_anti_patterns(
+            "你的手指僵在土里，胃猛地收紧。（请进行理智检定，0/1d4）", action_intent=True
+        )
+        == "你的手指僵在土里，胃猛地收紧。"
+    )
+    assert (
+        scrub_kp_anti_patterns("你压低身子准备靠近。(需要一次潜行检定)", action_intent=True)
+        == "你压低身子准备靠近。"
+    )
+
+
+def test_ordinary_parentheses_are_not_touched() -> None:
+    """🔴 只有"提到检定/掷骰"**且**"带祈使动词"才砍。
+
+    括号在中文叙事里是正常修辞，NPC 台词里也可能合理提到"检定"二字——
+    砍过头等于让守秘人不能说话。
+    """
+    keep = "他递给你一杯茶（茶还烫着），目光在你脸上停留。"
+    assert scrub_kp_anti_patterns(keep, action_intent=True) == keep
+    talk = "管家低声说：“警察明天会来做检定的。”"
+    assert scrub_kp_anti_patterns(talk, action_intent=True) == talk

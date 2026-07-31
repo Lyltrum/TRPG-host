@@ -330,7 +330,7 @@ async def test_read_module_sections(deps: KeeperDeps) -> None:
     assert "hall" in nodes and "cellar" in nodes
 
     hall = read_module_impl(deps, "node:hall")
-    assert "脚印" in hall and "侦查" in hall
+    assert "脚印" in hall and "侦察" in hall
 
     cellar = read_module_impl(deps, "node:cellar")
     assert "油灯" in cellar and "手套" in cellar  # 分支及嵌套分支都要可见

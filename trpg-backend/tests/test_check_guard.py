@@ -25,8 +25,8 @@ def _mod() -> ScenarioModule:
                 title="科比特宅邸",
                 kp_text="…",
                 checks=[
-                    ModuleCheck(skill="侦查", on_success="看见"),
-                    ModuleCheck(skill="聆听", on_success="听见"),
+                    ModuleCheck(skill_ids=["spot-hidden"], skill="侦察", on_success="看见"),
+                    ModuleCheck(skill_ids=["listen"], skill="聆听", on_success="听见"),
                 ],
             ),
             ModuleNode(id="street", title="街道", kp_text="…", checks=[]),
@@ -35,34 +35,34 @@ def _mod() -> ScenarioModule:
 
 
 def test_collect_skills() -> None:
-    """收集出来的是**归一后**的规范名，不是模组里的原写法。
+    """收集出来的是技能 **id**（exec/17 (A)）。
 
-    exec/12 #32 起护栏与执行层共用 `skill_names.match_key`：模组标注「侦查」
-    在这里会变成「侦察」。这条断言此前钉的是未归一的行为，随该修复更新——
-    是架构上的合法变化，不是回归（护栏放行的集合只变大不变小）。
+    这条断言的口径变过两次，都是架构上的合法变化：最早是模组原写法，
+    exec/12 #32 起是归一后的规范中文名，现在是 id——模组数据在组装期就
+    归一好了，运行时两侧都是 id，中文名不再参与任何比较。
     """
     skills = collect_module_check_skills(_mod())
-    assert "侦察" in skills
-    assert "侦查" not in skills
+    assert "spot-hidden" in skills
+    assert "侦察" not in skills
 
 
 def test_filter_blocks_improvised_when_node_has_checks() -> None:
     kept, issues = filter_checks_against_module(
         _mod(),
-        ["侦查", "克苏鲁神话"],
+        ["spot-hidden", "cthulhu-mythos"],
         current_scene="科比特宅邸",
     )
-    assert kept == ["侦查"]
-    assert any("克苏鲁神话" in i for i in issues)
+    assert kept == ["spot-hidden"]
+    assert any("cthulhu-mythos" in i for i in issues)
 
 
 def test_filter_allows_when_node_has_no_checks() -> None:
     kept, issues = filter_checks_against_module(
         _mod(),
-        ["话术"],
+        ["fast-talk"],
         current_scene="街道",
     )
-    assert kept == ["话术"]
+    assert kept == ["fast-talk"]
     assert issues == []
 
 
@@ -96,9 +96,9 @@ def test_find_node_falls_back_to_scene_hint_when_node_id_unknown() -> None:
 def test_filter_checks_against_module_uses_node_id() -> None:
     kept, issues = filter_checks_against_module(
         _mod(),
-        ["侦查", "克苏鲁神话"],
+        ["spot-hidden", "cthulhu-mythos"],
         current_scene="跟剧本地名完全对不上的乱写文本",
         current_node_id="house",
     )
-    assert kept == ["侦查"]
-    assert any("克苏鲁神话" in i for i in issues)
+    assert kept == ["spot-hidden"]
+    assert any("cthulhu-mythos" in i for i in issues)

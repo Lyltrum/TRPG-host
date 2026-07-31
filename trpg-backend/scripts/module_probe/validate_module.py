@@ -32,6 +32,7 @@ from typing import Any
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.keeper.module_loader import ModuleNode, ScenarioModule
+from app.core.keeper.skill_names import skill_id_catalog
 from app.dto.game import RulesetRead
 
 # 不泄密：从 key_facts 切出的关键词最短长度。太短（如「先生」）会误伤。
@@ -77,7 +78,46 @@ SKILL_ALIASES: dict[str, str] = {
     "劝说": "说服",
     "说服检定": "说服",
     "交涉": "话术",
+    # ── exec/17 (A) 补齐：真人实测在 5 个模组里实际出现的写法 ──
+    "闪躲": "闪避",
+    "观察": "侦察",
+    "信用": "信用评级",
+    "攀登": "攀爬",
+    "机械修理": "机械维修",
+    "机器维修": "机械维修",
+    "重机械操作": "操作重型机械",
+    "开锁": "锁匠",
+    "操纵（船只）": "驾驶：船舶",
+    "操纵：船只": "驾驶：船舶",
+    "操纵(船只)": "驾驶：船舶",
+    "语言:英语": "外语①",
+    "语言：英语": "外语①",
+    "艺术（唱歌）": "艺术与手艺①",
+    "艺术(唱歌)": "艺术与手艺①",
 }
+
+#: COC6 遗留的"技能"，在 COC7 里是**属性检定**（Idea→INT×5、Know→EDU×5）。
+#: 5 个模组里共 11 条，是最大的一类脏数据——同义词表救不了它们，因为
+#: COC7 规则表里压根没有这两个技能。
+COC6_ATTRIBUTE_CHECKS: dict[str, str] = {
+    "灵感": "INT",
+    "知识": "EDU",
+    "力量(STR)": "STR",
+    "力量（STR）": "STR",
+}
+
+#: 多选检定点：任一命中即可（模组原文用 `/` 罗列，括号里是 KP 说明）。
+#: 组合属性（STR+DEX）同样落在这里——"力量或敏捷任一"是它在本系统里
+#: 唯一说得通的表达，不值得为 1 条数据单开一类 schema。
+MULTI_SKILL_CHECKS: dict[str, list[str]] = {
+    "话术/魅惑(任一交涉技能)": ["fast-talk", "charm", "persuade"],
+    "话术/魅惑(任一交涉)": ["fast-talk", "charm", "persuade"],
+    "话术/魅惑/信用(贿赂,需先弄到酒)": ["fast-talk", "charm", "credit-rating"],
+    "STR+DEX": ["STR", "DEX"],
+}
+
+#: 理智检定：模组把它写进了 checks[]，但它该走 san_checks。
+SAN_CHECK_WRITINGS: frozenset[str] = frozenset({"理智", "理智(San)", "理智（San）", "San", "SAN"})
 
 
 @dataclass
@@ -246,8 +286,44 @@ def skill_resolvable(skill_name: str, ruleset: RulesetRead) -> bool:
     return False
 
 
-def normalize_module_skills(raw: dict[str, Any]) -> int:
-    """就地归一 nodes[].checks[].skill，返回改动条数。"""
+def resolve_check_skill(raw_skill: str, ruleset: RulesetRead) -> tuple[str, list[str], str]:
+    """把模组里的一条检定点写法解析成 `(kind, skill_ids, 展示名)`（exec/17 (A)）。
+
+    解析不出时返回 `("skill", [], 原文)`——**不猜**。调用方（`check_skills`）
+    会因为 `skill_ids` 为空而报错并阻断产出，脏数据从此进不了 structured.json。
+
+    这份别名表是**一次性离线转换**的输入，不是运行时的猜测器：输入是固定的
+    5 个模组文件，转换完模组里存的就是 id 了。打地鼠之所以是打地鼠，是因为
+    运行时面对的输入无穷无尽——组装期不是。
+    """
+    s = (raw_skill or "").strip()
+    if not s:
+        return "skill", [], ""
+    if s in SAN_CHECK_WRITINGS:
+        return "san", [], "理智检定"
+    if s in MULTI_SKILL_CHECKS:
+        ids = MULTI_SKILL_CHECKS[s]
+        catalog = skill_id_catalog(ruleset)
+        return "skill", ids, "/".join(catalog.get(i, i) for i in ids)
+    if s in COC6_ATTRIBUTE_CHECKS:
+        key = COC6_ATTRIBUTE_CHECKS[s]
+        catalog = skill_id_catalog(ruleset)
+        return "skill", [key], catalog.get(key, key)
+    wanted = normalize_skill_name(s)
+    for attr in ruleset.attributes:
+        if wanted in (attr.key, attr.label):
+            return "skill", [attr.key], attr.label
+    for spec in ruleset.skills:
+        if wanted in (spec.id, spec.name) or (
+            spec.name_en is not None and wanted.lower() == spec.name_en.lower()
+        ):
+            return "skill", [spec.id], spec.name
+    return "skill", [], s
+
+
+def normalize_module_skills(raw: dict[str, Any], ruleset: RulesetRead | None = None) -> int:
+    """就地把 nodes[].checks[] 归一成 `(kind, skill_ids, 展示名)`，返回改动条数。"""
+    ruleset = ruleset or build_coc7_ruleset()
     changed = 0
     nodes = raw.get("nodes")
     if not isinstance(nodes, list):
@@ -260,10 +336,14 @@ def normalize_module_skills(raw: dict[str, Any]) -> int:
             for check in checks:
                 if not isinstance(check, dict):
                     continue
-                old = str(check.get("skill") or "")
-                new = normalize_skill_name(old)
-                if new != old:
-                    check["skill"] = new
+                old_name = str(check.get("skill") or "")
+                old_ids = list(check.get("skill_ids") or [])
+                old_kind = check.get("kind") or "skill"
+                kind, ids, display = resolve_check_skill(old_name, ruleset)
+                if (ids, kind, display) != (old_ids, old_kind, old_name):
+                    check["skill_ids"] = ids
+                    check["kind"] = kind
+                    check["skill"] = display
                     changed += 1
         sub = node.get("sub_node")
         if isinstance(sub, dict):
@@ -421,12 +501,27 @@ def check_facts(module: ScenarioModule) -> list[str]:
 
 
 def check_skills(module: ScenarioModule, ruleset: RulesetRead | None = None) -> list[str]:
+    """检定点必须已经归一成白名单 id（exec/17 (A)）。
+
+    这条校验进 `ok`，也就是**阻断产出**：在此之前它只报错不拦，于是 43 条
+    脏数据照样能产出可主持的 structured.json，运行时再靠字符串匹配去猜，
+    猜不中就静默丢检定。
+    """
     ruleset = ruleset or build_coc7_ruleset()
+    catalog = skill_id_catalog(ruleset)
     errors: list[str] = []
     for node in _iter_nodes(module.nodes):
         for i, check in enumerate(node.checks):
-            if not skill_resolvable(check.skill, ruleset):
-                errors.append(f"node {node.id!r} checks[{i}].skill 无法解析：{check.skill!r}")
+            if check.kind == "san":
+                continue  # 理智检定不指向技能，走 san_checks
+            if not check.skill_ids:
+                errors.append(
+                    f"node {node.id!r} checks[{i}] 未归一到技能 id（原文 {check.skill!r}）"
+                )
+                continue
+            unknown = [sid for sid in check.skill_ids if sid not in catalog]
+            if unknown:
+                errors.append(f"node {node.id!r} checks[{i}].skill_ids 不在白名单：{unknown}")
     return errors
 
 

@@ -7,7 +7,10 @@
   },
   "kp_truth": {
     "summary": "真相是管家做的。",
-    "key_facts": ["管家有钥匙", "案发当晚停电"]
+    "key_facts": [
+      "管家有钥匙",
+      "案发当晚停电"
+    ]
   },
   "player_intro": "你们受雇调查庄园失窃案。",
   "opening": {
@@ -32,7 +35,9 @@
       "title": "可复现·管家松口窗口",
       "trigger": "当调查员当众指认管家时",
       "kp_text": "管家在证据面前短暂动摇，可能吐露部分真相。",
-      "effects": ["话术/恐吓检定可推进真相线"],
+      "effects": [
+        "话术/恐吓检定可推进真相线"
+      ],
       "once": false
     }
   ],
@@ -45,14 +50,22 @@
       "public_text": "门厅铺着长地毯，昨夜有人走过。",
       "checks": [
         {
-          "skill": "侦查",
+          "skill": "侦察",
           "difficulty": "普通",
           "on_success": "发现脚印通向地下室。",
-          "on_failure": "一无所获，浪费半天。"
+          "on_failure": "一无所获，浪费半天。",
+          "skill_ids": [
+            "spot-hidden"
+          ],
+          "kind": "skill"
         }
       ],
-      "exits": ["cellar"],
-      "contains": ["hall-footprints"],
+      "exits": [
+        "cellar"
+      ],
+      "contains": [
+        "hall-footprints"
+      ],
       "leads_to": [],
       "sub_nodes": [
         {
@@ -79,7 +92,12 @@
         {
           "condition": "玩家点燃油灯",
           "outcome": "看清赃物。",
-          "then": [{ "condition": "继续搜索", "outcome": "找到管家的手套。" }]
+          "then": [
+            {
+              "condition": "继续搜索",
+              "outcome": "找到管家的手套。"
+            }
+          ]
         }
       ],
       "sub_node": {
@@ -88,8 +106,12 @@
         "kp_text": "保险箱需要钥匙。",
         "checks": []
       },
-      "exits": ["hall"],
-      "contains": ["hidden-safe"],
+      "exits": [
+        "hall"
+      ],
+      "contains": [
+        "hidden-safe"
+      ],
       "leads_to": []
     }
   ],
@@ -109,8 +131,13 @@
       "role": "仆人",
       "public_text": "恭顺的老管家，声称案发时在厨房。",
       "kp_notes": "公开口径：案发时在厨房。",
-      "stats": { "STR": 50, "HP": 10 },
-      "same_as": ["butler-secret"],
+      "stats": {
+        "STR": 50,
+        "HP": 10
+      },
+      "same_as": [
+        "butler-secret"
+      ],
       "forms": []
     },
     {
@@ -118,14 +145,22 @@
       "name": "管家",
       "role": "真凶",
       "kp_notes": "谎称案发时在厨房；实际持有银器钥匙。",
-      "stats": { "STR": 50, "HP": 10 },
-      "same_as": ["butler-public"],
+      "stats": {
+        "STR": 50,
+        "HP": 10
+      },
+      "same_as": [
+        "butler-public"
+      ],
       "forms": [
         {
           "id": "butler-cornered",
           "name": "被揭穿时",
           "notes": "可能夺路而逃",
-          "stats": { "STR": 55, "HP": 10 }
+          "stats": {
+            "STR": 55,
+            "HP": 10
+          }
         }
       ]
     }

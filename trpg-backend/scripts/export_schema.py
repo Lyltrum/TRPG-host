@@ -53,6 +53,7 @@ _MODELS: list[type[BaseModel]] = [
     character.CharacterUpdateBody,
     character.CharacterDraftResult,
     character.CharacterRead,
+    character.PartyCharacterRead,
     character.RollAttributesResult,
     character.CharacterTemplateCreateBody,
     character.CharacterTemplateRead,

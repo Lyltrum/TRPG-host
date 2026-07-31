@@ -55,6 +55,8 @@ export type {
   GameRead as Game,
   GameSystemRead as GameSystem,
   CharacterRead as Character,
+  // 队友角色卡（exec/14 P5.3）——房间级列表，跟上面「读回自己那张」是两个接口
+  PartyCharacterRead as PartyCharacter,
   RulesetRead as Ruleset,
   SkillSpec,
   // 模组详情 / 导入（issue #77）—— 对应后端 dto/module.py

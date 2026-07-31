@@ -980,7 +980,9 @@ class KeeperAgent(Narrator):
             # 与 service/turn_window.merge_utterances 同口径
             return said[0].nickname, "\n".join(f"{u.nickname}：{u.text}" for u in said)
 
-        async def _segment(audience: tuple[str, ...], node_id: str | None, hint: str):
+        async def _segment(
+            audience: tuple[str, ...], node_id: str | None, hint: str, *, covert: bool = False
+        ):
             async with self._session_factory() as db:
                 known = await visible_fact_ids(db, room_id=room_id, audience=frozenset(audience))
             nickname, said = _said_by(audience)
@@ -1009,6 +1011,7 @@ class KeeperAgent(Narrator):
                 ),
                 audience=audience,
                 node_id=node_id,
+                covert=covert,
             )
 
         segments: list[NarrationSegment] = []
@@ -1024,6 +1027,7 @@ class KeeperAgent(Narrator):
                         "因此：只写他自己感知到的结果；不要写别人对他这次行动的反应，"
                         "也不要写成好像大家都看见了。"
                     ),
+                    covert=True,
                 )
             )
         for node_id, members in groups:

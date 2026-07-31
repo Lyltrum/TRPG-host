@@ -10,6 +10,7 @@ import type {
   MyRoomSummary,
   RoomSummary,
   ReplayEvent,
+  PartyCharacter,
 } from '../types';
 
 /**
@@ -123,6 +124,20 @@ export class RoomsResource {
   getReplay(roomId: string, reconnectToken: string): Promise<ReplayEvent[]> {
     return this.client.get<ReplayEvent[]>(
       `/rooms/${roomId}/replay`,
+      this.roomAuth(reconnectToken)
+    );
+  }
+
+  /**
+   * GET /api/v1/rooms/{roomId}/characters — 队伍里每个人的角色卡（exec/14 P5.3）
+   *
+   * 跟「读回自己那张」（`getCharacter`）是两个接口：这个只要求你是房间成员，
+   * 返回房间内**全部**玩家（含自己、含还没建卡的，后者 `status` 为 `absent`）。
+   * 真人桌上角色卡互相传阅，⑦检定与⑧HP/SAN 已裁决为公开，故不做脱敏。
+   */
+  listPartyCharacters(roomId: string, reconnectToken: string): Promise<PartyCharacter[]> {
+    return this.client.get<PartyCharacter[]>(
+      `/rooms/${roomId}/characters`,
       this.roomAuth(reconnectToken)
     );
   }

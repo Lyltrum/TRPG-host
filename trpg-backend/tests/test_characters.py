@@ -181,6 +181,66 @@ async def test_get_character_reads_back_saved_card(client: AsyncClient) -> None:
     assert data["generationMethod"] == "pointbuy"
 
 
+async def test_list_party_characters_shows_teammates(client: AsyncClient) -> None:
+    """队友卡（exec/14 P5.3）：方向与 P5.2 相反的一条——**放开**。
+
+    真人桌上角色卡摊在桌面互相传阅，此前系统只有「读回自己那张」，反而比
+    真人桌还封闭（exec/18 ⑨）。⑦检定与⑧HP/SAN 已裁决为公开，不做脱敏。
+    """
+    host = await create_room(client)
+    guest_token = await register(client, "party_guest")
+    guest = await join_room(client, host["roomCode"], guest_token, nickname="访客")
+
+    draft = await client.post(
+        f"{ROOMS_BASE}/{host['roomId']}/characters", headers=reconnect(host["reconnectToken"])
+    )
+    character_id = draft.json()["data"]["characterId"]
+    await client.patch(
+        f"{ROOMS_BASE}/{host['roomId']}/characters/{character_id}",
+        json=BUILT_CHARACTER,
+        headers=reconnect(host["reconnectToken"]),
+    )
+
+    # 访客拿自己的房间凭证去看房主的卡——这正是此前被 `_get_own_character` 拒掉的
+    response = await client.get(
+        f"{ROOMS_BASE}/{host['roomId']}/characters",
+        headers=reconnect(guest["reconnectToken"]),
+    )
+    assert response.status_code == 200
+    party = response.json()["data"]
+    assert [p["playerId"] for p in party] == [host["playerId"], guest["playerId"]]
+
+    owner = party[0]
+    assert owner["name"] == BUILT_CHARACTER["name"]
+    assert owner["attributes"] == BUILT_CHARACTER["attributes"]
+    # ⑦⑧ 公开：HP/SAN 与技能都不脱敏
+    assert owner["derivedStats"]["HP"] == BUILT_CHARACTER["derivedStats"]["HP"]
+    assert owner["derivedStats"]["SAN"] == BUILT_CHARACTER["derivedStats"]["SAN"]
+    assert owner["skills"] == BUILT_CHARACTER["skills"]
+    # 建卡过程字段不外泄——那是卡主自己的建卡向导才需要的东西
+    assert "generationMethod" not in owner
+    assert "allocatedAttributes" not in owner
+    assert "notes" not in owner
+
+    # 还没建卡的人也要出现：「谁还没准备好」正是队伍面板要回答的问题
+    assert party[1]["status"] == "absent"
+    assert party[1]["nickname"] == "访客"
+    assert party[1]["name"] is None
+
+
+async def test_list_party_characters_rejects_outsider(client: AsyncClient) -> None:
+    """不在这个房间里的人拿不到任何一张卡。"""
+    host = await create_room(client)
+    other_token = await register(client, "party_outsider")
+    other_room = await create_room(client, other_token)
+
+    response = await client.get(
+        f"{ROOMS_BASE}/{host['roomId']}/characters",
+        headers=reconnect(other_room["reconnectToken"]),
+    )
+    assert response.status_code == 403
+
+
 async def test_roll_attributes_marks_card_as_rolled(client: AsyncClient) -> None:
     """服务端权威掷骰后，这张卡要被标记成 roll。
 

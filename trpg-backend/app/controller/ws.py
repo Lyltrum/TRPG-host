@@ -117,7 +117,7 @@ async def _deliver_narration_segments(
     for segment in segments:
         if not segment.text:
             continue
-        payload = NarrationPushPayload(text=segment.text)
+        payload = NarrationPushPayload(text=segment.text, private=segment.covert)
         envelope = ServerEnvelope(type="narration.push", payload=payload.model_dump(by_alias=True))
         await manager.send_to_players(
             room_id, list(segment.audience), envelope.model_dump(by_alias=True)

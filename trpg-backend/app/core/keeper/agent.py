@@ -84,6 +84,7 @@ from app.core.keeper.prose_discipline import (
     inject_action_resolution_guidance,
     inject_confusion_guidance,
     inject_scene_transition_guidance,
+    inject_spotlight_guidance,
     inject_weird_response_guidance,
     is_clear_action_intent,
     is_player_confused,
@@ -491,6 +492,17 @@ class KeeperAgent(Narrator):
                 update={
                     "narration_guidance": inject_action_resolution_guidance(
                         decision.narration_guidance
+                    ),
+                }
+            )
+
+        # 聚光灯（exec/14 P5.2）：导演层算出"谁最久没被点到"，这里强制注入。
+        # 与上面三选一叠加生效——被冷落跟他说的那句话是什么类型无关。
+        if context.spotlight_nickname:
+            decision = decision.model_copy(
+                update={
+                    "narration_guidance": inject_spotlight_guidance(
+                        decision.narration_guidance, context.spotlight_nickname
                     ),
                 }
             )

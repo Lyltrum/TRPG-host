@@ -50,6 +50,7 @@ from app.core.keeper.leak_guard import log_leak_hits, scrub_meta_leaks
 from app.core.keeper.location_state import (
     PLAYER_LOCATION_KEY,
     format_party_locations,
+    group_players,
     location_of,
 )
 from app.core.keeper.module_loader import ScenarioModule
@@ -108,6 +109,7 @@ from app.core.narrator import (
     CheckResultNotice,
     NarrationContext,
     NarrationOutcome,
+    NarrationSegment,
     Narrator,
 )
 from app.dto.game import RulesetRead
@@ -534,21 +536,20 @@ class KeeperAgent(Narrator):
             # 中段——没法用代码保证模型一定服从（"这段话有没有替检定预支
             # 结果"不是能靠代码判断的），只能尽量提高服从概率。
             check_boundary_hint = _build_check_boundary_hint(pending_checks)
-            narration = await self._narrate_prose(
-                situation,
-                decision,
-                report,
-                issues,
-                max_tokens=token_limit,
-                max_chars=char_limit,
+            narration, segments = await self._narrate_per_audience(
+                room_id=room_id,
+                situation=situation,
+                decision=decision,
+                report=report,
+                issues=issues,
+                token_limit=token_limit,
+                char_limit=char_limit,
                 extra_suffix=check_boundary_hint,
-            )
-            narration = self._finalize_prose(
-                narration,
                 action_intent=action_intent,
                 confused=confused,
-                max_chars=char_limit,
-                room_id=room_id,
+                keeper_state=after_state,
+                players=players,
+                turn_player_ids=turn_player_ids,
             )
             # 可观测性，不做自动拦截：能不能判断"这段话有没有替检定预支结果"
             # 没有可靠的代码手段（跟其它 scrub 规则不同，这是语义/因果判断，
@@ -566,30 +567,31 @@ class KeeperAgent(Narrator):
                 text=narration,
                 check_requests=[_pending_to_notice(c) for c in pending_checks],
                 stat_changes=deps.stat_changes,
+                segments=segments,
             )
 
         # 阶段3·叙事：只写故事 + 长度硬裁 + 去菜单/软挡。
-        narration = await self._narrate_prose(
-            situation,
-            decision,
-            report,
-            issues,
-            max_tokens=token_limit,
-            max_chars=char_limit,
-        )
-        narration = self._finalize_prose(
-            narration,
+        narration, segments = await self._narrate_per_audience(
+            room_id=room_id,
+            situation=situation,
+            decision=decision,
+            report=report,
+            issues=issues,
+            token_limit=token_limit,
+            char_limit=char_limit,
+            extra_suffix="",
             action_intent=action_intent,
             confused=confused,
-            max_chars=char_limit,
-            room_id=room_id,
+            keeper_state=after_state,
+            players=players,
+            turn_player_ids=turn_player_ids,
         )
 
         # HP 变化的可见性不再靠拼进叙事正文保证——那样等于让守秘人的嘴说了句
         # 不该它说的系统台词（真人实测 2026-07-28 反馈）。现在 deps.stat_changes
         # 走 character.stat_changed 结构化广播，前端渲染成独立的系统提示，
         # 和叙事气泡分开。
-        return NarrationOutcome(text=narration, stat_changes=deps.stat_changes)
+        return NarrationOutcome(text=narration, stat_changes=deps.stat_changes, segments=segments)
 
     async def resolve_check(
         self, room_id: str, player_id: str, check_request_id: str
@@ -801,6 +803,106 @@ class KeeperAgent(Narrator):
                 limit=max_chars,
             )
         return clipped
+
+    async def _narrate_per_audience(
+        self,
+        *,
+        room_id: str,
+        situation: str,
+        decision: KeeperDecision,
+        report: list[str],
+        issues: list[str],
+        token_limit: int,
+        char_limit: int,
+        extra_suffix: str,
+        action_intent: bool,
+        confused: bool,
+        keeper_state: dict | None,
+        players: list[tuple[str, str]],
+        turn_player_ids: tuple[str, ...],
+    ) -> tuple[str, list[NarrationSegment]]:
+        """叙事阶段的投递分组（exec/14 P5.2，定稿：**一次裁决全局、只叙事分开**）。
+
+        返回 `(全房间正文, 分组段落)`，两者互斥：
+        - **全队同处一地**（房间只有一个位置组）→ 走原路径，返回 `(正文, [])`，
+          prompt 与 P5.2 之前**逐字一致**（不追加任何范围提示）。这是退化保证。
+        - **已分头** → 返回 `("", 段落列表)`，每个**本轮有人发言**的位置组各跑
+          一次叙事，受众是该地点的**全部**在场调查员（没发言但人在那儿的也该
+          听见）。没人发言的地方本轮不生成叙事——那边没发生事，凭空写一段等于
+          让模型编。
+        - 延迟代价：1 次裁决 + N 段叙事（N = 有人行动的地点数），不是 N 次裁决。
+
+        ⚠️ 能用代码保证的是**投递**：另一组的连接根本收不到这段文字。至于
+        "写给书房的这段里有没有提到地窖发生的事"，是语义判断，只能靠下面这段
+        范围提示提高服从概率——跟检定边界提醒同一性质，别当成保证。
+        """
+        all_ids = [pid for pid, _ in players]
+        groups = group_players(keeper_state, all_ids)
+        if len(groups) <= 1:
+            narration = await self._narrate_prose(
+                situation,
+                decision,
+                report,
+                issues,
+                max_tokens=token_limit,
+                max_chars=char_limit,
+                extra_suffix=extra_suffix,
+            )
+            return (
+                self._finalize_prose(
+                    narration,
+                    action_intent=action_intent,
+                    confused=confused,
+                    max_chars=char_limit,
+                    room_id=room_id,
+                ),
+                [],
+            )
+
+        nicknames = dict(players)
+        speakers = set(turn_player_ids)
+        segments: list[NarrationSegment] = []
+        for node_id, members in groups:
+            if not speakers.intersection(members):
+                continue
+            node = self._module.node_by_id(node_id) if node_id else None
+            where = node.title if node is not None else (node_id or "此处")
+            who = "、".join(nicknames.get(pid, pid) for pid in members)
+            scope_hint = (
+                f"\n\n【投递范围·代码硬提醒】这一段**只会送达在「{where}」的 {who}**，"
+                "别处的调查员看不到。因此：只写这里发生的事；"
+                "其他调查员在别处的行动、发现、遭遇，一个字都不要提，"
+                "也不要替这边的人转述他们不可能知道的消息。"
+            )
+            raw = await self._narrate_prose(
+                situation,
+                decision,
+                report,
+                issues,
+                max_tokens=token_limit,
+                max_chars=char_limit,
+                extra_suffix=extra_suffix + scope_hint,
+            )
+            segments.append(
+                NarrationSegment(
+                    text=self._finalize_prose(
+                        raw,
+                        action_intent=action_intent,
+                        confused=confused,
+                        max_chars=char_limit,
+                        room_id=room_id,
+                    ),
+                    audience=tuple(members),
+                    node_id=node_id,
+                )
+            )
+        logger.info(
+            "keeper_narration_split",
+            room_id=room_id,
+            groups=[(nid, len(m)) for nid, m in groups],
+            segments=len(segments),
+        )
+        return "", segments
 
     def _spawn_chapter_summary(self, room_id: str, history_lines: list[str]) -> None:
         """把摘要生成丢到后台。刻意不 await——它不在玩家等待路径上。"""

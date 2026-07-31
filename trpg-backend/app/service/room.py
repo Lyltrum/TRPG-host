@@ -147,7 +147,12 @@ async def _module_title(db: AsyncSession, scenario_id: str | None) -> str | None
 
 
 async def _to_room_preview(db: AsyncSession, room: Room) -> RoomPreview:
-    result = await db.scalars(select(Player).where(Player.room_id == room.id))
+    # 按加入顺序排（与 `character.list_party_characters` 同一口径）。没有
+    # order_by 时返回顺序由数据库决定、并不稳定——房主在列表里的位置会飘。
+    # 加 AI 队友之后这个既有缺陷更容易现形：新成员可能排在房主前面。
+    result = await db.scalars(
+        select(Player).where(Player.room_id == room.id).order_by(Player.joined_at, Player.id)
+    )
     room_players = list(result)
     return RoomPreview(
         room_id=room.id,
@@ -168,6 +173,7 @@ async def _to_room_preview(db: AsyncSession, room: Room) -> RoomPreview:
                 is_host=p.is_host,
                 ready=p.ready,
                 has_character=p.has_character,
+                is_ai=p.is_ai,
             )
             for p in room_players
         ],

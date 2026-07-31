@@ -842,6 +842,7 @@ export interface RoomPlayerRead {
   isHost: boolean;
   ready: boolean;
   hasCharacter: boolean;
+  isAi?: boolean;
 }
 
 /**

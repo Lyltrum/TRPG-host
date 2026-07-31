@@ -262,6 +262,31 @@ _NO_PENDING_CHECK_HINT = (
 )
 
 
+# 🔴 上面那条硬提醒有个例外，试玩实测抓到（2026-07-31，exec/19 #44）：
+# 玩家宣告「我抄起手边的东西狠狠砸它」，裁决器没发检定，叙事照着
+# `_NO_PENDING_CHECK_HINT` 的"直接把结果写成既定事实"写了「他侧身一闪，
+# 镇纸砸在书架上」——**攻击的成败被叙事定了**。
+#
+# 搜查、移动、对话那些动作，没检定就直接给结果是对的；但**对他人动手**不行：
+# 攻击的成败是玩家花技能点买来的权利，不该由叙事赠予或剥夺。裁决器没能发出
+# 检定（目标指代不明、局面不清）时，正确处理是**停下来追问**，不是替他裁定。
+#
+# 触发条件是**确定的**：`player_state == "physical_conflict"` 且本轮 pending
+# 为空。分类本身是语义判断（裁决 LLM 做，同 #8 迷茫检测、#40 提问的先例），
+# 但"分类命中 + 没有检定 → 注入这段"这一步是代码强制的。
+_UNRESOLVED_CONFLICT_HINT = (
+    "\n\n【动手未裁定·代码硬提醒】玩家本轮宣告了对他人动手/强行突破，"
+    "而本轮**没有任何检定**。因此：\n"
+    "① **绝对不许写出这次动手的成败**——不许写打中、打空、被闪开、被制住、"
+    "被夺下武器、对方受伤或毫发无伤；\n"
+    "② 正文停在**动作即将发生的那一刻**（他已经抬手/已经扑过去，结果未知），"
+    "然后用一句世界内的话向玩家确认他到底要对谁做什么"
+    "（「你是要动手打他？」「你打算硬闯过去？」）；\n"
+    "③ 不要要求掷骰、不要提检定二字——确认清楚后由守秘人下一轮裁决。\n"
+    "攻击的成败是玩家用技能点换来的权利，不能由叙事赠予或剥夺。"
+)
+
+
 def _build_bystander_hint(nicknames: list[str]) -> str:
     """本轮没发言的人：点名禁止替他们行动（exec/19 #41）。
 
@@ -511,6 +536,15 @@ class KeeperAgent(Narrator):
             confused = decision.player_state == "confused"
             weird = decision.player_state == "weird_or_meta"
             action_intent = decision.player_state == "clear_action"
+        # 玩家本轮对人动手/强行突破（exec/19 #44）。真正的注入条件还要加上
+        # "本轮没裁出任何检定"，那要等 create_pending_checks 跑完才知道，
+        # 所以这里只先记住分类。
+        physical_conflict = (
+            not is_adjudicate_fallback
+            and decision.player_state == "physical_conflict"
+            and not is_heartbeat
+            and not is_opening_ceremony
+        )
         # 🔴 真人实测 2026-07-31（exec/19 #40）：玩家问「科比特先生在家吗」，
         # 问的是守秘人（他忘了这个设定），叙事却把它演成角色在门厅里喊话、
         # 还照常推进了场景。提问不是行动——这里代码强制把推进世界的手段全部
@@ -665,6 +699,12 @@ class KeeperAgent(Narrator):
             scene_transition=scene_changed,
         )
 
+        # exec/19 #44：动手了，但本轮一个检定都没裁出来（裁决器没发，或护栏
+        # 拦掉）。此时叙事绝不能替玩家写出攻击的成败。
+        unresolved_conflict = physical_conflict and not pending_checks
+        if unresolved_conflict:
+            logger.info("keeper_unresolved_conflict", room_id=room_id)
+
         if pending_checks:
             pending_check_manager.add(room_id, pending_checks)
             # 🔴 真人实测 2026-07-29：检定发起前的铺垫文字，不止会提前泄露
@@ -717,6 +757,11 @@ class KeeperAgent(Narrator):
             )
 
         # 阶段3·叙事：只写故事 + 长度硬裁 + 去菜单/软挡。
+        # 动手却没裁出检定 → 换成"停在动作发生前并追问"，不许替玩家定成败
+        # （exec/19 #44）。两条硬提醒方向相反，只能二选一。
+        no_check_suffix = (
+            _UNRESOLVED_CONFLICT_HINT if unresolved_conflict else _NO_PENDING_CHECK_HINT
+        )
         narration, segments = await self._narrate_per_audience(
             room_id=room_id,
             situation=situation,
@@ -729,7 +774,7 @@ class KeeperAgent(Narrator):
             issues=issues,
             token_limit=token_limit,
             char_limit=char_limit,
-            extra_suffix=_NO_PENDING_CHECK_HINT,
+            extra_suffix=no_check_suffix,
             action_intent=action_intent,
             confused=confused,
             keeper_state=after_state,

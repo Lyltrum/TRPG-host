@@ -149,6 +149,7 @@ def format_turn_input(
     agenda_status: str = "",
     visibility_status: str = "",
     phase_status: str = "",
+    ledger_status: str = "",
     *,
     is_heartbeat: bool = False,
     is_opening_ceremony: bool = False,
@@ -159,7 +160,8 @@ def format_turn_input(
     名单必须显式给出：真实 DeepSeek 冒烟里 agent 曾把单人局幻觉成"你们三人"
     ——桌上有几个人不该靠猜。
 
-    agenda/visibility/phase 默认空 → 整块不渲染（旧调用点行为不变）。
+    agenda/visibility/phase/ledger 默认空 → 整块不渲染（旧调用点行为不变，
+    短模组开局时输出也不会变脏）。
 
     历史的最后一条就是当前这句话（ws.py 在调 narrate 之前已 record_event），
     这里如实呈现并在末尾单独点名"现在要回应的是谁的哪句话"。
@@ -174,6 +176,13 @@ def format_turn_input(
     phase_block = f"## 对局阶段\n{phase_status}\n\n" if phase_status else ""
     agenda_block = f"## 议程状态\n{agenda_status}\n\n" if agenda_status else ""
     visibility_block = f"## 密级配对状态\n{visibility_status}\n\n" if visibility_status else ""
+    # 事实账本（exec/14 P4）：已经被调查员确认拿到的线索。**代码记账**，
+    # 不随 200 条历史窗口滑走——长战役里第 3 轮拿到的线索第 300 轮仍在这里。
+    ledger_block = (
+        f"## 已确认的线索（调查员已经知道这些，不要当作未知重新铺陈）\n{ledger_status}\n\n"
+        if ledger_status
+        else ""
+    )
     mode_block = ""
     if is_heartbeat:
         mode_block = (
@@ -198,6 +207,7 @@ def format_turn_input(
         f"{phase_block}"
         f"{agenda_block}"
         f"{visibility_block}"
+        f"{ledger_block}"
         f"## 游戏历史（时间正序，最后一条即当前发言）\n{history_text}\n\n"
         f"## 当前\n玩家 {player_nickname} 刚刚说：「{utterance}」"
     )

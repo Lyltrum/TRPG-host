@@ -75,3 +75,8 @@ def evaluate_check(rolled: int, target: int) -> CheckOutcome:
     else:
         level = LEVEL_FAIL
     return CheckOutcome(rolled=rolled, target=target, level=level)
+
+
+def is_success(level: str) -> bool:
+    """这次检定算不算成功。失败/大失败以外都算（含大成功与各档难度成功）。"""
+    return level not in (LEVEL_FAIL, LEVEL_FUMBLE)

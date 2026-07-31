@@ -36,6 +36,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, format_agenda_status, load_fired_agenda
 from app.core.keeper.decision import KeeperDecision
+from app.core.keeper.dice import is_success
+from app.core.keeper.fact_ledger import record_revelations, render_ledger, revealed_fact_ids
 from app.core.keeper.leak_guard import log_leak_hits, scrub_meta_leaks
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.pending import PendingCheck, pending_check_manager
@@ -280,6 +282,12 @@ class KeeperAgent(Narrator):
             if keeper_state
             else keeper_state
         )
+        # 事实账本 L1：读全量（不设 limit）——它必须活过 _HISTORY_LIMIT 的
+        # 200 条滑动窗口，这正是它存在的理由。
+        async with self._session_factory() as db:
+            known_facts = await revealed_fact_ids(db, room_id=room_id)
+        ledger_status = render_ledger(self._module, known_facts)
+
         situation = format_turn_input(
             visible_state,
             history_lines,
@@ -289,6 +297,7 @@ class KeeperAgent(Narrator):
             agenda_status=agenda_status,
             visibility_status=visibility_status,
             phase_status=phase_status,
+            ledger_status=ledger_status,
             is_heartbeat=is_heartbeat,
             is_opening_ceremony=is_opening_ceremony,
             phase=phase,
@@ -598,6 +607,21 @@ class KeeperAgent(Narrator):
                 san_remaining=detail["san"],
             )
 
+        # 事实账本 L1（exec/14 P4）：检定成功 → 把这次揭开的线索**用代码**记进
+        # 账本。不靠 LLM 自觉写 keeper_state，也不放进会滑出 200 条窗口的历史里
+        # ——"必须记住"的东西必须活过窗口，这正是账本存在的理由。
+        if pending.reveals and is_success(notice.level):
+            async with self._session_factory() as db:
+                await record_revelations(
+                    db,
+                    room_id=room_id,
+                    player_id=pending.player_id,
+                    fact_ids=list(pending.reveals),
+                    via="check",
+                    detail=f"{pending.skill or ''}·{notice.level}",
+                )
+                await db.commit()
+
         logger.info(
             "keeper_check_resolved",
             room_id=room_id,
@@ -771,7 +795,14 @@ class KeeperAgent(Narrator):
         """读取世界状态笔记 + 全量事件历史 + 在场调查员名单。
 
         与 build_narration_context 的 6 条窗口不同：守秘人要对整局的一致性
-        负责（玩家在第 3 轮说过的话第 30 轮还得作数），所以重放完整历史。
+        负责，所以这里重放的是**最近 `_HISTORY_LIMIT`（200）条**事件，比叙事
+        那 6 条宽得多。
+
+        ⚠️ 这是**滑动窗口，不是完整历史**（此处 docstring 曾写"重放完整历史"，
+        与实现矛盾，exec/14 P4 修正）。每轮产生 2–4 条事件，200 条约等于最近
+        50–80 轮；一场几十小时的战役会把开头静默挤出去。**必须记住的东西不
+        依赖这个窗口**——线索走 `fact_ledger`（代码记账、读全量），世界状态走
+        `keeper_state`，两者都活过窗口。
 
         名单必须显式注入：真实 DeepSeek 冒烟里，agent 不知道桌上有几个人，
         开场直接幻觉出"你们三人"（实际只有一名玩家）——在场有谁不该靠猜。

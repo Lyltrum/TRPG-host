@@ -320,3 +320,51 @@ def test_action_submit_broadcasts_narration_to_room_only(sync_client: TestClient
     assert narration["type"] == "narration.push"
     assert "检查门锁" in narration["payload"]["text"]
     assert envelope_b["type"] == "session.bound"
+
+
+def test_repeated_identical_utterance_gets_distinct_event_ids(sync_client: TestClient) -> None:
+    """同一句话说两遍，两条广播必须带**不同的事件 id**（exec/19 #42）。
+
+    真人实测 2026-07-31：玩家第二次输入"过个侦查"，界面上他自己的气泡根本
+    没出现。前端拿**正文文本**当去重身份（`act-text:${utterance}`），因为
+    实时广播里没有任何事件标识可用，只能靠文本跟 replay 补的历史对齐——于是
+    同一句话第二次说就撞上第一次留下的 key，被静默丢弃。玩家以为没发出去，
+    再发一次，看起来就成了"我没输入却一直在出叙事"。
+
+    修法是让广播带上 `events` 行的 id。这条测试守的是那个 id 真的存在、
+    真的每条不同——它一旦退回 None，前端就只剩文本可用，bug 原样复现。
+    """
+    token = register_and_login(sync_client, "dedupe_host")
+    room = create_room(sync_client, token)
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        ws.send_json(
+            {
+                "type": "room.join",
+                "playerId": room["playerId"],
+                "payload": {"reconnectToken": room["reconnectToken"]},
+            }
+        )
+        ws.receive_json()  # session.bound
+
+        echoes = []
+        narrations = []
+        for _ in range(2):
+            ws.send_json(
+                {
+                    "type": "action.submit",
+                    "playerId": room["playerId"],
+                    "payload": {"utterance": "过个侦查"},
+                }
+            )
+            echoes.append(ws.receive_json())
+            narrations.append(ws.receive_json())
+
+    act_ids = [e["payload"]["eventId"] for e in echoes]
+    narr_ids = [n["payload"]["eventId"] for n in narrations]
+    assert all(i for i in act_ids), "action.broadcast 必须带 eventId"
+    assert all(i for i in narr_ids), "narration.push 必须带 eventId"
+    assert act_ids[0] != act_ids[1]
+    assert narr_ids[0] != narr_ids[1]
+    # 两条原话文本一模一样——正是旧版按文本去重会吞掉的那种情形
+    assert {e["payload"]["utterance"] for e in echoes} == {"过个侦查"}

@@ -99,10 +99,14 @@ async def _broadcast_narration(
     /rooms/{roomId}/replay` 读的就是这里写入的数据（issue #77 才打通的
     EventLog 闭环，此前"不记 EventLog"是已知缺口）。
     """
-    narration = NarrationPushPayload(text=text)
+    # 🔴 先落库再广播：广播 payload 要带上事件 id，前端按它去重（exec/19 #42）。
+    # 顺序反过来就拿不到 id，只能退回"按正文文本去重"——那正是 #42 的病根。
+    event_id = await room_service.record_event(
+        db, room_id, player_id, "narration.push", {"text": text}
+    )
+    narration = NarrationPushPayload(text=text, event_id=event_id)
     envelope = ServerEnvelope(type="narration.push", payload=narration.model_dump(by_alias=True))
     await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
-    await room_service.record_event(db, room_id, player_id, "narration.push", {"text": text})
 
 
 async def _deliver_narration_segments(
@@ -117,12 +121,7 @@ async def _deliver_narration_segments(
     for segment in segments:
         if not segment.text:
             continue
-        payload = NarrationPushPayload(text=segment.text, private=segment.covert)
-        envelope = ServerEnvelope(type="narration.push", payload=payload.model_dump(by_alias=True))
-        await manager.send_to_players(
-            room_id, list(segment.audience), envelope.model_dump(by_alias=True)
-        )
-        await room_service.record_event(
+        event_id = await room_service.record_event(
             db,
             room_id,
             None,
@@ -132,6 +131,11 @@ async def _deliver_narration_segments(
                 "audience": list(segment.audience),
                 "nodeId": segment.node_id,
             },
+        )
+        payload = NarrationPushPayload(text=segment.text, private=segment.covert, event_id=event_id)
+        envelope = ServerEnvelope(type="narration.push", payload=payload.model_dump(by_alias=True))
+        await manager.send_to_players(
+            room_id, list(segment.audience), envelope.model_dump(by_alias=True)
         )
 
 
@@ -411,13 +415,24 @@ async def _handle_action_submit(
     # 原话先广播：不管这条是开窗的还是并入的，同处一地的人都该**立刻**看见。
     # 分头后只发给在场的那几个（P5.2）；未分头时 audience 是 None，走原来的
     # 全房间广播，行为逐字不变。
+    audience = await _audience_at_speaker_location(db, room_id, player_id, private=private)
+    # 🔴 受众随事件一起落库：历史重放要能回答"这句话当时谁听见了"。没有它，
+    # P5.2d 的 per-audience 上下文裁剪就无从判断历史行的可见性——事后再猜位置
+    # 是猜不回来的。不写这个键 = 公开。
+    # 落库在广播**之前**：广播 payload 要带这一行的 id，前端按事件身份去重
+    # （exec/19 #42：此前只能按原话文本去重，同一句话说第二次就被永久吞掉）。
+    event_payload: dict = {"utterance": utterance, "private": private}
+    if audience is not None:
+        event_payload["audience"] = audience
+    event_id = await room_service.record_event(
+        db, room_id, player_id, "action.submit", event_payload
+    )
     action_envelope = ServerEnvelope(
         type="action.broadcast",
         payload=ActionBroadcastPayload(
-            player_id=player_id, nickname=nickname, utterance=utterance
+            player_id=player_id, nickname=nickname, utterance=utterance, event_id=event_id
         ).model_dump(by_alias=True),
     ).model_dump(by_alias=True)
-    audience = await _audience_at_speaker_location(db, room_id, player_id, private=private)
     if audience is None:
         await manager.broadcast(room_id, action_envelope)
     else:
@@ -511,20 +526,8 @@ async def _run_turn(
             for s in submissions
         ),
     )
-    # 事件按**人**分别记：账本/历史要能看出每句话是谁说的，不能只留一条
-    # 合并文本（否则多人轮在历史里退化成一个匿名段落）。
-    for sub in submissions:
-        # 🔴 受众随事件一起落库：历史重放要能回答"这句话当时谁听见了"。
-        # 没有它，P5.2d 的 per-audience 上下文裁剪就无从判断历史行的可见性
-        # ——事后再猜位置是猜不回来的。不写这个键 = 公开。
-        seen_by = await _audience_at_speaker_location(
-            db, room_id, sub.player_id, private=sub.private
-        )
-        payload: dict = {"utterance": sub.utterance, "private": sub.private}
-        if seen_by is not None:
-            payload["audience"] = seen_by
-        await room_service.record_event(db, room_id, sub.player_id, "action.submit", payload)
-
+    # 事件不在这里记：每条提交在 `_handle_action_submit` 里广播之前就已按**人**
+    # 落库了（广播 payload 需要那一行的 id 做去重身份，exec/19 #42）。
     narrator = websocket.app.state.narrator
     try:
         outcome = await narrator.narrate(context)

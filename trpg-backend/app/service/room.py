@@ -581,12 +581,16 @@ async def get_module_detail(db: AsyncSession, module_id: str) -> ModuleDetailRea
 
 async def record_event(
     db: AsyncSession, room_id: str, player_id: str | None, event_type: str, payload: dict
-) -> None:
+) -> str:
     """写入一条房间事件（issue #77 才真正打通的闭环——原来"不记 EventLog"是
     已知缺口，本期由 ws.py 在 narration.push / action.submit 时调用这个函数）。
+
+    返回事件 id：广播 payload 要带上它，前端才能拿事件身份去重（exec/19 #42）。
     """
-    db.add(Event(room_id=room_id, player_id=player_id, event_type=event_type, payload=payload))
+    event = Event(room_id=room_id, player_id=player_id, event_type=event_type, payload=payload)
+    db.add(event)
     await db.commit()
+    return event.id
 
 
 # 叙事上下文里带多少条行动历史。取值权衡：太少 AI 上文接不住，太多白白烧

@@ -164,6 +164,11 @@ class NarrationPushPayload(CamelModel):
     # 折叠成「点按查看」——**线下同桌**时旁人看得见你的屏幕，私密的物理前提
     # 本来就不成立，这个交互是那种场合下唯一的补救（P5.3）。
     private: bool = False
+    # 这条推送对应的 `events` 行 id。前端**按它去重**——replay 补历史与实时
+    # 广播是两条路径，同一条叙事会两边各来一次。真人实测 2026-07-31（exec/19
+    # #42）之前前端只能拿正文文本当身份，于是"同一句话说第二次"被永久吞掉。
+    # 🔴 不要用自由文本当标识符（项目 CLAUDE.md 已有这条判据）。
+    event_id: str | None = None
 
 
 class ChatMessagePayload(CamelModel):
@@ -196,6 +201,8 @@ class ActionBroadcastPayload(CamelModel):
     player_id: str
     nickname: str
     utterance: str
+    # 同 NarrationPushPayload.event_id：前端按事件 id 去重，不再按原话文本。
+    event_id: str | None = None
 
 
 class RoomStatePayload(CamelModel):

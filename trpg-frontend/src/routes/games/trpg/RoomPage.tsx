@@ -434,6 +434,15 @@ export default function RoomPage() {
   // 开场旁白常在 RoomPage 订阅 onWsMessage 之前就推完（房主点开始后立刻
   // navigate）；用 event id 去重，把 GET /replay 与实时 WS 合成一条时间线。
   const seenEventKeysRef = useRef<Set<string>>(new Set())
+  // 去重闸门：见过返回 false（丢弃），没见过登记并返回 true（渲染）。
+  // 🔴 `id` 缺失时**直接放行**（exec/19 #42）——身份不明就不该假装认识它，
+  // 重复显示只是难看，静默丢弃是永久丢消息。
+  const dedupe = (key: string, id?: string | null) => {
+    if (!id) return true
+    if (seenEventKeysRef.current.has(key)) return false
+    seenEventKeysRef.current.add(key)
+    return true
+  }
   // 两个独立界面（issue #107）：「主持人」是跟 AI 守秘人的对话（全房间广播、
   // 进 AI 上下文），「讨论区」是玩家之间的商量（AI 完全看不见）。同一个输入框
   // 按当前频道分流到 action.submit / chat.send 两条通道。
@@ -564,16 +573,10 @@ export default function RoomPage() {
                 if (real) text = real
               } catch { /* 拉不到就保留原文 */ }
             }
-            const key = `narr:${ev.id}`
-            if (seenEventKeysRef.current.has(key)) continue
-            seenEventKeysRef.current.add(key)
-            seenEventKeysRef.current.add(`narr-text:${text}`)
+            if (!dedupe(`narr:${ev.id}`, ev.id)) continue
             boot.push({ type: 'narr', sender: '守秘人', content: text, time: t })
           } else if (ev.eventType === 'action.submit' && typeof payload.utterance === 'string') {
-            const key = `act:${ev.id}`
-            if (seenEventKeysRef.current.has(key)) continue
-            seenEventKeysRef.current.add(key)
-            seenEventKeysRef.current.add(`act-text:${payload.utterance}`)
+            if (!dedupe(`act:${ev.id}`, ev.id)) continue
             const isSelf = ev.playerId === playerId
             boot.push({
               type: 'player',
@@ -637,9 +640,11 @@ export default function RoomPage() {
       const now = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
       if (envelope.type === 'action.broadcast') {
         const isSelf = envelope.payload.playerId === playerId
-        const textKey = `act-text:${envelope.payload.utterance}`
-        if (seenEventKeysRef.current.has(textKey)) return
-        seenEventKeysRef.current.add(textKey)
+        // 🔴 按**事件 id** 去重，不按正文（exec/19 #42）：replay 补历史与实时
+        // 广播是两条路径，同一行事件两边各来一次，得靠身份对齐。旧版拿原话
+        // 当身份，于是"过个侦查"说第二次就被永久吞掉，玩家看不见自己的话。
+        // 没有 eventId 时**不去重**：重复显示只是难看，丢消息是永久性的。
+        if (!dedupe(`act:${envelope.payload.eventId}`, envelope.payload.eventId)) return
         setMessages(prev => [...prev, {
           type: 'player',
           sender: isSelf ? senderNameRef.current : envelope.payload.nickname,
@@ -649,9 +654,7 @@ export default function RoomPage() {
         }])
       } else if (envelope.type === 'narration.push') {
         setTyping(false)
-        const textKey = `narr-text:${envelope.payload.text}`
-        if (seenEventKeysRef.current.has(textKey)) return
-        seenEventKeysRef.current.add(textKey)
+        if (!dedupe(`narr:${envelope.payload.eventId}`, envelope.payload.eventId)) return
         setMessages(prev => [...prev, {
           type: 'narr', sender: '守秘人', content: envelope.payload.text, time: now,
           private: envelope.payload.private === true,

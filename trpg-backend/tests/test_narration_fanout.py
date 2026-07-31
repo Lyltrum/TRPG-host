@@ -21,11 +21,14 @@ from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.decision import KeeperDecision
+from app.core.keeper.fact_ledger import EVENT_TYPE as FACT_EVENT_TYPE
+from app.core.keeper.fact_ledger import revealed_fact_ids, visible_fact_ids
 from app.core.keeper.location_state import HIDDEN_PLAYERS_KEY, PLAYER_LOCATION_KEY
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
-from app.core.narrator import NarrationContext
+from app.core.narrator import NarrationContext, PlayerUtterance
+from app.models.event import Event
 from app.models.room import Player, Room
 from app.service.ws_manager import ConnectionManager
 
@@ -134,6 +137,24 @@ def _stub(agent: KeeperAgent, decision: KeeperDecision) -> list[str]:
     agent._adjudicate = fake_adjudicate  # ty: ignore[invalid-assignment]
     agent._narrate_prose = fake_narrate_prose  # ty: ignore[invalid-assignment]
     return suffixes
+
+
+def _capture_situations(agent: KeeperAgent, decision: KeeperDecision) -> list[str]:
+    """抓每一段叙事**实际拿到的局面块**——P5.2d 守的就是它里面有什么。"""
+    situations: list[str] = []
+
+    async def fake_adjudicate(situation: str) -> KeeperDecision:
+        return decision
+
+    async def fake_narrate_prose(
+        situation, decision, report, issues, *, max_tokens, max_chars, extra_suffix=""
+    ):
+        situations.append(situation)
+        return "占位叙事。"
+
+    agent._adjudicate = fake_adjudicate  # ty: ignore[invalid-assignment]
+    agent._narrate_prose = fake_narrate_prose  # ty: ignore[invalid-assignment]
+    return situations
 
 
 async def _narrate(room_code: str, *, split: bool, both_speak: bool = False):
@@ -315,3 +336,121 @@ async def test_hidden_speaker_gets_own_segment_and_still_hears_the_room() -> Non
     assert [s.audience for s in outcome.segments] == [(a_id,), (a_id, b_id)]
     assert "只会送达 阿福 一个人" in suffixes[0]
     assert "阿福正处于隐匿状态" in suffixes[1]
+
+
+# ── 5. per-audience 上下文（P5.2d）：拿不到，才是真的说不出 ──────────
+
+
+async def _seed_split_room_with_history(room_code: str):
+    """两人分头 + 各自的历史：门厅的阿福、地下室的阿贵，各说过一句只有自己
+    那边听得见的话，各自挣到一条只有自己知道的线索。"""
+    async with _session_factory() as db:
+        room = Room(
+            room_code=room_code,
+            room_name="分头历史房",
+            max_players=4,
+            phase="InGame",
+            keeper_state={PHASE_KEY: PHASE_INVESTIGATION, CURRENT_NODE_KEY: "hall"},
+        )
+        db.add(room)
+        await db.flush()
+        a = Player(room_id=room.id, nickname="阿福")
+        b = Player(room_id=room.id, nickname="阿贵")
+        db.add_all([a, b])
+        await db.flush()
+        room.keeper_state = {**(room.keeper_state or {}), PLAYER_LOCATION_KEY: f"{b.id}@cellar"}
+        db.add_all(
+            [
+                Event(
+                    room_id=room.id,
+                    player_id=a.id,
+                    event_type="action.submit",
+                    payload={"utterance": "门厅这边我掀开了地毯", "audience": [a.id]},
+                ),
+                Event(
+                    room_id=room.id,
+                    player_id=b.id,
+                    event_type="action.submit",
+                    payload={"utterance": "地下室这边我撬开了木箱", "audience": [b.id]},
+                ),
+                Event(
+                    room_id=room.id,
+                    player_id=None,
+                    event_type="action.submit",
+                    payload={"utterance": "这句是分头之前说的，谁都听得见"},
+                ),
+                Event(
+                    room_id=room.id,
+                    player_id=a.id,
+                    event_type=FACT_EVENT_TYPE,
+                    payload={"fact_id": "f-hall", "via": "check", "audience": [a.id]},
+                ),
+                Event(
+                    room_id=room.id,
+                    player_id=b.id,
+                    event_type=FACT_EVENT_TYPE,
+                    payload={"fact_id": "f-cellar", "via": "check", "audience": [b.id]},
+                ),
+            ]
+        )
+        await db.commit()
+        return room.id, a.id, b.id
+
+
+async def test_each_segment_context_excludes_the_other_groups_history() -> None:
+    """🔴 P5.2d 的核心断言：门厅那段的 prompt 里**根本没有**地下室的历史。
+
+    这一条替代了"靠范围提示请模型别说"。变异检验：把 `_visible_history` 改成
+    无条件返回全部，这条立刻红。
+    """
+    agent = _keeper()
+    situations = _capture_situations(
+        agent, KeeperDecision(thinking="无事", narration_guidance="继续")
+    )
+    room_id, a_id, b_id = await _seed_split_room_with_history("FAN011")
+
+    await agent.narrate(
+        NarrationContext(
+            utterance="阿福：我看看四周\n阿贵：我也看看",
+            player_nickname="阿福",
+            room_id=room_id,
+            player_id=a_id,
+            participant_ids=(a_id, b_id),
+            utterances=(
+                PlayerUtterance(player_id=a_id, nickname="阿福", text="我看看四周"),
+                PlayerUtterance(player_id=b_id, nickname="阿贵", text="我也看看"),
+            ),
+        )
+    )
+    assert len(situations) == 2
+    hall, cellar = situations
+
+    # 历史：各看各的；分头之前那句两边都在
+    assert "门厅这边我掀开了地毯" in hall
+    assert "地下室这边我撬开了木箱" not in hall
+    assert "地下室这边我撬开了木箱" in cellar
+    assert "门厅这边我掀开了地毯" not in cellar
+    assert "这句是分头之前说的" in hall and "这句是分头之前说的" in cellar
+
+    # 本轮原话：门厅那段不该出现阿贵说了什么
+    assert "我看看四周" in hall and "我也看看" not in hall
+    assert "我也看看" in cellar and "我看看四周" not in cellar
+
+
+async def test_ledger_is_scoped_to_the_audience() -> None:
+    """线索账本同样按受众裁：地下室挣到的那条不进门厅那段。"""
+    async with _session_factory() as db:
+        assert await visible_fact_ids(db, room_id="nope", audience=frozenset()) == set()
+
+    room_id, a_id, b_id = await _seed_split_room_with_history("FAN012")
+    async with _session_factory() as db:
+        assert await visible_fact_ids(db, room_id=room_id, audience=frozenset({a_id})) == {"f-hall"}
+        assert await visible_fact_ids(db, room_id=room_id, audience=frozenset({b_id})) == {
+            "f-cellar"
+        }
+        # 两个人合起来一组时，两条都不算"共同知道"——交集口径，朝保密方向失败
+        assert (
+            await visible_fact_ids(db, room_id=room_id, audience=frozenset({a_id, b_id})) == set()
+        )
+        # 守秘人视图不过滤
+        assert await revealed_fact_ids(db, room_id=room_id) == {"f-hall", "f-cellar"}

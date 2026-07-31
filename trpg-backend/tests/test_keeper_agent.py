@@ -154,7 +154,9 @@ async def test_load_room_memory_replays_events_in_order() -> None:
     keeper_state, lines, roster, players = await _keeper()._load_room_memory(room_id)
 
     assert keeper_state == {"当前场景": "门厅"}
-    assert lines == [
+    # P5.2d：历史行带受众（None = 公开）。这批事件都没写 audience → 全公开。
+    assert all(line.audience is None for line in lines)
+    assert [line.text for line in lines] == [
         "阿福：我检查脚印",
         "阿福进行了一次侦察检定，掷出30，目标70，结果成功。",
         "守秘人：脚印通向地下室。",

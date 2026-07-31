@@ -213,13 +213,25 @@ async def create_pending_checks(
             node_id = location_of(keeper_state, player.id)
             # 🔴 id vs id（exec/17 (A)）：模组数据组装期已归一成规则表 id，
             # 裁决器输出的也是 id，护栏是纯集合比较——运行时不再有同义词表。
-            kept, guard_issues = filter_checks_against_module(
-                deps.module,
-                [check.skill_id],
-                current_scene=current_scene,
-                current_node_id=node_id,
-            )
-            issues.extend(guard_issues)
+            #
+            # 🔴 动手那一轮**不过护栏**（exec/19 #49，试玩实测抓到的回归）：
+            # 护栏（设计 02）防的是"玩家用模组没标注的调查技能即兴挖线索"
+            # （拿克苏鲁神话看穿真相那种）。**战斗不属于这个范畴**——模组不可能
+            # 在每个节点都标注格斗检定点，而玩家有权动手。
+            #
+            # 不豁免会死循环：护栏拦掉格斗 → 本轮零检定 → #44 的兜底要求叙事
+            # 停下来追问 → 玩家再说一次"我砸他的头" → 又被拦 → 又追问。
+            # 试玩里连着两轮都在问"你是要砸他的头？"，玩家永远打不出这一拳。
+            if decision.player_state != "physical_conflict":
+                kept, guard_issues = filter_checks_against_module(
+                    deps.module,
+                    [check.skill_id],
+                    current_scene=current_scene,
+                    current_node_id=node_id,
+                )
+                issues.extend(guard_issues)
+            else:
+                kept = [check.skill_id]
             if not kept:
                 continue
             # 事实账本（exec/14 P4）：这名玩家所在节点上同名检定标注的

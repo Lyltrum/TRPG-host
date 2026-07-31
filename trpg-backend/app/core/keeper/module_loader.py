@@ -13,6 +13,7 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -49,9 +50,29 @@ class ModuleFact(_LenientModel):
 
 
 class ModuleCheck(_LenientModel):
-    """一次检定点：技能、难度与成败后果（都是给 KP 看的自由文本）。"""
+    """一次检定点：技能、难度与成败后果。
 
-    skill: str
+    ## 两个技能字段的分工（exec/17 (A)）
+
+    - `skill_ids`：**机器可读**，组装期归一产出的规则表 id 列表。护栏比对、
+      账本 reveals 匹配只看它——两侧都是 id，运行时一个字符串匹配都不剩。
+      多个 id = **任一命中即可**（"话术/魅惑/信用"这类多选检定点，以及
+      "STR+DEX"这类组合属性）。
+    - `skill`：**展示名**，渲染进 KP 剧本正文给模型读。组装期归一成规则表
+      规范中文名。
+
+    为什么不是一个字段：id 给代码看、名字给人和模型看，两种受众对"同一个
+    技能"的正确写法本来就不同。此前只有 `skill` 一个自由文本字段，于是
+    43 条模组数据（含 11 条 COC6 遗留的「灵感/知识」）在运行时全靠字符串
+    匹配去猜，猜不中就静默丢检定。
+
+    `kind="san"` 的检定点是**理智检定**（模组里写作「理智」「理智(San)」）：
+    它该走 `san_checks` 而不是技能检定，`skill_ids` 恒为空。
+    """
+
+    skill_ids: list[str] = []
+    kind: Literal["skill", "san"] = "skill"
+    skill: str = ""
     difficulty: str | None = None
     on_success: str | None = None
     on_failure: str | None = None

@@ -19,7 +19,7 @@ from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.location_state import location_of
 from app.core.keeper.pending import PendingCheck
 from app.core.keeper.phase import PHASE_FINISHED, PHASE_INVESTIGATION
-from app.core.keeper.skill_names import match_key, resolve_skill_id
+from app.core.keeper.skill_names import resolve_skill_id
 from app.core.keeper.subject import KEEPER, Subject, authorize_decision, sanitize_decision
 from app.core.keeper.tools import (
     KeeperDeps,
@@ -211,11 +211,11 @@ async def create_pending_checks(
                 issues.append(f"检定[{check.skill_id}]未能发起：{exc}")
                 continue
             node_id = location_of(keeper_state, player.id)
-            # 🔴 拿**规则表规范名**去撞模组标注，不拿裁决器写的原文——两侧都是
-            # 自由文本时才需要同义词表打地鼠（exec/12 #32 的病根）。
+            # 🔴 id vs id（exec/17 (A)）：模组数据组装期已归一成规则表 id，
+            # 裁决器输出的也是 id，护栏是纯集合比较——运行时不再有同义词表。
             kept, guard_issues = filter_checks_against_module(
                 deps.module,
-                [display_name],
+                [check.skill_id],
                 current_scene=current_scene,
                 current_node_id=node_id,
             )
@@ -228,8 +228,7 @@ async def create_pending_checks(
             reveals: tuple[str, ...] = ()
             if scene_node is not None:
                 for module_check in scene_node.checks:
-                    same_skill = match_key(module_check.skill) == match_key(display_name)
-                    if same_skill and module_check.reveals:
+                    if check.skill_id in module_check.skill_ids and module_check.reveals:
                         reveals = tuple(module_check.reveals)
                         break
             # 对抗检定（exec/19 #38）：目标值必须落在 1–100。越界就**跳过整条

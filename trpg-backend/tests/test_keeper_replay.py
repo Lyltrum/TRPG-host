@@ -40,6 +40,9 @@ ROUNDS = [
     "我现在该做什么？",
 ]
 
+#: `narrate()` 在"还有待掷检定"时返回的代码固定文案（agent.py），不经过 LLM。
+_PENDING_CHECK_NOTICE = "守秘人正在等待掷骰——请先完成待掷的检定。"
+
 
 async def _fresh_room(tmp_path: Path):
     """临时库 + 干净房间 + 一张已就绪的角色卡。"""
@@ -163,9 +166,14 @@ async def test_scrub_only_deletes_never_invents(tmp_path: Path) -> None:
     texts, _, _ = await _play(tmp_path)
     tape = Tape.load(TAPE_PATH)
     recorded_narrations = [e.response_text for e in tape.entries if e.kind == "narrate"]
-    assert len(recorded_narrations) == len(texts)
+    # 🔴 不是每一轮都会调叙事模型：本轮还有待掷检定时，`narrate()` 直接返回
+    # 一句**代码固定文案**、不调 LLM（两段式玩家掷骰，agent.py 那条早返回）。
+    # 拿它去跟录音比对是错的——它压根不是叙事产物。exec/17 (A) 归一后 fixture
+    # 的门厅真的会发起检定，这条路径才第一次被磁带覆盖到。
+    llm_texts = [t for t in texts if t != _PENDING_CHECK_NOTICE]
+    assert len(recorded_narrations) == len(llm_texts)
 
-    for produced, recorded in zip(texts, recorded_narrations, strict=True):
+    for produced, recorded in zip(llm_texts, recorded_narrations, strict=True):
         it = iter(recorded)
         assert all(ch in it for ch in produced), "叙事正文出现了录音里没有的内容"
 

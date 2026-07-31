@@ -413,6 +413,6 @@ async def test_pending_check_carries_reveals_from_the_module() -> None:
         ruleset=build_coc7_ruleset(),
     )
     pending, _issues = await create_pending_checks(
-        deps, KeeperDecision(checks=[CheckRequest(skill_id=hall.checks[0].skill)])
+        deps, KeeperDecision(checks=[CheckRequest(skill_id=hall.checks[0].skill_ids[0])])
     )
     assert [p.reveals for p in pending] == [("fact-001",)]

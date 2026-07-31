@@ -232,7 +232,7 @@ async def test_player_location_key_is_reserved_from_state_updates(party) -> None
 async def test_check_guard_uses_each_players_own_location(party) -> None:
     """🔴 分头后不能用房间级指针去卡另一个人的检定。
 
-    fixture 里 hall 标注了检定点[侦查]、cellar 没标注 checks（即兴层放行）。
+    fixture 里 hall 标注了检定点 spot-hidden、cellar 没标注 checks（即兴层放行）。
     阿福在 cellar、阿贵在 hall：
     - 阿福掷「图书馆使用」→ 所在节点无 checks → 放行；
     - 若按房间级指针（hall）判定，这一条会被 hall 的 checks 否掉。
@@ -254,6 +254,6 @@ async def test_check_guard_uses_each_players_own_location(party) -> None:
     )
     pending, issues = await create_pending_checks(deps, decision)
     assert [p.player_id for p in pending] == [a_id]
-    # 阿贵那条被他自己所在的门厅护栏否掉（门厅只标注了侦查）
+    # 阿贵那条被他自己所在的门厅护栏否掉（门厅只标注了 spot-hidden）
     assert len(issues) == 1
-    assert "图书馆使用" in issues[0] and "门厅" in issues[0]
+    assert "library-use" in issues[0] and "门厅" in issues[0]

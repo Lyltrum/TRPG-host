@@ -19,6 +19,7 @@ from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.pending import PendingCheck
 from app.core.keeper.phase import PHASE_FINISHED, PHASE_INVESTIGATION
 from app.core.keeper.scene_state import load_current_node_id
+from app.core.keeper.subject import KEEPER, Subject, authorize_decision, sanitize_decision
 from app.core.keeper.tools import (
     KeeperDeps,
     KeeperToolError,
@@ -36,7 +37,7 @@ logger = structlog.get_logger()
 
 
 async def execute_side_effects(
-    deps: KeeperDeps, decision: KeeperDecision
+    deps: KeeperDeps, decision: KeeperDecision, *, subject: Subject = KEEPER
 ) -> tuple[list[str], list[str]]:
     """执行裁决里"立即生效"的部分：HP 变更 + 状态记账 + 议程触发。返回 (执行报告, 问题清单)。
 
@@ -56,6 +57,13 @@ async def execute_side_effects(
     """
     report: list[str] = []
     issues: list[str] = []
+
+    # 执行边界的授权（exec/14 P2 纵深防御第二道）。受限主体的越权字段本来
+    # 就无法表达（build_decision_model 已经把它从 schema 里去掉），这里再查
+    # 一遍是因为：老 schema 反序列化出来的决策、测试构造的决策、以后从别处
+    # 传进来的决策都可能绕过第一道。守秘人持全权限，这段对它恒为空。
+    issues.extend(authorize_decision(subject, decision))
+    decision = sanitize_decision(subject, decision)
 
     for hp in decision.hp_changes:
         try:
@@ -130,7 +138,7 @@ async def execute_side_effects(
 
 
 async def create_pending_checks(
-    deps: KeeperDeps, decision: KeeperDecision
+    deps: KeeperDeps, decision: KeeperDecision, *, subject: Subject = KEEPER
 ) -> tuple[list[PendingCheck], list[str]]:
     """把裁决里的 checks/san_checks 解析成待掷记录——**本函数不掷骰**。
 
@@ -146,6 +154,10 @@ async def create_pending_checks(
 
     pending: list[PendingCheck] = []
     issues: list[str] = []
+
+    # 发起检定同样是受权限管辖的动作（exec/14 P2）。无 REQUEST_CHECK /
+    # REQUEST_SAN_CHECK 的主体连 schema 里都没有这两个字段，这里是第二道。
+    decision = sanitize_decision(subject, decision)
 
     # 模组节点护栏：先按当前场景过滤 skill 列表（node_id 精确定位优先，
     # 自由文本地名模糊匹配兜底——见 check_guard.find_node_for_scene）。

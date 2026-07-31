@@ -1071,6 +1071,10 @@ export default function RoomPage() {
         {[
           { icon: ScrollText, label: '角色卡', key: 'sheet' },
           { icon: Star, label: '技能', key: 'skills' },
+          // 队友卡此前只能从顶栏那个无文字的小人图标进（面板还叫「房间成员」，
+          // 读起来像"看看谁在线"）——真人实测直接找不到，以为功能没做。
+          // 底部这排带文字的 tab 才是玩家找"卡"的心智位置，跟自己的角色卡并列。
+          { icon: Users, label: '队友', key: 'members' },
           { icon: Map, label: '地图', key: 'map' },
           { icon: BookOpen, label: '速记', key: 'notes' },
         ].map((item) => (
@@ -1414,7 +1418,7 @@ export default function RoomPage() {
       </BottomPanel>
 
       {/* Panel: 房间成员 */}
-      <BottomPanel open={openPanel === 'members'} onClose={() => setOpenPanel(null)} title="房间成员">
+      <BottomPanel open={openPanel === 'members'} onClose={() => setOpenPanel(null)} title="队友角色卡">
         {roomInfo ? (
           <div className="space-y-1.5">
             <p className="text-xs text-text-muted mb-2">{roomInfo.players.length}/{roomInfo.maxPlayers} 人</p>

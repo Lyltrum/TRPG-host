@@ -28,6 +28,7 @@ from app.core.keeper.tools import (
     _resolve_skill_target,
     adjust_hp_impl,
     adjust_npc_hp_impl,
+    clear_current_node_impl,
     mark_agenda_fired_impl,
     mark_visibility_revealed_impl,
     move_player_impl,
@@ -38,6 +39,22 @@ from app.core.keeper.tools import (
 )
 
 logger = structlog.get_logger()
+
+
+#: `state_updates` 里那个人类可读的场景键。它和 `current_node_id` 是同一件事的
+#: 两个面（人读的地名 / 机器读的节点 id），两者脱节就会出 #48。
+_SCENE_KEY = "当前场景"
+
+
+def _scene_moved_off_the_map(decision: KeeperDecision) -> bool:
+    """本轮换了场景，却没给出任何剧本节点 id（exec/19 #48）。
+
+    只在裁决器**明确写了新的「当前场景」**时才成立——没提场景的普通轮次
+    （对话、检定结算）不该动节点指针。
+    """
+    if decision.current_node_id:
+        return False
+    return any(u.key == _SCENE_KEY and u.value.strip() for u in decision.state_updates)
 
 
 async def execute_side_effects(
@@ -94,6 +111,22 @@ async def execute_side_effects(
             report.append(await set_current_node_impl(deps, decision.current_node_id))
         except KeeperToolError as exc:
             issues.append(f"场景定位未执行：{exc}")
+    elif _scene_moved_off_the_map(decision):
+        # 🔴 场景变了、但没有任何剧本节点对应得上（exec/19 #48）。
+        #
+        # 试玩实测：终局「当前场景 = 科比特家门外（警察到场）」，而节点指针还
+        # 停在 basement-laboratory——玩家已经站在屋外，护栏却拿地下室的 checks[]
+        # 去卡他的检定。裁决器**做对了**（找不到对应节点就留空，不编造 id），
+        # 错在代码把"没说"当成了"没变"。
+        #
+        # 正确语义是**清空**：人在剧本节点之外的地方，护栏退化到即兴层放行。
+        # 与 #37 同族——空间状态是地基，宁可承认不知道，不可拿旧值硬撑。
+        try:
+            cleared = await clear_current_node_impl(deps)
+            if cleared:
+                report.append(cleared)
+        except KeeperToolError as exc:
+            issues.append(f"场景指针清空未执行：{exc}")
 
     # 分头探索（P5.2）：逐人覆盖，必须排在 current_node_id 之后——那个是
     # "本轮发言者的默认落点"，这个是"谁不跟大家一起"，顺序反了会被默认值盖掉。

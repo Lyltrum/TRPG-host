@@ -68,6 +68,7 @@ from app.core.keeper.phase import (
     PHASE_FINISHED,
     PHASE_KEY,
     PHASE_OPENING,
+    format_endings_status,
     format_phase_status,
     load_ending_id,
     load_phase,
@@ -424,6 +425,8 @@ class KeeperAgent(Narrator):
         locations_status = format_party_locations(self._module, keeper_state, players)
         # NPC 对局内状态（exec/19 #39）：没记过账时是空串，整块不渲染。
         npc_status = format_npc_states(self._module, keeper_state)
+        # 可能的结局（exec/19 #47）：与议程同一待遇，每轮摆在裁决器眼前。
+        endings_status = format_endings_status(self._module)
 
         def build_situation(
             *,
@@ -451,6 +454,7 @@ class KeeperAgent(Narrator):
                 chapters_status=chapters_status,
                 locations_status=locations_status,
                 npc_status=npc_status,
+                endings_status=endings_status,
                 is_heartbeat=is_heartbeat,
                 is_opening_ceremony=is_opening_ceremony,
                 phase=phase,

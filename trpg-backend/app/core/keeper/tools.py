@@ -469,6 +469,31 @@ async def update_state_impl(deps: KeeperDeps, key: str, value: str) -> str:
     return f"已记录：{key} = {value}"
 
 
+def _drop_stealth_on_move(state: dict, moved_player_ids: set[str]) -> None:
+    """离开原地点 → 解除隐匿（exec/19 #46）。就地改 `state`。
+
+    exec/18 ② 早就写明"被发现、主动现身、**离开该地点**都要置回 false"，但那
+    三件事此前全靠裁决器写 stealth 自觉完成。试玩实测 2026-08-01：玩家第 6 轮
+    躲进街对面的阴影，之后一路垃圾场 → 温室 → 进屋 → 当面摊牌 → 地下室 →
+    冲出去报警，到第 26 轮「隐匿玩家」里还挂着他——二十轮之后模型早忘了。
+
+    三件事里**只有"离开该地点"是代码能确定性判断的**（位置变了就是变了），
+    所以把这一件收归代码；"被发现/主动现身"仍留给裁决器，那是语义判断。
+    这跟 #37 同一条判据：空间状态是地基，它错了投递就跟着错——多人局里一个
+    永不解除的隐匿标记意味着队友**永远收不到他的消息**。
+    """
+    if not moved_player_ids:
+        return
+    hidden = load_hidden_players(state)
+    remaining = hidden - moved_player_ids
+    if remaining == hidden:
+        return
+    if remaining:
+        state[HIDDEN_PLAYERS_KEY] = serialize_hidden_players(remaining)
+    else:
+        state.pop(HIDDEN_PLAYERS_KEY, None)
+
+
 async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
     """写入调查员当前所在的模组场景节点 id（结构化场景指针）。
 
@@ -518,15 +543,44 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
         movers = speakers | {
             pid for pid in roster if location_of(current_state, pid) in speaker_places
         }
+        # ⚠️ 谁"真的换了地方"也必须在改指针**之前**算——写完 CURRENT_NODE_KEY
+        # 再问，所有回落到房间指针的人都会显示成"已经在新节点"，等于没判。
+        # （跟上面 speaker_places 同一个坑，写这段时又踩了一次。）
+        moved_away = {pid for pid in movers if location_of(current_state, pid) != node_id}
 
         current_state[CURRENT_NODE_KEY] = node_id
         locations = load_player_locations(current_state)
         for pid in movers:
             locations[pid] = node_id
         current_state[PLAYER_LOCATION_KEY] = serialize_player_locations(locations)
+        _drop_stealth_on_move(current_state, moved_away)
         room.keeper_state = current_state
         await _record(db, deps, "keeper.node", {"node_id": node_id, "title": node.title})
     return f"当前场景节点：{node.title}（{node_id}）"
+
+
+async def clear_current_node_impl(deps: KeeperDeps) -> str:
+    """清空场景节点指针：人在剧本节点之外的地方（exec/19 #48）。
+
+    房间级指针与**所有**逐人条目一起清——留着任何一条，那个人的护栏就还挂在
+    旧节点上。清空后 location_of 返回 None，护栏退化到即兴层放行
+    （filter_checks_against_module 找不到节点就全部放行），这是正确行为：
+    剧本没写到的地方本来就没有"模组标注的检定点"可言。
+    """
+    async with deps.write_lock, deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            raise KeeperToolError("房间不存在")
+        current_state = dict(room.keeper_state or {})
+        if CURRENT_NODE_KEY not in current_state and not load_player_locations(current_state):
+            # 本来就没指针 = 无事发生。返回空串让调用方跳过——执行报告是
+            # 喂给叙事阶段的"本轮发生了什么"，塞一条无操作进去等于噪声。
+            return ""
+        current_state.pop(CURRENT_NODE_KEY, None)
+        current_state.pop(PLAYER_LOCATION_KEY, None)
+        room.keeper_state = current_state
+        await _record(db, deps, "keeper.node", {"node_id": None, "title": None})
+    return "场景已离开剧本节点范围，节点指针清空"
 
 
 async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> str:
@@ -547,8 +601,11 @@ async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> 
             raise KeeperToolError("房间不存在")
         current_state = dict(room.keeper_state or {})
         locations = load_player_locations(current_state)
+        moved_away = {player.id} if location_of(current_state, player.id) != node_id else set()
         locations[player.id] = node_id
         current_state[PLAYER_LOCATION_KEY] = serialize_player_locations(locations)
+        # 离开原地点 → 解除隐匿（exec/19 #46），与 set_current_node_impl 同口径
+        _drop_stealth_on_move(current_state, moved_away)
         room.keeper_state = current_state
         await _record(
             db,

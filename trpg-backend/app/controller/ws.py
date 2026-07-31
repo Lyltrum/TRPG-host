@@ -396,10 +396,10 @@ async def _handle_action_submit(
     - **收集窗口（exec/14 P5.1）**：真人守秘人同时听四个人说话、然后回应一次。
       窗口内的其他提交**并入同一轮**而不是被拒——汇总必须发生在裁决之前。
       单人局窗口为 0，行为与本功能上线前逐字一致（见 service/turn_window.py）。
-    - 锁：窗口关闭、裁决开跑之后，同一房间仍然只允许一个「读状态→跑 AI→写回」
-      循环，这时的提交才回到 ACTION_IN_PROGRESS——那时拒绝是对的，世界状态
-      确实正在被改写。finally 无条件释放 + 锁自身的超时兜底（action_lock.py），
-      保证一次 AI 失败不会永久锁死房间。
+    - 锁：同一房间仍然只允许一个「读状态→跑 AI→写回」循环。但**锁被占用不再是
+      拒绝**（exec/19 #36）：那几条留在缓冲里，持锁的循环跑完一轮会回来接着跑
+      下一轮。真人桌上不存在"你这句无效、请重说"——你说出口的话在空气里。
+      finally 只释放锁、**不清缓冲**；锁自身的超时兜底见 action_lock.py。
     - 玩家原话广播：修"聊天记录像被隔离"的 bug——此前原话只在发送方本地
       插入，其他人只能看到守秘人转述。
     - Narrator 失败（超时/网络/API 错）：只告诉发起者（error 不广播），
@@ -433,87 +433,129 @@ async def _handle_action_submit(
 
     lock_token = action_lock_manager.try_acquire(room_id)
     if lock_token is None:
-        # 上一轮的裁决还在跑（窗口已关）——这时拒绝是对的。
-        turn_window_manager.drain(room_id)
-        await _send_error(websocket, "ACTION_IN_PROGRESS", "守秘人正在处理其他玩家的行动，请稍候")
+        # 🔴 上一轮还在跑：**不 drain**，让这几条留在缓冲里等下一轮（exec/19 #36）。
+        # 真人桌上不存在"你这句无效、请重说"——你说出口的话在空气里，KP 最多说
+        # "等一下，我先处理完张三"。所以这里回的是**回执**不是错误。
+        # 谁来处理？当前持锁的那个循环跑完一轮后会回来看缓冲（见下面的 while）。
+        await _send_error(websocket, "QUEUED", "守秘人正在回应其他人，你的话已记下")
         return
 
     try:
-        window = turn_window_manager.window_seconds(manager.connection_count(room_id))
-        if window > 0:
-            await asyncio.sleep(window)
-        submissions = turn_window_manager.drain(room_id)
-        # 合并成一段给裁决器看；单条时返回原话本身，单人局的 prompt 因此与
-        # 本功能上线前逐字一致（merge_utterances 的退化保证）。
-        utterance = merge_utterances(submissions)
-
-        # ⚠️ 先组叙事上下文、后写事件：build_narration_context 靠"当前这条
-        # 还没入库"来保证历史里不含它（见该函数 docstring 的时序约定）。
-        context = await room_service.build_narration_context(db, room_id, player_id, utterance)
-        # 本轮一起发言的人：keeper 用它决定"把谁挪到新场景"——没发言的人
-        # 位置不动，否则分头探索时留在别处的人会被隔空传送走（P5.2）。
-        context = replace(
-            context,
-            participant_ids=tuple(dict.fromkeys(s.player_id for s in submissions)),
-            private_player_ids=tuple(dict.fromkeys(s.player_id for s in submissions if s.private)),
-            # 逐条原话：分组叙事时门厅那段的上下文里不能出现地下室那位说了
-            # 什么，合并成一段就裁不开了（P5.2d）。
-            utterances=tuple(
-                PlayerUtterance(player_id=s.player_id, nickname=s.nickname, text=s.utterance)
-                for s in submissions
-            ),
-        )
-        # 事件按**人**分别记：账本/历史要能看出每句话是谁说的，不能只留一条
-        # 合并文本（否则多人轮在历史里退化成一个匿名段落）。
-        for sub in submissions:
-            # 🔴 受众随事件一起落库：历史重放要能回答"这句话当时谁听见了"。
-            # 没有它，P5.2d 的 per-audience 上下文裁剪就无从判断历史行的可见性
-            # ——事后再猜位置是猜不回来的。不写这个键 = 公开。
-            seen_by = await _audience_at_speaker_location(
-                db, room_id, sub.player_id, private=sub.private
-            )
-            payload: dict = {"utterance": sub.utterance, "private": sub.private}
-            if seen_by is not None:
-                payload["audience"] = seen_by
-            await room_service.record_event(db, room_id, sub.player_id, "action.submit", payload)
-
-        narrator = websocket.app.state.narrator
-        try:
-            outcome = await narrator.narrate(context)
-        except Exception as exc:  # 外部服务的失败面（网络/超时/API 错）就是宽的，故意宽捕获
-            logger.warning("narrator_failed", room_id=room_id, error=str(exc))
-            await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
-            # 聊天区不能静默：补一条可见兜底，避免玩家以为断线
-            with contextlib.suppress(Exception):  # 兜底广播失败也不再抛
-                await _broadcast_narration(
-                    db,
-                    room_id,
-                    player_id,
-                    "守秘人整理思路时卡了一下。请用一句更明确的行动再说一次。",
-                )
-            return
-        # 玩家行动重置心跳节流（路线 6）
-        try:
-            from app.core.keeper.heartbeat import touch_activity
-
-            touch_activity(room_id)
-        except Exception:  # noqa: BLE001 — 心跳模块不可用时不影响主路径
-            pass
-        # outcome.text 可能为空（两段式玩家掷骰：pending 守卫命中时守秘人只
-        # 重发检定请求，不产生新叙事）——空文本不广播一条空 narration.push。
-        for notice in outcome.stat_changes:
-            await _broadcast_stat_change(room_id, notice)
-        if outcome.text:
-            await _broadcast_narration(db, room_id, player_id, outcome.text)
-        await _deliver_narration_segments(db, room_id, outcome.segments)
-        for notice in outcome.check_requests:
-            await _broadcast_check_request(room_id, notice)
+        # 一次持锁可以连跑多轮：本轮跑完若缓冲里又攒下了话，直接接着开下一轮。
+        # 🔴 循环条件是**同步**的，`is_collecting` 为假到 finally 里 release 之间
+        # 没有任何 await——asyncio 单线程下这就是原子的，不会出现"刚判空就有人
+        # 塞进来、然后锁被释放、而没有人再来处理"的孤儿缓冲。
+        while turn_window_manager.is_collecting(room_id):
+            connected = manager.connection_count(room_id)
+            await _await_window(room_id, connected)
+            submissions = turn_window_manager.drain(room_id)
+            if not submissions:
+                break
+            try:
+                await _run_turn(db, websocket, room_id, submissions)
+            except Exception:  # noqa: BLE001 — 一轮失败不该把排在后面的人一起丢掉
+                logger.warning("turn_failed", room_id=room_id, exc_info=True)
     finally:
-        # 🔴 两个都必须无条件释放。窗口缓冲若漏掉，房间会**永久停留在"收集中"**
-        # ——之后每一条提交都只广播原话、静默不裁决，比锁死更难查（锁至少
-        # 60 秒后会自己过期）。drain 是幂等的，正常路径已经取走时这里是空操作。
-        turn_window_manager.drain(room_id)
+        # 只释放锁。**不要在这里 drain**——缓冲里可能正排着别人的话，清掉就是
+        # 把他们的发言吞了（这正是 exec/19 #36 的病灶）。
         action_lock_manager.release(room_id, lock_token)
+
+
+#: 等窗口时的轮询粒度。只影响"人到齐后多久发现"，不影响窗口上限。
+_WINDOW_POLL_SECONDS = 0.1
+
+
+async def _await_window(room_id: str, connected_players: int) -> None:
+    """等收集窗口，但**人到齐就提前收**（exec/19 #35）。
+
+    固定 sleep 满窗口是纯白等：两人局里两个人都已经提交了，再等 2.5 秒不会
+    多收到任何东西，只是让所有人多盯 2.5 秒屏幕。这里改成轮询，凑齐在场人数
+    就立刻开跑。单人局窗口为 0，一次都不轮询，行为逐字不变。
+    """
+    window = turn_window_manager.window_seconds(connected_players)
+    if window <= 0:
+        return
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + window
+    while loop.time() < deadline:
+        if turn_window_manager.pending_count(room_id) >= connected_players:
+            return
+        await asyncio.sleep(_WINDOW_POLL_SECONDS)
+
+
+async def _run_turn(
+    db: AsyncSession,
+    websocket: WebSocket,
+    room_id: str,
+    submissions: list[Submission],
+) -> None:
+    """跑一轮：合并宣告 → 一次裁决 → 执行 → 叙事 → 投递。调用方持有房间锁。"""
+    # 合并成一段给裁决器看；单条时返回原话本身，单人局的 prompt 因此与
+    # 收集窗口上线前逐字一致（merge_utterances 的退化保证）。
+    utterance = merge_utterances(submissions)
+    initiator_id = submissions[0].player_id
+
+    # ⚠️ 先组叙事上下文、后写事件：build_narration_context 靠"当前这条
+    # 还没入库"来保证历史里不含它（见该函数 docstring 的时序约定）。
+    context = await room_service.build_narration_context(db, room_id, initiator_id, utterance)
+    # 本轮一起发言的人：keeper 用它决定"把谁挪到新场景"——没发言的人
+    # 位置不动，否则分头探索时留在别处的人会被隔空传送走（P5.2）。
+    context = replace(
+        context,
+        participant_ids=tuple(dict.fromkeys(s.player_id for s in submissions)),
+        private_player_ids=tuple(dict.fromkeys(s.player_id for s in submissions if s.private)),
+        # 逐条原话：分组叙事时门厅那段的上下文里不能出现地下室那位说了
+        # 什么，合并成一段就裁不开了（P5.2d）。
+        utterances=tuple(
+            PlayerUtterance(player_id=s.player_id, nickname=s.nickname, text=s.utterance)
+            for s in submissions
+        ),
+    )
+    # 事件按**人**分别记：账本/历史要能看出每句话是谁说的，不能只留一条
+    # 合并文本（否则多人轮在历史里退化成一个匿名段落）。
+    for sub in submissions:
+        # 🔴 受众随事件一起落库：历史重放要能回答"这句话当时谁听见了"。
+        # 没有它，P5.2d 的 per-audience 上下文裁剪就无从判断历史行的可见性
+        # ——事后再猜位置是猜不回来的。不写这个键 = 公开。
+        seen_by = await _audience_at_speaker_location(
+            db, room_id, sub.player_id, private=sub.private
+        )
+        payload: dict = {"utterance": sub.utterance, "private": sub.private}
+        if seen_by is not None:
+            payload["audience"] = seen_by
+        await room_service.record_event(db, room_id, sub.player_id, "action.submit", payload)
+
+    narrator = websocket.app.state.narrator
+    try:
+        outcome = await narrator.narrate(context)
+    except Exception as exc:  # 外部服务的失败面（网络/超时/API 错）就是宽的，故意宽捕获
+        logger.warning("narrator_failed", room_id=room_id, error=str(exc))
+        await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
+        # 聊天区不能静默：补一条可见兜底，避免玩家以为断线
+        with contextlib.suppress(Exception):  # 兜底广播失败也不再抛
+            await _broadcast_narration(
+                db,
+                room_id,
+                initiator_id,
+                "守秘人整理思路时卡了一下。请用一句更明确的行动再说一次。",
+            )
+        return
+    # 玩家行动重置心跳节流（路线 6）
+    try:
+        from app.core.keeper.heartbeat import touch_activity
+
+        touch_activity(room_id)
+    except Exception:  # noqa: BLE001 — 心跳模块不可用时不影响主路径
+        pass
+    # outcome.text 可能为空（两段式玩家掷骰：pending 守卫命中时守秘人只
+    # 重发检定请求，不产生新叙事）——空文本不广播一条空 narration.push。
+    for notice in outcome.stat_changes:
+        await _broadcast_stat_change(room_id, notice)
+    if outcome.text:
+        await _broadcast_narration(db, room_id, initiator_id, outcome.text)
+    await _deliver_narration_segments(db, room_id, outcome.segments)
+    for notice in outcome.check_requests:
+        await _broadcast_check_request(room_id, notice)
 
 
 async def _handle_check_roll(

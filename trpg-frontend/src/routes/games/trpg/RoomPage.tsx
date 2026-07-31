@@ -743,9 +743,14 @@ export default function RoomPage() {
           time: now,
         }])
       } else if (envelope.type === 'error') {
-        setTyping(false)
+        // QUEUED 不是错误，是**回执**：话已经记下了，守秘人处理完手头这轮就会
+        // 回到你（exec/19 #36）。所以这一支不清打字指示——它确实还在写。
+        const queued = envelope.payload.code === 'QUEUED'
+        if (!queued) setTyping(false)
         const friendly =
-          envelope.payload.code === 'ACTION_IN_PROGRESS'
+          queued
+            ? '守秘人正在回应其他人，你的话已记下'
+            : envelope.payload.code === 'ACTION_IN_PROGRESS'
             ? '守秘人正在处理其他玩家的行动，请稍候再试'
             : envelope.payload.code === 'INTERNAL_ERROR'
               ? '守秘人暂时无法回应，请稍后重试'

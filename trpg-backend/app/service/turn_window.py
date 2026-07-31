@@ -81,6 +81,13 @@ class TurnWindowManager:
     def is_collecting(self, room_id: str) -> bool:
         return room_id in self._buffers
 
+    def pending_count(self, room_id: str) -> int:
+        """本轮已收到几条宣告。调用方用它**提前收窗**——在场的人都已经说过话了
+        就没必要再等满窗口（见 ws.py 的等待循环）。这是纯赚的：不牺牲"多人合并
+        成一拍"，只砍掉所有人都到齐之后的那段白等。"""
+        buffer = self._buffers.get(room_id)
+        return len(buffer.submissions) if buffer is not None else 0
+
     def drain(self, room_id: str) -> list[Submission]:
         """取走本轮全部宣告并关闭窗口。之后再提交就是新的一轮（或被锁拒）。"""
         buffer = self._buffers.pop(room_id, None)

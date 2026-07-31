@@ -82,7 +82,12 @@ class KeeperDecision(_DecisionModel):
     工具，而是每轮必然产出的结构化字段，天然可审计（structlog 落盘）。
     """
 
-    thinking: str = Field(default="", description="裁决理由（审计用，不广播给玩家）")
+    # 🔴 必须短。实测（exec/19 #35）裁决那 ~7 秒里瓶颈**不在输入**——system
+    # prompt 的模组全文已经被 provider 的 prompt cache 覆盖了（11134 token 命中
+    # 10880），耗时几乎全在**输出解码**。而 thinking 是纯审计字段、玩家永远看
+    # 不到，模型却常写成 200 字小作文，占掉输出的三分之一。压到 30 字实测
+    # completion 370→250 token、单次 7.0s→5.6s。
+    thinking: str = Field(default="", description="裁决理由，最多 30 字（审计用，不广播给玩家）")
     checks: list[CheckRequest] = Field(default_factory=list)
     san_checks: list[SanCheckRequest] = Field(default_factory=list)
     hp_changes: list[HpChange] = Field(default_factory=list)

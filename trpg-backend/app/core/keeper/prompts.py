@@ -94,7 +94,7 @@ def build_adjudicator_instructions(module: ScenarioModule, ruleset: RulesetRead)
 
 ## 输出格式（只输出一个 JSON 对象，不要任何其它文字）
 {{
-  "thinking": "裁决理由，一两句（审计用，玩家看不到）",
+  "thinking": "裁决理由，**最多 30 字**（审计用，玩家看不到）",
   "checks": [{{"skill": "侦察", "player": null, "reason": "搜索书房命中剧本检定点"}}],
   "san_checks": [{{"player": null, "loss_on_success": "0", "loss_on_failure": "1d6", "reason": "目击食尸鬼"}}],
   "hp_changes": [{{"delta": -2, "player": null, "reason": "被抓伤"}}],

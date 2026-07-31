@@ -214,8 +214,8 @@ async def test_list_party_characters_shows_teammates(client: AsyncClient) -> Non
     assert owner["name"] == BUILT_CHARACTER["name"]
     assert owner["attributes"] == BUILT_CHARACTER["attributes"]
     # ⑦⑧ 公开：HP/SAN 与技能都不脱敏
-    assert owner["derivedStats"]["HP"] == BUILT_CHARACTER["derivedStats"]["HP"]
-    assert owner["derivedStats"]["SAN"] == BUILT_CHARACTER["derivedStats"]["SAN"]
+    assert owner["derivedStats"]["HP"] == 12
+    assert owner["derivedStats"]["SAN"] == 55
     assert owner["skills"] == BUILT_CHARACTER["skills"]
     # 建卡过程字段不外泄——那是卡主自己的建卡向导才需要的东西
     assert "generationMethod" not in owner

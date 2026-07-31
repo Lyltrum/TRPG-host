@@ -68,6 +68,7 @@ from app.core.keeper.prose_discipline import (
     scrub_kp_anti_patterns,
 )
 from app.core.keeper.scene_state import CURRENT_NODE_KEY, load_current_node_id
+from app.core.keeper.subject import KEEPER
 from app.core.keeper.tools import (
     KeeperDeps,
     KeeperToolError,
@@ -462,8 +463,11 @@ class KeeperAgent(Narrator):
             ruleset=self._ruleset,
             rng=self._rng,
         )
-        report, issues = await execute_side_effects(deps, decision)
-        pending_checks, pending_issues = await create_pending_checks(deps, decision)
+        # 守秘人的身份显式传进去：它不是"唯一那条代码路径"，是一个视图取
+        # 全集、持全权限的主体（exec/14 P2）。全权限下 sanitize/authorize 都
+        # 是恒等操作，行为与此前逐字节一致。
+        report, issues = await execute_side_effects(deps, decision, subject=KEEPER)
+        pending_checks, pending_issues = await create_pending_checks(deps, decision, subject=KEEPER)
         issues = [*issues, *pending_issues]
 
         if pending_checks:

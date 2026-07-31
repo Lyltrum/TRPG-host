@@ -11,6 +11,7 @@
 """
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -417,3 +418,58 @@ def render_full(module: ScenarioModule) -> str:
     parts.append(f"═══ 登场 NPC（专有名词以此为准，不得另起名字）═══\n\n{npcs}")
     parts.append(f"═══ 结局 ═══\n{render_endings(module)}")
     return "\n\n".join(parts)
+
+
+def render_for_subject(
+    module: ScenarioModule, *, sees_meta: bool, knows: Callable[[str], bool]
+) -> str:
+    """按主体视图渲染剧本（exec/14 P2）。
+
+    - 守秘人（`sees_meta=True`）→ 直接返回 `render_full(module)`，**同一个函数、
+      同一份输出**，不是等价副本。这是「重构不改行为」的一部分。
+    - 其余主体 → 只给虚构内可见的部分：
+      - **元层整块不给**：真相层 / 议程 / 结局 / 密级配对 / 开场 KP 指导 /
+        节点的 `kp_text` / NPC 的 `kp_notes`。它们对**任何**虚构内主体永不可见。
+      - 节点/NPC 只给 `public_text`（没有就只给名字，不拿 kp_text 顶替）。
+      - 事实只给 `knows` 里、且 `tier=diegetic` 的那些。
+
+    `knows` 传 `Subject.knows` 这类"给 fact_id 返回 bool"的可调用对象——只标
+    `Callable[[str], bool]`、不 import `Subject`，避免 module_loader（数据层）
+    反向依赖主体层。
+    """
+    if sees_meta:
+        return render_full(module)
+
+    parts: list[str] = [f"你身处的世界：{module.meta.title}"]
+    if module.meta.era:
+        parts[0] += f"（{module.meta.era}）"
+
+    places: list[str] = []
+    for node in _iter_all_nodes(module.nodes):
+        text = (node.public_text or "").strip()
+        places.append(f"- {node.title}：{text}" if text else f"- {node.title}")
+    if places:
+        parts.append("═══ 你知道的地方 ═══\n" + "\n".join(places))
+
+    people: list[str] = []
+    for npc in module.npcs:
+        text = (npc.public_text or "").strip()
+        role = f"（{npc.role}）" if npc.role else ""
+        people.append(f"- {npc.name}{role}：{text}" if text else f"- {npc.name}{role}")
+    if people:
+        parts.append("═══ 你认识的人 ═══\n" + "\n".join(people))
+
+    known = [f"- {f.text}" for f in module.facts if f.tier == "diegetic" and knows(f.id)]
+    if known:
+        parts.append("═══ 你知道的事 ═══\n" + "\n".join(known))
+    return "\n\n".join(parts)
+
+
+def _iter_all_nodes(nodes: list[ModuleNode]) -> list[ModuleNode]:
+    out: list[ModuleNode] = []
+    for node in nodes:
+        out.append(node)
+        if node.sub_node is not None:
+            out.extend(_iter_all_nodes([node.sub_node]))
+        out.extend(_iter_all_nodes(node.sub_nodes))
+    return out

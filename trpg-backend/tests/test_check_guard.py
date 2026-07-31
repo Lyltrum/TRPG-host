@@ -35,9 +35,15 @@ def _mod() -> ScenarioModule:
 
 
 def test_collect_skills() -> None:
+    """收集出来的是**归一后**的规范名，不是模组里的原写法。
+
+    exec/12 #32 起护栏与执行层共用 `skill_names.match_key`：模组标注「侦查」
+    在这里会变成「侦察」。这条断言此前钉的是未归一的行为，随该修复更新——
+    是架构上的合法变化，不是回归（护栏放行的集合只变大不变小）。
+    """
     skills = collect_module_check_skills(_mod())
-    assert "侦查" in skills or "侦查".lower() in skills
-    assert any("侦" in s for s in skills)
+    assert "侦察" in skills
+    assert "侦查" not in skills
 
 
 def test_filter_blocks_improvised_when_node_has_checks() -> None:

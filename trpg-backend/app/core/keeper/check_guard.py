@@ -13,10 +13,17 @@
 from __future__ import annotations
 
 from app.core.keeper.module_loader import ModuleNode, ScenarioModule
+from app.core.keeper.skill_names import match_key
 
 
 def _norm_skill(name: str) -> str:
-    return (name or "").strip().replace(" ", "").lower()
+    """🔴 必须与执行层同一口径（`skill_names.match_key`）。
+
+    此前这里只去空白+小写、**不做同义词归一**，于是模组标注「侦查」而裁决器
+    按规范名发起「侦察」时被精确比较拦掉，玩家侧完全静默（exec/12 #32）。
+    不变量：护栏不该拦住执行层能解析的技能名。
+    """
+    return match_key(name)
 
 
 def iter_nodes(nodes: list[ModuleNode]) -> list[ModuleNode]:

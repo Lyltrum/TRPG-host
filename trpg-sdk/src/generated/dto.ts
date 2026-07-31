@@ -22,6 +22,7 @@ export interface ActionBroadcastPayload {
   playerId: string;
   nickname: string;
   utterance: string;
+  eventId?: string | null;
 }
 
 /**
@@ -629,6 +630,7 @@ export interface MyRoomSummary {
 export interface NarrationPushPayload {
   text: string;
   private?: boolean;
+  eventId?: string | null;
 }
 
 /**

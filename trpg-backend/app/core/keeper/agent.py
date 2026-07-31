@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, format_agenda_status, load_fired_agenda
 from app.core.keeper.decision import KeeperDecision
+from app.core.keeper.leak_guard import log_leak_hits, scrub_meta_leaks
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.pending import PendingCheck, pending_check_manager
 from app.core.keeper.phase import (
@@ -330,7 +331,11 @@ class KeeperAgent(Narrator):
                     max_chars=char_limit,
                 )
                 narration = self._finalize_prose(
-                    narration, action_intent=False, confused=False, max_chars=char_limit
+                    narration,
+                    action_intent=False,
+                    confused=False,
+                    max_chars=char_limit,
+                    room_id=room_id,
                 )
                 logger.info(
                     "keeper_opening_narrated",
@@ -496,6 +501,7 @@ class KeeperAgent(Narrator):
                 action_intent=action_intent,
                 confused=confused,
                 max_chars=char_limit,
+                room_id=room_id,
             )
             # 可观测性，不做自动拦截：能不能判断"这段话有没有替检定预支结果"
             # 没有可靠的代码手段（跟其它 scrub 规则不同，这是语义/因果判断，
@@ -529,6 +535,7 @@ class KeeperAgent(Narrator):
             action_intent=action_intent,
             confused=confused,
             max_chars=char_limit,
+            room_id=room_id,
         )
 
         # HP 变化的可见性不再靠拼进叙事正文保证——那样等于让守秘人的嘴说了句
@@ -740,8 +747,14 @@ class KeeperAgent(Narrator):
         action_intent: bool,
         confused: bool = False,
         max_chars: int,
+        room_id: str | None = None,
     ) -> str:
         scrubbed = scrub_kp_anti_patterns(text, action_intent=action_intent, confused=confused)
+        # 泄密守门（exec/14 P3）：元层断言被逐字复述 → 整句丢弃；片段命中只
+        # 记日志不删（元层里常含公开人名/地名，片段匹配必然误伤合法叙事）。
+        # 这是全部三条叙事路径的唯一咽喉，放这里就不会有旁路。
+        scrubbed, leak_hits = scrub_meta_leaks(scrubbed, self._module)
+        log_leak_hits(leak_hits, room_id=room_id)
         # scrub 后再 clip，避免删菜单后仍超长 / 或裁切前未处理的尾巴
         final = clip_narration(scrubbed, max_chars)
         if scrubbed != (text or "").strip() or final != scrubbed:

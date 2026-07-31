@@ -383,6 +383,11 @@ export interface CheckResultPayload {
   targetValue?: number | null;
   result: string;
   checkRequestId?: string | null;
+  opposedOpponent?: string | null;
+  opposedRollValue?: number | null;
+  opposedTargetValue?: number | null;
+  opposedResult?: string | null;
+  opposedWon?: boolean | null;
 }
 
 /**

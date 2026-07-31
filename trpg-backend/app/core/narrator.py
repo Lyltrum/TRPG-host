@@ -115,6 +115,13 @@ class CheckResultNotice:
     level: str  # skill：成功等级文本；san："成功"/"失败"
     san_loss: int | None = None
     san_remaining: int | None = None
+    # 对抗检定（exec/19 #38）：对手侧也由服务端掷骰，结果一起广播——玩家要
+    # 看得见自己输在哪一掷，不能只给一个"你失败了"。
+    opposed_opponent: str | None = None
+    opposed_rolled: int | None = None
+    opposed_target: int | None = None
+    opposed_level: str | None = None
+    opposed_won: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

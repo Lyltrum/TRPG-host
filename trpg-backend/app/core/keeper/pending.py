@@ -27,6 +27,10 @@ class PendingCheck:
     # 这次检定成功时该揭开哪些事实（来自剧本 ModuleCheck.reveals，exec/14 P4）。
     # 在创建待掷记录时就绑定，而不是结算时再去查——待掷期间场景可能已经变了。
     reveals: tuple[str, ...] = ()
+    # 对抗检定（exec/19 #38）：对手的展示名 + 百分位目标值。两个都为 None =
+    # 普通检定，结算路径与本功能上线前逐字一致。
+    opposed_opponent: str | None = None
+    opposed_value: int | None = None
 
 
 class PendingCheckManager:

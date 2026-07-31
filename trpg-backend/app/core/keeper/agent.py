@@ -61,6 +61,7 @@ from app.core.keeper.location_state import (
     location_of,
 )
 from app.core.keeper.module_loader import ScenarioModule
+from app.core.keeper.npc_state import format_npc_states
 from app.core.keeper.pending import PendingCheck, pending_check_manager
 from app.core.keeper.phase import (
     ENDING_ID_KEY,
@@ -396,6 +397,8 @@ class KeeperAgent(Narrator):
         chapters_status = render_chapters(chapters)
         # 分头探索（P5.2）：全队同处一地时是空串，整块不渲染。
         locations_status = format_party_locations(self._module, keeper_state, players)
+        # NPC 对局内状态（exec/19 #39）：没记过账时是空串，整块不渲染。
+        npc_status = format_npc_states(self._module, keeper_state)
 
         def build_situation(
             *,
@@ -422,6 +425,7 @@ class KeeperAgent(Narrator):
                 ledger_status=ledger,
                 chapters_status=chapters_status,
                 locations_status=locations_status,
+                npc_status=npc_status,
                 is_heartbeat=is_heartbeat,
                 is_opening_ceremony=is_opening_ceremony,
                 phase=phase,
@@ -768,7 +772,13 @@ class KeeperAgent(Narrator):
         )
         if pending.kind == "skill":
             assert pending.skill is not None
-            _text, detail = await roll_check_detail(deps, pending.skill, pending.player_nickname)
+            _text, detail = await roll_check_detail(
+                deps,
+                pending.skill,
+                pending.player_nickname,
+                opposed_opponent=pending.opposed_opponent,
+                opposed_value=pending.opposed_value,
+            )
             notice = CheckResultNotice(
                 check_request_id=pending.check_request_id,
                 kind="skill",
@@ -777,6 +787,11 @@ class KeeperAgent(Narrator):
                 rolled=detail["rolled"],
                 target=detail["target"],
                 level=detail["level"],
+                opposed_opponent=detail.get("opposed_opponent"),
+                opposed_rolled=detail.get("opposed_rolled"),
+                opposed_target=detail.get("opposed_target"),
+                opposed_level=detail.get("opposed_level"),
+                opposed_won=detail.get("opposed_won"),
             )
         else:
             _text, detail = await san_check_detail(

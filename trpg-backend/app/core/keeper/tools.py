@@ -32,6 +32,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.coc7_rules import evaluate_skill_base
 from app.core.keeper import dice, module_loader
 from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, load_fired_agenda
+from app.core.keeper.location_state import (
+    PLAYER_LOCATION_KEY,
+    load_player_locations,
+    serialize_player_locations,
+)
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.phase import (
     ENDING_ID_KEY,
@@ -64,6 +69,7 @@ _RESERVED_STATE_KEYS = frozenset(
         PHASE_KEY,
         ENDING_ID_KEY,
         CURRENT_NODE_KEY,
+        PLAYER_LOCATION_KEY,
     }
 )
 
@@ -79,6 +85,10 @@ class KeeperDeps:
     session_factory: async_sessionmaker[AsyncSession]
     module: ScenarioModule
     ruleset: RulesetRead
+    # 本轮**一起发言**的全部玩家（收集窗口合并的那一批，见 service/turn_window.py）。
+    # 空 = 只有发起者。`set_current_node_impl` 只把这些人挪到新场景——没发言
+    # 的人位置不动，否则分头探索时留在别处的人会被隔空传送走（P5.2）。
+    turn_player_ids: tuple[str, ...] = ()
     rng: random.Random = field(default_factory=random.Random)
     # 「读-改-写」操作（update_state/adjust_hp/san_check）的串行锁。v2 的
     # 执行器本身是顺序执行、用不上它，但保留：v1 实测过 openai-agents 会并发
@@ -404,19 +414,58 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
     校验 node_id 必须真实存在于剧本节点树（module.node_by_id）——拒绝模型
     编造不存在的 id，与 mark_agenda_fired_impl/mark_visibility_revealed_impl
     同一套"未知 id 拒绝写入、上报为 issue"原则一致。
+
+    P5.2 起同时写两处：房间级指针（大部队所在）+ **本轮发言者**的逐人位置。
+    只挪发言的人是刻意的——分头探索时留在别处的人不该被这一个字段隔空
+    传送走（见 location_state.py）。
     """
     node = deps.module.node_by_id(node_id)
     if node is None:
         raise KeeperToolError(f"剧本里没有场景节点 id={node_id}")
+    movers = deps.turn_player_ids or (deps.player_id,)
     async with deps.write_lock, deps.session_factory() as db:
         room = await db.get(Room, deps.room_id)
         if room is None:
             raise KeeperToolError("房间不存在")
         current_state = dict(room.keeper_state or {})
         current_state[CURRENT_NODE_KEY] = node_id
+        locations = load_player_locations(current_state)
+        for pid in movers:
+            locations[pid] = node_id
+        current_state[PLAYER_LOCATION_KEY] = serialize_player_locations(locations)
         room.keeper_state = current_state
         await _record(db, deps, "keeper.node", {"node_id": node_id, "title": node.title})
     return f"当前场景节点：{node.title}（{node_id}）"
+
+
+async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> str:
+    """把**一名**调查员单独挪到某个剧本节点（分头探索，P5.2）。
+
+    与 `set_current_node_impl` 的分工是"默认 vs 覆盖"：那个写「本轮发言的人
+    共同到了哪」，这个写「谁没跟着大家、单独在哪」，写的是同一张逐人表。
+    一次只处理一个人，是为了让"节点 id 不存在 / 找不到这个玩家"这类问题
+    退化成**这一条**的 issue，而不是整批移动一起失败。
+    """
+    node = deps.module.node_by_id(node_id)
+    if node is None:
+        raise KeeperToolError(f"剧本里没有场景节点 id={node_id}")
+    async with deps.write_lock, deps.session_factory() as db:
+        player, _character = await _resolve_character(db, deps, player_name)
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            raise KeeperToolError("房间不存在")
+        current_state = dict(room.keeper_state or {})
+        locations = load_player_locations(current_state)
+        locations[player.id] = node_id
+        current_state[PLAYER_LOCATION_KEY] = serialize_player_locations(locations)
+        room.keeper_state = current_state
+        await _record(
+            db,
+            deps,
+            "keeper.move",
+            {"player": player.nickname, "node_id": node_id, "title": node.title},
+        )
+    return f"{player.nickname}单独前往：{node.title}（{node_id}）"
 
 
 async def mark_agenda_fired_impl(deps: KeeperDeps, event_ids: list[str]) -> str:

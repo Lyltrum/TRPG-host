@@ -47,6 +47,11 @@ from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.dice import is_success
 from app.core.keeper.fact_ledger import record_revelations, render_ledger, revealed_fact_ids
 from app.core.keeper.leak_guard import log_leak_hits, scrub_meta_leaks
+from app.core.keeper.location_state import (
+    PLAYER_LOCATION_KEY,
+    format_party_locations,
+    location_of,
+)
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.pending import PendingCheck, pending_check_manager
 from app.core.keeper.phase import (
@@ -80,7 +85,7 @@ from app.core.keeper.prose_discipline import (
     narration_max_tokens,
     scrub_kp_anti_patterns,
 )
-from app.core.keeper.scene_state import CURRENT_NODE_KEY, load_current_node_id
+from app.core.keeper.scene_state import CURRENT_NODE_KEY
 from app.core.keeper.subject import KEEPER
 from app.core.keeper.tools import (
     KeeperDeps,
@@ -225,6 +230,9 @@ class KeeperAgent(Narrator):
         room_id = context.room_id
         is_heartbeat = getattr(context, "is_heartbeat", False)
         is_opening_ceremony = getattr(context, "is_opening_ceremony", False)
+        # 本轮一起发言的人（收集窗口合并的那一批）。单人局 = (发起者,)，
+        # 与 P5.2 之前逐字一致。
+        turn_player_ids = tuple(context.participant_ids) or (context.player_id,)
 
         # 两段式玩家掷骰：还有待掷的检定时不再裁决新一轮——先让玩家把手头的
         # 骰子掷完。重发同一个请求（而不是静默不回应），防前端刷新丢卡片。
@@ -243,7 +251,7 @@ class KeeperAgent(Narrator):
                 check_requests=[_pending_to_notice(pending)],
             )
 
-        keeper_state, history_lines, roster = await self._load_room_memory(room_id)
+        keeper_state, history_lines, roster, players = await self._load_room_memory(room_id)
 
         # 对局已结束：拒绝新行动（心跳亦静默）
         phase = load_phase(keeper_state)
@@ -264,6 +272,7 @@ class KeeperAgent(Narrator):
                 session_factory=self._session_factory,
                 module=self._module,
                 ruleset=self._ruleset,
+                turn_player_ids=turn_player_ids,
                 rng=self._rng,
             )
             await set_phase_impl(deps_boot, PHASE_OPENING)
@@ -287,6 +296,9 @@ class KeeperAgent(Narrator):
             PHASE_KEY,
             ENDING_ID_KEY,
             CURRENT_NODE_KEY,
+            # 逐人位置是 `player_id@node_id` 的机器格式，对 LLM 无意义——
+            # 它看到的是下面渲染好的「各自所在」（P5.2）。
+            PLAYER_LOCATION_KEY,
         }
         visible_state = (
             {k: v for k, v in keeper_state.items() if k not in _hidden_keys}
@@ -300,6 +312,8 @@ class KeeperAgent(Narrator):
             chapters = await load_chapters(db, room_id=room_id)
         ledger_status = render_ledger(self._module, known_facts)
         chapters_status = render_chapters(chapters)
+        # 分头探索（P5.2）：全队同处一地时是空串，整块不渲染。
+        locations_status = format_party_locations(self._module, keeper_state, players)
 
         situation = format_turn_input(
             visible_state,
@@ -312,6 +326,7 @@ class KeeperAgent(Narrator):
             phase_status=phase_status,
             ledger_status=ledger_status,
             chapters_status=chapters_status,
+            locations_status=locations_status,
             is_heartbeat=is_heartbeat,
             is_opening_ceremony=is_opening_ceremony,
             phase=phase,
@@ -424,61 +439,6 @@ class KeeperAgent(Narrator):
                 }
             )
 
-        # 场景切换：独立于上面迷茫/怪话/明确行动三选一，两者可叠加生效。
-        # 判断信号是「当前场景」这个字段本身的变化（上一轮 keeper_state 里的
-        # 旧值 vs 这轮裁决刚写入的新值），不靠模型自己判断"是不是在对话中途
-        # 离场"——覆盖所有位置跳变，不止离开 NPC 对话这一种。真人实测
-        # 2026-07-29：玩家还在跟邻居对话，宣告去书房，回复直接是"钥匙已经
-        # 转了半圈、门已经推开"，完全跳过了道别+赶路这段，读起来像瞬移。
-        # 心跳/开场仪式各自已有独立的内容约束，跳过这条。
-        #
-        # 🔴 2026-07-30（04 遗留项）：优先用结构化的 current_node_id 做精确
-        # 比较——此前只比较「当前场景」自由文本，同一地点换个措辞（"书房"
-        # vs "惠特利宅书房"）会被误判成切换。双方都有 node_id 时以它为准；
-        # 否则退回自由文本比较（兼容尚未产出 node id 的模组/历史房间）。
-        prev_scene = (keeper_state or {}).get("当前场景")
-        new_scene = next((u.value for u in decision.state_updates if u.key == "当前场景"), None)
-        prev_node_id = load_current_node_id(keeper_state)
-        new_node_id = decision.current_node_id
-        if prev_node_id is not None and new_node_id is not None:
-            scene_changed = prev_node_id != new_node_id
-        else:
-            scene_changed = (
-                prev_scene is not None and new_scene is not None and prev_scene != new_scene
-            )
-        # 分段摘要 L2（exec/14 P4.2）：场景切换 = 天然的章节边界。**后台**整理，
-        # 玩家等的是叙事，不该为"整理笔记"多等几秒；失败只记日志不影响这轮。
-        if scene_changed and not is_heartbeat and not is_opening_ceremony:
-            self._spawn_chapter_summary(room_id, history_lines)
-
-        if not is_heartbeat and not is_opening_ceremony and scene_changed:
-            decision = decision.model_copy(
-                update={
-                    "narration_guidance": inject_scene_transition_guidance(
-                        decision.narration_guidance
-                    ),
-                }
-            )
-
-        logger.info(
-            "keeper_decision",
-            thinking=decision.thinking,
-            checks=[c.skill for c in decision.checks],
-            san_checks=len(decision.san_checks),
-            hp_changes=len(decision.hp_changes),
-            state_updates=[u.key for u in decision.state_updates],
-            agenda_fired=decision.agenda_fired,
-            visibility_revealed=decision.visibility_revealed,
-            opening_complete=decision.opening_complete,
-            ending_reached=decision.ending_reached,
-            is_heartbeat=is_heartbeat,
-            is_opening_ceremony=is_opening_ceremony,
-            player_confused=confused,
-            clear_action_intent=action_intent,
-            weird_or_meta=weird,
-            scene_transition=scene_changed,
-        )
-
         char_limit = narration_limit(
             is_heartbeat=is_heartbeat,
             is_opening_ceremony=is_opening_ceremony,
@@ -494,6 +454,7 @@ class KeeperAgent(Narrator):
             session_factory=self._session_factory,
             module=self._module,
             ruleset=self._ruleset,
+            turn_player_ids=turn_player_ids,
             rng=self._rng,
         )
         # 守秘人的身份显式传进去：它不是"唯一那条代码路径"，是一个视图取
@@ -502,6 +463,64 @@ class KeeperAgent(Narrator):
         report, issues = await execute_side_effects(deps, decision, subject=KEEPER)
         pending_checks, pending_issues = await create_pending_checks(deps, decision, subject=KEEPER)
         issues = [*issues, *pending_issues]
+
+        # 场景切换：独立于上面迷茫/怪话/明确行动三选一，两者可叠加生效。
+        # 真人实测 2026-07-29：玩家还在跟邻居对话，宣告去书房，回复直接是
+        # "钥匙已经转了半圈、门已经推开"，跳过了道别+赶路，读起来像瞬移。
+        # 心跳/开场仪式各自已有独立的内容约束，跳过这条。
+        #
+        # 🔴 P5.2：判据从"房间级「当前场景」字段变了没有"改成**逐人位置**
+        # 比对——分头探索后房间不再有单一"当前场景"，而"谁挪了窝"本来就
+        # 是按人问的问题。因此改成读**执行之后**的状态（位置由 tools 写库，
+        # 不是从 decision 字段猜），这也顺带覆盖了 decision.moves。
+        # 没有任何一个人两端都有 node_id 时，退回「当前场景」自由文本比较
+        # （兼容尚未产出 node id 的模组/历史房间）。
+        after_state = await self._read_keeper_state(room_id)
+        before_nodes = {pid: location_of(keeper_state, pid) for pid in turn_player_ids}
+        after_nodes = {pid: location_of(after_state, pid) for pid in turn_player_ids}
+        has_node_ids = any(
+            before_nodes[pid] is not None and after_nodes[pid] is not None
+            for pid in turn_player_ids
+        )
+        if has_node_ids:
+            scene_changed = any(before_nodes[pid] != after_nodes[pid] for pid in turn_player_ids)
+        else:
+            prev_scene = (keeper_state or {}).get("当前场景")
+            new_scene = (after_state or {}).get("当前场景")
+            scene_changed = (
+                prev_scene is not None and new_scene is not None and prev_scene != new_scene
+            )
+        # 分段摘要 L2（exec/14 P4.2）：场景切换 = 天然的章节边界。**后台**整理，
+        # 玩家等的是叙事，不该为"整理笔记"多等几秒；失败只记日志不影响这轮。
+        if scene_changed and not is_heartbeat and not is_opening_ceremony:
+            self._spawn_chapter_summary(room_id, history_lines)
+            decision = decision.model_copy(
+                update={
+                    "narration_guidance": inject_scene_transition_guidance(
+                        decision.narration_guidance
+                    ),
+                }
+            )
+
+        logger.info(
+            "keeper_decision",
+            thinking=decision.thinking,
+            checks=[c.skill for c in decision.checks],
+            san_checks=len(decision.san_checks),
+            hp_changes=len(decision.hp_changes),
+            state_updates=[u.key for u in decision.state_updates],
+            moves=[f"{m.player}→{m.node_id}" for m in decision.moves],
+            agenda_fired=decision.agenda_fired,
+            visibility_revealed=decision.visibility_revealed,
+            opening_complete=decision.opening_complete,
+            ending_reached=decision.ending_reached,
+            is_heartbeat=is_heartbeat,
+            is_opening_ceremony=is_opening_ceremony,
+            player_confused=confused,
+            clear_action_intent=action_intent,
+            weird_or_meta=weird,
+            scene_transition=scene_changed,
+        )
 
         if pending_checks:
             pending_check_manager.add(room_id, pending_checks)
@@ -843,7 +862,15 @@ class KeeperAgent(Narrator):
             )
         return final
 
-    async def _load_room_memory(self, room_id: str) -> tuple[dict | None, list[str], list[str]]:
+    async def _read_keeper_state(self, room_id: str) -> dict | None:
+        """只读一次世界状态笔记。执行阶段写库之后要拿新值时用（P5.2 场景变化判定）。"""
+        async with self._session_factory() as db:
+            room = await db.get(Room, room_id)
+            return room.keeper_state if room is not None else None
+
+    async def _load_room_memory(
+        self, room_id: str
+    ) -> tuple[dict | None, list[str], list[str], list[tuple[str, str]]]:
         """读取世界状态笔记 + 全量事件历史 + 在场调查员名单。
 
         与 build_narration_context 的 6 条窗口不同：守秘人要对整局的一致性
@@ -880,6 +907,8 @@ class KeeperAgent(Narrator):
                 for p in player_rows
                 if not p.is_ai
             ]
+            # (player_id, 昵称)：位置分组要按 id 分，渲染给 LLM 要用昵称。
+            players = [(p.id, p.nickname) for p in player_rows if not p.is_ai]
 
             result = await db.execute(
                 select(Event)
@@ -932,4 +961,4 @@ class KeeperAgent(Narrator):
                     f"{payload.get('delta', '?')}点（{payload.get('reason', '')}），"
                     f"当前生命值{payload.get('hp', '?')}。"
                 )
-        return keeper_state, lines, roster
+        return keeper_state, lines, roster, players

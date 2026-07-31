@@ -149,8 +149,9 @@ async def test_load_room_memory_replays_events_in_order() -> None:
         )
         await db.commit()
         room_id = room.id
+        player_id = player.id
 
-    keeper_state, lines, roster = await _keeper()._load_room_memory(room_id)
+    keeper_state, lines, roster, players = await _keeper()._load_room_memory(room_id)
 
     assert keeper_state == {"当前场景": "门厅"}
     assert lines == [
@@ -160,6 +161,8 @@ async def test_load_room_memory_replays_events_in_order() -> None:
     ]
     # 在场名单：未建卡的玩家也要出现（agent 不许幻觉出额外的调查员）
     assert roster == ["阿福（未建卡）"]
+    # (player_id, 昵称)：位置分组按 id、渲染给 LLM 用昵称（P5.2）
+    assert players == [(player_id, "阿福")]
 
 
 def test_format_turn_input_contains_all_sections() -> None:

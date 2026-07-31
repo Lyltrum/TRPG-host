@@ -57,6 +57,9 @@ class NarrationContext:
     # 在哪个房间、为谁掷骰/改状态。单轮叙事实现（DeepSeek/Fallback）不读。
     room_id: str | None = None
     player_id: str | None = None
+    # 本轮收集窗口里**一起发言**的全部玩家 id（含发起者）。空 = 只有发起者。
+    # keeper 用它决定"这一轮把谁挪到新场景"——没发言的人位置不动（P5.2）。
+    participant_ids: tuple[str, ...] = ()
     # 世界心跳主动轮（路线 6）：裁决/叙事走克制模式，不发起检定。
     is_heartbeat: bool = False
     # 开场仪式轮（设计 05）：game.start 后自动跑的第一轮，不发起高风险检定。

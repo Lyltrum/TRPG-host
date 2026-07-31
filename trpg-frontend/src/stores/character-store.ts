@@ -22,41 +22,47 @@ export interface CompletedCharacter {
 
 interface CharacterState {
   character: CompletedCharacter | null
-  // 这份角色数据属于哪个房间——见下面的 getForRoom，读取时要核对这个字段，
-  // 不能假设 localStorage 里存的就是当前房间的角色。
+  // 这份角色数据属于哪个房间的哪个玩家——见下面的 getForRoom，读取时两个都要
+  // 核对，不能假设 localStorage 里存的就是当前这个人的角色。
   roomId: string | null
-  setCharacter: (c: CompletedCharacter, roomId: string) => void
-  getForRoom: (roomId: string) => CompletedCharacter | null
-  // 局内 HP/San 结构化广播（character.stat_changed / san.check.result 里的
-  // sanRemaining）写回角色卡——只在 roomId 对得上当前存的这份角色时生效，
-  // 避免把过期广播误写进另一个房间的角色数据（真人实测 09-#4 修复）。
-  updateDerived: (roomId: string, patch: Partial<CompletedCharacter['derived']>) => void
+  playerId: string | null
+  setCharacter: (c: CompletedCharacter, roomId: string, playerId: string | null) => void
+  getForRoom: (roomId: string, playerId: string | null) => CompletedCharacter | null
   clear: () => void
 }
 
-// ★ 之前只存在内存里，换个浏览器 tab（比如从「我的游戏」继续一局早前建过卡
-// 的房间）角色数据就丢了，聊天室的"角色卡/技能"面板会看起来是空的——不是没
-// 建过卡，是本地状态没了。持久化到 localStorage 解决同浏览器下的这类场景
-// （换浏览器/清缓存仍然会丢，因为这份数据从来没真的存过后端，见 mock-db 里
-// MockCharacter 只存了 draft/complete 状态、没存真实建卡内容）。
+// 🔴 这份缓存**不是权威源**。角色卡的权威源是后端（issue #96 起有读接口，
+// `services/character/character-api.ts::fetchCharacter`）；准备页与聊天室都
+// 已改成进房拉一次、HP/SAN 变动后重拉。这里留下来只剩两个用途：
+//   ① 拉回来之前的**首屏占位**，避免闪一下空白；
+//   ② **建卡向导编辑已有角色卡**时恢复 `skillAlloc`——后端只存技能终值，
+//      不存"玩家分配了多少点"，这份分配值目前只有本地有。
+// 别再往这里加"局内状态"（HP/SAN 之类）：那类数据会被服务端改写，本地镜像
+// 不随权威源重建就必然偏（掉线期间错过广播就再也补不回来）。
 //
-// ★ 只存一份角色、不按房间区分曾经导致真实 bug：同一浏览器加入/恢复另一个
-// 房间时，会展示上一个房间的角色卡；换账号登录也会继承上一个用户的数据
-// （见 PR #67 review）。现在额外存一个 roomId，读取时用 getForRoom 核对，
-// 房间对不上就当作没建过卡，而不是直接把 character 暴露出去。
+// 写在 localStorage 而不是 sessionStorage：用途②要跨标签页/跨会话活着
+// （从「我的游戏」回到一局早前建过卡的房间还要能编辑）。
+//
+// ★ 只存一份角色曾经导致两次真实 bug：不按房间区分 → 加入另一个房间会展示
+// 上一个房间的角色卡（PR #67 review）；不按玩家区分 → **同一浏览器两个标签页
+// 进同一个房间**，后建完卡的会覆盖先建的，两边面板显示同一张卡。所以 roomId
+// 和 playerId 两个都要核对，任一对不上就当作没建过卡。
 export const useCharacterStore = create<CharacterState>()(
   persist(
     (set, get) => ({
       character: null,
       roomId: null,
-      setCharacter: (character, roomId) => set({ character, roomId }),
-      getForRoom: (roomId) => (get().roomId === roomId ? get().character : null),
-      updateDerived: (roomId, patch) => {
+      playerId: null,
+      setCharacter: (character, roomId, playerId) => set({ character, roomId, playerId }),
+      getForRoom: (roomId, playerId) => {
         const state = get()
-        if (state.roomId !== roomId || !state.character) return
-        set({ character: { ...state.character, derived: { ...state.character.derived, ...patch } } })
+        if (state.roomId !== roomId) return null
+        // playerId 存了就必须对得上。老缓存没有这个字段（null），此时只按
+        // roomId 判断——退回改动前的行为，不至于让升级前建的卡突然读不出来。
+        if (state.playerId !== null && state.playerId !== playerId) return null
+        return state.character
       },
-      clear: () => set({ character: null, roomId: null }),
+      clear: () => set({ character: null, roomId: null, playerId: null }),
     }),
     { name: 'aidm-character', storage: createJSONStorage(() => localStorage) }
   )

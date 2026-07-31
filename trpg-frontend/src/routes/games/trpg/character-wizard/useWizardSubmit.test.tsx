@@ -110,7 +110,7 @@ describe('useWizardSubmit', () => {
     previewCharacterMock.mockResolvedValue(computeResult())
     await submit(rollPoolState())
 
-    const saved = useCharacterStore.getState().getForRoom('room-1')
+    const saved = useCharacterStore.getState().getForRoom('room-1', null)
     expect(saved?.derived).toEqual({ hp: 12, san: 65, mp: 13, db: '+1D4', move: 8 })
     expect(saved?.skillFinalValues).toEqual({ 'spot-hidden': 40 })
   })
@@ -134,7 +134,7 @@ describe('useWizardSubmit', () => {
     )
     await submit(rollPoolState())
 
-    expect(useCharacterStore.getState().getForRoom('room-1')).toBeNull()
+    expect(useCharacterStore.getState().getForRoom('room-1', null)).toBeNull()
     expect(saveCharacter).not.toHaveBeenCalled()
     expect(completeCharacter).not.toHaveBeenCalled()
     expect(createCharacterDraft).not.toHaveBeenCalled()

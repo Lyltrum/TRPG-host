@@ -41,7 +41,12 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory
-from app.core.narrator import CheckRequestNotice, CheckResultNotice, StatChangeNotice
+from app.core.narrator import (
+    CheckRequestNotice,
+    CheckResultNotice,
+    NarrationSegment,
+    StatChangeNotice,
+)
 from app.dto.ws import (
     ActionBroadcastPayload,
     ActionSubmitPayload,
@@ -97,6 +102,66 @@ async def _broadcast_narration(
     envelope = ServerEnvelope(type="narration.push", payload=narration.model_dump(by_alias=True))
     await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
     await room_service.record_event(db, room_id, player_id, "narration.push", {"text": text})
+
+
+async def _deliver_narration_segments(
+    db: AsyncSession, room_id: str, segments: list[NarrationSegment]
+) -> None:
+    """分头探索（P5.2）：各处各看各的，只发给该地点在场的连接。
+
+    事件照样落库、且**每段一行**——守秘人永远看得见全部（私密是玩家↔玩家，
+    不是玩家↔KP，exec/18），历史重放与复盘都要完整。`audience` 写进 payload
+    供审计"这段当时发给了谁"。
+    """
+    for segment in segments:
+        if not segment.text:
+            continue
+        payload = NarrationPushPayload(text=segment.text)
+        envelope = ServerEnvelope(type="narration.push", payload=payload.model_dump(by_alias=True))
+        await manager.send_to_players(
+            room_id, list(segment.audience), envelope.model_dump(by_alias=True)
+        )
+        await room_service.record_event(
+            db,
+            room_id,
+            None,
+            "narration.push",
+            {
+                "text": segment.text,
+                "audience": list(segment.audience),
+                "nodeId": segment.node_id,
+            },
+        )
+
+
+async def _audience_at_speaker_location(
+    db: AsyncSession, room_id: str, player_id: str
+) -> list[str] | None:
+    """与发言者同处一地的玩家 id；**未分头时返回 None = 照旧全房间广播**。
+
+    分头探索（P5.2）后玩家原话也得按位置投递——不然"你不在场所以你不知道"
+    只挡住了守秘人的叙事，队友在地窖喊的那句话照样出现在你屏幕上。
+
+    找不到发言者时返回 `[player_id]`（只发给他自己）而不是 None：这条路径
+    上的错误必须**朝保密的方向**失败，退化成广播就是当场泄密。
+    """
+    from sqlalchemy import select
+
+    from app.core.keeper.location_state import group_players
+    from app.models.room import Player, Room
+
+    room = await db.get(Room, room_id)
+    keeper_state = room.keeper_state if room is not None else None
+    rows = await db.execute(
+        select(Player.id).where(Player.room_id == room_id, Player.is_ai.is_(False))
+    )
+    groups = group_players(keeper_state, list(rows.scalars()))
+    if len(groups) <= 1:
+        return None
+    for _node_id, members in groups:
+        if player_id in members:
+            return members
+    return [player_id]
 
 
 _OPENING_CEREMONY_UTTERANCE = (
@@ -254,7 +319,8 @@ async def _handle_room_join(
         await websocket.close(code=_NOT_FOUND_CLOSE_CODE)
         return False
     assert player_id is not None  # 上面能走到这里，player_id 必然非空（见 get_player 调用）
-    manager.add(room_id, websocket)
+    # 连接登记必须带上玩家身份：per-observer 投递（P5.2）要能回答"这条连接是谁"。
+    manager.add(room_id, websocket, player_id)
     await room_service.set_player_connected(db, player_id, True)
     payload = SessionBoundPayload(room_id=room_id, player_id=player_id)
     envelope = ServerEnvelope(type="session.bound", payload=payload.model_dump(by_alias=True))
@@ -334,16 +400,20 @@ async def _handle_action_submit(
     player = await room_service.get_player(db, player_id)
     nickname = player.nickname if player is not None else "玩家"
 
-    # 原话先广播：不管这条是开窗的还是并入的，其他人都该**立刻**看见。
-    await manager.broadcast(
-        room_id,
-        ServerEnvelope(
-            type="action.broadcast",
-            payload=ActionBroadcastPayload(
-                player_id=player_id, nickname=nickname, utterance=utterance
-            ).model_dump(by_alias=True),
+    # 原话先广播：不管这条是开窗的还是并入的，同处一地的人都该**立刻**看见。
+    # 分头后只发给在场的那几个（P5.2）；未分头时 audience 是 None，走原来的
+    # 全房间广播，行为逐字不变。
+    action_envelope = ServerEnvelope(
+        type="action.broadcast",
+        payload=ActionBroadcastPayload(
+            player_id=player_id, nickname=nickname, utterance=utterance
         ).model_dump(by_alias=True),
-    )
+    ).model_dump(by_alias=True)
+    audience = await _audience_at_speaker_location(db, room_id, player_id)
+    if audience is None:
+        await manager.broadcast(room_id, action_envelope)
+    else:
+        await manager.send_to_players(room_id, audience, action_envelope)
 
     opened = turn_window_manager.join(
         room_id, Submission(player_id=player_id, nickname=nickname, utterance=utterance)
@@ -411,6 +481,7 @@ async def _handle_action_submit(
             await _broadcast_stat_change(room_id, notice)
         if outcome.text:
             await _broadcast_narration(db, room_id, player_id, outcome.text)
+        await _deliver_narration_segments(db, room_id, outcome.segments)
         for notice in outcome.check_requests:
             await _broadcast_check_request(room_id, notice)
     finally:
@@ -471,6 +542,7 @@ async def _handle_check_roll(
             await _broadcast_stat_change(room_id, notice)
         if outcome.text:
             await _broadcast_narration(db, room_id, player_id, outcome.text)
+        await _deliver_narration_segments(db, room_id, outcome.segments)
         for notice in outcome.check_requests:
             await _broadcast_check_request(room_id, notice)
     finally:

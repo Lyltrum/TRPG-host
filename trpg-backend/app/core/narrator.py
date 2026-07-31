@@ -108,6 +108,20 @@ class StatChangeNotice:
     reason: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class NarrationSegment:
+    """一段**只发给特定几个人**的叙事（exec/14 P5.2 分头探索）。
+
+    `audience` 是这段该送达的玩家 id。**空元组 = 谁都不发**，不是"发给所有
+    人"——受众算错时必须表现为没人收到（可见的故障），而不是当场泄密。
+    """
+
+    text: str
+    audience: tuple[str, ...]
+    #: 这段发生在哪个剧本节点（审计/落库用，None = 位置未记录）
+    node_id: str | None = None
+
+
 @dataclass
 class NarrationOutcome:
     """`Narrator.narrate()`/`resolve_check()` 的统一返回形状。
@@ -123,6 +137,10 @@ class NarrationOutcome:
     check_requests: list[CheckRequestNotice] = field(default_factory=list)
     check_results: list[CheckResultNotice] = field(default_factory=list)
     stat_changes: list[StatChangeNotice] = field(default_factory=list)
+    #: 分头探索（P5.2）：各处各看各的。**非空时 `text` 必为空**——同一轮不会
+    #: 既有全房间叙事又有分组叙事，否则两边内容会重复。未分头时它恒为空，
+    #: 调用方走的还是原来那条 `text` 广播路径。
+    segments: list[NarrationSegment] = field(default_factory=list)
 
 
 class Narrator(ABC):

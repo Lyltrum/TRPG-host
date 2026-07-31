@@ -82,7 +82,9 @@ def _stub_agent(agent: KeeperAgent, decision: KeeperDecision) -> dict:
     async def fake_adjudicate(situation: str) -> KeeperDecision:
         return decision
 
-    async def fake_narrate_prose(situation, decision, report, issues, *, max_tokens, max_chars):
+    async def fake_narrate_prose(
+        situation, decision, report, issues, *, max_tokens, max_chars, extra_suffix=""
+    ):
         captured["decision"] = decision
         return "占位叙事文本。"
 

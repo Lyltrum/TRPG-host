@@ -33,6 +33,7 @@ WebSocket 可能存活很久，用一个 session 包住整条连接会在这期�
 
 import asyncio
 import contextlib
+from dataclasses import replace
 
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -370,6 +371,11 @@ async def _handle_action_submit(
         # ⚠️ 先组叙事上下文、后写事件：build_narration_context 靠"当前这条
         # 还没入库"来保证历史里不含它（见该函数 docstring 的时序约定）。
         context = await room_service.build_narration_context(db, room_id, player_id, utterance)
+        # 本轮一起发言的人：keeper 用它决定"把谁挪到新场景"——没发言的人
+        # 位置不动，否则分头探索时留在别处的人会被隔空传送走（P5.2）。
+        context = replace(
+            context, participant_ids=tuple(dict.fromkeys(s.player_id for s in submissions))
+        )
         # 事件按**人**分别记：账本/历史要能看出每句话是谁说的，不能只留一条
         # 合并文本（否则多人轮在历史里退化成一个匿名段落）。
         for sub in submissions:

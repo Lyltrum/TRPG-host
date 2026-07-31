@@ -50,6 +50,19 @@ class StateUpdate(_DecisionModel):
     value: str
 
 
+class PlayerMove(_DecisionModel):
+    """一名调查员**单独**去了别处（分头探索，exec/14 P5.2）。
+
+    跟 `KeeperDecision.current_node_id` 的分工是"默认 vs 覆盖"，不是同一份
+    数据的两个角色：`current_node_id` 说的是「本轮发言的人共同到了哪」，
+    这里说的是「谁没跟着大家、单独在哪」，后者覆盖前者。全队在一起的常见
+    情形下 `moves` 恒为空数组，行为与 P5.2 之前逐字一致。
+    """
+
+    player: str = Field(description="调查员昵称或角色名，必须是在场名单里的人")
+    node_id: str = Field(description="他单独所在的剧本节点 id，不得编造")
+
+
 class KeeperDecision(_DecisionModel):
     """裁决阶段的完整输出契约。
 
@@ -67,12 +80,20 @@ class KeeperDecision(_DecisionModel):
     # 地名，这个字段是同一件事的机器可读版——剧本节点树里真实存在的 id
     # （见 module_loader.render_full 每个节点标题旁的 `id: xxx`）。取代此前
     # check_guard 对自由文本地名做的模糊字符串匹配。
+    #
+    # exec/14 P5.2：语义收窄为「本轮**发言的**调查员共同到了哪」——不再是
+    # "全房间都在这"。没发言的人位置不动（分头探索时他还在别处，不能被这
+    # 一个字段隔空传送走）。谁单独在别处走 `moves`。
     current_node_id: str | None = Field(
         default=None,
         description=(
-            "本轮结束时调查员所在的剧本节点 id；无法对应到已知节点或场景"
+            "本轮结束时**发言的调查员共同**所在的剧本节点 id；无法对应到已知节点或场景"
             "未变化时留空，不要编造不存在的 id"
         ),
+    )
+    moves: list[PlayerMove] = Field(
+        default_factory=list,
+        description="分头探索：谁单独去了别处（全队在一起时留空数组）",
     )
     agenda_fired: list[str] = Field(
         default_factory=list, description="本轮真正发生的议程事件 id（不预告）"

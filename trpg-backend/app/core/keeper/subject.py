@@ -58,6 +58,8 @@ DECISION_FIELD_CAPABILITIES: dict[str, Capability] = {
     "hp_changes": Capability.ADJUST_HP,
     "state_updates": Capability.UPDATE_STATE,
     "current_node_id": Capability.SET_SCENE,
+    # 分头探索（P5.2）：移动别人跟设置场景是同一件事的两个粒度，同一个能力。
+    "moves": Capability.SET_SCENE,
     "agenda_fired": Capability.FIRE_AGENDA,
     "visibility_revealed": Capability.REVEAL_VISIBILITY,
     "opening_complete": Capability.ADVANCE_PHASE,

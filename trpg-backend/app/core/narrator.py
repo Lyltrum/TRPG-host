@@ -84,6 +84,9 @@ class NarrationContext:
     is_heartbeat: bool = False
     # 开场仪式轮（设计 05）：game.start 后自动跑的第一轮，不发起高风险检定。
     is_opening_ceremony: bool = False
+    # 聚光灯（exec/14 P5.2）：这一轮要把镜头转向谁。由导演层按「谁最久没被
+    # 点到」算出来，非空时 keeper 强制注入引导。None = 普通心跳。
+    spotlight_nickname: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

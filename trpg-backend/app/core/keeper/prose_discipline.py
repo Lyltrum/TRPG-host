@@ -229,6 +229,29 @@ def inject_scene_transition_guidance(guidance: str) -> str:
     return f"{_SCENE_TRANSITION_GUIDANCE_PREFIX}\n{g}"
 
 
+def inject_spotlight_guidance(guidance: str, nickname: str) -> str:
+    """把镜头转向被冷落的那位调查员（exec/14 P5.2 聚光灯）。
+
+    导演层原本只问"整桌静了多久"，四人桌上这不够——话多的人会一直占着回合，
+    安静的那位可以整场都不被点到，而系统完全察觉不到（整桌一点也不"静默"）。
+    这里把判据换成**谁最久没被点到**，由代码算（最后一条 action.submit 的
+    时间），不靠模型自觉去"照顾玩家"。
+    """
+    prefix = (
+        f"【聚光灯·代码硬指令】{nickname}已经很久没有被点到了。"
+        f"本轮必须把镜头转向{nickname}：给他一个**具体的、就在他眼前的**"
+        "钩子（一个声响、一件他位置上才看得见的东西、一个 NPC 直接对他说的话），"
+        f"让他有明确的东西可以回应。不要泛泛地问「{nickname}你想做什么」，"
+        "也不要只是重述别人刚做过的事。"
+    )
+    g = (guidance or "").strip()
+    if prefix in g:
+        return g
+    if not g:
+        return prefix
+    return f"{prefix}\n{g}"
+
+
 # ── scrub：菜单 / 虚拟挡 ──────────────────────────────────
 
 _BRACKET_MENU = re.compile(r"[\[【][^\]】]{0,120}(?:你可以|你也可以|选择|或者)[^\]】]{0,120}[\]】]")

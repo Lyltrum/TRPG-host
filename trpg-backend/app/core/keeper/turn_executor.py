@@ -149,7 +149,7 @@ async def create_pending_checks(
     check.request（第一层模组护栏）。
     返回 (待掷记录, 问题清单)。
     """
-    from app.core.keeper.check_guard import filter_checks_against_module
+    from app.core.keeper.check_guard import filter_checks_against_module, find_node_for_scene
     from app.models.room import Room
 
     pending: list[PendingCheck] = []
@@ -180,6 +180,15 @@ async def create_pending_checks(
     # 保持原 checks 顺序，只保留通过护栏的
     guarded_checks = [c for c in decision.checks if c.skill in allowed_set]
 
+    # 事实账本（exec/14 P4）：当前场景节点上同名检定标注的 reveals，绑定到
+    # 待掷记录上。查不到节点/查不到同名检定就是空——旧模组与未迁移模组照常。
+    scene_node = find_node_for_scene(deps.module, current_scene, node_id=current_node_id)
+    reveals_by_skill: dict[str, tuple[str, ...]] = {}
+    if scene_node is not None:
+        for module_check in scene_node.checks:
+            if module_check.skill and module_check.reveals:
+                reveals_by_skill[module_check.skill] = tuple(module_check.reveals)
+
     async with deps.session_factory() as db:
         for check in guarded_checks:
             try:
@@ -199,6 +208,7 @@ async def create_pending_checks(
                     loss_on_success="0",
                     loss_on_failure="0",
                     reason=check.reason,
+                    reveals=reveals_by_skill.get(check.skill, ()),
                 )
             )
         for san in decision.san_checks:

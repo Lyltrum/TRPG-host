@@ -8,6 +8,7 @@
 自己如何合并 check_results，不依赖网络请求。
 """
 
+import random
 import tempfile
 from pathlib import Path
 
@@ -18,9 +19,10 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.agent import KeeperAgent
+from app.core.keeper.fact_ledger import revealed_fact_ids
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.pending import PendingCheck, PendingCheckManager, pending_check_manager
-from app.core.keeper.tools import KeeperToolError
+from app.core.keeper.tools import KeeperDeps, KeeperToolError
 from app.core.narrator import CheckResultNotice, NarrationContext, NarrationOutcome
 from app.models.room import Character, Player, Room
 
@@ -116,7 +118,9 @@ def _stub_agent(stub_outcome: NarrationOutcome) -> _StubKeeperAgent:
 
 
 def _check(room_id: str = "room-1", check_request_id: str = "chk-1", **overrides) -> PendingCheck:
-    defaults = {
+    # 显式标注：overrides 里会传 reveals（tuple），不标的话 ty 会把值类型
+    # 推成 str 而报错。
+    defaults: dict[str, object] = {
         "check_request_id": check_request_id,
         "kind": "skill",
         "room_id": room_id,
@@ -128,7 +132,8 @@ def _check(room_id: str = "room-1", check_request_id: str = "chk-1", **overrides
         "reason": "搜索书房",
     }
     defaults.update(overrides)
-    return PendingCheck(**defaults)
+    # 值类型是异质的（str / tuple），`**` 展开时 ty 推不出各字段的具体类型
+    return PendingCheck(**defaults)  # ty: ignore[invalid-argument-type]
 
 
 def test_manager_add_first_has() -> None:
@@ -320,3 +325,94 @@ async def test_resolve_check_queue_empty_triggers_settlement_narration() -> None
     assert len(agent.narrate_calls) == 1
     assert agent.narrate_calls[0].utterance == "（掷骰完成，请根据检定结果继续）"
     assert pending_check_manager.has(room_id) is False
+
+
+# ── 事实账本接线（exec/14 P4）──────────────────────────────
+
+
+class _FixedRoll(random.Random):
+    """固定 d100 结果，用来精确造出"成功"或"失败"。"""
+
+    def __init__(self, value: int) -> None:
+        super().__init__()
+        self._value = value
+
+    def randint(self, a: int, b: int) -> int:  # noqa: D102
+        return self._value if (a, b) == (1, 100) else super().randint(a, b)
+
+
+async def _resolve_with_roll(roll: int, reveals: tuple[str, ...]) -> tuple[str, NarrationOutcome]:
+    room_id, player_id, nickname = await _seed_room()
+    pending_check_manager.add(
+        room_id,
+        [
+            _check(
+                room_id=room_id,
+                check_request_id="chk-ledger",
+                player_id=player_id,
+                player_nickname=nickname,
+                skill="侦察",
+                reveals=reveals,
+            )
+        ],
+    )
+    agent = _StubKeeperAgent(
+        api_key="fake-key",
+        module=load_module(_FIXTURE_MODULE),
+        ruleset=build_coc7_ruleset(),
+        session_factory=_session_factory,
+        stub_outcome=NarrationOutcome(text="结算叙事"),
+        rng=_FixedRoll(roll),
+    )
+    outcome = await agent.resolve_check(room_id, player_id, "chk-ledger")
+    return room_id, outcome
+
+
+async def test_successful_check_records_its_facts() -> None:
+    room_id, _ = await _resolve_with_roll(1, ("fact-001",))  # 01 恒为大成功
+    async with _session_factory() as db:
+        assert await revealed_fact_ids(db, room_id=room_id) == {"fact-001"}
+
+
+async def test_failed_check_records_nothing() -> None:
+    """🔴 掷失败不该白拿线索——变异检验发现这条原本没有测试守着。"""
+    room_id, _ = await _resolve_with_roll(100, ("fact-001",))  # 100 恒为大失败
+    async with _session_factory() as db:
+        assert await revealed_fact_ids(db, room_id=room_id) == set()
+
+
+async def test_pending_check_carries_reveals_from_the_module() -> None:
+    """🔴 模组标注的 reveals 必须绑到待掷记录上。
+
+    变异检验发现这段接线原本没有测试守着：把绑定改成空元组，全部用例照样绿。
+    绑定时机是"创建待掷记录时"而不是"结算时再查"——待掷期间场景可能已经变了。
+    """
+    from app.core.keeper.decision import CheckRequest, KeeperDecision
+    from app.core.keeper.module_loader import ModuleFact
+    from app.core.keeper.turn_executor import create_pending_checks
+
+    room_id, player_id, _nickname = await _seed_room()
+    module = load_module(_FIXTURE_MODULE)
+    hall = module.node_by_id("hall")
+    assert hall is not None
+    module.facts.append(ModuleFact(id="fact-001", text="地毯上有半干的泥脚印"))
+    hall.checks[0].reveals = ["fact-001"]
+
+    # 把房间定位到那个节点，护栏才会放行该节点标注的检定
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        room.keeper_state = {"当前场景": hall.title, "当前场景节点": hall.id}
+        await db.commit()
+
+    deps = KeeperDeps(
+        room_id=room_id,
+        player_id=player_id,
+        session_factory=_session_factory,
+        module=module,
+        ruleset=build_coc7_ruleset(),
+    )
+    pending, _issues = await create_pending_checks(
+        deps, KeeperDecision(checks=[CheckRequest(skill=hall.checks[0].skill)])
+    )
+    assert [p.reveals for p in pending] == [("fact-001",)]

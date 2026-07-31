@@ -24,6 +24,9 @@ class PendingCheck:
     loss_on_success: str  # kind="san" 时使用；skill 恒 "0"
     loss_on_failure: str
     reason: str
+    # 这次检定成功时该揭开哪些事实（来自剧本 ModuleCheck.reveals，exec/14 P4）。
+    # 在创建待掷记录时就绑定，而不是结算时再去查——待掷期间场景可能已经变了。
+    reveals: tuple[str, ...] = ()
 
 
 class PendingCheckManager:

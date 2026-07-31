@@ -83,6 +83,7 @@ from app.core.keeper.prose_discipline import (
     clip_narration,
     inject_action_resolution_guidance,
     inject_confusion_guidance,
+    inject_kp_question_guidance,
     inject_scene_transition_guidance,
     inject_spotlight_guidance,
     inject_weird_response_guidance,
@@ -258,6 +259,31 @@ _NO_PENDING_CHECK_HINT = (
     "写了他只会一直等一个永远不来的骰子。"
     "需要不确定性时，直接把结果写成既定事实，或者把局面停在他下一步可以行动的地方。"
 )
+
+
+def _build_bystander_hint(nicknames: list[str]) -> str:
+    """本轮没发言的人：点名禁止替他们行动（exec/19 #41）。
+
+    真人实测 2026-07-31：只有凌铭辉提交了行动，叙事却写「张家豪扫了一眼鞋柜旁
+    那双沾泥的雨靴」——张家豪什么都没说。叙事 prompt 里本来就有「不替玩家决定
+    下一步」，但那是**没有名单的泛化纪律**；名册上摆着另一个名字、聚光灯指引又
+    在鼓励照顾镜头，模型自然会给他补一笔。代码明明知道谁发了言、谁没发言，
+    这里把这份名单交出去。
+
+    ⚠️ 名单是代码确定的，**模型服从与否仍是概率性的**（同 `_NO_PENDING_CHECK_HINT`）。
+    ⚠️ 名单必须按**每段的受众**算，不能把别组的人名带进来——否则 per-observer
+    投递做的隔离会被这条 prompt 自己泄回去。
+    """
+    if not nicknames:
+        return ""
+    names = "、".join(nicknames)
+    return (
+        f"\n\n【发言人名单·代码硬提醒】本轮只有已列出的调查员提交了行动。"
+        f"{names}**这一轮什么都没说**——不得替他{'们' if len(nicknames) > 1 else ''}"
+        "写出任何主动动作、主动观察或台词（不要写他去看了什么、注意到了什么、"
+        "说了什么）。只能写他被动在场（站在那里、跟着走），或者让环境/NPC 朝他"
+        "抛一个钩子，把下一步留给他自己决定。"
+    )
 
 
 class KeeperAgent(Narrator):
@@ -481,7 +507,27 @@ class KeeperAgent(Narrator):
             confused = decision.player_state == "confused"
             weird = decision.player_state == "weird_or_meta"
             action_intent = decision.player_state == "clear_action"
-        if confused:
+        # 🔴 真人实测 2026-07-31（exec/19 #40）：玩家问「科比特先生在家吗」，
+        # 问的是守秘人（他忘了这个设定），叙事却把它演成角色在门厅里喊话、
+        # 还照常推进了场景。提问不是行动——这里代码强制把推进世界的手段全部
+        # 收走（检定/移动/场景指针），只留"回答"这一件事。
+        kp_question = (
+            not is_adjudicate_fallback
+            and decision.player_state == "question_to_kp"
+            and not is_heartbeat
+            and not is_opening_ceremony
+        )
+        if kp_question:
+            decision = decision.model_copy(
+                update={
+                    "checks": [],
+                    "san_checks": [],
+                    "moves": [],
+                    "current_node_id": None,
+                    "narration_guidance": inject_kp_question_guidance(decision.narration_guidance),
+                }
+            )
+        elif confused:
             # 🔴 裁决走兜底（_FALLBACK_ADJUDICATE_GUIDANCE）时不要把它和迷茫引导拼
             # 一起——兜底文案说"别编造+可请玩家重说一遍"，迷茫引导说"必须给 1-2
             # 个具体方向"，两句话方向相反，叙事模型会各退一步、缩回复述已知信息
@@ -965,6 +1011,18 @@ class KeeperAgent(Narrator):
         covert_player_ids = hidden_ids | private_player_ids
         covert_speakers = [pid for pid in turn_player_ids if pid in covert_player_ids]
         open_speakers = {pid for pid in turn_player_ids if pid not in covert_player_ids}
+        nicknames = dict(players)
+
+        def _bystanders(audience: tuple[str, ...]) -> str:
+            """这一段的受众里，本轮没发言的人（exec/19 #41）。按受众裁。"""
+            return _build_bystander_hint(
+                [
+                    nicknames[pid]
+                    for pid in audience
+                    if pid not in turn_player_ids and pid in nicknames
+                ]
+            )
+
         if len(groups) <= 1 and not covert_speakers:
             narration = await self._narrate_prose(
                 situation,
@@ -973,7 +1031,7 @@ class KeeperAgent(Narrator):
                 issues,
                 max_tokens=token_limit,
                 max_chars=char_limit,
-                extra_suffix=extra_suffix,
+                extra_suffix=extra_suffix + _bystanders(tuple(all_ids)),
             )
             return (
                 self._finalize_prose(
@@ -986,7 +1044,6 @@ class KeeperAgent(Narrator):
                 [],
             )
 
-        nicknames = dict(players)
         by_speaker = {u.player_id: u for u in utterances}
 
         def _said_by(members: tuple[str, ...]) -> tuple[str, str]:
@@ -1018,7 +1075,7 @@ class KeeperAgent(Narrator):
                 issues,
                 max_tokens=token_limit,
                 max_chars=char_limit,
-                extra_suffix=extra_suffix + hint,
+                extra_suffix=extra_suffix + hint + _bystanders(audience),
             )
             return NarrationSegment(
                 text=self._finalize_prose(

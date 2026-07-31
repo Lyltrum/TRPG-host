@@ -212,6 +212,25 @@ def inject_confusion_guidance(guidance: str) -> str:
     return f"{_CONFUSION_GUIDANCE_PREFIX}\n{g}"
 
 
+_KP_QUESTION_GUIDANCE_PREFIX = (
+    "【玩家在问你·代码注入】这一轮玩家不是在角色内做事，而是在向守秘人打听"
+    "他角色本该知道、但他忘了的设定。**不要把它演成角色的动作或喊话**"
+    "（别写他敲了门、别写他喊出声、别写有没有人应答），世界不因此推进一步。"
+    "直接把他角色应该记得的那部分信息简短告诉他（可以用「你记得」起头），"
+    "只答已经挣得或本来就该知道的部分，未挣得的线索仍然不给。"
+    "答完把局面停在他可以行动的地方。"
+)
+
+
+def inject_kp_question_guidance(guidance: str) -> str:
+    g = (guidance or "").strip()
+    if _KP_QUESTION_GUIDANCE_PREFIX in g:
+        return g
+    if not g:
+        return _KP_QUESTION_GUIDANCE_PREFIX
+    return f"{_KP_QUESTION_GUIDANCE_PREFIX}\n{g}"
+
+
 _SCENE_TRANSITION_GUIDANCE_PREFIX = (
     "【场景切换·代码注入】本轮「当前场景」从上一轮的位置切换到了新位置。"
     "正文开头先用半句到一句话交代离开当前情境（结束对话/转身/穿过……），"

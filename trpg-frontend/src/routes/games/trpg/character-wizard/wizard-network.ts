@@ -1,6 +1,7 @@
 import type { SkillComputeView } from 'trpg-sdk'
 import { useRoomStore } from '@/stores/room-store'
 import { createCharacterDraft, saveCharacter } from '@/services/character/character-api'
+import { effectiveAttr } from './wizard-selectors'
 import type { WizardState } from './wizard-state'
 
 /**
@@ -66,11 +67,18 @@ export async function syncCurrentStateToBackend(
     gender: state.info.gender || null,
     residence: state.info.residence,
     birthplace: state.info.birthplace,
-    // 年龄调整端点基于后端已保存的 character.allocated_attributes 重算
-    // （wizard-bugfix-round4.md 方案 A）——这里必须同步分配值，不能是
-    // 已经套过一次修正的有效值，否则 apply-age-adjustment 会在修正结果
-    // 上再修一次。
-    attr: state.attr,
+    // 🔴 两个字段是两份**语义不同**的数据（wizard-bugfix-round4.md 方案 A）：
+    // - `attr` → characters.attributes，存**有效值**（年龄修正后），预算/衍生值
+    //   /技能 base 都基于它；
+    // - `allocatedAttributes` → 存**分配值**，`apply-age-adjustment` 必须基于它
+    //   重算才幂等（否则会在修正结果上再修一次）。
+    //
+    // 曾经两个都写 state.attr（分配值），首次建卡看不出问题——那时还没做年龄
+    // 调整、两者本来就相等。但**编辑一张已套过年龄修正的卡**时，这一步会把
+    // 有效值覆写回分配值 = 年龄修正被抹掉 → 职业点预算按更低的 EDU 重算 →
+    // 一进技能页就凭空超支（真人实测 exec/12 #31：EDU 59→55，预算 228→220，
+    // 恰好差 8 点，而那张卡原本每一点都花得刚刚好）。
+    attr: effectiveAttr(state),
     allocatedAttributes: state.attr,
     derived,
     skillValues: buildSkillsPayload(state.skillAlloc, skillComputeMap),

@@ -159,6 +159,48 @@ def _allocate_skills(
     return skills
 
 
+#: AI 调查员的默认名字池。真人玩家一眼要能认出"这是个 AI 队友"，所以不取
+#: 会跟真人混淆的普通人名。
+_DEFAULT_NICKNAMES = ("阿铁", "阿铜", "阿锡", "阿锌")
+
+
+async def add_ai_player_to_room(
+    db: AsyncSession,
+    room_id: str,
+    reconnect_token: str | None,
+    *,
+    nickname: str | None = None,
+    occupation_name: str | None = None,
+    seed: int | None = None,
+) -> Player:
+    """房主给房间加一个 AI 队友（API 入口，带鉴权与人数/阶段约束）。
+
+    只允许在**开局之前**加（Lobby / Building）：开局后半途插入一个成员会打乱
+    位置分组与叙事名单，那是另一件事，不在本期范围。
+    """
+    from app.service.room import RoomConflictError, _require_host, find_room_by_id
+
+    room = await find_room_by_id(db, room_id)
+    await _require_host(db, room, reconnect_token)
+    if room.phase not in ("Lobby", "Building"):
+        raise RoomConflictError("只有开局前可以加 AI 队友")
+
+    rows = await db.execute(select(Player).where(Player.room_id == room_id))
+    existing = list(rows.scalars())
+    if len(existing) >= room.max_players:
+        raise RoomConflictError(f"房间已满（{room.max_players} 人）")
+
+    if nickname is None:
+        taken = {p.nickname for p in existing}
+        nickname = next(
+            (n for n in _DEFAULT_NICKNAMES if n not in taken),
+            f"AI-{len(existing) + 1}",
+        )
+    return await create_ai_player(
+        db, room_id, nickname=nickname, occupation_name=occupation_name, seed=seed
+    )
+
+
 async def create_ai_player(
     db: AsyncSession,
     room_id: str,
@@ -168,6 +210,9 @@ async def create_ai_player(
     seed: int | None = None,
 ) -> Player:
     """在房间里加一个 AI 玩家，并给它一张**规则上合法**的完成态角色卡。
+
+    这层不做鉴权与人数校验（那是 `add_ai_player_to_room` 的事）——测试与试玩
+    装置直接用这个，不必先造一个房主凭证。
 
     `seed` 用于可复现（测试与试玩装置要能造出同一张卡）。不传就用系统随机。
     """

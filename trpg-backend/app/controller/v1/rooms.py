@@ -30,13 +30,16 @@ from app.dto.chat import ChatMessageRead
 from app.dto.common import ApiResponse
 from app.dto.replay import ReplayEventRead, RoomSummaryRead
 from app.dto.room import (
+    AiPlayerCreateBody,
     JoinRoomBody,
     RoomCreate,
     RoomCreateResult,
+    RoomPlayerRead,
     RoomPreview,
     SelectModuleBody,
 )
 from app.models.user import User
+from app.service import ai_player as ai_player_service
 from app.service import character as character_service
 from app.service import chat as chat_service
 from app.service import room as room_service
@@ -146,6 +149,52 @@ async def get_room_info(
     if preview is None:
         raise AppException(ErrorCode.ROOM_NOT_FOUND, "房间不存在", status.HTTP_404_NOT_FOUND)
     return ApiResponse.ok(preview)
+
+
+@router.post("/{room_id}/ai-players", response_model=ApiResponse[RoomPlayerRead], status_code=201)
+async def add_ai_player(
+    room_id: str,
+    body: AiPlayerCreateBody | None = None,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[RoomPlayerRead]:
+    """POST /api/v1/rooms/{roomId}/ai-players —— 房主加一个 AI 队友（exec/21）。
+
+    人不齐时补位。它有一张**规则上合法**的完成态角色卡（`service/ai_player.py`
+    按 COC7 规则生成并自检），因此天然满足"全员建卡完成"这个开局条件。
+
+    本期它**不会说话**：占座位、进名单、算进位置分组、卡可被队友传阅，但不提交
+    行动——行动决策是 exec/21 第三层。
+    """
+    payload = body or AiPlayerCreateBody()
+    try:
+        player = await ai_player_service.add_ai_player_to_room(
+            db,
+            room_id,
+            reconnect_token,
+            nickname=payload.nickname,
+            occupation_name=payload.occupation,
+            seed=payload.seed,
+        )
+    except room_service.RoomNotFoundError as exc:
+        raise AppException(ErrorCode.ROOM_NOT_FOUND, str(exc), status.HTTP_404_NOT_FOUND) from exc
+    except (room_service.RoomAuthenticationError, room_service.RoomAuthorizationError) as exc:
+        raise AppException(ErrorCode.FORBIDDEN, str(exc), status.HTTP_403_FORBIDDEN) from exc
+    except room_service.RoomConflictError as exc:
+        raise AppException(ErrorCode.CONFLICT, str(exc), status.HTTP_409_CONFLICT) from exc
+    except ValueError as exc:  # 未知职业
+        raise AppException(ErrorCode.BAD_REQUEST, str(exc), status.HTTP_400_BAD_REQUEST) from exc
+    return ApiResponse(
+        success=True,
+        data=RoomPlayerRead(
+            player_id=player.id,
+            nickname=player.nickname,
+            is_host=player.is_host,
+            ready=player.ready,
+            has_character=player.has_character,
+            is_ai=player.is_ai,
+        ),
+    )
 
 
 @router.post("/{room_id}/start-story", response_model=ApiResponse[None])

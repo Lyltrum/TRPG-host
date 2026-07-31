@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
+from starlette.testclient import TestClient
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.coc7_rules import (
@@ -29,6 +30,7 @@ from app.core.coc7_rules import (
     validate_character_with_occupation,
 )
 from app.core.db import Base
+from app.main import app
 from app.models.room import Character, Player, Room
 from app.service.ai_player import (
     _allocate_attributes,
@@ -191,3 +193,81 @@ async def test_count_ai_players() -> None:
         await create_ai_player(db, room_id, nickname="阿铁", seed=1)
         await create_ai_player(db, room_id, nickname="阿铜", seed=2)
         assert await count_ai_players(db, room_id) == 2
+
+
+# ── API 端点 ───────────────────────────────────────
+
+_ROOMS = "/api/v1/rooms"
+
+
+@pytest.fixture
+def sync_client() -> TestClient:
+    return TestClient(app)
+
+
+def _register(client: TestClient, account: str) -> str:
+    r = client.post(
+        "/api/v1/auth/register",
+        json={"account": account, "password": "secret1", "nickname": "房主"},
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["data"]["token"]
+
+
+def _create_room(client: TestClient, token: str, max_players: int = 4) -> dict:
+    r = client.post(
+        _ROOMS,
+        json={"roomName": "AI 队友测试房", "nickname": "房主", "maxPlayers": max_players},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def test_add_ai_player_endpoint(sync_client) -> None:
+    """房主加 AI 队友：201 + 成员列表里多一个 isAi 的人，且它已完成建卡。
+
+    `has_character=True` 是关键——开局条件是"全员建卡完成"，AI 的卡一落库
+    就是完成态，所以加了 AI 不会卡住开局。
+    """
+    token = _register(sync_client, "ai_host")
+    room = _create_room(sync_client, token)
+    rh = {"X-Reconnect-Token": room["reconnectToken"]}
+
+    r = sync_client.post(f"/api/v1/rooms/{room['roomId']}/ai-players", json={"seed": 7}, headers=rh)
+    assert r.status_code == 201, r.text
+    data = r.json()["data"]
+    assert data["isAi"] is True
+    assert data["hasCharacter"] is True
+
+    preview = sync_client.get(f"/api/v1/rooms/{room['roomCode']}").json()["data"]
+    assert preview["playerCount"] == 2
+    assert [p["isAi"] for p in preview["players"]] == [False, True]
+
+
+def test_add_ai_player_requires_host(sync_client) -> None:
+    """非房主不能加 AI——凭证不对就是 403，不能靠"反正没人会调"过关。"""
+    token = _register(sync_client, "ai_host2")
+    room = _create_room(sync_client, token)
+    r = sync_client.post(
+        f"/api/v1/rooms/{room['roomId']}/ai-players",
+        json={},
+        headers={"X-Reconnect-Token": "not-a-real-token"},
+    )
+    assert r.status_code == 403
+
+
+def test_add_ai_player_respects_max_players(sync_client) -> None:
+    """房间满了就不能再加——AI 占的是真座位，不是额外附加的。"""
+    token = _register(sync_client, "ai_host3")
+    room = _create_room(sync_client, token, max_players=2)
+    rh = {"X-Reconnect-Token": room["reconnectToken"]}
+
+    assert (
+        sync_client.post(
+            f"/api/v1/rooms/{room['roomId']}/ai-players", json={}, headers=rh
+        ).status_code
+        == 201
+    )
+    full = sync_client.post(f"/api/v1/rooms/{room['roomId']}/ai-players", json={}, headers=rh)
+    assert full.status_code == 409

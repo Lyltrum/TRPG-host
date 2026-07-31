@@ -94,6 +94,20 @@ class RoomPlayerRead(CamelModel):
     is_host: bool
     ready: bool
     has_character: bool
+    # AI 队友（exec/21）。前端要能把它跟真人区分开——玩家有权知道桌上哪个
+    # 是补位的，这不是该藏起来的信息。
+    is_ai: bool = False
+
+
+class AiPlayerCreateBody(CamelModel):
+    """加一个 AI 队友（exec/21）。三个字段都可选。
+
+    `seed` 用于可复现——同一个 seed 造出同一张卡，测试与试玩装置需要它。
+    """
+
+    nickname: str | None = None
+    occupation: str | None = None
+    seed: int | None = None
 
 
 class ModuleRead(CamelModel):

@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Users, Map, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll } from 'lucide-react'
+import { ArrowLeft, Users, Map, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll, EyeOff } from 'lucide-react'
 import { useState, useRef, useEffect, type FormEvent } from 'react'
 import type { ChatMessage } from 'trpg-sdk'
 import { useRoomStore } from '@/stores/room-store'
@@ -395,6 +395,10 @@ export default function RoomPage() {
   const [channel, setChannel] = useState<'dm' | 'chat'>('dm')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
+  // 私密行动（exec/18 ⑥）：勾上后这一条只回给自己，同处的队友看不到。
+  // 守秘人照常看得见——私密是玩家↔玩家，不是玩家↔KP。每发一条自动复位，
+  // 不做成常驻开关：忘了关会把整局都变成私密，而玩家不会察觉。
+  const [privateAction, setPrivateAction] = useState(false)
   const [typing, setTyping] = useState(false)
   const [openPanel, setOpenPanel] = useState<string | null>(null)
   const [sheetPage, setSheetPage] = useState<'info' | 'background'>('info')
@@ -743,7 +747,11 @@ export default function RoomPage() {
     }
     setInput('')
     setTyping(true)
-    sdk.roomSocket.submitAction(playerId, { utterance: text })
+    sdk.roomSocket.submitAction(playerId, {
+      utterance: text,
+      ...(privateAction ? { visibility: 'private' as const } : {}),
+    })
+    setPrivateAction(false)
   }
 
   // 掷骰确认（两段式玩家掷骰）：骰值由服务端权威生成，这里只发 checkRequestId
@@ -1070,10 +1078,26 @@ export default function RoomPage() {
               <Mic className="w-[18px] h-[18px]" strokeWidth={2} />
             </button>
           )}
+          {channel === 'dm' && (
+            <button
+              type="button"
+              onClick={() => setPrivateAction(v => !v)}
+              title={privateAction ? '这一条只有你自己看得到' : '设为私密行动'}
+              className={`w-10 h-10 rounded-full border flex items-center justify-center flex-shrink-0 active:scale-[0.92] transition-all ${
+                privateAction
+                  ? 'bg-brass border-brass text-white'
+                  : 'bg-card border-border-light text-text-muted active:border-brass active:text-brass-dark'
+              }`}
+            >
+              <EyeOff className="w-[18px] h-[18px]" strokeWidth={2} />
+            </button>
+          )}
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={channel === 'dm' ? '对守秘人说…' : '和队友讨论…'}
+            placeholder={
+              channel === 'chat' ? '和队友讨论…' : privateAction ? '私密行动，只有你看得到…' : '对守秘人说…'
+            }
             className="flex-1 bg-input border border-border-mid rounded-[20px] px-4 py-2.5 text-sm text-text-primary font-sans outline-none min-h-[40px] placeholder:text-text-dim focus:border-brass transition-colors"
           />
           <button

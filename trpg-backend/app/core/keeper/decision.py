@@ -63,6 +63,17 @@ class PlayerMove(_DecisionModel):
     node_id: str = Field(description="他单独所在的剧本节点 id，不得编造")
 
 
+class StealthChange(_DecisionModel):
+    """潜行/现身（exec/18 ②）。
+
+    「在场但不可见」：隐匿的调查员照常**听得见**这里发生的一切，但他自己的
+    行动不会被同处的其他人看见。被发现、主动现身、离开该地点都要置回 false。
+    """
+
+    player: str = Field(description="调查员昵称或角色名")
+    hidden: bool = Field(description="true=潜行成功进入隐匿；false=现身/被发现")
+
+
 class KeeperDecision(_DecisionModel):
     """裁决阶段的完整输出契约。
 
@@ -94,6 +105,10 @@ class KeeperDecision(_DecisionModel):
     moves: list[PlayerMove] = Field(
         default_factory=list,
         description="分头探索：谁单独去了别处（全队在一起时留空数组）",
+    )
+    stealth: list[StealthChange] = Field(
+        default_factory=list,
+        description="潜行状态变化：谁藏起来了 / 谁现身或被发现了（没变化时留空数组）",
     )
     agenda_fired: list[str] = Field(
         default_factory=list, description="本轮真正发生的议程事件 id（不预告）"

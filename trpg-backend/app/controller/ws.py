@@ -135,23 +135,28 @@ async def _deliver_narration_segments(
 
 
 async def _audience_at_speaker_location(
-    db: AsyncSession, room_id: str, player_id: str
+    db: AsyncSession, room_id: str, player_id: str, *, private: bool = False
 ) -> list[str] | None:
-    """与发言者同处一地的玩家 id；**未分头时返回 None = 照旧全房间广播**。
+    """这句原话该发给谁；**返回 None = 照旧全房间广播**。
 
-    分头探索（P5.2）后玩家原话也得按位置投递——不然"你不在场所以你不知道"
-    只挡住了守秘人的叙事，队友在地窖喊的那句话照样出现在你屏幕上。
+    三条规则，按优先级：
+    1. 玩家自己勾了私密（exec/18 ⑥）或正处于隐匿状态（②）→ 只回给他本人；
+    2. 全队已分头（P5.2 ①）→ 只发给同处一地的人。不然"你不在场所以你不知道"
+       只挡住了守秘人的叙事，队友在地窖喊的那句照样出现在你屏幕上；
+    3. 都不是 → None，走原来的全房间广播，行为逐字不变。
 
     找不到发言者时返回 `[player_id]`（只发给他自己）而不是 None：这条路径
     上的错误必须**朝保密的方向**失败，退化成广播就是当场泄密。
     """
     from sqlalchemy import select
 
-    from app.core.keeper.location_state import group_players
+    from app.core.keeper.location_state import group_players, load_hidden_players
     from app.models.room import Player, Room
 
     room = await db.get(Room, room_id)
     keeper_state = room.keeper_state if room is not None else None
+    if private or player_id in load_hidden_players(keeper_state):
+        return [player_id]
     rows = await db.execute(
         select(Player.id).where(Player.room_id == room_id, Player.is_ai.is_(False))
     )
@@ -378,6 +383,8 @@ async def _handle_action_submit(
     room_id: str,
     player_id: str,
     utterance: str,
+    *,
+    private: bool = False,
 ) -> None:
     """处理 action.submit：玩家对 AI 主持人说的任何一句话（issue #107 定稿后
     的唯一事件——"是行动还是提问"由 AI 判断，协议层不预分类）。
@@ -409,14 +416,15 @@ async def _handle_action_submit(
             player_id=player_id, nickname=nickname, utterance=utterance
         ).model_dump(by_alias=True),
     ).model_dump(by_alias=True)
-    audience = await _audience_at_speaker_location(db, room_id, player_id)
+    audience = await _audience_at_speaker_location(db, room_id, player_id, private=private)
     if audience is None:
         await manager.broadcast(room_id, action_envelope)
     else:
         await manager.send_to_players(room_id, audience, action_envelope)
 
     opened = turn_window_manager.join(
-        room_id, Submission(player_id=player_id, nickname=nickname, utterance=utterance)
+        room_id,
+        Submission(player_id=player_id, nickname=nickname, utterance=utterance, private=private),
     )
     if not opened:
         # 已经有人在收集本轮：并入即可，不另起一个裁决循环。
@@ -444,13 +452,19 @@ async def _handle_action_submit(
         # 本轮一起发言的人：keeper 用它决定"把谁挪到新场景"——没发言的人
         # 位置不动，否则分头探索时留在别处的人会被隔空传送走（P5.2）。
         context = replace(
-            context, participant_ids=tuple(dict.fromkeys(s.player_id for s in submissions))
+            context,
+            participant_ids=tuple(dict.fromkeys(s.player_id for s in submissions)),
+            private_player_ids=tuple(dict.fromkeys(s.player_id for s in submissions if s.private)),
         )
         # 事件按**人**分别记：账本/历史要能看出每句话是谁说的，不能只留一条
         # 合并文本（否则多人轮在历史里退化成一个匿名段落）。
         for sub in submissions:
             await room_service.record_event(
-                db, room_id, sub.player_id, "action.submit", {"utterance": sub.utterance}
+                db,
+                room_id,
+                sub.player_id,
+                "action.submit",
+                {"utterance": sub.utterance, "private": sub.private},
             )
 
         narrator = websocket.app.state.narrator
@@ -640,16 +654,17 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                         utterance = submit_payload.utterance.strip()
                         if not utterance:
                             continue
-                        # visibility="private"（私密行动，结果只给发起者）本期只铺
-                        # 协议位——真正的私密裁决要 AI 知道"这条不能在后续叙事里
-                        # 泄露"，属于编排层（issue #107）。明确回 NOT_IMPLEMENTED，
-                        # 绝不静默当 public 处理——否则玩家以为保密的行动被广播出去，
-                        # 当场暴露。
-                        if submit_payload.visibility == "private":
-                            await _send_error(websocket, "NOT_IMPLEMENTED", "私密行动本期尚未实现")
-                            continue
+                        # visibility="private"（exec/18 ⑥，P5.2c 落地）：原话与
+                        # 结果只回给发起者，同处一地的其他人不知道他做了什么。
+                        # 🔴 守秘人照常看得见并正常裁定——私密是玩家↔玩家，
+                        # 不是玩家↔KP（KP 不知道就没法主持）。
                         await _handle_action_submit(
-                            db, websocket, room_id, bound_player_id, utterance
+                            db,
+                            websocket,
+                            room_id,
+                            bound_player_id,
+                            utterance,
+                            private=submit_payload.visibility == "private",
                         )
                     elif event_type == "chat.send":
                         chat_payload = ChatSendPayload.model_validate(raw_payload)

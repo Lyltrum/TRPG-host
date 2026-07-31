@@ -51,6 +51,7 @@ from app.core.keeper.location_state import (
     PLAYER_LOCATION_KEY,
     format_party_locations,
     group_players,
+    load_hidden_players,
     location_of,
 )
 from app.core.keeper.module_loader import ScenarioModule
@@ -550,6 +551,7 @@ class KeeperAgent(Narrator):
                 keeper_state=after_state,
                 players=players,
                 turn_player_ids=turn_player_ids,
+                private_player_ids=frozenset(context.private_player_ids),
             )
             # 可观测性，不做自动拦截：能不能判断"这段话有没有替检定预支结果"
             # 没有可靠的代码手段（跟其它 scrub 规则不同，这是语义/因果判断，
@@ -585,6 +587,7 @@ class KeeperAgent(Narrator):
             keeper_state=after_state,
             players=players,
             turn_player_ids=turn_player_ids,
+            private_player_ids=frozenset(context.private_player_ids),
         )
 
         # HP 变化的可见性不再靠拼进叙事正文保证——那样等于让守秘人的嘴说了句
@@ -820,25 +823,34 @@ class KeeperAgent(Narrator):
         keeper_state: dict | None,
         players: list[tuple[str, str]],
         turn_player_ids: tuple[str, ...],
+        private_player_ids: frozenset[str],
     ) -> tuple[str, list[NarrationSegment]]:
         """叙事阶段的投递分组（exec/14 P5.2，定稿：**一次裁决全局、只叙事分开**）。
 
         返回 `(全房间正文, 分组段落)`，两者互斥：
-        - **全队同处一地**（房间只有一个位置组）→ 走原路径，返回 `(正文, [])`，
+        - **全队同处一地、且本轮没有隐秘发言者** → 走原路径，返回 `(正文, [])`，
           prompt 与 P5.2 之前**逐字一致**（不追加任何范围提示）。这是退化保证。
-        - **已分头** → 返回 `("", 段落列表)`，每个**本轮有人发言**的位置组各跑
-          一次叙事，受众是该地点的**全部**在场调查员（没发言但人在那儿的也该
-          听见）。没人发言的地方本轮不生成叙事——那边没发生事，凭空写一段等于
-          让模型编。
-        - 延迟代价：1 次裁决 + N 段叙事（N = 有人行动的地点数），不是 N 次裁决。
+        - 否则 → 返回 `("", 段落列表)`：
+          · 每个**隐秘发言者**（②潜行中 或 ⑥自己标了私密）各一段，只给他本人；
+          · 每个含**公开发言者**的位置组各一段，受众是该地点的**全部**在场调查员
+            （没发言但人在现场的也该听见，隐匿者也在其中——「自己听得见」）；
+          · 没人发言的地方本轮不生成叙事，那边没发生事，凭空写等于让模型编。
+        - 延迟代价：1 次裁决 + N 段叙事，不是 N 次裁决。
 
-        ⚠️ 能用代码保证的是**投递**：另一组的连接根本收不到这段文字。至于
-        "写给书房的这段里有没有提到地窖发生的事"，是语义判断，只能靠下面这段
-        范围提示提高服从概率——跟检定边界提醒同一性质，别当成保证。
+        ⚠️ 能用代码保证的是**投递**：别人的连接根本收不到这段文字。至于
+        "写给门厅的这段里有没有提到地下室发生的事"，是语义判断，只能靠下面
+        这段范围提示提高服从概率——跟检定边界提醒同一性质，别当成保证。
         """
         all_ids = [pid for pid, _ in players]
         groups = group_players(keeper_state, all_ids)
-        if len(groups) <= 1:
+        # ②潜行是**常驻状态**（写在 keeper_state 里，直到被发现/现身）；
+        # ⑥私密是**这一轮的一次性标记**（玩家自己在提交时勾的）。两者对投递的
+        # 影响一样，但只有前者该在别人那段里被提"他藏着"。
+        hidden_ids = load_hidden_players(keeper_state)
+        covert_player_ids = hidden_ids | private_player_ids
+        covert_speakers = [pid for pid in turn_player_ids if pid in covert_player_ids]
+        open_speakers = {pid for pid in turn_player_ids if pid not in covert_player_ids}
+        if len(groups) <= 1 and not covert_speakers:
             narration = await self._narrate_prose(
                 situation,
                 decision,
@@ -860,20 +872,8 @@ class KeeperAgent(Narrator):
             )
 
         nicknames = dict(players)
-        speakers = set(turn_player_ids)
-        segments: list[NarrationSegment] = []
-        for node_id, members in groups:
-            if not speakers.intersection(members):
-                continue
-            node = self._module.node_by_id(node_id) if node_id else None
-            where = node.title if node is not None else (node_id or "此处")
-            who = "、".join(nicknames.get(pid, pid) for pid in members)
-            scope_hint = (
-                f"\n\n【投递范围·代码硬提醒】这一段**只会送达在「{where}」的 {who}**，"
-                "别处的调查员看不到。因此：只写这里发生的事；"
-                "其他调查员在别处的行动、发现、遭遇，一个字都不要提，"
-                "也不要替这边的人转述他们不可能知道的消息。"
-            )
+
+        async def _segment(audience: tuple[str, ...], node_id: str | None, hint: str):
             raw = await self._narrate_prose(
                 situation,
                 decision,
@@ -881,25 +881,59 @@ class KeeperAgent(Narrator):
                 issues,
                 max_tokens=token_limit,
                 max_chars=char_limit,
-                extra_suffix=extra_suffix + scope_hint,
+                extra_suffix=extra_suffix + hint,
             )
+            return NarrationSegment(
+                text=self._finalize_prose(
+                    raw,
+                    action_intent=action_intent,
+                    confused=confused,
+                    max_chars=char_limit,
+                    room_id=room_id,
+                ),
+                audience=audience,
+                node_id=node_id,
+            )
+
+        segments: list[NarrationSegment] = []
+        for pid in covert_speakers:
+            who = nicknames.get(pid, pid)
             segments.append(
-                NarrationSegment(
-                    text=self._finalize_prose(
-                        raw,
-                        action_intent=action_intent,
-                        confused=confused,
-                        max_chars=char_limit,
-                        room_id=room_id,
+                await _segment(
+                    (pid,),
+                    location_of(keeper_state, pid),
+                    (
+                        f"\n\n【投递范围·代码硬提醒】这一段**只会送达 {who} 一个人**。"
+                        f"他这一轮的行动是隐秘的：同一处的其他调查员不知道他做了什么。"
+                        "因此：只写他自己感知到的结果；不要写别人对他这次行动的反应，"
+                        "也不要写成好像大家都看见了。"
                     ),
-                    audience=tuple(members),
-                    node_id=node_id,
                 )
             )
+        for node_id, members in groups:
+            if not open_speakers.intersection(members):
+                continue
+            node = self._module.node_by_id(node_id) if node_id else None
+            where = node.title if node is not None else (node_id or "此处")
+            who = "、".join(nicknames.get(pid, pid) for pid in members)
+            hint = (
+                f"\n\n【投递范围·代码硬提醒】这一段**只会送达在「{where}」的 {who}**，"
+                "别处的调查员看不到。因此：只写这里发生的事；"
+                "其他调查员在别处的行动、发现、遭遇，一个字都不要提，"
+                "也不要替这边的人转述他们不可能知道的消息。"
+            )
+            hidden_here = [nicknames.get(pid, pid) for pid in members if pid in hidden_ids]
+            if hidden_here:
+                hint += (
+                    f"另外，{'、'.join(hidden_here)}正处于隐匿状态——这里的其他人"
+                    "不知道他在场，正文里不要提到他。"
+                )
+            segments.append(await _segment(tuple(members), node_id, hint))
         logger.info(
             "keeper_narration_split",
             room_id=room_id,
             groups=[(nid, len(m)) for nid, m in groups],
+            covert_speakers=len(covert_speakers),
             segments=len(segments),
         )
         return "", segments

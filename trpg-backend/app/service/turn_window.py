@@ -40,6 +40,9 @@ class Submission:
     player_id: str
     nickname: str
     utterance: str
+    #: 玩家自己勾了「私密行动」（exec/18 ⑥）。只影响**投递**：结果只回给他，
+    #: 守秘人照常看得见并正常裁定——私密是玩家↔玩家，不是玩家↔KP。
+    private: bool = False
 
 
 @dataclass

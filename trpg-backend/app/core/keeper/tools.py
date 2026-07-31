@@ -33,8 +33,11 @@ from app.core.coc7_rules import evaluate_skill_base
 from app.core.keeper import dice, module_loader
 from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, load_fired_agenda
 from app.core.keeper.location_state import (
+    HIDDEN_PLAYERS_KEY,
     PLAYER_LOCATION_KEY,
+    load_hidden_players,
     load_player_locations,
+    serialize_hidden_players,
     serialize_player_locations,
 )
 from app.core.keeper.module_loader import ScenarioModule
@@ -70,6 +73,7 @@ _RESERVED_STATE_KEYS = frozenset(
         ENDING_ID_KEY,
         CURRENT_NODE_KEY,
         PLAYER_LOCATION_KEY,
+        HIDDEN_PLAYERS_KEY,
     }
 )
 
@@ -466,6 +470,29 @@ async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> 
             {"player": player.nickname, "node_id": node_id, "title": node.title},
         )
     return f"{player.nickname}单独前往：{node.title}（{node_id}）"
+
+
+async def set_stealth_impl(deps: KeeperDeps, player_name: str, hidden: bool) -> str:
+    """把一名调查员置入 / 移出隐匿状态（exec/18 ②「在场但不可见」）。
+
+    隐匿只影响**他自己的行动被谁看见**；他照常收得到所在地点的叙事——
+    "自己听得见"是这条规则的一半，另一半靠 per-observer 投递实现。
+    """
+    async with deps.write_lock, deps.session_factory() as db:
+        player, _character = await _resolve_character(db, deps, player_name)
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            raise KeeperToolError("房间不存在")
+        current_state = dict(room.keeper_state or {})
+        hidden_ids = load_hidden_players(current_state)
+        if hidden:
+            hidden_ids.add(player.id)
+        else:
+            hidden_ids.discard(player.id)
+        current_state[HIDDEN_PLAYERS_KEY] = serialize_hidden_players(hidden_ids)
+        room.keeper_state = current_state
+        await _record(db, deps, "keeper.stealth", {"player": player.nickname, "hidden": hidden})
+    return f"{player.nickname}{'进入隐匿' if hidden else '不再隐匿'}"
 
 
 async def mark_agenda_fired_impl(deps: KeeperDeps, event_ids: list[str]) -> str:

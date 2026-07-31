@@ -178,10 +178,13 @@ def test_lock_released_after_narrator_failure(sync_client: TestClient) -> None:
         assert ws.receive_json()["type"] == "narration.push"
 
 
-def test_action_submit_private_returns_not_implemented(sync_client: TestClient) -> None:
-    """visibility="private" 本期只铺协议位，明确回 NOT_IMPLEMENTED——绝不
-    静默当 public 广播出去（issue #107 验收标准：玩家以为保密的行动被广播
-    当场就暴露）。"""
+def test_action_submit_private_is_accepted_and_echoed_to_self(sync_client: TestClient) -> None:
+    """visibility="private"（exec/18 ⑥，P5.2c 落地）：不再回 NOT_IMPLEMENTED。
+
+    这条只能验"发起者自己收得到、且没被当成错误拒掉"。**"其他人收不到"要两个
+    真实 WS 客户端**，pytest 做不了（TestClient 每连接独立事件循环），受众计算
+    本身由 `test_narration_fanout.py` 单测、端到端由 e2e 守。
+    """
     token = register_and_login(sync_client, "priv_host")
     room = create_room(sync_client, token)
 
@@ -196,9 +199,8 @@ def test_action_submit_private_returns_not_implemented(sync_client: TestClient) 
         )
         envelope = ws.receive_json()
 
-    # 收到的是 error，而不是 action.broadcast——原话没有被广播出去
-    assert envelope["type"] == "error"
-    assert envelope["payload"]["code"] == "NOT_IMPLEMENTED"
+    assert envelope["type"] == "action.broadcast"
+    assert envelope["payload"]["utterance"] == "我偷偷摸他口袋"
 
 
 def test_action_lock_semantics() -> None:

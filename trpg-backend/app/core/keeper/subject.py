@@ -58,8 +58,10 @@ DECISION_FIELD_CAPABILITIES: dict[str, Capability] = {
     "hp_changes": Capability.ADJUST_HP,
     "state_updates": Capability.UPDATE_STATE,
     "current_node_id": Capability.SET_SCENE,
-    # 分头探索（P5.2）：移动别人跟设置场景是同一件事的两个粒度，同一个能力。
+    # 分头探索 / 潜行（P5.2）：位置与"在场但不可见"都是空间状态，与设置场景
+    # 同一件事的不同粒度，共用一个能力。
     "moves": Capability.SET_SCENE,
+    "stealth": Capability.SET_SCENE,
     "agenda_fired": Capability.FIRE_AGENDA,
     "visibility_revealed": Capability.REVEAL_VISIBILITY,
     "opening_complete": Capability.ADVANCE_PHASE,

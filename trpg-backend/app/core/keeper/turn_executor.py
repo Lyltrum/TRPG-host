@@ -31,6 +31,7 @@ from app.core.keeper.tools import (
     move_player_impl,
     set_current_node_impl,
     set_phase_impl,
+    set_stealth_impl,
     update_state_impl,
 )
 
@@ -94,6 +95,13 @@ async def execute_side_effects(
             report.append(await move_player_impl(deps, move.player, move.node_id))
         except KeeperToolError as exc:
             issues.append(f"分头移动未执行：{exc}")
+
+    # 潜行状态（exec/18 ②）：与移动同一类空间状态，逐条执行、逐条记 issue。
+    for change in decision.stealth:
+        try:
+            report.append(await set_stealth_impl(deps, change.player, change.hidden))
+        except KeeperToolError as exc:
+            issues.append(f"潜行状态未执行：{exc}")
 
     # 议程触发：只校验 id 合法性，once 幂等由 mark_agenda_fired_impl 兜底。
     if decision.agenda_fired:

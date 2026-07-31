@@ -31,6 +31,11 @@ from app.core.keeper.scene_state import load_current_node_id
 
 PLAYER_LOCATION_KEY = "玩家位置"
 
+#: 潜行/躲藏中的调查员（exec/18 ②）。「在场但不可见」——他照常**听得见**这里
+#: 发生的一切（所以不把他从位置分组里摘出去），但他自己的行动不会广播给同处
+#: 的其他人。存 player_id 的逗号串。
+HIDDEN_PLAYERS_KEY = "隐匿玩家"
+
 
 def load_player_locations(keeper_state: dict | None) -> dict[str, str]:
     """解析 player_id → node_id。保序、去空、后写覆盖先写。"""
@@ -53,6 +58,19 @@ def load_player_locations(keeper_state: dict | None) -> dict[str, str]:
 
 def serialize_player_locations(locations: dict[str, str]) -> str:
     return ", ".join(f"{pid}@{nid}" for pid, nid in locations.items())
+
+
+def load_hidden_players(keeper_state: dict | None) -> set[str]:
+    if not keeper_state:
+        return set()
+    raw = keeper_state.get(HIDDEN_PLAYERS_KEY)
+    if raw is None or raw == "":
+        return set()
+    return {part.strip() for part in str(raw).split(",") if part.strip()}
+
+
+def serialize_hidden_players(player_ids: set[str]) -> str:
+    return ", ".join(sorted(player_ids))
 
 
 def location_of(keeper_state: dict | None, player_id: str) -> str | None:
@@ -90,19 +108,23 @@ def format_party_locations(
 ) -> str:
     """注入局面块的「各自所在」。
 
-    **全队同处一地时返回空串**——整块不渲染，单人局与未分头的多人局 prompt
-    与 P5.2 之前逐字一致（退化保证）。只有真的分头了，裁决器才需要知道谁
-    在哪，以及"不在场的人听不见这边"。
+    **全队同处一地、且没人在隐匿时返回空串**——整块不渲染，单人局与未分头的
+    多人局 prompt 与 P5.2 之前逐字一致（退化保证）。只有真的分头/有人藏起来了，
+    裁决器才需要知道谁在哪、谁看不见谁。
     """
     ids = [pid for pid, _ in players]
     groups = group_players(keeper_state, ids)
-    if len(groups) <= 1:
+    hidden = load_hidden_players(keeper_state)
+    if len(groups) <= 1 and not hidden.intersection(ids):
         return ""
     nicknames = dict(players)
     lines: list[str] = []
     for node_id, members in groups:
         node = module.node_by_id(node_id) if node_id else None
         where = f"{node.title}（{node_id}）" if node is not None else (node_id or "（位置未记录）")
-        who = "、".join(nicknames.get(pid, pid) for pid in members)
+        who = "、".join(
+            f"{nicknames.get(pid, pid)}（隐匿中）" if pid in hidden else nicknames.get(pid, pid)
+            for pid in members
+        )
         lines.append(f"- {where}：{who}")
     return "\n".join(lines)

@@ -21,7 +21,7 @@ from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.location_state import PLAYER_LOCATION_KEY
+from app.core.keeper.location_state import HIDDEN_PLAYERS_KEY, PLAYER_LOCATION_KEY
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
@@ -246,3 +246,72 @@ async def test_speaker_audience_is_own_group_when_split() -> None:
     async with _session_factory() as db:
         assert await _audience_at_speaker_location(db, room_id, a_id) == [a_id]
         assert await _audience_at_speaker_location(db, room_id, b_id) == [b_id]
+
+
+# ── 4. ⑥私密行动 / ②潜行 ───────────────────────────
+
+
+async def test_private_flag_narrows_utterance_audience_even_when_together() -> None:
+    """⑥：全队同处一地也照样只回给他自己。"""
+    room_id, a_id, _b_id = await _seed("FAN007", {CURRENT_NODE_KEY: "hall"})
+    async with _session_factory() as db:
+        assert await _audience_at_speaker_location(db, room_id, a_id, private=True) == [a_id]
+
+
+async def test_hidden_player_utterance_audience_is_self_only() -> None:
+    """②：隐匿中的人做什么，同处的其他人不知道。"""
+    room_id, a_id, b_id = await _seed("FAN008", {CURRENT_NODE_KEY: "hall"})
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        room.keeper_state = {**(room.keeper_state or {}), HIDDEN_PLAYERS_KEY: a_id}
+        await db.commit()
+    async with _session_factory() as db:
+        assert await _audience_at_speaker_location(db, room_id, a_id) == [a_id]
+        # 没藏的人照旧全房间广播
+        assert await _audience_at_speaker_location(db, room_id, b_id) is None
+
+
+async def test_private_speaker_gets_own_segment_without_splitting_party() -> None:
+    """⑥：未分头 + 有私密发言者 → 走分段路径，只给他一段。"""
+    agent = _keeper()
+    suffixes = _stub(agent, KeeperDecision(thinking="无事", narration_guidance="继续"))
+    room_id, a_id, _b_id = await _seed("FAN009", {CURRENT_NODE_KEY: "hall"})
+    context = NarrationContext(
+        utterance="我趁他不注意摸他口袋",
+        player_nickname="阿福",
+        room_id=room_id,
+        player_id=a_id,
+        private_player_ids=(a_id,),
+    )
+    outcome = await agent.narrate(context)
+    assert outcome.text == ""
+    assert [s.audience for s in outcome.segments] == [(a_id,)]
+    assert len(suffixes) == 1
+    assert "只会送达 阿福 一个人" in suffixes[0]
+
+
+async def test_hidden_speaker_gets_own_segment_and_still_hears_the_room() -> None:
+    """②：隐匿的阿福自己行动 → 单独一段；阿贵行动 → 阿福也在受众里（听得见）。"""
+    agent = _keeper()
+    suffixes = _stub(agent, KeeperDecision(thinking="无事", narration_guidance="继续"))
+    room_id, a_id, b_id = await _seed("FAN010", {CURRENT_NODE_KEY: "hall"})
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        room.keeper_state = {**(room.keeper_state or {}), HIDDEN_PLAYERS_KEY: a_id}
+        await db.commit()
+
+    outcome = await agent.narrate(
+        NarrationContext(
+            utterance="我贴着墙根往里挪",
+            player_nickname="阿福",
+            room_id=room_id,
+            player_id=a_id,
+            participant_ids=(a_id, b_id),
+        )
+    )
+    # 隐匿者一段（只给自己）+ 公开发言者那一组一段（受众含隐匿者本人）
+    assert [s.audience for s in outcome.segments] == [(a_id,), (a_id, b_id)]
+    assert "只会送达 阿福 一个人" in suffixes[0]
+    assert "阿福正处于隐匿状态" in suffixes[1]

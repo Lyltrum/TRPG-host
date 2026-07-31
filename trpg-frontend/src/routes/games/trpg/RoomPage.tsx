@@ -388,8 +388,14 @@ export default function RoomPage() {
   )
   const [remoteCharacter, setRemoteCharacter] = useState<typeof cachedCharacter>(null)
   const character = remoteCharacter ?? cachedCharacter
-  // WS 回调里要读"变化前的 HP"来渲染 `12 → 9` 这种提示。用 ref 而不是把
-  // character 放进那个 effect 的依赖——依赖一变就会退订重订阅 WS 消息。
+  // 🔴 下面这几个值**只在回调内部用于渲染**，绝不能进 WS 订阅 / replay 兜底
+  // 那两个 effect 的依赖数组。依赖一变，effect 就会退订重订阅（或把进行中的
+  // replay 轮询 cancel 掉），**窗口期内到达的消息直接丢失**——真人实测复现：
+  // 房主整局收不到开场旁白，玩家却收到了。
+  //
+  // 两个诱因：`senderName` 依赖角色卡（改从后端异步拉之后必然变化一次）、
+  // `roomInfo` 来自轮询（每次返回都是新对象，等于每隔几秒重订阅一次）。
+  // 后者是既有问题，只是角色卡改成异步后才被稳定复现出来。
   const characterRef = useRef(character)
   characterRef.current = character
 
@@ -403,11 +409,18 @@ export default function RoomPage() {
       })
   }, [roomId, characterId, ruleset])
 
+  const reloadCharacterRef = useRef(reloadCharacter)
+  reloadCharacterRef.current = reloadCharacter
+
   useEffect(() => {
     reloadCharacter()
   }, [reloadCharacter])
   const senderName = character?.info.name || nickname || '你'
+  const senderNameRef = useRef(senderName)
+  senderNameRef.current = senderName
   const roomInfo = useRoomPlayers(roomCode)
+  const roomInfoRef = useRef(roomInfo)
+  roomInfoRef.current = roomInfo
   const isHost = roomInfo?.players.find((p) => p.playerId === playerId)?.isHost ?? false
   // 房主选模组时落在 game-store；访客/刷新后优先 room-store.moduleId（同 StoryPage 的取值口径）
   const roomModuleId = useRoomStore((s) => s.moduleId)
@@ -564,7 +577,7 @@ export default function RoomPage() {
             const isSelf = ev.playerId === playerId
             boot.push({
               type: 'player',
-              sender: isSelf ? senderName : '调查员',
+              sender: isSelf ? senderNameRef.current : '调查员',
               content: payload.utterance,
               time: t,
               isSelf,
@@ -591,7 +604,7 @@ export default function RoomPage() {
     return () => {
       cancelled = true
     }
-  }, [roomId, reconnectToken, playerId, senderName])
+  }, [roomId, reconnectToken, playerId])
 
   // 服务端广播订阅：
   // - action.broadcast：任何玩家对守秘人说的**原话**。自己的那条也靠这条广播
@@ -613,10 +626,12 @@ export default function RoomPage() {
   //   （待掷检定已失效）等，转成友好的系统提示。
   useEffect(() => {
     // 按 playerId 找显示名——自己用角色名/昵称，其他人查房间成员列表。
-    // 定义在 effect 内部（而不是组件级函数）是为了不用把它塞进下面的依赖
-    // 数组：它引用的 playerId/senderName/roomInfo 已经都在依赖数组里了。
+    // 🔴 一律读 ref，不读闭包捕获的值：这两个值都会在对局中途变化，进依赖
+    // 就等于定期退订重订阅，窗口期的消息会丢（见上面 characterRef 处的说明）。
     const nicknameFor = (id: string) =>
-      id === playerId ? senderName : roomInfo?.players.find(p => p.playerId === id)?.nickname ?? '玩家'
+      id === playerId
+        ? senderNameRef.current
+        : roomInfoRef.current?.players.find(p => p.playerId === id)?.nickname ?? '玩家'
 
     const off = onWsMessage((envelope) => {
       const now = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
@@ -627,7 +642,7 @@ export default function RoomPage() {
         seenEventKeysRef.current.add(textKey)
         setMessages(prev => [...prev, {
           type: 'player',
-          sender: isSelf ? senderName : envelope.payload.nickname,
+          sender: isSelf ? senderNameRef.current : envelope.payload.nickname,
           content: envelope.payload.utterance,
           time: now,
           isSelf,
@@ -705,7 +720,7 @@ export default function RoomPage() {
         // 不本地增量改，重拉一次——服务端才是权威，掉线期间错过的广播这样
         // 也能一并归位（sanRemaining 仍然带在广播里，用来渲染下面的提示）。
         if (rollerId === playerId && typeof sanRemaining === 'number') {
-          reloadCharacter()
+          reloadCharacterRef.current()
         }
       } else if (envelope.type === 'character.stat_changed') {
         // HP 变更的结构化广播（真人实测 09-#4/#6）：此前 HP 变化只被拼进
@@ -717,7 +732,7 @@ export default function RoomPage() {
         const isSelf = targetId === playerId
         const prevHp = isSelf ? characterRef.current?.derived.hp : undefined
         if (isSelf) {
-          reloadCharacter()
+          reloadCharacterRef.current()
         }
         const label = prevHp !== undefined && prevHp !== hp
           ? `${nicknameFor(targetId)} · HP ${prevHp} → ${hp}`
@@ -746,7 +761,7 @@ export default function RoomPage() {
       }
     })
     return off
-  }, [playerId, senderName, roomInfo, roomId, reloadCharacter])
+  }, [playerId, roomId])
 
   // 讨论区历史：进房拉一次（倒序返回，反转成时间正序渲染）。实时增量走上面
   // 的 chat.message 广播，历史和增量之间的重复靠 messageId 去重兜住。

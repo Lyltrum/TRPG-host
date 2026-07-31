@@ -75,9 +75,21 @@ def test_dead_tie_goes_to_the_defender() -> None:
     assert dice.resolve_opposed(_outcome(60, 70), _outcome(60, 70)) is False
 
 
-def test_both_fail_still_compares_levels() -> None:
-    # 失败 > 大失败：两边都没成功时，大失败的那个更惨
-    assert dice.resolve_opposed(_outcome(90, 70), _outcome(100, 70)) is True
+def test_actor_who_failed_never_wins() -> None:
+    """🔴 试玩实测补的（exec/19 #43）：对抗掷骰里失败的一方不可能获胜。
+
+    初版只比成功等级的序号，于是 `失败(1) > 大失败(0)`、以及两边都失败时
+    "技能值高者胜"，都会判出赢家。真实发生过：玩家 63/60 失败、对手 62/50
+    也失败，系统记 won=True，给叙事的文本却是「失败 vs 失败 → 胜」——
+    叙事模型看懂了矛盾、按"失败"写，它比代码判对了。
+    """
+    # 双方都失败（含一方大失败）→ 僵局，主动方没赢
+    assert dice.resolve_opposed(_outcome(90, 70), _outcome(100, 70)) is False
+    assert dice.resolve_opposed(_outcome(90, 70), _outcome(90, 70)) is False
+    # 复现试玩里那一掷：63/60 失败 vs 62/50 失败
+    assert dice.resolve_opposed(_outcome(63, 60), _outcome(62, 50)) is False
+    # 主动方成功、对手失败 → 赢（技能值再低也赢）
+    assert dice.resolve_opposed(_outcome(20, 30), _outcome(90, 80)) is True
 
 
 # ── 2. 越界不夹紧 ───────────────────────────────────

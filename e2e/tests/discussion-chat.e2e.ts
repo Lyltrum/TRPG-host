@@ -168,7 +168,7 @@ test('🔴 所有人都能看到发起者的原话 + 守秘人回复（修"聊�
   }
 })
 
-test('🔴 收集窗口：窗口内他人提交并入同一轮（不再被拒），窗口外仍拒', async () => {
+test('🔴 收集窗口：窗口内并入同一轮；窗口外排进下一轮（都不拒、都不丢）', async () => {
   const room = await createRoomWithModule('lock')
   const guest = await registerPlayer('lockguest')
   const joined = await guest.sdk.rooms.join(room.roomCode, { nickname: '抢话访客' }, guest.token)
@@ -209,26 +209,48 @@ test('🔴 收集窗口：窗口内他人提交并入同一轮（不再被拒）
     ).then(() => 'extra' as const, () => 'only-one' as const)
     assert.equal(secondNarration, 'only-one', '窗口内的多条宣告应合并成一轮叙事')
 
-    // 窗口关闭、裁决跑起来之后再提交 —— 这时拒绝是对的（世界状态正在被改写）。
-    // ⚠️ 用重试而不是一次命中：锁的释放在 narration 广播**之后**的 finally 里，
-    // 两者之间有毫秒级窗口，e2e 的代码速度可能正好错过（真人手速踩不中）。
-    let accepted = false
-    for (let attempt = 0; attempt < 10 && !accepted; attempt++) {
-      const outcome = waitForEvent(
-        guest.sdk,
-        (e) =>
-          (e.type === 'action.broadcast' && e.payload.utterance === '我再翻抽屉') ||
-          (e.type === 'error' && e.payload.code === 'ACTION_IN_PROGRESS')
+    // 🔴 exec/19 #36：窗口关闭、裁决已经跑起来之后再提交，**不再被拒**——
+    // 那几条留在缓冲里，持锁的循环跑完一轮会接着跑下一轮。真人桌上不存在
+    // "你这句无效、请重说"。
+    //
+    // 这里不去控制"到底撞没撞上正在跑的那一轮"（那是毫秒级竞态，e2e 稳不住），
+    // 而是断言两条路径**共同**的不变量：既不会被拒，也不会丢。
+    //
+    // ⚠️ 要**确定性**落在「窗口已关、这一轮的叙事还在跑」那一段，不能随手发一条
+    // 就指望撞上（撞不上就等于没测，变异检验会漏）。时序是算出来的：
+    //   t=0     访客提交 → 开窗、拿锁 → 等窗口（只有他一个人说话 → 等满 2.5s）
+    //   t=2.5s  drain（缓冲清空）→ 叙事开跑，NARRATOR_DELAY_SECONDS=1
+    //   t=3.5s  叙事广播、锁释放
+    // 所以 t=2.8s 时：缓冲是空的（房主会 opened=true 自己开一轮）、锁仍被持有
+    // → 必然走排队路径。两个常量：turn_window.py 的 WINDOW_SECONDS=2.5、
+    // run-e2e.ts 的 NARRATOR_DELAY_SECONDS=1。
+    const third = '我检查窗台'
+    const fourth = '我盯着门口'
+    guest.sdk.roomSocket.submitAction(joined.playerId, { utterance: third })
+    await new Promise((r) => setTimeout(r, 2_800))
+
+    const rejected = waitForEvent(
+      room.host.sdk,
+      (e) => e.type === 'error' && e.payload.code === 'ACTION_IN_PROGRESS',
+      3_000
+    ).then(() => 'rejected' as const, () => 'never' as const)
+    room.host.sdk.roomSocket.submitAction(room.hostPlayerId, { utterance: fourth })
+
+    // 最关键的一条：这句话必须**真的落进世界**。修复前它被广播给了所有人的
+    // 屏幕，却从没写进 events —— 于是守秘人的历史里根本没有它，桌面上大家却
+    // 都以为它发生过。
+    // 排队那一轮要真的跑起来。轮询 replay 而不是等 narration：narration 分不清
+    // 是第三条那轮的还是第四条那轮的，落库这句话本身才是要断言的东西。
+    let landed = false
+    for (let attempt = 0; attempt < 40 && !landed; attempt++) {
+      const replay = await guest.sdk.rooms.getReplay(room.roomId, joined.reconnectToken)
+      landed = replay.some(
+        (e) => e.eventType === 'action.submit' && e.payload?.utterance === fourth
       )
-      guest.sdk.roomSocket.submitAction(joined.playerId, { utterance: '我再翻抽屉' })
-      const event = await outcome
-      if (event.type === 'action.broadcast') {
-        accepted = true
-      } else {
-        await new Promise((r) => setTimeout(r, 100))
-      }
+      if (!landed) await new Promise((r) => setTimeout(r, 250))
     }
-    assert.ok(accepted, '一轮结束后访客的提交应当被受理')
+    assert.ok(landed, '排队的提交必须落库，否则守秘人的历史里没有这句话')
+    assert.equal(await rejected, 'never', '锁被占用时应排队，不该回 ACTION_IN_PROGRESS')
   } finally {
     room.host.sdk.roomSocket.disconnect()
     guest.sdk.roomSocket.disconnect()

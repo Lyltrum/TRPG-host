@@ -158,7 +158,7 @@ async def test_narrate_passes_check_boundary_hint_as_extra_suffix() -> None:
             thinking="玩家追踪痕迹",
             narration_guidance="裁决给出的原始指引",
             player_state="clear_action",
-            checks=[CheckRequest(skill="追踪", reason="沿痕迹寻找线索")],
+            checks=[CheckRequest(skill_id="track", reason="沿痕迹寻找线索")],
         )
 
     async def fake_narrate_prose(

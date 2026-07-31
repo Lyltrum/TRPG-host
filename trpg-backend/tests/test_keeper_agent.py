@@ -192,12 +192,12 @@ def test_decision_parses_full_json() -> None:
     from app.core.keeper.decision import KeeperDecision
 
     d = KeeperDecision.model_validate_json(
-        '{"thinking": "命中检定点", "checks": [{"skill": "侦查", "player": null, '
+        '{"thinking": "命中检定点", "checks": [{"skill_id": "spot-hidden", "player": null, '
         '"reason": "搜索"}], "san_checks": [], "hp_changes": [], '
         '"state_updates": [{"key": "场景", "value": "书房"}], '
         '"narration_guidance": "失败则一无所获", "extra_field": 1}'
     )
-    assert d.checks[0].skill == "侦查" and d.checks[0].player is None
+    assert d.checks[0].skill_id == "spot-hidden" and d.checks[0].player is None
     assert d.state_updates[0].key == "场景"
     # 多余字段忽略不报错（LLM 生成的 JSON 常带私货）
 

@@ -247,8 +247,8 @@ async def test_check_guard_uses_each_players_own_location(party) -> None:
     decision = KeeperDecision.model_validate(
         {
             "checks": [
-                {"skill": "图书馆使用", "player": "阿福"},
-                {"skill": "图书馆使用", "player": "阿贵"},
+                {"skill_id": "library-use", "player": "阿福"},
+                {"skill_id": "library-use", "player": "阿贵"},
             ]
         }
     )

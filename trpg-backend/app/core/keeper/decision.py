@@ -42,9 +42,24 @@ class OpposedTarget(_DecisionModel):
 
 
 class CheckRequest(_DecisionModel):
-    """一次技能/属性检定请求。player 为 None = 本轮行动的发起玩家。"""
+    """一次技能/属性检定请求。player 为 None = 本轮行动的发起玩家。
 
-    skill: str
+    🔴 `skill_id` 是**白名单 id**，不是中文名（exec/17）：技能用规则表 id
+    （`spot-hidden`、`fighting-brawl`），属性用属性 key（`STR`、`CON`）。
+
+    为什么不是自由文本：中文名两侧都是人/模型随手写的（裁决器按自己的 COC7
+    常识说"侦查"，规则表叫"侦察"），指望逐字相同不现实，而事后维护同义词
+    字典是打地鼠——换个模组、模型换个措辞就又漏一个。id 是封闭集合（92+9），
+    随规则版本变、不随模组变。**tool calling 不解决这个问题**（它的参数同样
+    是模型写的字符串），解决它的是 enum/白名单。
+
+    ⚠️ 如实记：DeepSeek 走的是 JSON mode 而不是带 schema 的 structured output，
+    所以 enum **约束不到生成**，只能靠 prompt 给表 + 代码校验。模型仍写中文名
+    时代码会**显式回退**并打 `keeper_skill_id_fallback` warning——不是静默，
+    日志能统计守规率，据此再决定要不要收紧成硬失败。
+    """
+
+    skill_id: str = Field(description="技能 id 或属性 key，必须取自权威 id 表")
     player: str | None = None
     reason: str = ""
     opposed: OpposedTarget | None = Field(default=None, description="对抗检定时填；普通检定留 null")

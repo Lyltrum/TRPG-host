@@ -163,7 +163,7 @@ async def test_execute_side_effects_collects_issues_without_crashing(deps: Keepe
 
 
 async def test_create_pending_checks_valid_skill(deps: KeeperDeps) -> None:
-    decision = KeeperDecision(checks=[CheckRequest(skill="侦查", reason="搜索书房")])
+    decision = KeeperDecision(checks=[CheckRequest(skill_id="spot-hidden", reason="搜索书房")])
     pending, issues = await create_pending_checks(deps, decision)
     assert issues == []
     assert len(pending) == 1
@@ -193,14 +193,14 @@ async def test_create_pending_checks_valid_san(deps: KeeperDeps) -> None:
 
 
 async def test_create_pending_checks_unknown_skill_becomes_issue(deps: KeeperDeps) -> None:
-    decision = KeeperDecision(checks=[CheckRequest(skill="量子力学")])
+    decision = KeeperDecision(checks=[CheckRequest(skill_id="量子力学")])
     pending, issues = await create_pending_checks(deps, decision)
     assert pending == []
     assert len(issues) == 1 and "量子力学" in issues[0]
 
 
 async def test_create_pending_checks_unknown_player_becomes_issue(deps: KeeperDeps) -> None:
-    decision = KeeperDecision(checks=[CheckRequest(skill="侦查", player="不存在的人")])
+    decision = KeeperDecision(checks=[CheckRequest(skill_id="spot-hidden", player="不存在的人")])
     pending, issues = await create_pending_checks(deps, decision)
     assert pending == []
     assert len(issues) == 1 and "不存在的人" in issues[0]

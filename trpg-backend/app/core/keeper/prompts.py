@@ -32,9 +32,9 @@ def render_skill_reference(ruleset: RulesetRead) -> str:
     太差，评估后判断不值得做）。跟登场 NPC 表同一个道理（"专有名词以此为
     准，不得另起名字"）：给出权威列表，模型自己的中文语感就能挑对，不需要
     生成之后再靠字符串匹配去猜它想说哪个。"""
-    skills = "、".join(s.name for s in ruleset.skills)
-    attrs = "、".join(a.label for a in ruleset.attributes)
-    return f"技能：{skills}\n属性：{attrs}"
+    skills = "、".join(f"{s.id}={s.name}" for s in ruleset.skills)
+    attrs = "、".join(f"{a.key}={a.label}" for a in ruleset.attributes)
+    return f"技能（id=名称）：{skills}\n属性（key=名称）：{attrs}"
 
 
 def build_adjudicator_instructions(module: ScenarioModule, ruleset: RulesetRead) -> str:
@@ -44,7 +44,7 @@ def build_adjudicator_instructions(module: ScenarioModule, ruleset: RulesetRead)
 ## 剧本全文（绝密，裁决的权威依据）
 {render_full(module)}
 
-## 技能/属性权威名称表（checks[].skill 与其它任何提到技能/属性的地方，必须原样使用下表名称，禁止使用同义词/口语说法/简称——如"侦察"不得写成"侦查"或"观察"，"闪避"不得写成"闪躲"）
+## 技能/属性权威 id 表（`checks[].skill_id` 必须**原样填等号左边的 id**，不是中文名——如搜索房间填 `spot-hidden` 而不是"侦察"/"侦查"/"观察"；属性检定填属性 key 如 `CON`。id 不在下表里的检定发不出去。narration_guidance 等给人看的文字里照常用等号右边的中文名。）
 {render_skill_reference(ruleset)}
 
 ## 裁决规则（真人 KP 优先：推进行动，不是写风景）
@@ -53,7 +53,7 @@ def build_adjudicator_instructions(module: ScenarioModule, ruleset: RulesetRead)
    **禁止**让叙事者重述开场街景、禁止「如果你穿过马路…」式虚拟语气挡行动、
    禁止只描写「你还站在自家门口」却不执行玩家已宣告的移动/调查。
    像真人 KP：玩家说走过去，你就写走过去之后发生什么。
-1. **检定判定**：玩家不会替你喊技能名——判断"这个行动要不要检定、用哪个技能"是你的职责。玩家行动命中剧本标注的检定点时（搜索房间→侦察；打探/套话→话术/魅惑/信用；查资料→图书馆使用；跟踪痕迹→追踪），**必须**在 checks 里给出检定，技能名从上面的权威名称表里选；"我仔细翻找书房"就是完整的行动宣告，直接裁定侦察，不要求玩家先说明搜索方式。纯对话、无风险移动、观察显而易见之物不检定（checks 留空数组，理由写进 thinking）。**有检定时**：guidance 写到「需要掷骰的那一刻」为止，不要先写检定才能知道的结果。
+1. **检定判定**：玩家不会替你喊技能名——判断"这个行动要不要检定、用哪个技能"是你的职责。玩家行动命中剧本标注的检定点时（搜索房间→侦察；打探/套话→话术/魅惑/信用；查资料→图书馆使用；跟踪痕迹→追踪），**必须**在 checks 里给出检定，技能从上面的权威 id 表里选、填 `skill_id`（填 id 不填中文名）；"我仔细翻找书房"就是完整的行动宣告，直接裁定侦察，不要求玩家先说明搜索方式。纯对话、无风险移动、观察显而易见之物不检定（checks 留空数组，理由写进 thinking）。**有检定时**：guidance 写到「需要掷骰的那一刻」为止，不要先写检定才能知道的结果。
 1b. **集体宣告要给每个人各发一次检定**：玩家说「**我们**打算…」「大家一起…」「我和 X 一块…」时，这是**全体在场调查员**的行动，不是发言者一个人的。该检定的话，checks 里要为**每一位参与的调查员各写一条**（`player` 逐个填昵称，不要只留一个 null）。真人实测 2026-07-31：玩家说"我们打算直接打他一顿"，只有发言者掷了斗殴，另一个人被晾在一边。
 1c. **对抗检定要用 opposed 字段，不要写进指引**：掰手腕、挣脱束缚、抵抗毒物、推门 vs 门后有人顶着——这类"你和对方比一把"的场合，在那条 check 里加 `"opposed": {{"opponent": "科比特", "value": 80}}`。`value` 是**百分位目标值 0-100**：NPC 的技能/属性直接用它的百分数，COC6 式的属性点（POT 16、STR 13）要 **×5** 换算（POT 16 → 80）。对手的骰子由系统掷、胜负由系统判，你**不要**在 narration_guidance 里写"请进行 XX 对抗检定"或自己宣布谁赢了——那样玩家界面上不会出现掷骰卡片，他会一直等一个不来的骰子。
 2. **玩家宣告技能时的合理性**：玩家点名的技能在当前情境不合理时（如用克苏鲁神话"看穿真相"），不要照单裁定——checks 留空，在 narration_guidance 里说明拒绝理由让叙事者转达。
@@ -102,7 +102,7 @@ def build_adjudicator_instructions(module: ScenarioModule, ruleset: RulesetRead)
 ## 输出格式（只输出一个 JSON 对象，不要任何其它文字）
 {{
   "thinking": "裁决理由，**最多 30 字**（审计用，玩家看不到）",
-  "checks": [{{"skill": "侦察", "player": null, "reason": "搜索书房命中剧本检定点", "opposed": null}}, {{"skill": "体质", "player": "凌铭辉", "reason": "抵抗毒烟", "opposed": {{"opponent": "毒烟", "value": 80}}}}],
+  "checks": [{{"skill_id": "spot-hidden", "player": null, "reason": "搜索书房命中剧本检定点", "opposed": null}}, {{"skill_id": "CON", "player": "凌铭辉", "reason": "抵抗毒烟", "opposed": {{"opponent": "毒烟", "value": 80}}}}],
   "san_checks": [{{"player": null, "loss_on_success": "0", "loss_on_failure": "1d6", "reason": "目击食尸鬼"}}],
   "hp_changes": [{{"delta": -2, "player": null, "reason": "被抓伤"}}, {{"delta": -4, "npc": "科比特", "reason": "被铁铲砍中"}}],
   "state_updates": [{{"key": "当前场景", "value": "书房"}}],
@@ -116,7 +116,7 @@ def build_adjudicator_instructions(module: ScenarioModule, ruleset: RulesetRead)
   "narration_guidance": "给叙事者的指引",
   "player_state": "normal"
 }}
-player 为 null 表示本轮行动的发起玩家；技能/属性名必须原样取自上面的权威名称表（如：侦察、图书馆使用、话术、力量、幸运……）；没有的项用空数组，但 thinking 和 narration_guidance 每轮都要写。"""
+player 为 null 表示本轮行动的发起玩家；`skill_id` 必须原样取自上面权威 id 表的等号左边（如：spot-hidden、library-use、charm、STR、LUCK……），写中文名会被判为非法；没有的项用空数组，但 thinking 和 narration_guidance 每轮都要写。"""
 
 
 def build_narrator_instructions(module: ScenarioModule) -> str:

@@ -42,6 +42,14 @@ from app.core.keeper.location_state import (
     serialize_player_locations,
 )
 from app.core.keeper.module_loader import ScenarioModule
+from app.core.keeper.npc_state import (
+    NPC_STATE_KEY,
+    apply_hp_delta,
+    initial_hp,
+    load_npc_states,
+    npc_display_name,
+    resolve_npc_id,
+)
 from app.core.keeper.phase import (
     ENDING_ID_KEY,
     PHASE_KEY,
@@ -258,36 +266,77 @@ def _write_stat(character: Character, key: str, new_value: int) -> None:
 
 
 async def roll_check_detail(
-    deps: KeeperDeps, skill_name: str, player_name: str | None = None
+    deps: KeeperDeps,
+    skill_name: str,
+    player_name: str | None = None,
+    *,
+    opposed_opponent: str | None = None,
+    opposed_value: int | None = None,
 ) -> tuple[str, dict]:
     """技能/属性检定的完整实现，额外返回结构化明细（两段式玩家掷骰：`check.result`
     事件需要 player_id/skill/rolled/target/level 这些字段，不能只有一段拼好的文本）。
-    `roll_check_impl` 是它的薄包装，保持旧签名不破坏现有调用方/测试。"""
+    `roll_check_impl` 是它的薄包装，保持旧签名不破坏现有调用方/测试。
+
+    传了 `opposed_*` 就是**对抗检定**（exec/19 #38）：对手侧同样由服务端掷骰
+    （d100 对 `opposed_value`），胜负按 `dice.resolve_opposed`。两个参数都不传时
+    整条路径与本功能上线前逐字一致。
+    """
+    is_opposed = opposed_opponent is not None and opposed_value is not None
     async with deps.session_factory() as db:
         player, character = await _resolve_character(db, deps, player_name)
         display_name, target = _resolve_skill_target(deps, character, skill_name)
         outcome = dice.evaluate_check(dice.roll_d100(deps.rng), target)
-        await _record(
-            db,
-            deps,
-            "keeper.check",
-            {
-                "player": player.nickname,
-                "skill": display_name,
-                "rolled": outcome.rolled,
-                "target": outcome.target,
-                "level": outcome.level,
-            },
+        opponent_outcome = (
+            dice.evaluate_check(dice.roll_d100(deps.rng), opposed_value)
+            if is_opposed and opposed_value is not None
+            else None
         )
-    deps.check_results.append(
-        f"{player.nickname} · {display_name}检定："
-        f"{outcome.rolled}/{outcome.target} → {outcome.level}"
-    )
-    text = (
-        f"{player.nickname} 的{display_name}检定：d100={outcome.rolled}，"
-        f"目标值 {outcome.target}（困难 {outcome.target // 2}/极难 {outcome.target // 5}）"
-        f"→ {outcome.level}"
-    )
+        won = (
+            dice.resolve_opposed(outcome, opponent_outcome)
+            if opponent_outcome is not None
+            else None
+        )
+        record: dict = {
+            "player": player.nickname,
+            "skill": display_name,
+            "rolled": outcome.rolled,
+            "target": outcome.target,
+            "level": outcome.level,
+        }
+        if opponent_outcome is not None:
+            record["opposed"] = {
+                "opponent": opposed_opponent,
+                "rolled": opponent_outcome.rolled,
+                "target": opponent_outcome.target,
+                "level": opponent_outcome.level,
+                "won": won,
+            }
+        await _record(db, deps, "keeper.check", record)
+
+    if opponent_outcome is not None:
+        verdict = "胜" if won else "负"
+        deps.check_results.append(
+            f"{player.nickname} · {display_name}对抗{opposed_opponent}："
+            f"{outcome.rolled}/{outcome.target}（{outcome.level}） vs "
+            f"{opponent_outcome.rolled}/{opponent_outcome.target}"
+            f"（{opponent_outcome.level}） → {verdict}"
+        )
+        text = (
+            f"{player.nickname} 的{display_name}对抗检定（对手：{opposed_opponent}）："
+            f"d100={outcome.rolled}/{outcome.target} → {outcome.level}；"
+            f"对手 d100={opponent_outcome.rolled}/{opponent_outcome.target}"
+            f" → {opponent_outcome.level}。{player.nickname}{verdict}。"
+        )
+    else:
+        deps.check_results.append(
+            f"{player.nickname} · {display_name}检定："
+            f"{outcome.rolled}/{outcome.target} → {outcome.level}"
+        )
+        text = (
+            f"{player.nickname} 的{display_name}检定：d100={outcome.rolled}，"
+            f"目标值 {outcome.target}（困难 {outcome.target // 2}/极难 {outcome.target // 5}）"
+            f"→ {outcome.level}"
+        )
     detail = {
         "player_id": player.id,
         "player": player.nickname,
@@ -296,6 +345,12 @@ async def roll_check_detail(
         "target": outcome.target,
         "level": outcome.level,
     }
+    if opponent_outcome is not None:
+        detail["opposed_opponent"] = opposed_opponent
+        detail["opposed_rolled"] = opponent_outcome.rolled
+        detail["opposed_target"] = opponent_outcome.target
+        detail["opposed_level"] = opponent_outcome.level
+        detail["opposed_won"] = won
     return text, detail
 
 
@@ -675,6 +730,46 @@ async def adjust_hp_impl(
         )
     )
     return f"{player.nickname} HP {current} → {new_value}{status}（{reason}）"
+
+
+async def adjust_npc_hp_impl(deps: KeeperDeps, delta: int, reason: str, npc_label: str) -> str:
+    """给 NPC 记一笔生命值变化（exec/19 #39）。
+
+    NPC 没有角色卡可写，状态挂在 `keeper_state` 的 NPC 状态表上。名字必须能
+    解析成模组里的 npc id（白名单，见 `npc_state.resolve_npc_id`）——解析不出
+    就报错让上层记 issue，**不新建条目**：凭裁决器随口写的名字建状态，等于
+    让自由文本当标识符，下一轮换个称呼就成了两个 NPC。
+    """
+    npc_id = resolve_npc_id(deps.module, npc_label)
+    if npc_id is None:
+        known = "、".join(n.name for n in deps.module.npcs) or "（剧本没有登场 NPC）"
+        raise KeeperToolError(f"剧本里没有 NPC「{npc_label}」。登场 NPC：{known}")
+    # write_lock：见 KeeperDeps 注释——读-改-写必须串行。
+    async with deps.write_lock, deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            raise KeeperToolError("房间不存在")
+        current_state = dict(room.keeper_state or {})
+        states = load_npc_states(current_state)
+        state = apply_hp_delta(states, npc_id, delta, base_hp=initial_hp(deps.module, npc_id))
+        current_state[NPC_STATE_KEY] = states
+        # ⚠️ JSON 列整体重新赋值（同 _write_stat 的原因）。
+        room.keeper_state = current_state
+        await _record(
+            db,
+            deps,
+            "keeper.npc_hp",
+            {"npc": npc_id, "delta": delta, "state": state, "reason": reason},
+        )
+    name = npc_display_name(deps.module, npc_id)
+    if isinstance(state.get("hp"), int):
+        hp = state["hp"]
+        status = "（已倒地/失去行动力）" if hp == 0 else ""
+        summary = f"{name} HP → {hp}{status}"
+    else:
+        summary = f"{name} 累计受伤 {state.get('damage', 0)} 点（数据卡无 HP）"
+    deps.check_results.append(summary)
+    return f"{summary}（{reason}）"
 
 
 async def san_check_detail(

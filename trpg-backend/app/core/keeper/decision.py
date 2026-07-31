@@ -24,12 +24,30 @@ class _DecisionModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class OpposedTarget(_DecisionModel):
+    """对抗检定的对手侧（exec/19 #38）。
+
+    真人实测 2026-07-31：裁决器想要「凌铭辉，体质对抗 POT 16」，而 schema 里
+    没有任何字段能表达"对手是谁、目标值多少"——它就把这句写进了散文，玩家
+    界面上永远不会出现那张掷骰卡片，只能等一个不来的骰子。**schema 表达不了
+    的东西会从叙事里漏出去**，这是那条判据的原始案例。
+
+    `value` 是**百分位目标值**（0–100），不是 COC6 的属性点：毒物 POT 16 要
+    写成 80（POT×5），NPC 的技能/属性直接用它的百分数。换算由裁决器完成——
+    它手里有数据卡，代码手里没有。
+    """
+
+    opponent: str = Field(description="对手是谁/什么（NPC 名、毒物、暗流……），展示用")
+    value: int = Field(description="对手侧的百分位目标值 0-100（属性点要 ×5）")
+
+
 class CheckRequest(_DecisionModel):
     """一次技能/属性检定请求。player 为 None = 本轮行动的发起玩家。"""
 
     skill: str
     player: str | None = None
     reason: str = ""
+    opposed: OpposedTarget | None = Field(default=None, description="对抗检定时填；普通检定留 null")
 
 
 class SanCheckRequest(_DecisionModel):
@@ -40,8 +58,19 @@ class SanCheckRequest(_DecisionModel):
 
 
 class HpChange(_DecisionModel):
+    """一笔生命值变化。目标要么是调查员（`player`），要么是 NPC（`npc`）。
+
+    `npc` 是 exec/19 #39 补的口子：战斗里 NPC 当然会掉血，而此前 HP 变更只
+    认房间里的玩家，裁决器写「科比特 -4」一律执行失败，NPC 的伤势只活在叙事
+    文字里。两个字段分开而不是让 `player` 兼收并蓄——一个字段扮演两个角色
+    必出结构性 bug，而且"这个名字指的是玩家还是 NPC"本来就不该靠猜。
+    """
+
     delta: int
     player: str | None = None
+    npc: str | None = Field(
+        default=None, description="NPC 的 id 或名字，必须取自剧本登场 NPC，与 player 二选一"
+    )
     reason: str = ""
 
 

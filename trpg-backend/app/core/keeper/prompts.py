@@ -55,8 +55,10 @@ def build_adjudicator_instructions(module: ScenarioModule, ruleset: RulesetRead)
    像真人 KP：玩家说走过去，你就写走过去之后发生什么。
 1. **检定判定**：玩家不会替你喊技能名——判断"这个行动要不要检定、用哪个技能"是你的职责。玩家行动命中剧本标注的检定点时（搜索房间→侦察；打探/套话→话术/魅惑/信用；查资料→图书馆使用；跟踪痕迹→追踪），**必须**在 checks 里给出检定，技能名从上面的权威名称表里选；"我仔细翻找书房"就是完整的行动宣告，直接裁定侦察，不要求玩家先说明搜索方式。纯对话、无风险移动、观察显而易见之物不检定（checks 留空数组，理由写进 thinking）。**有检定时**：guidance 写到「需要掷骰的那一刻」为止，不要先写检定才能知道的结果。
 1b. **集体宣告要给每个人各发一次检定**：玩家说「**我们**打算…」「大家一起…」「我和 X 一块…」时，这是**全体在场调查员**的行动，不是发言者一个人的。该检定的话，checks 里要为**每一位参与的调查员各写一条**（`player` 逐个填昵称，不要只留一个 null）。真人实测 2026-07-31：玩家说"我们打算直接打他一顿"，只有发言者掷了斗殴，另一个人被晾在一边。
+1c. **对抗检定要用 opposed 字段，不要写进指引**：掰手腕、挣脱束缚、抵抗毒物、推门 vs 门后有人顶着——这类"你和对方比一把"的场合，在那条 check 里加 `"opposed": {{"opponent": "科比特", "value": 80}}`。`value` 是**百分位目标值 0-100**：NPC 的技能/属性直接用它的百分数，COC6 式的属性点（POT 16、STR 13）要 **×5** 换算（POT 16 → 80）。对手的骰子由系统掷、胜负由系统判，你**不要**在 narration_guidance 里写"请进行 XX 对抗检定"或自己宣布谁赢了——那样玩家界面上不会出现掷骰卡片，他会一直等一个不来的骰子。
 2. **玩家宣告技能时的合理性**：玩家点名的技能在当前情境不合理时（如用克苏鲁神话"看穿真相"），不要照单裁定——checks 留空，在 narration_guidance 里说明拒绝理由让叙事者转达。
 3. **理智/伤害**：目击恐怖之物按剧本的损失表达式给 san_checks；受到伤害给 hp_changes。剧本没有要求时不要凭空扣减。
+3b. **NPC 也会掉血**：伤到的是 NPC/怪物时，hp_changes 写 `npc` 字段而不是 `player`（`{{"delta": -4, "npc": "科比特", "reason": "被铁铲砍中"}}`）。名字必须是上面【登场 NPC】里的名字或 id，不要另起称呼。局面块有「NPC 当前状态」小节时那是**权威值**，按它裁决，不要从上一段叙事里猜它伤到什么程度。
 4. **状态记账**：本轮有实质进展时（进入新场景、关键线索被挣得、NPC 态度变化、游戏内时间流逝）写 state_updates——这是跨轮记忆的唯一来源。玩家移动后**必须**更新「当前场景」（state_updates 里的人类可读地名），**并且**把 current_node_id 设为剧本节点列表中对应的 id（每个节点标题后括号里的"id: xxx"）；找不到精确对应的节点时 current_node_id 留空（null），禁止编造不存在的 id。
 4b. **分头探索**：current_node_id 只管**本轮发言的人共同去了哪**。有人**单独**去别处（"我去地窖看看，你们留在客厅"）时，把他写进 moves：`[{{"player": "昵称", "node_id": "cellar"}}]`；没发言的人位置不动，不要用 current_node_id 把他们隔空挪走。全队在一起时 moves 就是空数组。局面块出现「各自所在」小节时说明已经分头——**不在同一处的调查员看不见对方那边发生的事**，narration_guidance 要分别交代各处，不要让两边的人凭空知道对方的发现。
 4c. **潜行/隐匿**：调查员藏起来、贴墙躲进阴影、跟踪时不想被发现——潜行检定成功（或情境本身足以藏住）就写 `stealth: [{{"player": "昵称", "hidden": true}}]`。隐匿的人**照常听得见**这里发生的一切，但同处的其他人不知道他在场。被发现、主动现身、离开这个地点时必须写回 `hidden: false`。局面块标了「（隐匿中）」的人，叙事里不要让别人看见他。
@@ -100,9 +102,9 @@ def build_adjudicator_instructions(module: ScenarioModule, ruleset: RulesetRead)
 ## 输出格式（只输出一个 JSON 对象，不要任何其它文字）
 {{
   "thinking": "裁决理由，**最多 30 字**（审计用，玩家看不到）",
-  "checks": [{{"skill": "侦察", "player": null, "reason": "搜索书房命中剧本检定点"}}],
+  "checks": [{{"skill": "侦察", "player": null, "reason": "搜索书房命中剧本检定点", "opposed": null}}, {{"skill": "体质", "player": "凌铭辉", "reason": "抵抗毒烟", "opposed": {{"opponent": "毒烟", "value": 80}}}}],
   "san_checks": [{{"player": null, "loss_on_success": "0", "loss_on_failure": "1d6", "reason": "目击食尸鬼"}}],
-  "hp_changes": [{{"delta": -2, "player": null, "reason": "被抓伤"}}],
+  "hp_changes": [{{"delta": -2, "player": null, "reason": "被抓伤"}}, {{"delta": -4, "npc": "科比特", "reason": "被铁铲砍中"}}],
   "state_updates": [{{"key": "当前场景", "value": "书房"}}],
   "current_node_id": "some-node-id",
   "moves": [],
@@ -161,6 +163,7 @@ def format_turn_input(
     ledger_status: str = "",
     chapters_status: str = "",
     locations_status: str = "",
+    npc_status: str = "",
     *,
     is_heartbeat: bool = False,
     is_opening_ceremony: bool = False,
@@ -206,6 +209,11 @@ def format_turn_input(
         if locations_status
         else ""
     )
+    # NPC 对局内状态（exec/19 #39）：没有任何 NPC 被记过账时是空串，整块不渲染。
+    # 有记录时它是**权威值**——裁决器不该再从上一段散文里猜"它伤到什么程度"。
+    npc_block = (
+        f"## NPC 当前状态（对局内实时值，优先于剧本数据卡）\n{npc_status}\n\n" if npc_status else ""
+    )
     mode_block = ""
     if is_heartbeat:
         mode_block = (
@@ -228,6 +236,7 @@ def format_turn_input(
         f"## 在场调查员（就是这些人，不多不少——叙事人数必须与名单一致）\n{roster_text}\n\n"
         f"## 世界状态笔记\n{state_text}\n\n"
         f"{locations_block}"
+        f"{npc_block}"
         f"{phase_block}"
         f"{agenda_block}"
         f"{visibility_block}"

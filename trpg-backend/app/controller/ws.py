@@ -293,6 +293,11 @@ async def _broadcast_check_result(room_id: str, notice: CheckResultNotice) -> No
             target_value=notice.target,
             result=notice.level,
             check_request_id=notice.check_request_id,
+            opposed_opponent=notice.opposed_opponent,
+            opposed_roll_value=notice.opposed_rolled,
+            opposed_target_value=notice.opposed_target,
+            opposed_result=notice.opposed_level,
+            opposed_won=notice.opposed_won,
         )
         event_type = "check.result"
     envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))

@@ -691,10 +691,15 @@ export default function RoomPage() {
         }])
       } else if (envelope.type === 'check.result') {
         const { playerId: rollerId, skill, rollValue, targetValue, result, checkRequestId } = envelope.payload
+        // 对抗检定（exec/19 #38）：对手侧也由服务端掷骰，一起显示——玩家要
+        // 看得见自己输在哪一掷，不能只给一个"你失败了"。
+        const opposed = envelope.payload.opposedOpponent
+          ? ` vs ${envelope.payload.opposedOpponent} ${envelope.payload.opposedRollValue}/${envelope.payload.opposedTargetValue} · ${envelope.payload.opposedWon ? '胜' : '负'}`
+          : ''
         setMessages(prev => [...prev, {
           type: 'dice',
           sender: nicknameFor(rollerId),
-          content: `${skill} · ${rollValue}/${targetValue ?? '?'} · ${result}`,
+          content: `${skill} · ${rollValue}/${targetValue ?? '?'} · ${result}${opposed}`,
           time: now,
           isSelf: rollerId === playerId,
         }])

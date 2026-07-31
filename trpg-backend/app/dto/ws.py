@@ -281,6 +281,12 @@ class CheckResultPayload(CamelModel):
     target_value: int | None = None
     result: str
     check_request_id: str | None = None
+    # 对抗检定（exec/19 #38）。全为 None = 普通检定，前端渲染与此前一致。
+    opposed_opponent: str | None = None
+    opposed_roll_value: int | None = None
+    opposed_target_value: int | None = None
+    opposed_result: str | None = None
+    opposed_won: bool | None = None
 
 
 class SanCheckRequestPayload(CamelModel):

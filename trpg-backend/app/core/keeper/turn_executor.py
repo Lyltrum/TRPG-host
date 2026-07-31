@@ -26,6 +26,7 @@ from app.core.keeper.tools import (
     _resolve_character,
     _resolve_skill_target,
     adjust_hp_impl,
+    adjust_npc_hp_impl,
     mark_agenda_fired_impl,
     mark_visibility_revealed_impl,
     move_player_impl,
@@ -69,9 +70,14 @@ async def execute_side_effects(
 
     for hp in decision.hp_changes:
         try:
-            report.append(
-                await adjust_hp_impl(deps, hp.delta, hp.reason or "守秘人裁定", hp.player)
-            )
+            reason = hp.reason or "守秘人裁定"
+            # NPC 与调查员走两条记账（exec/19 #39）：NPC 的状态挂在 keeper_state
+            # 的 NPC 状态表上，没有角色卡可写。`npc` 优先——两个字段都填时以
+            # 显式的 NPC 为准，因为 `player` 的默认语义是"本轮发起者"。
+            if hp.npc:
+                report.append(await adjust_npc_hp_impl(deps, hp.delta, reason, hp.npc))
+            else:
+                report.append(await adjust_hp_impl(deps, hp.delta, reason, hp.player))
         except KeeperToolError as exc:
             issues.append(f"HP 变更未执行：{exc}")
     for update in decision.state_updates:
@@ -215,6 +221,20 @@ async def create_pending_checks(
                     if module_check.skill == check.skill and module_check.reveals:
                         reveals = tuple(module_check.reveals)
                         break
+            # 对抗检定（exec/19 #38）：目标值必须落在 1–100。越界就**跳过整条
+            # 检定并记 issue**，不悄悄夹紧成 100——夹紧等于把裁决器写错的数字
+            # 变成一个看似合理的规则结论，玩家和日志都看不出发生过什么。
+            opposed_opponent: str | None = None
+            opposed_value: int | None = None
+            if check.opposed is not None:
+                if not 1 <= check.opposed.value <= 100:
+                    issues.append(
+                        f"对抗检定[{check.skill}]未发起：对手目标值 {check.opposed.value} "
+                        "不在 1-100（属性点要 ×5 换算成百分位）"
+                    )
+                    continue
+                opposed_opponent = check.opposed.opponent
+                opposed_value = check.opposed.value
             pending.append(
                 PendingCheck(
                     check_request_id=str(uuid.uuid4()),
@@ -227,6 +247,8 @@ async def create_pending_checks(
                     loss_on_failure="0",
                     reason=check.reason,
                     reveals=reveals,
+                    opposed_opponent=opposed_opponent,
+                    opposed_value=opposed_value,
                 )
             )
         for san in decision.san_checks:

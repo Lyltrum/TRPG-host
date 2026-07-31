@@ -37,6 +37,7 @@ from app.core.keeper.location_state import (
     PLAYER_LOCATION_KEY,
     load_hidden_players,
     load_player_locations,
+    location_of,
     serialize_hidden_players,
     serialize_player_locations,
 )
@@ -90,8 +91,9 @@ class KeeperDeps:
     module: ScenarioModule
     ruleset: RulesetRead
     # 本轮**一起发言**的全部玩家（收集窗口合并的那一批，见 service/turn_window.py）。
-    # 空 = 只有发起者。`set_current_node_impl` 只把这些人挪到新场景——没发言
-    # 的人位置不动，否则分头探索时留在别处的人会被隔空传送走（P5.2）。
+    # 空 = 只有发起者。`set_current_node_impl` 把这些人**以及此刻与他们同处
+    # 一地的人**挪到新场景——"跟你站在一起的人跟你一起走"，见该函数 docstring
+    # 里那次真人实测打脸（exec/19 #37）。
     turn_player_ids: tuple[str, ...] = ()
     rng: random.Random = field(default_factory=random.Random)
     # 「读-改-写」操作（update_state/adjust_hp/san_check）的串行锁。v2 的
@@ -419,19 +421,49 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
     编造不存在的 id，与 mark_agenda_fired_impl/mark_visibility_revealed_impl
     同一套"未知 id 拒绝写入、上报为 issue"原则一致。
 
-    P5.2 起同时写两处：房间级指针（大部队所在）+ **本轮发言者**的逐人位置。
-    只挪发言的人是刻意的——分头探索时留在别处的人不该被这一个字段隔空
-    传送走（见 location_state.py）。
+    P5.2 起同时写两处：房间级指针 + 逐人位置。
+
+    ## 🔴 谁跟着走：**发言者 + 此刻与他同处一地的人**
+
+    真人实测 2026-07-31（exec/19 #37）打脸过一次：最初只挪"本轮发言的人"，
+    理由是"分头时留在别处的人不该被隔空传送走"。顾虑本身对，**默认方向选反了**
+    ——绝大多数时间全队是在一起的，于是：
+
+        第 1 轮 张家豪发言 → 张家豪@门外（凌铭辉无条目、回落房间指针，同组）
+        第 2 轮 凌铭辉发言 → 凌铭辉@门口、房间指针也变门口
+                            但张家豪有**显式旧条目**「门外」，不再回落 → 分头！
+
+    两个人明明肩并肩站着，系统却判成分头：叙事分段投递、张家豪什么都收不到，
+    连裁决器都读着错误的「各自所在」写下"张家豪在房子外面，未直接参与"，于是
+    只给凌铭辉发了检定。一个位置默认值把三件事一起弄坏了。
+
+    改成"跟你站在一起的人跟你一起走"：完全用现有数据算得出来，不需要模型额外
+    表达，而且两头都退化正确——全队同处时全员同行；真分头时（`moves` 挪走的那
+    位）不在发言者所处的地点，自然不动。
     """
     node = deps.module.node_by_id(node_id)
     if node is None:
         raise KeeperToolError(f"剧本里没有场景节点 id={node_id}")
-    movers = deps.turn_player_ids or (deps.player_id,)
+    speakers = set(deps.turn_player_ids or (deps.player_id,))
     async with deps.write_lock, deps.session_factory() as db:
         room = await db.get(Room, deps.room_id)
         if room is None:
             raise KeeperToolError("房间不存在")
         current_state = dict(room.keeper_state or {})
+        roster = list(
+            (
+                await db.execute(
+                    select(Player.id).where(Player.room_id == deps.room_id, Player.is_ai.is_(False))
+                )
+            ).scalars()
+        )
+        # 用改动**之前**的状态判断"谁跟发言者站在一起"——先写指针再判断会把
+        # 所有回落到房间指针的人都算成同处，等于没判。
+        speaker_places = {location_of(current_state, pid) for pid in speakers}
+        movers = speakers | {
+            pid for pid in roster if location_of(current_state, pid) in speaker_places
+        }
+
         current_state[CURRENT_NODE_KEY] = node_id
         locations = load_player_locations(current_state)
         for pid in movers:

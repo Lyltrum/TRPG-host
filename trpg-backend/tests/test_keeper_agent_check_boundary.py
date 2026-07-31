@@ -194,9 +194,13 @@ async def test_narrate_passes_check_boundary_hint_as_extra_suffix() -> None:
     assert outcome.check_requests and outcome.check_requests[0].skill == "追踪"
 
 
-async def test_narrate_normal_turn_has_empty_extra_suffix() -> None:
-    """没有检定发起的普通轮次，extra_suffix 应该是空字符串（默认值），
-    不该被之前哪个分支意外污染。"""
+async def test_narrate_normal_turn_forbids_asking_for_rolls() -> None:
+    """没有检定发起的普通轮次：追加的是「别要求掷骰」那条硬提醒，且**绝不能**
+    混进「已发起以下检定」那条（两条方向相反，同时出现必然把模型搞糊涂）。
+
+    真人实测 2026-07-31（exec/19 #38）：裁决输出 checks=[]，叙事却写出「凌铭辉，
+    进行一次体质对抗检定，目标 POT 16」——玩家等一个永远不会出现的骰子卡片。
+    """
     agent = _keeper()
     captured: dict = {}
 
@@ -225,4 +229,5 @@ async def test_narrate_normal_turn_has_empty_extra_suffix() -> None:
     )
     await agent.narrate(context)
 
-    assert captured["extra_suffix"] == ""
+    assert "不得要求任何调查员掷骰" in captured["extra_suffix"]
+    assert "本轮已发起以下检定" not in captured["extra_suffix"]

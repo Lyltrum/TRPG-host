@@ -180,12 +180,17 @@ async def _narrate(room_code: str, *, split: bool, both_speak: bool = False):
     return outcome, suffixes, a_id, b_id
 
 
-async def test_party_together_keeps_single_broadcast_and_identical_prompt() -> None:
-    """退化保证：未分头 → 一段全房间叙事、**不追加任何范围提示**。"""
+async def test_party_together_keeps_single_broadcast_without_scope_hint() -> None:
+    """退化保证：未分头 → 一段全房间叙事、**不追加投递范围提示**。
+
+    （「本轮没有待掷检定，别要求掷骰」那条硬提醒与分头无关，每一轮都在，
+    所以这里只断言范围提示不出现，不再断言 suffix 整体为空。）
+    """
     outcome, suffixes, _a, _b = await _narrate("FAN001", split=False)
     assert outcome.text == "第1段叙事。"
     assert outcome.segments == []
-    assert suffixes == [""]
+    assert len(suffixes) == 1
+    assert "投递范围" not in suffixes[0]
 
 
 async def test_split_party_produces_one_segment_per_acting_group() -> None:

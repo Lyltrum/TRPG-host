@@ -151,15 +151,41 @@ def test_format_party_locations_is_empty_when_together() -> None:
 # ── 2. 写入侧 ───────────────────────────────────────
 
 
-async def test_current_node_only_moves_this_turn_speakers(party) -> None:
-    """🔴 current_node_id 不得把没发言的人隔空传送走。"""
+async def test_current_node_moves_everyone_standing_with_the_speaker(party) -> None:
+    """🔴 跟你站在一起的人跟你一起走（exec/19 #37 真人实测打脸后改的）。
+
+    最初只挪"本轮发言的人"，结果两人肩并肩站着也会被判成分头：
+    先张家豪发言（他拿到显式条目），再凌铭辉发言（房间指针跟着变，但张家豪
+    的旧条目不再回落）→ 叙事分段投递、一个人什么都收不到，连裁决器都读着
+    错误的「各自所在」少发了检定。
+    """
     deps, a_id, b_id = party
-    _report, issues = await execute_side_effects(deps, KeeperDecision(current_node_id="cellar"))
+    # 第一轮：阿福发言。两人此刻都没有显式位置（都回落 None）→ 一起走。
+    _report, issues = await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
     assert issues == []
+    assert load_player_locations(await _state(deps)) == {a_id: "hall", b_id: "hall"}
+
+    # 第二轮：还是阿福发言。阿贵已有显式条目「hall」，与阿福同处 → 仍然一起走。
+    await execute_side_effects(deps, KeeperDecision(current_node_id="cellar"))
     state = await _state(deps)
-    # 发言者（阿福）被挪走；阿贵没有自己的条目 → 回落房间级指针
-    assert load_player_locations(state) == {a_id: "cellar"}
+    assert load_player_locations(state) == {a_id: "cellar", b_id: "cellar"}
     assert state[CURRENT_NODE_KEY] == "cellar"
+    assert is_party_split(state, [a_id, b_id]) is False
+
+
+async def test_current_node_does_not_drag_along_someone_who_split_off(party) -> None:
+    """真分头的人不该被隔空传送走——这是当初那条顾虑，它仍然成立。"""
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    # 阿贵单独去地下室
+    await execute_side_effects(
+        deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="cellar")])
+    )
+    # 阿福（在门厅）继续走动：阿贵不在他那儿，不跟着走
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hidden-safe"))
+    state = await _state(deps)
+    assert load_player_locations(state) == {a_id: "hidden-safe", b_id: "cellar"}
+    assert is_party_split(state, [a_id, b_id]) is True
 
 
 async def test_moves_override_current_node(party) -> None:

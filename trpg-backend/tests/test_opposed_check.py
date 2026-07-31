@@ -149,7 +149,7 @@ async def test_out_of_range_target_skips_the_check_instead_of_clamping(bad_value
         narration_guidance="写对抗",
         checks=[
             CheckRequest(
-                skill="体质",
+                skill_id="CON",
                 player="凌铭辉",
                 reason="抵抗毒烟",
                 opposed=OpposedTarget(opponent="毒烟", value=bad_value),
@@ -168,7 +168,7 @@ async def test_valid_opposed_check_carries_opponent_into_pending() -> None:
         narration_guidance="写对抗",
         checks=[
             CheckRequest(
-                skill="体质",
+                skill_id="CON",
                 player="凌铭辉",
                 reason="抵抗毒烟",
                 opposed=OpposedTarget(opponent="毒烟", value=80),

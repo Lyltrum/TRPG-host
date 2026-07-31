@@ -648,7 +648,7 @@ class KeeperAgent(Narrator):
         logger.info(
             "keeper_decision",
             thinking=decision.thinking,
-            checks=[c.skill for c in decision.checks],
+            checks=[c.skill_id for c in decision.checks],
             san_checks=len(decision.san_checks),
             hp_changes=len(decision.hp_changes),
             state_updates=[u.key for u in decision.state_updates],

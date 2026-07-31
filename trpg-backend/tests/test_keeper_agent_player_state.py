@@ -107,7 +107,7 @@ async def test_player_state_confused_catches_regex_gap() -> None:
 
     decision = KeeperDecision(
         thinking="玩家在问方向",
-        checks=[CheckRequest(skill="侦查", reason="不应保留")],
+        checks=[CheckRequest(skill_id="spot-hidden", reason="不应保留")],
         narration_guidance="裁决给出的原始指引",
         player_state="confused",
     )
@@ -172,7 +172,7 @@ async def test_player_state_normal_does_not_trigger_any_branch() -> None:
     "明确行动"的正则（"我去查看书房"），非兜底路径下也**不应该**再看正则——
     分类完全由裁决 LLM 决定，guidance/checks 原样返回。"""
     utterance = "我去查看书房"
-    original_checks = [CheckRequest(skill="侦查", reason="裁决已给出的检定")]
+    original_checks = [CheckRequest(skill_id="spot-hidden", reason="裁决已给出的检定")]
     decision = KeeperDecision(
         thinking="正常调查",
         checks=original_checks,
@@ -193,7 +193,7 @@ async def test_player_state_normal_does_not_trigger_any_branch() -> None:
 
     final_decision = captured["decision"]
     assert final_decision.narration_guidance == "裁决给出的原始指引，不应被改动"
-    assert [c.skill for c in final_decision.checks] == ["侦查"]
+    assert [c.skill_id for c in final_decision.checks] == ["spot-hidden"]
 
 
 # ── 4. KeeperDecision 的 player_state 解析/降级 ─────────

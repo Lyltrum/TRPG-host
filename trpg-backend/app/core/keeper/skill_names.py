@@ -53,3 +53,31 @@ def canonical_skill_name(name: str | None) -> str:
 def match_key(name: str | None) -> str:
     """用于比较的键：归一 + 去空格 + 小写。护栏两侧都要用它。"""
     return canonical_skill_name(name).replace(" ", "").lower()
+
+
+# ── 技能指向 id 化（exec/17 (B)）────────────────────────
+
+
+def skill_id_catalog(ruleset) -> dict[str, str]:  # noqa: ANN001 — RulesetRead，避免循环 import
+    """白名单：`id → 展示名`。技能用规则表 id，属性用属性 key（STR/CON…）。
+
+    这是裁决器**唯一**被允许写进 `checks[].skill_id` 的取值集合。92 个技能
+    id + 9 个属性 key 是个封闭集合，随规则版本变、不随模组变——让模型从里面
+    挑一个，比让它写中文名再由代码去猜它想说哪个可靠得多（exec/17）。
+    """
+    catalog = {spec.id: spec.name for spec in ruleset.skills}
+    catalog.update({attr.key: attr.label for attr in ruleset.attributes})
+    return catalog
+
+
+def resolve_skill_id(ruleset, skill_id: str | None) -> str | None:  # noqa: ANN001
+    """id → 展示名。不在白名单里返回 None（调用方报错，不猜）。"""
+    key = (skill_id or "").strip()
+    if not key:
+        return None
+    catalog = skill_id_catalog(ruleset)
+    if key in catalog:
+        return catalog[key]
+    # id 大小写不敏感：模型偶尔写 "Spot-Hidden"
+    lowered = {k.lower(): v for k, v in catalog.items()}
+    return lowered.get(key.lower())

@@ -104,7 +104,7 @@ async def _run(room_code: str, player_state: str):
             thinking="玩家发问",
             narration_guidance="裁决给出的原始指引",
             player_state=player_state,  # ty: ignore[invalid-argument-type]
-            checks=[CheckRequest(skill="侦察", reason="环顾门厅")],
+            checks=[CheckRequest(skill_id="spot-hidden", reason="环顾门厅")],
             current_node_id="cellar",
             moves=[PlayerMove(player="凌铭辉", node_id="cellar")],
         )

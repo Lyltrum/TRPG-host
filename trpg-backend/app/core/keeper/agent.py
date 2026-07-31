@@ -1267,9 +1267,11 @@ class KeeperAgent(Narrator):
         async with self._session_factory() as db:
             room = await db.get(Room, room_id)
             keeper_state = room.keeper_state if room is not None else None
-            rows = await db.execute(
-                select(Player.id).where(Player.room_id == room_id, Player.is_ai.is_(False))
-            )
+            # AI 玩家算进分组（exec/21 第一层）：它在场就该算进它那一组，
+            # 否则分头时它拿不到自己那边的叙事。**分组用全量玩家、发送用连接**
+            # ——`send_to_players` 按 player_id 找连接，AI 没有连接自然发不到，
+            # 那是对的，不需要在这里特判。
+            rows = await db.execute(select(Player.id).where(Player.room_id == room_id))
             ids = list(rows.scalars())
         groups = group_players(keeper_state, ids)
         if len(groups) <= 1:
@@ -1322,10 +1324,12 @@ class KeeperAgent(Narrator):
                     else "（未建卡）"
                 )
                 for p in player_rows
-                if not p.is_ai
             ]
             # (player_id, 昵称)：位置分组要按 id 分，渲染给 LLM 要用昵称。
-            players = [(p.id, p.nickname) for p in player_rows if not p.is_ai]
+            # 🔴 AI 玩家进名单（exec/21 第一层）：守秘人必须知道桌上有几个人
+            # ——这份名单当初就是为了治"单人局幻觉成你们三人"。AI 在场却不在
+            # 名单里，叙事会当它不存在。
+            players = [(p.id, p.nickname) for p in player_rows]
 
             result = await db.execute(
                 select(Event)

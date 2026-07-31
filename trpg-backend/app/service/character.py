@@ -292,8 +292,7 @@ async def list_party_characters(
 
     out: list[PartyCharacterRead] = []
     for p in players:
-        if p.is_ai:
-            continue
+        # AI 玩家也是队友，它的卡照样要能被传阅（exec/21 第一层）。
         c = by_player.get(p.id)
         if c is None:
             out.append(

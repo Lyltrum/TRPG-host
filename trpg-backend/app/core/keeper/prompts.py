@@ -169,6 +169,7 @@ def format_turn_input(
     chapters_status: str = "",
     locations_status: str = "",
     npc_status: str = "",
+    endings_status: str = "",
     *,
     is_heartbeat: bool = False,
     is_opening_ceremony: bool = False,
@@ -216,6 +217,14 @@ def format_turn_input(
     )
     # NPC 对局内状态（exec/19 #39）：没有任何 NPC 被记过账时是空串，整块不渲染。
     # 有记录时它是**权威值**——裁决器不该再从上一段散文里猜"它伤到什么程度"。
+    # 可能的结局（exec/19 #47）：与议程同一个待遇——每轮摆在眼前，而不是
+    # 只躺在 system prompt 末尾的剧本全文里。
+    endings_block = (
+        f"## 可能的结局（每轮判断触发条件是否已满足；满足才写 ending_reached，"
+        f"未满足必须为 null）\n{endings_status}\n\n"
+        if endings_status
+        else ""
+    )
     npc_block = (
         f"## NPC 当前状态（对局内实时值，优先于剧本数据卡）\n{npc_status}\n\n" if npc_status else ""
     )
@@ -243,6 +252,7 @@ def format_turn_input(
         f"{locations_block}"
         f"{npc_block}"
         f"{phase_block}"
+        f"{endings_block}"
         f"{agenda_block}"
         f"{visibility_block}"
         f"{chapters_block}"

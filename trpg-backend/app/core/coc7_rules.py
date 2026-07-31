@@ -738,6 +738,37 @@ def compute_preview(
     )
 
 
+def validate_character_with_occupation(
+    ruleset: RulesetRead,
+    attributes: dict[str, int],
+    occupation: OccupationSpec | None,
+    skills: dict[str, int],
+    generation_method: str = GENERATION_POINT_BUY,
+    attribute_pool_total: int | None = None,
+    allocated_attributes: dict[str, int] | None = None,
+) -> list[ValidationIssue]:
+    """按**职业对象**校验（`validate_character` 的按名字版本是它的包装）。
+
+    为什么需要这个入口：职业表里存在**同名不同项**的职业（律师 ×2、私家侦探
+    ×2、工匠 ×2…共 6 组），它们的信用区间乃至技能点公式都不同。按名字查只能
+    拿到第一个匹配——调用方手里已经有确切的那个职业对象时，不该再退回去按
+    名字猜一次。
+
+    ⚠️ 这个入口不解决角色卡按名字存职业那个更根本的问题（见 exec/22），
+    它只保证"调用方明确知道是哪个职业"时校验用的就是那一个。
+    """
+    return _compute(
+        ruleset,
+        attributes,
+        occupation,
+        skills,
+        occupation_not_found=occupation is None,
+        generation_method=generation_method,
+        attribute_pool_total=attribute_pool_total,
+        allocated_attributes=allocated_attributes,
+    ).validation
+
+
 def validate_character(
     ruleset: RulesetRead,
     attributes: dict[str, int],

@@ -57,8 +57,13 @@ async def record_revelations(
     fact_ids: list[str],
     via: str,
     detail: str = "",
+    audience: list[str] | None = None,
 ) -> list[str]:
     """记账。已经记过的事实不重复记（同一条线索多路径拿到只算一次）。
+
+    `audience`：当时**在场看见这条线索被挣得**的玩家 id。`None` = 全房间都在场
+    （P5.2d 之前的账目一律如此，因此老数据天然是公开的）。分头/隐匿/私密时
+    只有那几个人知道——这是 per-audience 上下文的原料，见 `visible_fact_ids`。
 
     调用方负责 commit——记账要和触发它的那次结算在同一个事务里，
     不能出现"检定成功了但账没记上"。
@@ -68,12 +73,15 @@ async def record_revelations(
     already = await revealed_fact_ids(db, room_id=room_id)
     fresh = [f for f in fact_ids if f not in already]
     for fact_id in fresh:
+        payload: dict = {"fact_id": fact_id, "via": via, "detail": detail}
+        if audience is not None:
+            payload["audience"] = list(audience)
         db.add(
             Event(
                 room_id=room_id,
                 player_id=player_id,
                 event_type=EVENT_TYPE,
-                payload={"fact_id": fact_id, "via": via, "detail": detail},
+                payload=payload,
             )
         )
     if fresh:
@@ -82,7 +90,7 @@ async def record_revelations(
 
 
 async def revealed_fact_ids(db: AsyncSession, *, room_id: str) -> set[str]:
-    """房间内已揭开的全部事实 id。
+    """房间内已揭开的全部事实 id（**守秘人视图**，不过滤受众）。
 
     **不设 limit** —— 这正是账本存在的理由：它必须活过 `_HISTORY_LIMIT`
     那个 200 条的滑动窗口。
@@ -95,6 +103,30 @@ async def revealed_fact_ids(db: AsyncSession, *, room_id: str) -> set[str]:
         fact_id = (payload or {}).get("fact_id")
         if fact_id:
             out.add(str(fact_id))
+    return out
+
+
+async def visible_fact_ids(db: AsyncSession, *, room_id: str, audience: frozenset[str]) -> set[str]:
+    """这组观察者**共同知道**的事实 id（exec/14 P5.2d）。
+
+    判据是**交集**、朝保密方向失败：一条线索只有在 `audience` 里**每个人**
+    当时都在场时才进这一组的上下文。少给一条最多让叙事重新铺陈一次；多给
+    一条就是把别人在地下室挣到的东西塞进门厅这段的 prompt——模型想不漏都
+    难。没有 `audience` 字段的账目视为公开（老数据 + 未分头时的常态）。
+    """
+    rows = await db.execute(
+        select(Event.payload).where(Event.room_id == room_id, Event.event_type == EVENT_TYPE)
+    )
+    out: set[str] = set()
+    for (payload,) in rows:
+        payload = payload or {}
+        fact_id = payload.get("fact_id")
+        if not fact_id:
+            continue
+        seen_by = payload.get("audience")
+        if seen_by is not None and not audience.issubset(set(seen_by)):
+            continue
+        out.add(str(fact_id))
     return out
 
 

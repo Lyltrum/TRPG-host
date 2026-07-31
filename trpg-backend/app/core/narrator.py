@@ -44,6 +44,19 @@ _SYSTEM_PROMPT = (
 
 
 @dataclass(frozen=True, slots=True)
+class PlayerUtterance:
+    """本轮某一个玩家说的那句话（收集窗口合并前的原始条目）。
+
+    keeper 需要**逐条**而不只是合并后的那一段：分头时门厅那段的上下文里
+    不能出现地下室那位说了什么（exec/14 P5.2d）。
+    """
+
+    player_id: str
+    nickname: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class NarrationContext:
     """生成一段叙事所需的全部上下文。调用方（WS 层）负责准备好这些字段——
     本模块不查库，也不知道房间/玩家在数据库里长什么样。"""
@@ -64,6 +77,9 @@ class NarrationContext:
     # 行动结果只回给本人，同处一地的其他人不知道。⚠️ 守秘人永远看得见——
     # 私密是玩家↔玩家，不是玩家↔KP。
     private_player_ids: tuple[str, ...] = ()
+    # 本轮各人的原话，逐条。空 = 只有 `utterance` 这一句（心跳/开场/掷骰结算
+    # 路径）。分组叙事时按受众裁剪，见 KeeperAgent._narrate_per_audience。
+    utterances: tuple[PlayerUtterance, ...] = ()
     # 世界心跳主动轮（路线 6）：裁决/叙事走克制模式，不发起检定。
     is_heartbeat: bool = False
     # 开场仪式轮（设计 05）：game.start 后自动跑的第一轮，不发起高风险检定。

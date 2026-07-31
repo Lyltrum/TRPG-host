@@ -27,7 +27,8 @@ openai-agents SDK 不再出现在这条主路径上（依赖暂保留，未来�
 
 import asyncio
 import random
-from dataclasses import replace
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 
 import structlog
 from openai.types.chat import ChatCompletionMessageParam
@@ -45,7 +46,12 @@ from app.core.keeper.chapter import (
 )
 from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.dice import is_success
-from app.core.keeper.fact_ledger import record_revelations, render_ledger, revealed_fact_ids
+from app.core.keeper.fact_ledger import (
+    record_revelations,
+    render_ledger,
+    revealed_fact_ids,
+    visible_fact_ids,
+)
 from app.core.keeper.leak_guard import log_leak_hits, scrub_meta_leaks
 from app.core.keeper.location_state import (
     PLAYER_LOCATION_KEY,
@@ -112,6 +118,7 @@ from app.core.narrator import (
     NarrationOutcome,
     NarrationSegment,
     Narrator,
+    PlayerUtterance,
 )
 from app.dto.game import RulesetRead
 from app.models.event import Event
@@ -165,6 +172,32 @@ _EVENT_LABELS = {
     "keeper.san": "理智",
     "keeper.hp": "生命",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class _HistoryLine:
+    """一条历史行 + 它当时的受众（exec/14 P5.2d）。
+
+    `audience=None` = 公开，全房间都经历过（未分头时的常态，也是 P5.2d 之前
+    所有老数据的形态）。分头/隐匿/私密时只有那几个人经历过。
+    """
+
+    text: str
+    audience: frozenset[str] | None = None
+
+
+def _visible_history(lines: list[_HistoryLine], audience: frozenset[str] | None) -> list[str]:
+    """裁剪出这组观察者**共同经历过**的历史（exec/14 P5.2d）。
+
+    `audience=None` = 守秘人视图，全给（它对整局一致性负责，必须看见全部）。
+
+    否则判据是**交集**、朝保密方向失败：只有当 `audience` 里每个人当时都在场，
+    这一行才进他们那一段的上下文。这是 P5.2 从"提示词请你别说"升级成"根本
+    不知道"的关键一步——门厅那段的模型看不到地下室的历史，就漏不出来。
+    """
+    if audience is None:
+        return [line.text for line in lines]
+    return [line.text for line in lines if line.audience is None or audience <= line.audience]
 
 
 def _pending_to_notice(pending: PendingCheck) -> CheckRequestNotice:
@@ -318,21 +351,41 @@ class KeeperAgent(Narrator):
         # 分头探索（P5.2）：全队同处一地时是空串，整块不渲染。
         locations_status = format_party_locations(self._module, keeper_state, players)
 
-        situation = format_turn_input(
-            visible_state,
-            history_lines,
-            roster,
-            context.player_nickname,
-            context.utterance,
-            agenda_status=agenda_status,
-            visibility_status=visibility_status,
-            phase_status=phase_status,
-            ledger_status=ledger_status,
-            chapters_status=chapters_status,
-            locations_status=locations_status,
-            is_heartbeat=is_heartbeat,
-            is_opening_ceremony=is_opening_ceremony,
-            phase=phase,
+        def build_situation(
+            *,
+            audience: frozenset[str] | None,
+            ledger: str,
+            nickname: str,
+            utterance: str,
+        ) -> str:
+            """按受众组装局面块（exec/14 P5.2d）。
+
+            `audience=None` = 守秘人视图（裁决阶段用）：历史与账本全给。
+            分组叙事时传该组的受众，历史/账本/原话三处一起裁——**模型拿不到
+            的东西才是真的漏不出来**，这比在 prompt 末尾请它别说可靠。
+            """
+            return format_turn_input(
+                visible_state,
+                _visible_history(history_lines, audience),
+                roster,
+                nickname,
+                utterance,
+                agenda_status=agenda_status,
+                visibility_status=visibility_status,
+                phase_status=phase_status,
+                ledger_status=ledger,
+                chapters_status=chapters_status,
+                locations_status=locations_status,
+                is_heartbeat=is_heartbeat,
+                is_opening_ceremony=is_opening_ceremony,
+                phase=phase,
+            )
+
+        situation = build_situation(
+            audience=None,
+            ledger=ledger_status,
+            nickname=context.player_nickname,
+            utterance=context.utterance,
         )
 
         # 有 structured 开场素材时：仪式轮不跑裁决（开场没有玩家行动可裁决），
@@ -496,7 +549,13 @@ class KeeperAgent(Narrator):
         # 分段摘要 L2（exec/14 P4.2）：场景切换 = 天然的章节边界。**后台**整理，
         # 玩家等的是叙事，不该为"整理笔记"多等几秒；失败只记日志不影响这轮。
         if scene_changed and not is_heartbeat and not is_opening_ceremony:
-            self._spawn_chapter_summary(room_id, history_lines)
+            # 🔴 只喂**公开**历史行：L2 摘要本身不带受众，全房间共用一份，
+            # 拿分头期间只有一边知道的剧情去压摘要，等于绕过 P5.2d 的裁剪从
+            # 前情提要漏出去。代价是分头那段剧情进不了摘要（已在
+            # `_narrate_per_audience` 的 docstring 里记为残留缺口）。
+            self._spawn_chapter_summary(
+                room_id, [line.text for line in history_lines if line.audience is None]
+            )
             decision = decision.model_copy(
                 update={
                     "narration_guidance": inject_scene_transition_guidance(
@@ -540,6 +599,10 @@ class KeeperAgent(Narrator):
             narration, segments = await self._narrate_per_audience(
                 room_id=room_id,
                 situation=situation,
+                build_situation=build_situation,
+                utterances=context.utterances,
+                fallback_nickname=context.player_nickname,
+                fallback_utterance=context.utterance,
                 decision=decision,
                 report=report,
                 issues=issues,
@@ -576,6 +639,10 @@ class KeeperAgent(Narrator):
         narration, segments = await self._narrate_per_audience(
             room_id=room_id,
             situation=situation,
+            build_situation=build_situation,
+            utterances=context.utterances,
+            fallback_nickname=context.player_nickname,
+            fallback_utterance=context.utterance,
             decision=decision,
             report=report,
             issues=issues,
@@ -654,6 +721,9 @@ class KeeperAgent(Narrator):
         # 账本。不靠 LLM 自觉写 keeper_state，也不放进会滑出 200 条窗口的历史里
         # ——"必须记住"的东西必须活过窗口，这正是账本存在的理由。
         if pending.reveals and is_success(notice.level):
+            # 受众 = 当时**跟他在同一处**的人（P5.2d）。分头时地下室挣到的线索
+            # 不该出现在门厅那段的上下文里；未分头 → None → 照旧全房间可见。
+            audience = await self._colocated_players(room_id, pending.player_id)
             async with self._session_factory() as db:
                 await record_revelations(
                     db,
@@ -662,6 +732,7 @@ class KeeperAgent(Narrator):
                     fact_ids=list(pending.reveals),
                     via="check",
                     detail=f"{pending.skill or ''}·{notice.level}",
+                    audience=audience,
                 )
                 await db.commit()
 
@@ -812,6 +883,10 @@ class KeeperAgent(Narrator):
         *,
         room_id: str,
         situation: str,
+        build_situation: Callable[..., str],
+        utterances: tuple[PlayerUtterance, ...],
+        fallback_nickname: str,
+        fallback_utterance: str,
         decision: KeeperDecision,
         report: list[str],
         issues: list[str],
@@ -837,9 +912,18 @@ class KeeperAgent(Narrator):
           · 没人发言的地方本轮不生成叙事，那边没发生事，凭空写等于让模型编。
         - 延迟代价：1 次裁决 + N 段叙事，不是 N 次裁决。
 
-        ⚠️ 能用代码保证的是**投递**：别人的连接根本收不到这段文字。至于
-        "写给门厅的这段里有没有提到地下室发生的事"，是语义判断，只能靠下面
-        这段范围提示提高服从概率——跟检定边界提醒同一性质，别当成保证。
+        ## 🔴 保密靠的是"拿不到"，不是"请你别说"（P5.2d）
+
+        每一段叙事的局面块都由 `build_situation` **按这一段的受众重建**：
+        历史、线索账本、本轮原话三处一起裁。门厅那段的模型上下文里根本没有
+        地下室发生过什么，于是它想漏也漏不出来——这是结构性的，不是纪律性的。
+
+        段尾那句范围提示保留，但它现在只承担文风（"只写这里的事"），不再是
+        保密手段。
+
+        ⚠️ 残留缺口，如实记：**L2 分段摘要**（前情提要）是全局历史压出来的，
+        本身没有受众。现在的缓解是只用公开历史行去生成它（见
+        `_spawn_chapter_summary` 的调用点），代价是分头期间的剧情不进摘要。
         """
         all_ids = [pid for pid, _ in players]
         groups = group_players(keeper_state, all_ids)
@@ -872,10 +956,30 @@ class KeeperAgent(Narrator):
             )
 
         nicknames = dict(players)
+        by_speaker = {u.player_id: u for u in utterances}
+
+        def _said_by(members: tuple[str, ...]) -> tuple[str, str]:
+            """这一组人本轮说了什么。别组的原话一个字都不带进来。"""
+            said = [by_speaker[pid] for pid in members if pid in by_speaker]
+            if not said:
+                return fallback_nickname, fallback_utterance
+            if len(said) == 1:
+                return said[0].nickname, said[0].text
+            # 与 service/turn_window.merge_utterances 同口径
+            return said[0].nickname, "\n".join(f"{u.nickname}：{u.text}" for u in said)
 
         async def _segment(audience: tuple[str, ...], node_id: str | None, hint: str):
+            async with self._session_factory() as db:
+                known = await visible_fact_ids(db, room_id=room_id, audience=frozenset(audience))
+            nickname, said = _said_by(audience)
+            scoped_situation = build_situation(
+                audience=frozenset(audience),
+                ledger=render_ledger(self._module, known),
+                nickname=nickname,
+                utterance=said,
+            )
             raw = await self._narrate_prose(
-                situation,
+                scoped_situation,
                 decision,
                 report,
                 issues,
@@ -998,6 +1102,27 @@ class KeeperAgent(Narrator):
             )
         return final
 
+    async def _colocated_players(self, room_id: str, player_id: str) -> list[str] | None:
+        """跟他同处一地的玩家 id；**未分头时返回 None = 全房间**（P5.2d）。
+
+        找不到他时返回 `[player_id]`，与 ws 层同一条规矩：这条路径上的错误
+        必须朝保密方向失败。
+        """
+        async with self._session_factory() as db:
+            room = await db.get(Room, room_id)
+            keeper_state = room.keeper_state if room is not None else None
+            rows = await db.execute(
+                select(Player.id).where(Player.room_id == room_id, Player.is_ai.is_(False))
+            )
+            ids = list(rows.scalars())
+        groups = group_players(keeper_state, ids)
+        if len(groups) <= 1:
+            return None
+        for _node_id, members in groups:
+            if player_id in members:
+                return members
+        return [player_id]
+
     async def _read_keeper_state(self, room_id: str) -> dict | None:
         """只读一次世界状态笔记。执行阶段写库之后要拿新值时用（P5.2 场景变化判定）。"""
         async with self._session_factory() as db:
@@ -1006,7 +1131,7 @@ class KeeperAgent(Narrator):
 
     async def _load_room_memory(
         self, room_id: str
-    ) -> tuple[dict | None, list[str], list[str], list[tuple[str, str]]]:
+    ) -> tuple[dict | None, list[_HistoryLine], list[str], list[tuple[str, str]]]:
         """读取世界状态笔记 + 全量事件历史 + 在场调查员名单。
 
         与 build_narration_context 的 6 条窗口不同：守秘人要对整局的一致性
@@ -1064,37 +1189,51 @@ class KeeperAgent(Narrator):
             # 不存在，player_rows 就是全量）。
             nicknames = {p.id: p.nickname for p in player_rows}
 
-        lines: list[str] = []
+        lines: list[_HistoryLine] = []
         for event in events:
             payload = event.payload or {}
+            # 受众：payload 里带 `audience` 的事件只有那几个人经历过（分头/隐匿/
+            # 私密时写入，见 ws.py）。没有这个字段 = 公开，老数据天然如此。
+            raw_audience = payload.get("audience")
+            audience = frozenset(str(x) for x in raw_audience) if raw_audience else None
             if event.event_type == "action.submit":
                 who = nicknames.get(event.player_id or "", "玩家")
-                lines.append(f"{who}：{payload.get('utterance', '')}")
+                lines.append(_HistoryLine(f"{who}：{payload.get('utterance', '')}", audience))
             elif event.event_type == "narration.push":
                 text = payload.get("text", "")
                 if len(text) > _HISTORY_NARRATION_CLIP:
                     text = text[:_HISTORY_NARRATION_CLIP] + "……"
-                lines.append(f"守秘人：{text}")
+                lines.append(_HistoryLine(f"守秘人：{text}", audience))
             elif event.event_type == "keeper.check":
                 # 🔴 2026-07-30（exec/11 待办2）：曾用 `[检定] 玩家 技能：a/b → 结果`
                 # 这种方括号"记账行"格式喂给叙事 LLM 看历史，真人实测复现过
                 # 叙事正文里编造出一句格式几乎一样但数值全假的"记账"（见
                 # prose_discipline.py 的 _FAKE_STAT_LOG_LEAK）——模型照猫画虎
                 # 模仿了这里看到的模板。改成普通叙述句，不留可逐字复刻的模板。
+                # ⑦⑧ 定稿：检定过程与结果、HP/SAN 一律公开 → 受众恒为 None
                 lines.append(
-                    f"{payload.get('player', '')}进行了一次{payload.get('skill', '')}"
-                    f"检定，掷出{payload.get('rolled', '?')}，目标"
-                    f"{payload.get('target', '?')}，结果{payload.get('level', '')}。"
+                    _HistoryLine(
+                        f"{payload.get('player', '')}进行了一次{payload.get('skill', '')}"
+                        f"检定，掷出{payload.get('rolled', '?')}，目标"
+                        f"{payload.get('target', '?')}，结果{payload.get('level', '')}。",
+                        None,
+                    )
                 )
             elif event.event_type == "keeper.san":
                 lines.append(
-                    f"{payload.get('player', '')}遭受理智冲击，损失"
-                    f"{payload.get('loss', '?')}点理智，当前理智值{payload.get('san', '?')}。"
+                    _HistoryLine(
+                        f"{payload.get('player', '')}遭受理智冲击，损失"
+                        f"{payload.get('loss', '?')}点理智，当前理智值{payload.get('san', '?')}。",
+                        None,
+                    )
                 )
             elif event.event_type == "keeper.hp":
                 lines.append(
-                    f"{payload.get('player', '')}的生命值发生变化："
-                    f"{payload.get('delta', '?')}点（{payload.get('reason', '')}），"
-                    f"当前生命值{payload.get('hp', '?')}。"
+                    _HistoryLine(
+                        f"{payload.get('player', '')}的生命值发生变化："
+                        f"{payload.get('delta', '?')}点（{payload.get('reason', '')}），"
+                        f"当前生命值{payload.get('hp', '?')}。",
+                        None,
+                    )
                 )
         return keeper_state, lines, roster, players

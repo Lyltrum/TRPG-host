@@ -45,6 +45,7 @@ from app.core.narrator import (
     CheckRequestNotice,
     CheckResultNotice,
     NarrationSegment,
+    PlayerUtterance,
     StatChangeNotice,
 )
 from app.dto.ws import (
@@ -455,17 +456,26 @@ async def _handle_action_submit(
             context,
             participant_ids=tuple(dict.fromkeys(s.player_id for s in submissions)),
             private_player_ids=tuple(dict.fromkeys(s.player_id for s in submissions if s.private)),
+            # 逐条原话：分组叙事时门厅那段的上下文里不能出现地下室那位说了
+            # 什么，合并成一段就裁不开了（P5.2d）。
+            utterances=tuple(
+                PlayerUtterance(player_id=s.player_id, nickname=s.nickname, text=s.utterance)
+                for s in submissions
+            ),
         )
         # 事件按**人**分别记：账本/历史要能看出每句话是谁说的，不能只留一条
         # 合并文本（否则多人轮在历史里退化成一个匿名段落）。
         for sub in submissions:
-            await room_service.record_event(
-                db,
-                room_id,
-                sub.player_id,
-                "action.submit",
-                {"utterance": sub.utterance, "private": sub.private},
+            # 🔴 受众随事件一起落库：历史重放要能回答"这句话当时谁听见了"。
+            # 没有它，P5.2d 的 per-audience 上下文裁剪就无从判断历史行的可见性
+            # ——事后再猜位置是猜不回来的。不写这个键 = 公开。
+            seen_by = await _audience_at_speaker_location(
+                db, room_id, sub.player_id, private=sub.private
             )
+            payload: dict = {"utterance": sub.utterance, "private": sub.private}
+            if seen_by is not None:
+                payload["audience"] = seen_by
+            await room_service.record_event(db, room_id, sub.player_id, "action.submit", payload)
 
         narrator = websocket.app.state.narrator
         try:

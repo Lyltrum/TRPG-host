@@ -31,6 +31,7 @@ WebSocket 可能存活很久，用一个 session 包住整条连接会在这期�
 鉴权单独用一个短 session，之后每条消息各开各的，消息之间等待时不持有连接。
 """
 
+import asyncio
 import contextlib
 
 import structlog
@@ -66,6 +67,7 @@ from app.service import auth as auth_service
 from app.service import chat as chat_service
 from app.service import room as room_service
 from app.service.action_lock import action_lock_manager
+from app.service.turn_window import Submission, merge_utterances, turn_window_manager
 from app.service.ws_manager import manager
 
 router = APIRouter()
@@ -313,41 +315,67 @@ async def _handle_action_submit(
     """处理 action.submit：玩家对 AI 主持人说的任何一句话（issue #107 定稿后
     的唯一事件——"是行动还是提问"由 AI 判断，协议层不预分类）。
 
-    流程：拿房间锁 → 广播玩家原话（action.broadcast）→ 调 Narrator 生成
-    叙事 → 广播回复（narration.push）→ 释放锁。
+    流程：并入本轮收集窗口 → 广播玩家原话（action.broadcast）→ 开窗者拿房间锁、
+    等窗口、取走全部宣告 → 一次裁决 + 一次叙事 → 广播回复 → 释放锁。
 
-    - 锁：同一房间同一时刻只允许一个「读状态→跑 AI→写回」循环，其他人的
-      提交直接拒（ACTION_IN_PROGRESS），防止两次并发生成读到同一份旧状态、
-      产出矛盾叙事。finally 无条件释放 + 锁自身的超时兜底（action_lock.py），
+    - **收集窗口（exec/14 P5.1）**：真人守秘人同时听四个人说话、然后回应一次。
+      窗口内的其他提交**并入同一轮**而不是被拒——汇总必须发生在裁决之前。
+      单人局窗口为 0，行为与本功能上线前逐字一致（见 service/turn_window.py）。
+    - 锁：窗口关闭、裁决开跑之后，同一房间仍然只允许一个「读状态→跑 AI→写回」
+      循环，这时的提交才回到 ACTION_IN_PROGRESS——那时拒绝是对的，世界状态
+      确实正在被改写。finally 无条件释放 + 锁自身的超时兜底（action_lock.py），
       保证一次 AI 失败不会永久锁死房间。
     - 玩家原话广播：修"聊天记录像被隔离"的 bug——此前原话只在发送方本地
       插入，其他人只能看到守秘人转述。
     - Narrator 失败（超时/网络/API 错）：只告诉发起者（error 不广播），
       其他人看到了原话但等不到回复，发起者重试即可。
     """
+    player = await room_service.get_player(db, player_id)
+    nickname = player.nickname if player is not None else "玩家"
+
+    # 原话先广播：不管这条是开窗的还是并入的，其他人都该**立刻**看见。
+    await manager.broadcast(
+        room_id,
+        ServerEnvelope(
+            type="action.broadcast",
+            payload=ActionBroadcastPayload(
+                player_id=player_id, nickname=nickname, utterance=utterance
+            ).model_dump(by_alias=True),
+        ).model_dump(by_alias=True),
+    )
+
+    opened = turn_window_manager.join(
+        room_id, Submission(player_id=player_id, nickname=nickname, utterance=utterance)
+    )
+    if not opened:
+        # 已经有人在收集本轮：并入即可，不另起一个裁决循环。
+        return
+
     lock_token = action_lock_manager.try_acquire(room_id)
     if lock_token is None:
+        # 上一轮的裁决还在跑（窗口已关）——这时拒绝是对的。
+        turn_window_manager.drain(room_id)
         await _send_error(websocket, "ACTION_IN_PROGRESS", "守秘人正在处理其他玩家的行动，请稍候")
         return
 
     try:
-        player = await room_service.get_player(db, player_id)
-        nickname = player.nickname if player is not None else "玩家"
+        window = turn_window_manager.window_seconds(manager.connection_count(room_id))
+        if window > 0:
+            await asyncio.sleep(window)
+        submissions = turn_window_manager.drain(room_id)
+        # 合并成一段给裁决器看；单条时返回原话本身，单人局的 prompt 因此与
+        # 本功能上线前逐字一致（merge_utterances 的退化保证）。
+        utterance = merge_utterances(submissions)
 
         # ⚠️ 先组叙事上下文、后写事件：build_narration_context 靠"当前这条
         # 还没入库"来保证历史里不含它（见该函数 docstring 的时序约定）。
         context = await room_service.build_narration_context(db, room_id, player_id, utterance)
-        await room_service.record_event(
-            db, room_id, player_id, "action.submit", {"utterance": utterance}
-        )
-
-        broadcast_payload = ActionBroadcastPayload(
-            player_id=player_id, nickname=nickname, utterance=utterance
-        )
-        envelope = ServerEnvelope(
-            type="action.broadcast", payload=broadcast_payload.model_dump(by_alias=True)
-        )
-        await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
+        # 事件按**人**分别记：账本/历史要能看出每句话是谁说的，不能只留一条
+        # 合并文本（否则多人轮在历史里退化成一个匿名段落）。
+        for sub in submissions:
+            await room_service.record_event(
+                db, room_id, sub.player_id, "action.submit", {"utterance": sub.utterance}
+            )
 
         narrator = websocket.app.state.narrator
         try:
@@ -380,6 +408,10 @@ async def _handle_action_submit(
         for notice in outcome.check_requests:
             await _broadcast_check_request(room_id, notice)
     finally:
+        # 🔴 两个都必须无条件释放。窗口缓冲若漏掉，房间会**永久停留在"收集中"**
+        # ——之后每一条提交都只广播原话、静默不裁决，比锁死更难查（锁至少
+        # 60 秒后会自己过期）。drain 是幂等的，正常路径已经取走时这里是空操作。
+        turn_window_manager.drain(room_id)
         action_lock_manager.release(room_id, lock_token)
 
 

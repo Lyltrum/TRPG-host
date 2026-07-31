@@ -25,6 +25,7 @@ openai-agents SDK 不再出现在这条主路径上（依赖暂保留，未来�
 可能复用）。
 """
 
+import asyncio
 import random
 from dataclasses import replace
 
@@ -35,6 +36,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, format_agenda_status, load_fired_agenda
+from app.core.keeper.chapter import (
+    load_chapters,
+    record_chapter,
+    render_chapters,
+    should_summarize,
+    turns_since_last_chapter,
+)
 from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.dice import is_success
 from app.core.keeper.fact_ledger import record_revelations, render_ledger, revealed_fact_ids
@@ -51,8 +59,10 @@ from app.core.keeper.phase import (
     load_phase,
 )
 from app.core.keeper.prompts import (
+    CHAPTER_SUMMARY_INSTRUCTIONS,
     build_adjudicator_instructions,
     build_narrator_instructions,
+    format_chapter_input,
     format_narrator_input,
     format_turn_input,
 )
@@ -205,6 +215,7 @@ class KeeperAgent(Narrator):
         self._client = build_llm_client(
             api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=_REQUEST_TIMEOUT_SECONDS
         )
+        self._background: set[asyncio.Task] = set()
         self._adjudicator_instructions = build_adjudicator_instructions(module, ruleset)
         self._narrator_instructions = build_narrator_instructions(module)
 
@@ -286,7 +297,9 @@ class KeeperAgent(Narrator):
         # 200 条滑动窗口，这正是它存在的理由。
         async with self._session_factory() as db:
             known_facts = await revealed_fact_ids(db, room_id=room_id)
+            chapters = await load_chapters(db, room_id=room_id)
         ledger_status = render_ledger(self._module, known_facts)
+        chapters_status = render_chapters(chapters)
 
         situation = format_turn_input(
             visible_state,
@@ -298,6 +311,7 @@ class KeeperAgent(Narrator):
             visibility_status=visibility_status,
             phase_status=phase_status,
             ledger_status=ledger_status,
+            chapters_status=chapters_status,
             is_heartbeat=is_heartbeat,
             is_opening_ceremony=is_opening_ceremony,
             phase=phase,
@@ -432,6 +446,11 @@ class KeeperAgent(Narrator):
             scene_changed = (
                 prev_scene is not None and new_scene is not None and prev_scene != new_scene
             )
+        # 分段摘要 L2（exec/14 P4.2）：场景切换 = 天然的章节边界。**后台**整理，
+        # 玩家等的是叙事，不该为"整理笔记"多等几秒；失败只记日志不影响这轮。
+        if scene_changed and not is_heartbeat and not is_opening_ceremony:
+            self._spawn_chapter_summary(room_id, history_lines)
+
         if not is_heartbeat and not is_opening_ceremony and scene_changed:
             decision = decision.model_copy(
                 update={
@@ -763,6 +782,39 @@ class KeeperAgent(Narrator):
                 limit=max_chars,
             )
         return clipped
+
+    def _spawn_chapter_summary(self, room_id: str, history_lines: list[str]) -> None:
+        """把摘要生成丢到后台。刻意不 await——它不在玩家等待路径上。"""
+        task = asyncio.create_task(self._summarize_chapter(room_id, history_lines))
+        # 存一份引用防止任务被 GC 提前回收（asyncio 只持弱引用）
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def _summarize_chapter(self, room_id: str, history_lines: list[str]) -> None:
+        """整理一段梗概。任何失败都只记日志——它是记忆的锦上添花，不是主路径。"""
+        try:
+            async with self._session_factory() as db:
+                turns = await turns_since_last_chapter(db, room_id=room_id)
+            if not should_summarize(scene_changed=True, turns_since_last=turns):
+                return
+            if not history_lines:
+                return
+            response = await self._client.chat.completions.create(
+                tape_kind="chapter",
+                model=DEEPSEEK_MODEL,
+                messages=[
+                    {"role": "system", "content": CHAPTER_SUMMARY_INSTRUCTIONS},
+                    {"role": "user", "content": format_chapter_input(history_lines)},
+                ],
+                temperature=0.2,
+                extra_body=_DISABLE_THINKING,
+            )
+            text = (response.choices[0].message.content or "").strip()
+            async with self._session_factory() as db:
+                await record_chapter(db, room_id=room_id, text=text)
+                await db.commit()
+        except Exception:
+            logger.warning("keeper_chapter_summary_failed", room_id=room_id, exc_info=True)
 
     def _finalize_prose(
         self,

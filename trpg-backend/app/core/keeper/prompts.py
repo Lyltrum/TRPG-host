@@ -150,6 +150,7 @@ def format_turn_input(
     visibility_status: str = "",
     phase_status: str = "",
     ledger_status: str = "",
+    chapters_status: str = "",
     *,
     is_heartbeat: bool = False,
     is_opening_ceremony: bool = False,
@@ -160,7 +161,7 @@ def format_turn_input(
     名单必须显式给出：真实 DeepSeek 冒烟里 agent 曾把单人局幻觉成"你们三人"
     ——桌上有几个人不该靠猜。
 
-    agenda/visibility/phase/ledger 默认空 → 整块不渲染（旧调用点行为不变，
+    agenda/visibility/phase/ledger/chapters 默认空 → 整块不渲染（旧调用点行为不变，
     短模组开局时输出也不会变脏）。
 
     历史的最后一条就是当前这句话（ws.py 在调 narrate 之前已 record_event），
@@ -178,6 +179,10 @@ def format_turn_input(
     visibility_block = f"## 密级配对状态\n{visibility_status}\n\n" if visibility_status else ""
     # 事实账本（exec/14 P4）：已经被调查员确认拿到的线索。**代码记账**，
     # 不随 200 条历史窗口滑走——长战役里第 3 轮拿到的线索第 300 轮仍在这里。
+    # 分段摘要 L2（exec/14 P4.2）：更早的剧情梗概，同样活过 200 条历史窗口。
+    chapters_block = (
+        f"## 前情提要（更早发生的事，已压缩）\n{chapters_status}\n\n" if chapters_status else ""
+    )
     ledger_block = (
         f"## 已确认的线索（调查员已经知道这些，不要当作未知重新铺陈）\n{ledger_status}\n\n"
         if ledger_status
@@ -207,6 +212,7 @@ def format_turn_input(
         f"{phase_block}"
         f"{agenda_block}"
         f"{visibility_block}"
+        f"{chapters_block}"
         f"{ledger_block}"
         f"## 游戏历史（时间正序，最后一条即当前发言）\n{history_text}\n\n"
         f"## 当前\n玩家 {player_nickname} 刚刚说：「{utterance}」"
@@ -237,3 +243,15 @@ def format_narrator_input(
         )
     parts.append("\n请以守秘人身份回应玩家。")
     return "\n".join(parts)
+
+
+CHAPTER_SUMMARY_INSTRUCTIONS = (
+    "你是跑团记录员。把下面这段游戏历史压缩成一句话梗概，供守秘人以后回顾。\n"
+    "只写**发生了什么**：去了哪、跟谁谈了什么、达成或搞砸了什么。\n"
+    "不写：分析、推测、评价、对玩家的建议、任何检定数值。\n"
+    "不超过 60 字，一句话，不分行。"
+)
+
+
+def format_chapter_input(history_lines: list[str]) -> str:
+    return "以下是这一段的游戏历史：\n" + "\n".join(history_lines) + "\n\n请输出一句话梗概。"

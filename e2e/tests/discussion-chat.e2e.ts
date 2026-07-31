@@ -2,7 +2,7 @@
  * issue #107 端到端：玩家讨论区与主持人对话分流。
  *
  * 覆盖：讨论区广播 / 重发去重 / 玩家原话广播（修"聊天记录像被隔离"的 bug）/
- * 行动锁的并发拒绝与释放 / 退房清空聊天 / 复盘纯净。
+ * 回合收集窗口的并入与拒绝边界 / 退房清空聊天 / 复盘纯净。
  *
  * 锁窗口依赖 run-e2e.ts 给后端设置的 NARRATOR_DELAY_SECONDS=1（测试钩子）：
  * 占位 narrator 同步秒回，没有这 1 秒延迟，两个客户端"同时提交"永远压不中
@@ -168,7 +168,7 @@ test('🔴 所有人都能看到发起者的原话 + 守秘人回复（修"聊�
   }
 })
 
-test('🔴 行动锁：处理中他人提交被拒（ACTION_IN_PROGRESS），完成后恢复', async () => {
+test('🔴 收集窗口：窗口内他人提交并入同一轮（不再被拒），窗口外仍拒', async () => {
   const room = await createRoomWithModule('lock')
   const guest = await registerPlayer('lockguest')
   const joined = await guest.sdk.rooms.join(room.roomCode, { nickname: '抢话访客' }, guest.token)
@@ -179,26 +179,39 @@ test('🔴 行动锁：处理中他人提交被拒（ACTION_IN_PROGRESS），完
     )
     await bindSocket(guest.sdk, room.roomId, guest.token, joined.playerId, joined.reconnectToken)
 
-    // 房主提交——narrator 有 1 秒人为延迟（NARRATOR_DELAY_SECONDS），锁窗口
-    // 开着。等到原话广播到达（证明房主的提交已被受理、锁已被持有）再让访客抢。
+    // exec/14 P5.1：真人守秘人同时听几个人说话、然后回应一次。窗口内的第二条
+    // 提交**并入同一轮**，不再吃 ACTION_IN_PROGRESS——汇总必须发生在裁决之前。
     const hostNarration = waitForEvent(room.host.sdk, (e) => e.type === 'narration.push')
     const hostEcho = waitForEvent(room.host.sdk, (e) => e.type === 'action.broadcast')
     room.host.sdk.roomSocket.submitAction(room.hostPlayerId, { utterance: '我搜查书架' })
     await hostEcho
 
-    // 访客在锁窗口内提交 → 被拒，且 error 只发给访客自己
+    // 访客在收集窗口内提交：原话照常广播给全房间，且**不该**收到拒绝
+    const guestEcho = waitForEvent(
+      guest.sdk,
+      (e) => e.type === 'action.broadcast' && e.payload.utterance === '我翻抽屉'
+    )
     const guestRejected = waitForEvent(
       guest.sdk,
-      (e) => e.type === 'error' && e.payload.code === 'ACTION_IN_PROGRESS'
-    )
+      (e) => e.type === 'error' && e.payload.code === 'ACTION_IN_PROGRESS',
+      1_500
+    ).then(() => 'rejected' as const, () => 'no-rejection' as const)
     guest.sdk.roomSocket.submitAction(joined.playerId, { utterance: '我翻抽屉' })
-    await guestRejected
+    await guestEcho
+    assert.equal(await guestRejected, 'no-rejection', '窗口内的提交不该被拒，应并入同一轮')
 
-    // 房主的叙事回复到达后访客再提交。⚠️ 用重试而不是一次命中：锁的释放在
-    // narration 广播**之后**的 finally 里，两者之间有毫秒级窗口——真人手速
-    // 不可能踩中，但 e2e 代码速度可以，首发正好撞上就又吃一次
-    // ACTION_IN_PROGRESS（这本来就是产品行为：被拒了稍后重试即可）。
+    // 两条宣告只换来**一轮**叙事（合并处理，不是各跑一次）
     await hostNarration
+    const secondNarration = await waitForEvent(
+      room.host.sdk,
+      (e) => e.type === 'narration.push',
+      1_500
+    ).then(() => 'extra' as const, () => 'only-one' as const)
+    assert.equal(secondNarration, 'only-one', '窗口内的多条宣告应合并成一轮叙事')
+
+    // 窗口关闭、裁决跑起来之后再提交 —— 这时拒绝是对的（世界状态正在被改写）。
+    // ⚠️ 用重试而不是一次命中：锁的释放在 narration 广播**之后**的 finally 里，
+    // 两者之间有毫秒级窗口，e2e 的代码速度可能正好错过（真人手速踩不中）。
     let accepted = false
     for (let attempt = 0; attempt < 10 && !accepted; attempt++) {
       const outcome = waitForEvent(
@@ -215,7 +228,7 @@ test('🔴 行动锁：处理中他人提交被拒（ACTION_IN_PROGRESS），完
         await new Promise((r) => setTimeout(r, 100))
       }
     }
-    assert.ok(accepted, '锁释放后访客的提交应当被受理')
+    assert.ok(accepted, '一轮结束后访客的提交应当被受理')
   } finally {
     room.host.sdk.roomSocket.disconnect()
     guest.sdk.roomSocket.disconnect()

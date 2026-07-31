@@ -28,6 +28,11 @@ class ConnectionManager:
     def has_connections(self, room_id: str) -> bool:
         return bool(self._rooms.get(room_id))
 
+    def connection_count(self, room_id: str) -> int:
+        """房间当前的连接数。回合收集窗口用它决定"要不要等其他人"
+        （单人局窗口为 0，见 service/turn_window.py）。"""
+        return len(self._rooms.get(room_id, ()))
+
     def connected_room_ids(self) -> list[str]:
         """当前至少有一条 WS 连接的房间 id（心跳扫描用）。"""
         return [rid for rid, conns in self._rooms.items() if conns]

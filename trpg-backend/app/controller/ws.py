@@ -34,6 +34,7 @@ WebSocket 可能存活很久，用一个 session 包住整条连接会在这期�
 import asyncio
 import contextlib
 from dataclasses import replace
+from uuid import uuid4
 
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -541,7 +542,32 @@ async def _handle_action_submit(
 
 
 async def _join_ai_players(db: AsyncSession, websocket: WebSocket, room_id: str) -> None:
-    """问 AI 队友要不要跟一句，要的话按真人同样的路径并进本轮（exec/21 第三层）。
+    """问 AI 队友要不要在**讨论区**说一句（exec/21 第三层，exec/25 #60 改通道）。
+
+    ## 🔴 为什么不再走 `action.submit`
+
+    第一版让 AI 走跟真人**完全相同**的路径，本意是防它作弊（读剧本、跳检定）。
+    真人实测（exec/25 #60）暴露了这条原则本身选错了方向：玩家问「我们能直接去
+    他的地下室吗」，AI 队友答「先别急，我们看看他进屋后有什么动静」——裁决器
+    这一轮收到两条**等权**发言，其中一条是明确的行动宣言，于是按行动推进了世界。
+    **AI 把玩家的提问变成了一次行动。**
+
+    > **「没有特权」和「完全平等」是两件事。它没拿到不该有的特权，却拿到了
+    > 它不该有的那一半平等：推进世界的权力。**
+
+    桌游对这件事早有成规：DM 自己操控的 PC（DMPC）是公认反模式，官方替代品
+    Sidekick 靠的是**机制不对称**——「升级收益比 PC 少，正是为了让 NPC 加入队伍
+    时不会盖过玩家」，而且控制权推荐归玩家。三条全在机制层，没有一条是行为规范。
+
+    所以改成写讨论区：那条通道**不写 events 表、不进任何 LLM 上下文**
+    （见 `_handle_chat_send`），AI 的话于是**结构性地**够不到裁决器——不是
+    "请它别推进世界"，是它在的地方没有那个开关。同「保密靠拿不到，不是请你别说」。
+
+    玩家要它做什么，自己在主持人频道说出来（「我和阿铁一起去地下室」）——
+    **行动权只有真人有，AI 的行动权是派生的。**
+
+    时机保持不变（收集窗口关闭后、drain 之前），它仍然是对真人刚说的那句话做
+    反应。改成"叙事之后再出主意"是另一个决策，等实测觉得别扭再说。
 
     整块**失败即沉默**：AI 补位是锦上添花，它的模型抽风不能把真人这一轮拖垮。
     """
@@ -554,9 +580,32 @@ async def _join_ai_players(db: AsyncSession, websocket: WebSocket, room_id: str)
         logger.warning("ai_players_failed", room_id=room_id, exc_info=True)
         return
     for submission in submissions:
-        await _ingest_utterance(
-            db, room_id, submission.player_id, submission.nickname, submission.utterance
-        )
+        await _post_ai_suggestion(db, room_id, submission.player_id, submission.utterance)
+
+
+async def _post_ai_suggestion(db: AsyncSession, room_id: str, player_id: str, text: str) -> None:
+    """把 AI 队友的一句建议发进讨论区，并广播给全房间。
+
+    走 `save_chat_message` 而不是自己拼 `ChatMessage`：幂等、落库形状、清理
+    （`/end` 会清讨论区）三件事都跟真人的消息共用一条路径。`client_message_id`
+    用 uuid4——AI 没有客户端，这个字段对它只是唯一键。
+    """
+    player = await room_service.get_player(db, player_id)
+    if player is None:
+        return
+    message = await chat_service.save_chat_message(db, room_id, player_id, text, str(uuid4()))
+    chat_message = ChatMessagePayload(
+        message_id=message.id,
+        player_id=message.player_id,
+        nickname=player.nickname,
+        text=message.text,
+        sent_at=message.created_at,
+        client_message_id=message.client_message_id,
+    )
+    envelope = ServerEnvelope(
+        type="chat.message", payload=chat_message.model_dump(by_alias=True, mode="json")
+    )
+    await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
 
 
 #: 一轮里最多替 AI 掷几次骰。防的是"结算叙事又给它发了个新检定"无限套娃——

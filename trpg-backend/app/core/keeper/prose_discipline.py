@@ -235,6 +235,30 @@ def inject_kp_question_guidance(guidance: str) -> str:
     return f"{_KP_QUESTION_GUIDANCE_PREFIX}\n{g}"
 
 
+# 🔴 exec/25 #59：`feasibility_question` 与 `question_to_kp` **共用**"收走推进
+# 世界的手段"那半（都不该让世界动一步），但 guidance **必须分开**——上面那段
+# 通篇在教叙事器"把他角色应该记得的部分告诉他、用「你记得」起头"，那是为
+# **回忆**写的。玩家问「我们能直接去地下室吗」时套这段，叙事器会去翻他的记忆，
+# 而不是回答"能不能、代价是什么"。
+_FEASIBILITY_QUESTION_GUIDANCE_PREFIX = (
+    "【玩家在问能不能·代码注入】这一轮玩家在征询可行性或许可，**他还没有决定要做**。"
+    "不要替他做决定，不要把它演成他已经动身、已经开始做了，世界不因此推进一步。"
+    "回答三件事：能不能做、有什么代价或阻碍、需要什么条件。"
+    "只用剧本里和这局已经发生过的东西回答——**不许现编新的阻碍来劝退他，"
+    "也不许现编一条剧本里没有的通路**。"
+    "答完把选择权交回给他（比如以「你要现在过去吗」这类收尾），停在他可以行动的地方。"
+)
+
+
+def inject_feasibility_question_guidance(guidance: str) -> str:
+    g = (guidance or "").strip()
+    if _FEASIBILITY_QUESTION_GUIDANCE_PREFIX in g:
+        return g
+    if not g:
+        return _FEASIBILITY_QUESTION_GUIDANCE_PREFIX
+    return f"{_FEASIBILITY_QUESTION_GUIDANCE_PREFIX}\n{g}"
+
+
 _SCENE_TRANSITION_GUIDANCE_PREFIX = (
     "【场景切换·代码注入】本轮「当前场景」从上一轮的位置切换到了新位置。"
     "正文开头先用半句到一句话交代离开当前情境（结束对话/转身/穿过……），"

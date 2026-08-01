@@ -26,7 +26,11 @@ export function toCompletedCharacter(
 ): CompletedCharacter | null {
   if (!saved.name) return null;
 
-  const occupationId = ruleset.occupations.find((o) => o.name === saved.occupation)?.id ?? null;
+  // 优先用后端存的 id（exec/22）。名字不唯一——按名字 find 只会拿回第一个
+  // 匹配，同名不同项的职业（律师/私家侦探/工匠…）会被认成同一个。老卡没有
+  // id 时才回退按名字查，行为与改动前一致。
+  const occupationId =
+    saved.occupationId ?? ruleset.occupations.find((o) => o.name === saved.occupation)?.id ?? null;
   const derived = saved.derivedStats ?? {};
   const num = (v: unknown) => (typeof v === 'number' ? v : 0);
 

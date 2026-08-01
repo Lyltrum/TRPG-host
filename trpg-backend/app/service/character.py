@@ -26,8 +26,10 @@ from app.core.coc7_rules import (
     ValidationIssue,
     compute_derived_stats,
     compute_preview,
+    find_occupation_by_id,
+    find_occupation_by_name,
     validate_age,
-    validate_character,
+    validate_character_with_occupation,
 )
 from app.core.errors import not_implemented
 from app.dto.character import (
@@ -163,6 +165,9 @@ async def update_character(
     character.derived_stats = payload.derived_stats
     character.skills = payload.skills
     character.equipment = [item.name for item in payload.equipment]
+    # 职业用 id 定位（exec/22）。老客户端不传 id 时保持 None，complete 时
+    # 回退按名字查——行为与改动前一致，不会把老前端弄挂。
+    character.occupation_id = payload.occupation_id
     character.occupation = payload.occupation
     character.background = payload.background
     character.notes = payload.notes
@@ -193,27 +198,38 @@ async def complete_character(
 ) -> None:
     """标记建卡完成，同步把对应玩家的 has_character 置为 True。
 
-    issue #84 S2：落库前先用 `coc7_rules.validate_character` 权威校验已保存的
-    属性/职业/技能是否合法，不合法直接抛 `CharacterInvalidError` 拒绝——
-    `occupation` 字段存的是职业名字符串（不是 id，见 `Character` 模型注释），
-    按名字映射回职业定义；映射不到时 `validate_character` 会产出
-    `OCCUPATION_NOT_FOUND` 校验项，同样会被拒绝，不会静默放行。
+    issue #84 S2：落库前先用 `coc7_rules` 权威校验已保存的属性/职业/技能是否
+    合法，不合法直接抛 `CharacterInvalidError` 拒绝；映射不到职业时校验会产出
+    `OCCUPATION_NOT_FOUND`，同样被拒绝，不会静默放行。
+
+    🔴 **职业优先按 id 定位**（exec/22）：职业名不唯一——规则表里有 6 组同名
+    不同项的职业（律师 ×2、私家侦探 ×2、工匠 ×2…），信用区间乃至技能点公式
+    都不同。只按名字查会拿回第一个匹配，于是合法的卡可能被判非法；公式不同
+    的那三组更阴，会把职业技能点预算算成另一个数**且不报错**。
+    `occupation_id` 为空（老卡 / 老客户端）时回退按名字查，行为与改动前一致。
     """
     character = await _get_own_character(db, room_id, character_id, reconnect_token)
     room = await find_room_by_id(db, room_id)
     ruleset = await _resolve_ruleset(db, room)
-    issues = validate_age(ruleset, character.age) + validate_character(
+
+    if character.occupation_id is not None:
+        occupation, not_found = find_occupation_by_id(ruleset.occupations, character.occupation_id)
+    else:
+        occupation, not_found = find_occupation_by_name(ruleset.occupations, character.occupation)
+
+    issues = validate_age(ruleset, character.age) + validate_character_with_occupation(
         ruleset,
         attributes=character.attributes or {},
-        occupation_name=character.occupation,
+        occupation=occupation,
         skills=character.skills or {},
         generation_method=character.generation_method,
         attribute_pool_total=character.attribute_pool_total,
         # wizard-bugfix-round4（方案 A，#20 的修复）：年龄修正后的有效值不能
-        # 再拿去跑只对分配值成立的预算/池值总和/步进校验，见 `validate_character`
-        # 的 `allocated_attributes` 参数说明。没有分配值的老角色卡传 None，
-        # 退回旧行为。
+        # 再拿去跑只对分配值成立的预算/池值总和/步进校验，见
+        # `validate_character` 的 `allocated_attributes` 参数说明。没有分配值
+        # 的老角色卡传 None，退回旧行为。
         allocated_attributes=character.allocated_attributes,
+        occupation_not_found=not_found,
     )
     if issues:
         raise CharacterInvalidError(issues)
@@ -257,6 +273,7 @@ async def get_character(
         derived_stats=character.derived_stats or {},
         skills=character.skills or {},
         equipment=list(character.equipment or []),
+        occupation_id=character.occupation_id,
         occupation=character.occupation,
         background=character.background or "",
         notes=character.notes or "",
@@ -314,6 +331,7 @@ async def list_party_characters(
                 derived_stats=c.derived_stats or {},
                 skills=c.skills or {},
                 equipment=list(c.equipment or []),
+                occupation_id=c.occupation_id,
                 occupation=c.occupation,
                 background=c.background or "",
                 background_detail=c.background_detail,

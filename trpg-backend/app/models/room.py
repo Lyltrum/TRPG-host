@@ -186,6 +186,14 @@ class Character(Base):
     )
 
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # 🔴 职业**用 id 定位**（exec/22）：职业名不唯一——规则表里有 6 组同名
+    # 不同项的职业（律师 ×2、私家侦探 ×2、工匠 ×2…），信用区间乃至技能点公式
+    # 都不同。此前只存名字，`find_occupation_by_name` 只能查回第一个匹配，
+    # 于是"玩家选的是哪一个"在落库那一刻就丢了：合法的卡可能被判非法，
+    # 更阴的是公式不同的那三组会把职业技能点预算算成另一个数、且不报错。
+    # 又一次"用自由文本当标识符"，与 exec/17 同族。
+    occupation_id: Mapped[int | None] = mapped_column(nullable=True)
+    # 保留：展示用的职业名（也是老数据唯一的线索）。id 为空时回退按名字查。
     occupation: Mapped[str | None] = mapped_column(String(100), nullable=True)
     attributes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # 玩家在属性步骤分配出来的原始属性（年龄修正之前）。

@@ -262,6 +262,7 @@ async def create_ai_player(
             player_id=player.id,
             status="complete",
             name=nickname,
+            occupation_id=occupation.id,
             occupation=occupation.name,
             age=_AI_AGE,
             gender="未知",

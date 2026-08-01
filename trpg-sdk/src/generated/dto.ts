@@ -225,6 +225,7 @@ export interface CharacterRead {
     [k: string]: number;
   };
   equipment?: string[];
+  occupationId?: number | null;
   occupation?: string | null;
   background?: string;
   notes?: string;
@@ -296,6 +297,7 @@ export interface CharacterUpdateBody {
     [k: string]: number;
   };
   equipment?: EquipmentItem[];
+  occupationId?: number | null;
   occupation?: string | null;
   background?: string;
   notes?: string;
@@ -695,6 +697,7 @@ export interface PartyCharacterRead {
     [k: string]: number;
   };
   equipment?: string[];
+  occupationId?: number | null;
   occupation?: string | null;
   background?: string;
   backgroundDetail?: {

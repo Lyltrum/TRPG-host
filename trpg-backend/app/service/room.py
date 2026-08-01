@@ -661,16 +661,34 @@ async def build_narration_context(
     )
 
 
+#: 🔴 **绝不能出现在玩家复盘里的事件类型**（exec/25 #61）。
+#:
+#: `get_replay` 把 `payload` **原样**返回给玩家。`keeper.decision` 里装的是
+#: 裁决的审计信息：`thinking` 在 prompt 里就写明"玩家看不到"，`player_state`
+#: 会直接暴露守秘人对这句话的判断。它落表是为了让**我们**能诊断，不是为了
+#: 讲故事——复盘讲的是"发生了什么"，不是"守秘人当时怎么想的"。
+#:
+#: 这是黑名单，不是白名单——改成白名单要动现有全部事件类型，风险不成比例。
+#: 代价是：**新增任何带敏感 payload 的事件类型时，必须回来加进这个集合**。
+_REPLAY_HIDDEN_EVENT_TYPES = frozenset({"keeper.decision"})
+
+
 async def get_replay(
     db: AsyncSession, room_id: str, reconnect_token: str | None
 ) -> list[ReplayEventRead]:
     """GET /api/v1/rooms/{roomId}/replay —— 逐条事件回放，按发生时间正序。
 
     先校验发起者是这个房间的成员（复盘是"只有参与者能看"的内容），再查事件。
+    审计类事件按 `_REPLAY_HIDDEN_EVENT_TYPES` 排除。
     """
     await require_room_member(db, room_id, reconnect_token)
     result = await db.scalars(
-        select(Event).where(Event.room_id == room_id).order_by(Event.created_at)
+        select(Event)
+        .where(
+            Event.room_id == room_id,
+            Event.event_type.not_in(_REPLAY_HIDDEN_EVENT_TYPES),
+        )
+        .order_by(Event.created_at)
     )
     return [ReplayEventRead.model_validate(e) for e in result]
 

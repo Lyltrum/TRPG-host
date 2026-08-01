@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.event import Event
 from app.models.room import Player
 from tests.helpers import ROOMS_BASE, bearer, create_room, join_room, reconnect, register
 
@@ -379,3 +380,47 @@ async def test_replay_requires_room_member_token(client: AsyncClient) -> None:
     )
     assert ok.status_code == 200
     assert ok.json()["data"] == []
+
+
+async def test_replay_never_leaks_the_keeper_decision_audit(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """🔴 exec/25 #61：裁决的审计事件**绝不能**出现在玩家的复盘里。
+
+    `keeper.decision` 落 events 表是为了让我们能诊断"叙事为什么这么写"，而
+    `get_replay` 是把 `payload` **原样**返回给玩家的：`thinking` 在 prompt 里
+    就写明玩家看不到，`player_state` 会直接暴露守秘人对这句话的判断。
+
+    造一条普通事件作对照——只断言"没有 keeper.decision"的话，把整个 replay
+    改成返回空列表它也绿。
+    """
+    room = await create_room(client)
+    room_id = room["roomId"]
+    db_session.add(
+        Event(
+            room_id=room_id,
+            player_id=room["playerId"],
+            event_type="keeper.decision",
+            payload={"player_state": "feasibility_question", "thinking": "玩家在问可行性"},
+        )
+    )
+    db_session.add(
+        Event(
+            room_id=room_id,
+            player_id=room["playerId"],
+            event_type="narration.push",
+            payload={"text": "门厅里空无一人。"},
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"{ROOMS_BASE}/{room_id}/replay", headers=reconnect(room["reconnectToken"])
+    )
+    assert response.status_code == 200
+    events = response.json()["data"]
+    # 对照：普通事件照常返回
+    assert [e["eventType"] for e in events] == ["narration.push"]
+    # 审计内容一个字都不能漏出去
+    assert "玩家在问可行性" not in response.text
+    assert "feasibility_question" not in response.text

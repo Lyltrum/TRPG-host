@@ -1,4 +1,4 @@
-"""能力清单 + 四个钩子的汇总函数（exec/27 阶段 2）。
+"""能力清单 + 五个钩子的汇总函数（exec/27 阶段 2）。
 
 **加一个能力 = 新建一个目录 + 在下面这个元组里加一行。**（唯一的例外是
 schema 片段还要在 `decision.py` 里显式继承一次，理由见 `registry` 里
@@ -61,6 +61,23 @@ def situation_blocks(module: ScenarioModule, keeper_state: dict | None) -> list[
             if body:
                 rendered.append((block.order, f"## {block.heading}\n{body}\n\n"))
     return sorted(rendered, key=lambda item: item[0])
+
+
+def audit_fields(decision: BaseModel) -> dict[str, object]:
+    """各能力要留痕的字段，合并成一份日志 kwargs。
+
+    键冲突会当场炸——两个能力抢同一个日志字段名，日志里只会剩一个，而且是
+    静默的。宁可在启动/第一轮就失败。
+    """
+    merged: dict[str, object] = {}
+    for capability in CAPABILITIES:
+        if capability.audit is None:
+            continue
+        for key, value in capability.audit(decision).items():
+            if key in merged:
+                raise ValueError(f"能力 {capability.name!r} 的审计字段 {key!r} 与别的能力撞名")
+            merged[key] = value
+    return merged
 
 
 def registered_schemas() -> Sequence[type[BaseModel]]:

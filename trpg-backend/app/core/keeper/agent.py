@@ -37,7 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, format_agenda_status, load_fired_agenda
-from app.core.keeper.capabilities import situation_blocks
+from app.core.keeper.capabilities import audit_fields, situation_blocks
 from app.core.keeper.chapter import (
     load_chapters,
     record_chapter,
@@ -686,13 +686,15 @@ class KeeperAgent(Narrator):
             thinking=decision.thinking,
             checks=[c.skill_id for c in decision.checks],
             san_checks=len(decision.san_checks),
-            hp_changes=len(decision.hp_changes),
             state_updates=[u.key for u in decision.state_updates],
             moves=[f"{m.player}→{m.node_id}" for m in decision.moves],
             agenda_fired=decision.agenda_fired,
             visibility_revealed=decision.visibility_revealed,
             opening_complete=decision.opening_complete,
             ending_reached=decision.ending_reached,
+            # 已经垂直切出去的能力自带审计字段（exec/27 阶段 2）——否则每加一片
+            # 能力都得回来改这行，而漏了不报错、只是那片能力在日志里隐身。
+            **audit_fields(decision),
             is_heartbeat=is_heartbeat,
             is_opening_ceremony=is_opening_ceremony,
             player_confused=confused,

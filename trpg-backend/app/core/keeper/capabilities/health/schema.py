@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import Field
+from collections.abc import Mapping
+
+from pydantic import BaseModel, Field
 
 from app.core.keeper.registry import Capability, DecisionModel
 
@@ -32,3 +34,12 @@ class HealthDecisionFields(DecisionModel):
 
 #: 这个能力的字段需要哪种权限。`subject.authorize_decision` 从注册表汇总。
 FIELD_CAPABILITIES = {"hp_changes": Capability.ADJUST_HP}
+
+
+def audit_fields(decision: BaseModel) -> Mapping[str, object]:
+    """本轮 HP 变更进 `keeper_decision` 日志的样子。
+
+    只记条数，不记 delta/对象：那些在 `keeper.hp` / `keeper.npc_hp` 两条事件里
+    已经逐笔留痕了，这里是"本轮这片能力动没动手"的速览。
+    """
+    return {"hp_changes": len(getattr(decision, "hp_changes", ()))}

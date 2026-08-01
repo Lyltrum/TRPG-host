@@ -2,14 +2,14 @@
 
 ## 它在解决什么
 
-一个守秘人能力（"HP 变化"、"技能检定"、"分头移动"）天然横跨四层：schema
+一个守秘人能力（"HP 变化"、"技能检定"、"分头移动"）天然横跨好几层：schema
 教模型能说什么、prompt 教模型什么时候说、executor 把它变成世界的改变、
-situation 把结果再喂回模型眼前。此前这四段分别躺在 `decision.py` /
-`prompts.py` / `tools.py` / `agent.py` 里——实测一个功能平均改 4.1 个文件，
-`agent.py` 被 90 个功能里的 46 个碰过。**那不是文件放错了地方，是能力被按
-技术层切碎了。**
+situation 把结果再喂回模型眼前、audit 让它在日志里留得下痕。此前这几段分别
+躺在 `decision.py` / `prompts.py` / `tools.py` / `agent.py` 里——实测一个功能
+平均改 4.1 个文件，`agent.py` 被 90 个功能里的 46 个碰过。**那不是文件放错了
+地方，是能力被按技术层切碎了。**
 
-本模块定义那四个钩子的形状。具体能力在 `capabilities/<名字>/` 里各自组装一个
+本模块定义那五个钩子的形状。具体能力在 `capabilities/<名字>/` 里各自组装一个
 `KeeperCapability` 交上来，骨架（decision/prompts/turn_executor/agent）只跟
 这份契约打交道。
 
@@ -111,6 +111,15 @@ class SituationBlock:
     render: Callable[[ScenarioModule, dict | None], str]
 
 
+#: 审计钩子：从本轮裁决里挑出该进 `keeper_decision` 结构化日志的字段。
+#:
+#: 🔴 这是第五个钩子，跟 `situation` 一样是**切到一半在真代码里发现漏掉的**。
+#: 没有它，`agent.py` 那行 `logger.info("keeper_decision", ...)` 就得逐个列出
+#: 每个能力的字段——于是"加一个能力不改编排层一行"当场不成立，而且漏了不会
+#: 报错，只是那片能力从此在日志里**隐身**：线上排查时看不出它本轮做没做事。
+AuditFn = Callable[[BaseModel], Mapping[str, object]]
+
+
 #: 执行钩子：拿到本轮裁决，做完自己那部分副作用，返回 (执行报告, 问题清单)。
 #: 报告喂给叙事阶段（叙事必须知道"发生了什么"），问题清单是"裁决里不合法的项"
 #: ——跳过不炸，一并交给叙事自然圆场。
@@ -141,3 +150,5 @@ class KeeperCapability:
     prompt_blocks: Sequence[PromptBlock] = ()
     executors: Sequence[ExecutorHook] = ()
     situations: Sequence[SituationBlock] = ()
+    #: 往 `keeper_decision` 日志贡献的字段（None = 这个能力没什么好审计的）。
+    audit: AuditFn | None = None

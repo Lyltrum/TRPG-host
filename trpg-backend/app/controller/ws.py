@@ -250,26 +250,36 @@ async def _run_opening_ceremony(
     return text
 
 
-async def _broadcast_check_request(room_id: str, notice: CheckRequestNotice) -> None:
-    """广播一次"待掷检定"通知（两段式玩家掷骰）——守秘人裁决需要检定后
-    随叙事一起推给房间，玩家在前端看到卡片、点击掷骰后才真正生成骰值。"""
+def _check_request_envelope(
+    notice: CheckRequestNotice,
+) -> tuple[SanCheckRequestPayload | CheckRequestPayload, str]:
+    """待掷通知 → (payload, 事件类型)。首发广播与重连补发共用同一份组装。"""
     if notice.kind == "san":
-        payload: SanCheckRequestPayload | CheckRequestPayload = SanCheckRequestPayload(
-            player_id=notice.player_id,
-            current_san=None,
-            check_request_id=notice.check_request_id,
-            reason=notice.reason or None,
+        return (
+            SanCheckRequestPayload(
+                player_id=notice.player_id,
+                current_san=None,
+                check_request_id=notice.check_request_id,
+                reason=notice.reason or None,
+            ),
+            "san.check.request",
         )
-        event_type = "san.check.request"
-    else:
-        payload = CheckRequestPayload(
+    return (
+        CheckRequestPayload(
             player_id=notice.player_id,
             skill=notice.skill or "",
             target_value=None,
             check_request_id=notice.check_request_id,
             reason=notice.reason or None,
-        )
-        event_type = "check.request"
+        ),
+        "check.request",
+    )
+
+
+async def _broadcast_check_request(room_id: str, notice: CheckRequestNotice) -> None:
+    """广播一次"待掷检定"通知（两段式玩家掷骰）——守秘人裁决需要检定后
+    随叙事一起推给房间，玩家在前端看到卡片、点击掷骰后才真正生成骰值。"""
+    payload, event_type = _check_request_envelope(notice)
     envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))
     await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
 
@@ -341,7 +351,30 @@ async def _handle_room_join(
     payload = SessionBoundPayload(room_id=room_id, player_id=player_id)
     envelope = ServerEnvelope(type="session.bound", payload=payload.model_dump(by_alias=True))
     await websocket.send_json(envelope.model_dump(by_alias=True))
+    await _resend_pending_checks(db, websocket, room_id)
     return True
+
+
+async def _resend_pending_checks(db: AsyncSession, websocket: WebSocket, room_id: str) -> None:
+    """重连后补发还没掷的检定卡片（真人实测 exec/23 #56）。
+
+    `check.request` 只在裁决那一刻**实时推过一次**。刷新页面或断线重连的人
+    再也收不到它——而队列里那条检定还在，`narrate` 的守卫会一直挡着新一轮，
+    于是对局停在"守秘人等你掷骰、你屏幕上却没有骰子"的死角。
+
+    队列落库（exec/24 §8.1）只解决了"服务端不会忘"，这一半解决"客户端能想起来"
+    ——两个都做了，重启才真的能接着玩。
+
+    只发给**这一条刚绑定的连接**，不广播：别人手上的卡片好好的，重发一遍只会
+    在他们屏幕上多出一张重复卡。
+    """
+    from app.core.keeper.pending import pending_check_manager, to_notice
+
+    for pending in await pending_check_manager.list_all(db, room_id):
+        notice = to_notice(pending)
+        payload, event_type = _check_request_envelope(notice)
+        envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))
+        await websocket.send_json(envelope.model_dump(by_alias=True))
 
 
 async def _handle_chat_send(

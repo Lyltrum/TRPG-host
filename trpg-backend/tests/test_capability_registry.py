@@ -61,6 +61,18 @@ def test_situation_blocks_render_nothing_when_empty() -> None:
     assert registry_pkg.situation_blocks(_MODULE, {"当前场景": "书房"}) == []
 
 
+def test_audit_fields_are_merged_from_every_capability() -> None:
+    """🔴 漏了 audit 不报错，只是那片能力在日志里**隐身**——线上排查时看不出
+    它本轮做没做事。所以这条断言盯的是"注册了就一定进得去"。"""
+    decision = KeeperDecision(thinking="砍中", narration_guidance="写打斗")
+    merged = registry_pkg.audit_fields(decision)
+    for capability in registry_pkg.CAPABILITIES:
+        if capability.audit is None:
+            continue
+        for key in capability.audit(decision):
+            assert key in merged
+
+
 def test_hooks_are_sorted_and_do_not_collide_with_skeleton_steps() -> None:
     """order 的语义：能力钩子与骨架剩下的步骤共用一条数轴，重号就分不出先后。"""
     orders = [hook.order for hook in registry_pkg.executors()]

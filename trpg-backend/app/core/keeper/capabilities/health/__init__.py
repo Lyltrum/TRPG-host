@@ -7,6 +7,7 @@
 | `schema.py` | 裁决器**能说什么**（`hp_changes` 字段片段） |
 | `prompt.py` | 裁决器**什么时候说**（规则 3b + 输出示例那一行） |
 | `executor.py` | 说了之后**世界怎么变**（角色卡 / NPC 状态表两条记账） |
+| `schema.audit_fields` | 本轮动没动手，进 `keeper_decision` 日志 |
 | `npc_state.py` | NPC 血量的存储形态与寻址（白名单 npc id） |
 | `test_health_capability.py` | 上面四件事各自的验收 |
 
@@ -17,7 +18,11 @@
 from app.core.keeper.capabilities.health.executor import execute_hp_changes
 from app.core.keeper.capabilities.health.npc_state import format_npc_states
 from app.core.keeper.capabilities.health.prompt import PROMPT_BLOCKS
-from app.core.keeper.capabilities.health.schema import FIELD_CAPABILITIES, HealthDecisionFields
+from app.core.keeper.capabilities.health.schema import (
+    FIELD_CAPABILITIES,
+    HealthDecisionFields,
+    audit_fields,
+)
 from app.core.keeper.registry import ExecutorHook, KeeperCapability, SituationBlock
 
 CAPABILITY = KeeperCapability(
@@ -37,4 +42,5 @@ CAPABILITY = KeeperCapability(
             render=format_npc_states,
         ),
     ),
+    audit=audit_fields,
 )

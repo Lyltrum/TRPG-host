@@ -20,10 +20,14 @@ def _character(**overrides) -> Character:  # noqa: ANN003
         "occupation": "罪犯-独行罪犯",
         "age": 32,
         "attributes": {"STR": 60, "DEX": 70, "EDU": 50},
-        "derived_stats": {"HP": 14, "SAN": 50, "MP": 10},
+        "derived_stats": {"HP": 14, "SAN": 50, "MP": 10, "DB": "+1D4", "Build": 1, "MOV": 8},
         "skills": {"stealth": 65, "locksmith": 55, "spot-hidden": 40},
         "background": "",
         "background_detail": None,
+        "gender": "男",
+        "residence": "",
+        "birthplace": "",
+        "equipment": [],
     }
     defaults.update(overrides)
     return Character(**defaults)
@@ -97,3 +101,46 @@ def test_sheet_reaches_the_turn_input_block() -> None:
     assert "罪犯-独行罪犯" in block
     assert "潜行 65" in block
     assert "背景：未填写" in block
+
+
+# ── 战斗原语 / 装备 / 出身（exec/23 #55 第二轮）──
+
+
+def test_combat_primitives_are_included() -> None:
+    """🔴 DB／体格／移动早就算好存在 derived_stats 里，第一版漏了。
+
+    裁决器已经能发起对抗检定、能给 NPC 扣血——它在写一拳的后果，不能不知道
+    这拳带 +1D4 还是 0。追逐战同理，比的是 MOV。
+    """
+    text = format_sheet("张家豪", _character(), RULESET)
+    assert "伤害加值 +1D4" in text
+    assert "体格 1" in text
+    assert "移动 8" in text
+
+
+def test_attributes_are_included() -> None:
+    """机制上用不着（掷骰查库），叙事上要：SIZ 决定钻不钻得过缝隙。"""
+    text = format_sheet("张家豪", _character(), RULESET)
+    assert "力量60" in text and "敏捷70" in text
+
+
+def test_equipment_absence_is_stated() -> None:
+    """🔴 装备空了也要说。不说的话模型会默认他掏得出手电筒/武器——跟空背景
+    诱发编造个人史是同一类。有没有光源直接决定一段叙事成不成立。"""
+    assert "随身：未列" in format_sheet("张家豪", _character(), RULESET)
+    text = format_sheet("张家豪", _character(equipment=["手电筒", "左轮手枪"]), RULESET)
+    assert "随身：手电筒、左轮手枪" in text
+
+
+def test_origin_is_omitted_when_blank() -> None:
+    """居住地/出生地空着**不渲染**——它不像背景那样是编造诱因，写一行
+    「未填写」只是噪音。这个差别是有意的。"""
+    assert "出身" not in format_sheet("张家豪", _character(), RULESET)
+    text = format_sheet("张家豪", _character(residence="阿卡姆"), RULESET)
+    assert "出身：居住地阿卡姆" in text
+
+
+def test_gender_rides_in_the_head_line_and_is_optional() -> None:
+    """称呼要用（他/她），现在模型只能靠名字猜。"""
+    assert "，男）" in format_sheet("张家豪", _character(), RULESET)
+    assert "，男）" not in format_sheet("张家豪", _character(gender=None), RULESET)

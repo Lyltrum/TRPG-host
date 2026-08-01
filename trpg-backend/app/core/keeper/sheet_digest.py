@@ -72,6 +72,30 @@ def _background(character: Character) -> str:
     return "；".join(parts)
 
 
+def _attributes(character: Character, ruleset: RulesetRead) -> str:
+    """九项属性原值。机制上用不着（掷骰直接查库），叙事上要——SIZ 决定钻不钻得过
+    缝隙、STR 决定推不推得开门，真人 KP 是照着卡面判这些的。"""
+    values = character.attributes or {}
+    parts = [f"{a.label}{values[a.key]}" for a in ruleset.attributes if values.get(a.key)]
+    return " ".join(parts)
+
+
+def _combat(character: Character) -> str:
+    """COC7 的战斗/追逐原语：伤害加值、体格、移动力。
+
+    🔴 这三项**早就算好存在 `derived_stats` 里**，第一版却只渲染了 HP/SAN/MP。
+    而裁决器已经能发起对抗检定、能给 NPC 扣血（exec/19 #38/#39）——它在写一拳
+    的后果，却不知道这拳带 +1D4 还是 0。
+    """
+    derived = character.derived_stats or {}
+    parts = [
+        f"{label} {derived[key]}"
+        for label, key in (("伤害加值", "DB"), ("体格", "Build"), ("移动", "MOV"))
+        if derived.get(key) is not None
+    ]
+    return "／".join(parts)
+
+
 def format_sheet(nickname: str, character: Character | None, ruleset: RulesetRead) -> str:
     """渲染一个调查员的档案（多行，供名单块逐条展开）。"""
     if character is None or not character.name:
@@ -86,14 +110,35 @@ def format_sheet(nickname: str, character: Character | None, ruleset: RulesetRea
     head = f"{nickname}（角色：{character.name}，{character.occupation or '无职业'}"
     if character.age:
         head += f"，{character.age}岁"
+    if character.gender:
+        head += f"，{character.gender}"
     head += "）"
 
     lines = [head]
+    origin = "、".join(
+        f"{label}{value}"
+        for label, value in (("居住地", character.residence), ("出生地", character.birthplace))
+        if (value or "").strip()
+    )
+    # 居住地/出生地有值才渲染：空着不会诱发编造，写一行「未填写」只是噪音。
+    # 这跟背景的处理**故意不同**（见下）。
+    if origin:
+        lines.append(f"  出身：{origin}")
+    attributes = _attributes(character, ruleset)
+    if attributes:
+        lines.append(f"  属性：{attributes}")
     if vitals:
         lines.append(f"  当前：{vitals}")
+    combat = _combat(character)
+    if combat:
+        lines.append(f"  体能：{combat}")
     skills = _top_skills(character, ruleset)
     if skills:
         lines.append(f"  擅长：{skills}")
+    # 🔴 装备**空了也要说**：不说的话模型会默认他掏得出手电筒/武器，那跟空背景
+    # 诱发编造个人史是同一类问题。有没有光源、有没有枪，直接决定一段叙事成不成立。
+    equipment = [e for e in (character.equipment or []) if str(e).strip()]
+    lines.append(f"  随身：{'、'.join(str(e) for e in equipment)}" if equipment else "  随身：未列")
     background = _background(character)
     # 🔴 空背景要**说出来**，不能省略这一行：省略等于让模型自己填空，而它
     # 填出来的会是一段以既成事实口吻讲述的、谁都没同意过的个人史。

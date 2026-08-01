@@ -28,6 +28,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from app.core.keeper.capabilities.agenda.schema import AgendaDecisionFields
 from app.core.keeper.capabilities.health.schema import HealthDecisionFields
 from app.core.keeper.registry import DecisionModel
 
@@ -141,7 +142,7 @@ class StealthChange(DecisionModel):
     hidden: bool = Field(description="true=潜行成功进入隐匿；false=现身/被发现")
 
 
-class KeeperDecision(HealthDecisionFields, DecisionModel):
+class KeeperDecision(AgendaDecisionFields, HealthDecisionFields, DecisionModel):
     """裁决阶段的完整输出契约。
 
     所有列表字段默认空——"本轮不需要检定"表现为 `checks=[]` 加上 `thinking`
@@ -180,9 +181,6 @@ class KeeperDecision(HealthDecisionFields, DecisionModel):
     stealth: list[StealthChange] = Field(
         default_factory=list,
         description="潜行状态变化：谁藏起来了 / 谁现身或被发现了（没变化时留空数组）",
-    )
-    agenda_fired: list[str] = Field(
-        default_factory=list, description="本轮真正发生的议程事件 id（不预告）"
     )
     # 路线 5：本轮玩家挣得后可揭开的密级配对 id（须存在于 module.visibility_pairs）
     visibility_revealed: list[str] = Field(

@@ -29,7 +29,6 @@ from app.core.keeper.subject import KEEPER, Subject, authorize_decision, sanitiz
 from app.core.keeper.tools import (
     _resolve_skill_target,
     clear_current_node_impl,
-    mark_agenda_fired_impl,
     mark_visibility_revealed_impl,
     move_player_impl,
     set_current_node_impl,
@@ -53,7 +52,6 @@ _SKELETON_STEP_ORDERS = {
     "current_node": 30.0,
     "moves": 40.0,
     "stealth": 50.0,
-    "agenda": 60.0,
     "visibility": 70.0,
     "phase": 80.0,
 }
@@ -82,9 +80,6 @@ async def execute_side_effects(
       "发生了什么"才能如实写；
     - 问题清单：裁决里不合法的项（找不到的玩家 / 未知议程 id）**跳过不炸**，
       记下来一并喂给叙事阶段让它自然圆场；同时进日志供排查。
-
-    议程 once 去重下沉在 mark_agenda_fired_impl（它拿得到 deps.module 与现值），
-    这里只做「id 不存在 → issue」。
 
     执行是顺序的（不并发），tools 层的 write_lock 因此在这条路径上只是冗余
     保险——保留它是因为 `*_impl` 还可能被未来的并发调用方复用。
@@ -163,21 +158,6 @@ async def execute_side_effects(
             except KeeperToolError as exc:
                 issues.append(f"潜行状态未执行：{exc}")
 
-    async def _step_agenda() -> None:
-        # 议程触发：只校验 id 合法性，once 幂等由 mark_agenda_fired_impl 兜底。
-        if decision.agenda_fired:
-            valid_ids: list[str] = []
-            for eid in decision.agenda_fired:
-                if deps.module.agenda_by_id(eid) is None:
-                    issues.append(f"议程事件未执行：剧本里没有 id={eid}")
-                    continue
-                valid_ids.append(eid)
-            if valid_ids:
-                try:
-                    report.append(await mark_agenda_fired_impl(deps, valid_ids))
-                except KeeperToolError as exc:
-                    issues.append(f"议程事件未执行：{exc}")
-
     async def _step_visibility() -> None:
         # 密级配对揭开（路线 5）
         if decision.visibility_revealed:
@@ -219,7 +199,6 @@ async def execute_side_effects(
             ("current_node", _step_current_node),
             ("moves", _step_moves),
             ("stealth", _step_stealth),
-            ("agenda", _step_agenda),
             ("visibility", _step_visibility),
             ("phase", _step_phase),
         )

@@ -90,15 +90,6 @@ _SKELETON_RULES: tuple[tuple[float, str], ...] = (
         """7. **检定结果结算**：游戏历史末尾若有尚未被叙述的检定或理智结果，本轮任务是基于该结果裁决后续（成功给成功的信息，失败给失败的代价；目击恐怖之物时追加 san_checks）——**绝不重复发起刚刚已出结果的同一项检定**。""",
     ),
     (
-        8.0,
-        """8. **议程与游戏内时间**：世界不只随玩家行动而动，还有自己的时间表。
-   ①每轮维护 keeper_state 的「游戏内时间」（如"第2天 夜晚"）——用 state_updates 写（subject 填 world），剧情推进到新的时段就更新；
-   ②局面块的「议程状态」列出尚未发生的事件及其触发条件（自由文本描述）；你对照 keeper_state 的游戏内时间与当前局面，判断某条的触发条件是否在本轮达成，达成就把它的 id 写进 agenda_fired，并在 narration_guidance 里指示叙事者把这件事呈现出来；
-   ③agenda_fired 只写"本轮真的发生了"的——不预告、不提前铺垫；
-   ④已发生区里的事件不要再触发（once），也不要在叙事里当新事件重讲；
-   ⑤议程事件**不依赖玩家在场**：玩家没去监视，事件照样发生，玩家事后才看到痕迹（这正是时间压力的来源）。""",
-    ),
-    (
         9.0,
         """9. **密级配对（Visibility）**：局面块的「密级配对状态」列出尚未揭开 / 已揭开的 pair。
    玩家通过成功检定或明确剧情挣得 public 侧信息时，把对应 pair 的 id 写入 visibility_revealed；
@@ -166,7 +157,6 @@ _SKELETON_OUTPUT_EXAMPLE: tuple[tuple[float, str], ...] = (
     (50, '  "current_node_id": "some-node-id"'),
     (60, '  "moves": []'),
     (70, '  "stealth": []'),
-    (80, '  "agenda_fired": ["some-agenda-id"]'),
     (90, '  "visibility_revealed": ["pair-id"]'),
     (100, '  "opening_complete": false'),
     (110, '  "ending_reached": null'),
@@ -281,7 +271,6 @@ def format_turn_input(
     roster: list[str],
     player_nickname: str,
     utterance: str,
-    agenda_status: str = "",
     visibility_status: str = "",
     phase_status: str = "",
     ledger_status: str = "",
@@ -299,7 +288,7 @@ def format_turn_input(
     名单必须显式给出：真实 DeepSeek 冒烟里 agent 曾把单人局幻觉成"你们三人"
     ——桌上有几个人不该靠猜。
 
-    agenda/visibility/phase/ledger/chapters 默认空 → 整块不渲染（旧调用点行为不变，
+    visibility/phase/ledger/chapters 默认空 → 整块不渲染（旧调用点行为不变，
     短模组开局时输出也不会变脏）。已经垂直切出去的能力不走这些参数，走
     `capability_blocks`（成品文本 + order，由 `capabilities.situation_blocks`
     渲染），空内容同样整块不渲染。
@@ -315,7 +304,6 @@ def format_turn_input(
     )
     history_text = "\n".join(history_lines) if history_lines else "（无）"
     phase_block = f"## 对局阶段\n{phase_status}\n\n" if phase_status else ""
-    agenda_block = f"## 议程状态\n{agenda_status}\n\n" if agenda_status else ""
     visibility_block = f"## 密级配对状态\n{visibility_status}\n\n" if visibility_status else ""
     # 事实账本（exec/14 P4）：已经被调查员确认拿到的线索。**代码记账**，
     # 不随 200 条历史窗口滑走——长战役里第 3 轮拿到的线索第 300 轮仍在这里。
@@ -367,7 +355,6 @@ def format_turn_input(
         (10.0, locations_block),
         (30.0, phase_block),
         (40.0, endings_block),
-        (50.0, agenda_block),
         (60.0, visibility_block),
         (70.0, chapters_block),
         (80.0, ledger_block),

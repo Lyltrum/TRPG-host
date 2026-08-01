@@ -18,8 +18,15 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, format_agenda_status, load_fired_agenda
+from app.core.keeper.capabilities import situation_blocks
+from app.core.keeper.capabilities.agenda.executor import mark_agenda_fired_impl
+from app.core.keeper.capabilities.agenda.state import (
+    AGENDA_FIRED_KEY,
+    format_agenda_status,
+    load_fired_agenda,
+)
 from app.core.keeper.decision import KeeperDecision
+from app.core.keeper.deps import KeeperDeps
 from app.core.keeper.module_loader import (
     load_module,
     public_story_from_module,
@@ -28,12 +35,12 @@ from app.core.keeper.module_loader import (
 )
 from app.core.keeper.prompts import format_turn_input
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
-from app.core.keeper.tools import KeeperDeps, mark_agenda_fired_impl
 from app.core.keeper.turn_executor import execute_side_effects
 from app.models.event import Event
 from app.models.room import Character, Player, Room
 
-_FIXTURE_MODULE = Path(__file__).parent / "fixtures" / "keeper_module.json"
+# 测试夹具仍集中放在 tests/fixtures（模组 JSON 是几片能力共用的）
+_FIXTURE_MODULE = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "keeper_module.json"
 
 _db_path = Path(tempfile.mkdtemp(prefix="trpg-keeper-agenda-test-")) / "agenda.db"
 _engine = create_async_engine(f"sqlite+aiosqlite:///{_db_path}", poolclass=NullPool)
@@ -368,36 +375,40 @@ def test_keeper_decision_agenda_fired_defaults_empty() -> None:
     assert d.agenda_fired == []
 
 
-# ── 10. format_turn_input 默认不渲染议程块 ──────────
+# ── 10. 议程块进局面块（走 situation 钩子） ──────────
 
 
-def test_format_turn_input_empty_agenda_status_omits_block() -> None:
+def test_module_without_agenda_renders_no_block(tmp_path: Path) -> None:
+    """剧本没有议程时整块（连标题）不渲染。"""
+    minimal = {
+        "meta": {"id": "old", "title": "旧"},
+        "kp_truth": {"summary": "x"},
+        "player_intro": "y",
+    }
+    path = tmp_path / "no_agenda.json"
+    path.write_text(json.dumps(minimal, ensure_ascii=False), encoding="utf-8")
+    module = load_module(path)
+    assert situation_blocks(module, None) == []
     text = format_turn_input(
-        {"当前场景": "门厅"},
-        ["阿福：我检查脚印"],
-        ["阿福（角色：侦探福）"],
-        "阿福",
-        "我下地下室",
-        agenda_status="",
+        None, [], ["阿福"], "阿福", "你好", capability_blocks=situation_blocks(module, None)
     )
     assert "议程状态" not in text
-    # 旧调用点不传 agenda_status 也应如此
-    text2 = format_turn_input({"k": "v"}, [], ["阿福"], "阿福", "你好")
-    assert "议程状态" not in text2
 
 
-def test_format_turn_input_with_agenda_status_renders_block() -> None:
+def test_agenda_block_lands_between_world_state_and_history() -> None:
+    """🔴 位置由 SituationBlock 的 order 决定，不再由 format_turn_input 里
+    一行硬编码的 f-string 决定——切分前后这段文本必须逐字节相同。"""
+    module = load_module(str(_FIXTURE_MODULE))
     text = format_turn_input(
         None,
         [],
         ["阿福"],
         "阿福",
         "等到入夜",
-        agenda_status="- night-1-footprints · 第一夜",
+        capability_blocks=situation_blocks(module, None),
     )
     assert "## 议程状态" in text
     assert "night-1-footprints" in text
-    # 块位置：世界状态之后、游戏历史之前
     state_pos = text.index("世界状态笔记")
     agenda_pos = text.index("议程状态")
     history_pos = text.index("游戏历史")

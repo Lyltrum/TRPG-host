@@ -36,8 +36,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, format_agenda_status, load_fired_agenda
-from app.core.keeper.capabilities import audit_fields, situation_blocks
+from app.core.keeper.capabilities import audit_fields, hidden_state_keys, situation_blocks
 from app.core.keeper.chapter import (
     load_chapters,
     record_chapter,
@@ -351,16 +350,15 @@ class KeeperAgent(Narrator):
                 PHASE_KEY: PHASE_OPENING,
             }
 
-        # 议程 / 密级 / 阶段状态由代码注入——once 与揭开记账不靠模型自觉。
-        fired = load_fired_agenda(keeper_state)
-        agenda_status = format_agenda_status(self._module, fired)
+        # 密级 / 阶段状态由代码注入——揭开记账不靠模型自觉。
         revealed = load_revealed_visibility(keeper_state)
         visibility_status = format_visibility_status(
             self._module, revealed, observer_id=context.player_id
         )
         phase_status = format_phase_status(phase, ending_id)
+        # 已切出去的能力自己声明哪些键不该原样喂给模型（exec/27 阶段 3）。
         _hidden_keys = {
-            AGENDA_FIRED_KEY,
+            *hidden_state_keys(),
             VISIBILITY_REVEALED_KEY,
             PHASE_KEY,
             ENDING_ID_KEY,
@@ -410,7 +408,6 @@ class KeeperAgent(Narrator):
                 roster,
                 nickname,
                 utterance,
-                agenda_status=agenda_status,
                 visibility_status=visibility_status,
                 phase_status=phase_status,
                 ledger_status=ledger,
@@ -696,7 +693,6 @@ class KeeperAgent(Narrator):
             san_checks=len(decision.san_checks),
             state_updates=[u.key for u in decision.state_updates],
             moves=[f"{m.player}→{m.node_id}" for m in decision.moves],
-            agenda_fired=decision.agenda_fired,
             visibility_revealed=decision.visibility_revealed,
             opening_complete=decision.opening_complete,
             ending_reached=decision.ending_reached,

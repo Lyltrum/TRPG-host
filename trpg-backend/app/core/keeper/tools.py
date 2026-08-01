@@ -26,7 +26,7 @@ from sqlalchemy import select
 
 from app.core.coc7_rules import evaluate_skill_base
 from app.core.keeper import dice, module_loader
-from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, load_fired_agenda
+from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.deps import (
     KeeperDeps,
     KeeperToolError,
@@ -64,12 +64,11 @@ from app.models.room import Character, Player, Room
 logger = structlog.get_logger()
 
 # keeper_state 里的系统保留 key：由代码写，不交给 LLM 的 state_updates。
-# 每个 KEY 常量的权威定义在各自的状态编解码模块（agenda_state.py/
-# scene_state.py/phase.py/visibility.py），这里只汇总成"禁止 state_updates
-# 改写"的集合——本文件（tools.py）是这些 KEY 唯一允许写入的地方。
-_RESERVED_STATE_KEYS = frozenset(
+# 已经垂直切出去的能力自己声明（`reserved_state_keys` 钩子，exec/27 阶段 3）；
+# 剩下的还散在各状态编解码模块（scene_state.py/phase.py/visibility.py），
+# 跟着对应能力一起搬走。
+_RESERVED_STATE_KEYS = reserved_state_keys() | frozenset(
     {
-        AGENDA_FIRED_KEY,
         VISIBILITY_REVEALED_KEY,
         PHASE_KEY,
         ENDING_ID_KEY,
@@ -588,53 +587,6 @@ async def set_stealth_impl(deps: KeeperDeps, player_name: str, hidden: bool) -> 
             db, deps, "keeper.stealth", {"player": player.nickname, "hidden": hidden}
         )
     return f"{player.nickname}{'进入隐匿' if hidden else '不再隐匿'}"
-
-
-async def mark_agenda_fired_impl(deps: KeeperDeps, event_ids: list[str]) -> str:
-    """把议程事件标记为已触发（幂等：已在列表里且 once=True 的忽略）。
-
-    once 语义必须由代码保证：LLM 的 state_updates 靠不住，实测多数轮不记。
-    once=False 的事件允许重复触发——仍写事件留痕，但不重复塞进列表。
-
-    必须走 write_lock（与 update_state_impl 一致——JSON 列是整体重新赋值，
-    读改写并发会丢更新，v1 冒烟真的踩过）。
-    """
-    if not event_ids:
-        return "议程事件触发：（无）"
-
-    async with deps.write_lock, deps.session_factory() as db:
-        room = await db.get(Room, deps.room_id)
-        if room is None:
-            raise KeeperToolError("房间不存在")
-
-        current_state = dict(room.keeper_state or {})
-        already = load_fired_agenda(current_state)
-        newly: list[str] = []
-        report_parts: list[str] = []
-
-        for eid in event_ids:
-            event = deps.module.agenda_by_id(eid)
-            title = (event.title if event is not None else None) or eid
-            # once=True 且已在列表 → 幂等跳过（不是错误，只是不重复记账）
-            if event is not None and event.once and eid in already:
-                report_parts.append(f"{eid}（{title}，已触发过）")
-                continue
-            # once=False 或首次：进列表（once=False 已在列表里时不重复塞）
-            if eid not in already:
-                already.append(eid)
-                newly.append(eid)
-            report_parts.append(f"{eid}（{title}）")
-
-        if newly:
-            # ⚠️ JSON 列整体重新赋值（同 update_state_impl / _write_stat）。
-            current_state[AGENDA_FIRED_KEY] = ", ".join(already)
-            room.keeper_state = current_state
-            await record_event(db, deps, "keeper.agenda", {"event_ids": newly})
-        # 纯跳过（全部已触发过）时不写库、不留痕，但返回可读报告让调用方知情。
-
-    if not report_parts:
-        return "议程事件触发：（无）"
-    return "议程事件触发：" + "、".join(report_parts)
 
 
 async def mark_visibility_revealed_impl(

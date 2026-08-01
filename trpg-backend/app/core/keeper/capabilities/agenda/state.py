@@ -1,10 +1,9 @@
 """议程状态编解码（提案①）。
 
-跟 `phase.py`/`visibility.py` 同一套三件套模式：KEY 常量 + `load_*`
-（从 `keeper_state` 解析）+ `format_*`（渲染进裁决/叙事的局面块）。
-这三个文件是 keeper_state 每类保留状态的统一范本——写入侧永远在
-`tools.py` 的对应 `*_impl`（这里是 `mark_agenda_fired_impl`），是唯一
-允许改 `keeper_state`/DB 的地方。
+KEY 常量 + `load_*`（从 `keeper_state` 解析）+ `format_*`（渲染进局面块）。
+写入侧在同目录的 `executor.py`（`mark_agenda_fired_impl`），那是唯一允许改
+这个键的地方；`AGENDA_FIRED_KEY` 通过注册表的 `reserved_state_keys` 钩子
+声明出去，`state_updates` 碰不到它。
 """
 
 from __future__ import annotations
@@ -60,3 +59,12 @@ def format_agenda_status(module: ScenarioModule, fired_ids: list[str]) -> str:
     if done_lines:
         parts.append("### 已经发生\n" + "\n".join(done_lines))
     return "\n\n".join(parts)
+
+
+def render_agenda_status(module: ScenarioModule, keeper_state: dict | None) -> str:
+    """注册进局面块的 situation 钩子：从 `keeper_state` 直接渲染。
+
+    `once` 语义和"别重复触发"是硬约束，靠模型从剧本全文里自己记等于没有——
+    所以这块由代码每轮算好摆在它眼前。
+    """
+    return format_agenda_status(module, load_fired_agenda(keeper_state))

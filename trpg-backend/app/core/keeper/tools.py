@@ -10,7 +10,7 @@ docstring）。`*_impl` 保持普通 async 函数形态，可直接单测。
 每类保留状态自己的 KEY 常量 + `load_*`/`format_*` 不在本文件——那些是
 L2 状态编解码，各自有独立模块（phase.py/visibility.py/agenda_state.py/
 scene_state.py），本文件只 import 它们的 KEY 常量用于写入 + 拼进
-`_RESERVED_STATE_KEYS`。
+`RESERVED_STATE_KEYS`。
 
 服务端权威原则：骰子由 `dice.py` 掷（LLM 只消费结果、改不了点数），
 HP/San 修改真实写 `characters` 表，所有操作都写一行 `events` 表留痕
@@ -63,11 +63,15 @@ from app.models.room import Character, Player, Room
 
 logger = structlog.get_logger()
 
-# keeper_state 里的系统保留 key：由代码写，不交给 LLM 的 state_updates。
+# keeper_state 里的系统保留 key：由代码写。**唯一来源**——`state_updates` 不许
+# 写它们（下面 update_state_impl），`agent` 也不把它们原样喂给模型（那边直接
+# 引用这个集合，不再自己维护第二张清单：两张手维护的清单实测已经分叉过一次，
+# `NPC状态` 两张都漏了，模型一条 state_updates 就能把血量记账清零）。
+#
 # 已经垂直切出去的能力自己声明（`reserved_state_keys` 钩子，exec/27 阶段 3）；
 # 剩下的还散在各状态编解码模块（scene_state.py/phase.py/visibility.py），
 # 跟着对应能力一起搬走。
-_RESERVED_STATE_KEYS = reserved_state_keys() | frozenset(
+RESERVED_STATE_KEYS = reserved_state_keys() | frozenset(
     {
         VISIBILITY_REVEALED_KEY,
         PHASE_KEY,
@@ -77,6 +81,23 @@ _RESERVED_STATE_KEYS = reserved_state_keys() | frozenset(
         HIDDEN_PLAYERS_KEY,
     }
 )
+
+
+def visible_keeper_state(keeper_state: dict | None) -> dict | None:
+    """喂给模型的那份世界状态笔记：滤掉所有代码记账的键。
+
+    🔴 与 `RESERVED_STATE_KEYS`（`state_updates` 不许写）**共用同一个集合**，
+    不是两张各自维护的清单。此前是两张，实测已经分叉：`NPC状态` 两张都漏了，
+    于是模型既看得见那个 dict 的原始形态，又能用一条 `state_updates` 把它覆盖
+    成字符串、让血量记账静默清零（exec/27 阶段 3 复查复现）。
+
+    这些键要么是机器格式（逐人位置是 `player_id@node_id`、隐匿玩家是 player id），
+    要么已经由 situation 钩子渲染成人话摆在局面块里——原样再喂一遍既是噪声也是
+    泄漏。空字典/None 原样返回（"尚无记录"由渲染层表达）。
+    """
+    if not keeper_state:
+        return keeper_state
+    return {k: v for k, v in keeper_state.items() if k not in RESERVED_STATE_KEYS}
 
 
 # ── 内部查询辅助 ──────────────────────────────────────
@@ -389,7 +410,7 @@ async def update_state_impl(
     的说明：没有主体的状态既不可裁剪也无法回答"谁看得见"（exec/24 §8.2）。
     """
     # write_lock：见 KeeperDeps 注释——SDK 并行工具调用下「读-改-写」必须串行。
-    if key in _RESERVED_STATE_KEYS:
+    if key in RESERVED_STATE_KEYS:
         raise KeeperToolError(f"状态键 {key!r} 由系统记账，不能通过 state_updates 写入")
     resolved = resolve_state_subject(deps.module, subject)
     if resolved is None:

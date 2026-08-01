@@ -227,3 +227,46 @@ def test_endings_status_is_empty_for_a_module_without_endings() -> None:
     """没有结局的模组 → 空串 → 整块不渲染（退化保证）。"""
     stripped = _MODULE.model_copy(update={"endings": []})
     assert format_endings_status(stripped) == ""
+
+
+# ── 代码记账的键不原样喂给模型（exec/27 阶段 3） ─────
+
+
+def test_reserved_keys_are_the_single_source_of_what_the_model_may_not_write() -> None:
+    """🔴 各能力声明的键必须真的进 `RESERVED_STATE_KEYS`。
+
+    此前"不许写"和"不喂给模型"是两张手维护的清单，实测已经分叉：`NPC状态`
+    两张都漏了。现在只有这一张，`agent` 直接引用它算 `visible_state`。
+    """
+    from app.core.keeper.capabilities import CAPABILITIES
+    from app.core.keeper.tools import RESERVED_STATE_KEYS
+
+    for capability in CAPABILITIES:
+        for key in capability.reserved_state_keys:
+            assert key in RESERVED_STATE_KEYS, f"{capability.name} 声明的 {key!r} 没进保留集合"
+
+
+def test_the_model_never_sees_a_code_maintained_key_verbatim() -> None:
+    """局面块的「世界状态笔记」里不许出现任何保留键。
+
+    它们要么是机器格式（逐人位置是 `player_id@node_id`、隐匿玩家是 player id），
+    要么已经由 situation 钩子渲染成人话——原样再喂一遍既是噪声也是泄漏。
+    """
+    from app.core.keeper.prompts import format_turn_input
+    from app.core.keeper.tools import RESERVED_STATE_KEYS, visible_keeper_state
+
+    keeper_state = dict.fromkeys(RESERVED_STATE_KEYS, "机器格式值")
+    keeper_state["当前场景"] = "书房"
+    # 🔴 过滤必须由**被测函数**做。第一版在这里自己写了一遍过滤，于是变异体
+    # （把 visible_keeper_state 改成原样返回）照样绿——测试根本没走进被测代码。
+    text = format_turn_input(visible_keeper_state(keeper_state), [], ["阿福"], "阿福", "我看看")
+    assert "书房" in text
+    for key in RESERVED_STATE_KEYS:
+        assert key not in text
+
+
+def test_empty_state_passes_through_untouched() -> None:
+    from app.core.keeper.tools import visible_keeper_state
+
+    assert visible_keeper_state(None) is None
+    assert visible_keeper_state({}) == {}

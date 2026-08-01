@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background_writer import BackgroundWriter
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.coc7_rules import (
     GENERATION_POINT_BUY,
@@ -41,6 +42,7 @@ from app.core.coc7_rules import (
 )
 from app.dto.game import OccupationSpec, RulesetRead
 from app.models.room import Character, Player, Room
+from app.service.character_background import generate_background
 
 #: AI 调查员固定 30 岁。COC7 的年龄修正在 20–39 岁区间内为零，于是「分配值」
 #: 与「有效值」两份属性完全相同——不需要为 AI 玩家维护年龄修正那套双份记账
@@ -225,6 +227,7 @@ async def add_ai_player_to_room(
     nickname: str | None = None,
     occupation_name: str | None = None,
     seed: int | None = None,
+    writer: BackgroundWriter | None = None,
 ) -> Player:
     """房主给房间加一个 AI 队友（API 入口，带鉴权与人数/阶段约束）。
 
@@ -250,7 +253,12 @@ async def add_ai_player_to_room(
             f"AI-{len(existing) + 1}",
         )
     return await create_ai_player(
-        db, room_id, nickname=nickname, occupation_name=occupation_name, seed=seed
+        db,
+        room_id,
+        nickname=nickname,
+        occupation_name=occupation_name,
+        seed=seed,
+        writer=writer,
     )
 
 
@@ -261,6 +269,7 @@ async def create_ai_player(
     nickname: str,
     occupation_name: str | None = None,
     seed: int | None = None,
+    writer: BackgroundWriter | None = None,
 ) -> Player:
     """在房间里加一个 AI 玩家，并给它一张**规则上合法**的完成态角色卡。
 
@@ -282,6 +291,18 @@ async def create_ai_player(
     player = Player(room_id=room_id, nickname=nickname, is_ai=True, has_character=True, ready=True)
     db.add(player)
     await db.flush()
+    # AI 队友跟真人的一键生成走同一条背景路径：它的有限视角里也只有职业和技能
+    # （`ai_actor.build_view`），有段过去它才像个人而不是一具技能表。
+    written = await generate_background(
+        db,
+        room_id,
+        writer,
+        name=nickname,
+        occupation=occupation.name,
+        age=_AI_AGE,
+        skills=skills,
+    )
+    background, background_detail = written if written is not None else (None, None)
     db.add(
         Character(
             room_id=room_id,
@@ -298,6 +319,8 @@ async def create_ai_player(
             derived_stats=compute_derived_stats(attributes, _AI_AGE),
             skills=skills,
             generation_method=GENERATION_POINT_BUY,
+            background=background,
+            background_detail=background_detail,
         )
     )
     await db.commit()

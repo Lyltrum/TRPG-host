@@ -8,7 +8,7 @@
 
 from typing import NoReturn
 
-from fastapi import APIRouter, Body, Depends, Header, Query, status
+from fastapi import APIRouter, Body, Depends, Header, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.controller.dependencies import get_current_user
@@ -155,6 +155,7 @@ async def get_room_info(
 @router.post("/{room_id}/ai-players", response_model=ApiResponse[RoomPlayerRead], status_code=201)
 async def add_ai_player(
     room_id: str,
+    request: Request,
     body: AiPlayerCreateBody | None = None,
     reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
     db: AsyncSession = Depends(get_db),
@@ -176,6 +177,7 @@ async def add_ai_player(
             nickname=payload.nickname,
             occupation_name=payload.occupation,
             seed=payload.seed,
+            writer=getattr(request.app.state, "background_writer", None),
         )
     except room_service.RoomNotFoundError as exc:
         raise AppException(ErrorCode.ROOM_NOT_FOUND, str(exc), status.HTTP_404_NOT_FOUND) from exc
@@ -334,6 +336,7 @@ async def create_character(
 async def quick_build_character(
     room_id: str,
     payload: QuickBuildCharacterBody,
+    request: Request,
     reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[CharacterDraftResult]:
@@ -345,7 +348,11 @@ async def quick_build_character(
     """
     try:
         result = await character_service.quick_build_character(
-            db, room_id, reconnect_token, payload.name
+            db,
+            room_id,
+            reconnect_token,
+            payload.name,
+            writer=getattr(request.app.state, "background_writer", None),
         )
     except character_service.CharacterInvalidError as exc:
         raise AppException(

@@ -365,6 +365,47 @@ async def get_character(
     )
 
 
+class BackgroundUnavailableError(RuntimeError):
+    """背景没能生成出来（没配 key／超时／模型崩）。
+
+    🔴 跟 `quick_build_character` 里的处理**故意相反**：那里写不出来就保持空、
+    卡照常成立（玩家在等的是卡，背景是锦上添花）；这里玩家**主动点了「换一个」**，
+    静默保持原样会让他以为按钮坏了、然后一直点。显式失败，告诉他。
+    """
+
+
+async def regenerate_background(
+    db: AsyncSession,
+    room_id: str,
+    character_id: str,
+    reconnect_token: str | None,
+    writer: BackgroundWriter | None = None,
+) -> CharacterRead:
+    """重摇一次角色背景（exec/25 P1 #5）。
+
+    `exec/20 §1.9` 里定的方向：不打算硬化"写得好不好"——真要管内容质量，
+    该给玩家一个重新生成的按钮，让人来判，而不是让代码去判。
+
+    只重写背景，**属性/技能/职业一个都不动**：玩家想换的是这个人的过去，
+    不是换一张卡（换卡他可以回去重新一键生成）。
+    """
+    character = await _get_own_character(db, room_id, character_id, reconnect_token)
+    written = await generate_background(
+        db,
+        room_id,
+        writer,
+        name=character.name or "",
+        occupation=character.occupation or "",
+        age=character.age or 0,
+        skills=character.skills or {},
+    )
+    if written is None:
+        raise BackgroundUnavailableError("背景生成失败")
+    character.background, character.background_detail = written
+    await db.commit()
+    return await get_character(db, room_id, character_id, reconnect_token)
+
+
 async def list_party_characters(
     db: AsyncSession, room_id: str, reconnect_token: str | None
 ) -> list[PartyCharacterRead]:

@@ -77,7 +77,8 @@ export function ConceptStep({
           放在第一步、名字输入框正下方——这是新人唯一确定会看到的一屏。 */}
       <StepSection title="不想一步步来？">
         <p className="text-[12px] text-text-muted mb-2.5">
-          填好上面的角色姓名，点这里由系统随机生成一张完整合法的调查员卡，直接开局。
+          填好上面的角色姓名，点这里由系统随机生成一张完整合法的调查员卡
+          <span className="text-brass-dark">（含一段属于他的过去）</span>，直接开局。
           想自己捏就继续走下面的「下一步」。
         </p>
         <button
@@ -92,7 +93,17 @@ export function ConceptStep({
           <Wand2 className="w-4 h-4" />
           {quickBuilding ? '生成中…' : '一键生成一张角色卡'}
         </button>
-        {!info.name.trim() && (
+        {/* 🔴 真人实测：这一步同步等 7–9.5 秒（背景那次 LLM 调用），而按钮上
+            只有"生成中…"三个字——新人会以为卡住了。说清在等什么，顺带让他知道
+            这条路的产出里有背景故事（exec/25 P1 #4）。 */}
+        {quickBuilding && (
+          <p className="text-[11px] text-text-muted text-center mt-2 leading-[1.6]">
+            正在掷属性、分配技能，
+            <br />
+            并为你的调查员写一段过去，大约十秒。
+          </p>
+        )}
+        {!info.name.trim() && !quickBuilding && (
           <p className="text-[11px] text-text-dim text-center mt-2">请先填写角色姓名</p>
         )}
         {quickBuildError && (

@@ -237,6 +237,96 @@ async def test_quick_build_stores_the_generated_background(
     }
 
 
+async def test_regenerate_replaces_only_the_background(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """重摇只换过去，属性/技能/职业一个都不动——玩家想换的是这个人的经历，
+    不是换一张卡（换卡他可以回去重新一键生成）。"""
+    writer, _ = _writer_with(_FULL_JSON)
+    app.state.background_writer = writer
+
+    room = await create_room(client, nickname="账号昵称")
+    built = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/quick-build",
+        json={"name": "凌铭辉"},
+        headers=reconnect(room["reconnectToken"]),
+    )
+    character_id = built.json()["data"]["characterId"]
+    before = await db_session.get(Character, character_id)
+    assert before is not None
+    attributes, skills, occupation = before.attributes, before.skills, before.occupation_id
+
+    writer2, fake2 = _writer_with(_FULL_JSON.replace("总述", "换过的总述"))
+    app.state.background_writer = writer2
+    response = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/regenerate-background",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert response.status_code == 200, response.text
+    assert fake2.calls == 1
+    assert response.json()["data"]["background"] == "换过的总述"
+
+    db_session.expire_all()
+    after = await db_session.get(Character, character_id)
+    assert after is not None
+    assert after.background == "换过的总述"
+    assert after.attributes == attributes
+    assert after.skills == skills
+    assert after.occupation_id == occupation
+
+
+async def test_regenerate_fails_loudly_when_the_writer_is_down(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """🔴 跟一键生成**故意相反**：那里写不出来就保持空、卡照常成立；这里玩家
+    主动点了「换一个」，静默保持原样会让他以为按钮坏了、然后一直点。
+
+    对照断言：原背景必须**没被清掉**——失败不能顺手把他已有的东西弄没。
+    """
+    writer, _ = _writer_with(_FULL_JSON)
+    app.state.background_writer = writer
+    room = await create_room(client, nickname="账号昵称")
+    built = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/quick-build",
+        json={"name": "凌铭辉"},
+        headers=reconnect(room["reconnectToken"]),
+    )
+    character_id = built.json()["data"]["characterId"]
+
+    broken, _ = _writer_with(RuntimeError("上游 500"))
+    app.state.background_writer = broken
+    response = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/regenerate-background",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert response.status_code == 503, response.text
+
+    db_session.expire_all()
+    character = await db_session.get(Character, character_id)
+    assert character is not None
+    assert character.background == "总述"
+
+
+async def test_regenerate_rejects_someone_elses_character(client: AsyncClient) -> None:
+    """鉴权走 `_get_own_character`：不能重摇别人的卡。"""
+    writer, _ = _writer_with(_FULL_JSON)
+    app.state.background_writer = writer
+    room = await create_room(client, nickname="房主")
+    built = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/quick-build",
+        json={"name": "凌铭辉"},
+        headers=reconnect(room["reconnectToken"]),
+    )
+    character_id = built.json()["data"]["characterId"]
+
+    other = await create_room(client, nickname="别人")
+    response = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/regenerate-background",
+        headers=reconnect(other["reconnectToken"]),
+    )
+    assert response.status_code in (403, 404)
+
+
 async def test_ai_teammate_gets_a_background_too(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

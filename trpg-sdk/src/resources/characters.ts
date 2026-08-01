@@ -61,6 +61,26 @@ export class CharactersResource {
     );
   }
 
+  /**
+   * POST /api/v1/rooms/{roomId}/characters/{characterId}/regenerate-background
+   * — 重摇一次角色背景。
+   *
+   * 只换过去，属性/技能/职业一个都不动（想换整张卡就回去重新一键生成）。
+   * 生成服务不可用时后端返回 503 而不是静默保持原样——玩家主动点了「换一个」，
+   * 没反应会让他以为按钮坏了。
+   */
+  regenerateBackground(
+    roomId: string,
+    characterId: string,
+    reconnectToken: string
+  ): Promise<Character> {
+    return this.client.post<Character>(
+      `/rooms/${roomId}/characters/${characterId}/regenerate-background`,
+      null,
+      this.authenticated(reconnectToken)
+    );
+  }
+
   /** PATCH /api/v1/rooms/{roomId}/characters/{characterId} — 保存建卡向导算好的完整角色数据 */
   save(
     roomId: string,

@@ -72,6 +72,9 @@ class Capability(StrEnum):
     ADJUST_HP = "adjust_hp"
     UPDATE_STATE = "update_state"
     SET_SCENE = "set_scene"
+    #: 「此刻藏着没」。与 SET_SCENE 分开而不是共用一条：玩家向守秘人提问那一轮
+    #: 要收走移动与场景指针，但**不该让藏起来的人现身**（exec/27 阶段 3 · B 族）。
+    SET_HIDING = "set_hiding"
     FIRE_AGENDA = "fire_agenda"
     REVEAL_VISIBILITY = "reveal_visibility"
     ADVANCE_PHASE = "advance_phase"

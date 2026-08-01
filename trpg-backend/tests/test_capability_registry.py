@@ -55,10 +55,24 @@ def test_prompt_blocks_land_in_the_adjudicator_instructions() -> None:
     assert text.index("\n3. ") < text.index("\n3b. ") < text.index("\n4. ")
 
 
-def test_situation_blocks_render_nothing_when_empty() -> None:
-    """没有内容时整块（连标题）不渲染——没记过账的对局，局面块与切分前逐字一致。"""
-    assert registry_pkg.situation_blocks(_MODULE, None) == []
-    assert registry_pkg.situation_blocks(_MODULE, {"当前场景": "书房"}) == []
+def test_situation_blocks_skip_capabilities_with_nothing_to_say() -> None:
+    """render 返回空串时整块（连标题）不渲染——否则局面块里会多出空标题。
+
+    注意不是"状态空就什么都不渲染"：`agenda` 在开局就有话说（它要列出**尚未
+    发生**的事件），而 `health` 要等真有 NPC 掉过血才出现。两种都对。
+    """
+    for keeper_state in (None, {"当前场景": "书房"}):
+        rendered = registry_pkg.situation_blocks(_MODULE, keeper_state)
+        expected = [
+            block
+            for capability in registry_pkg.CAPABILITIES
+            for block in capability.situations
+            if block.render(_MODULE, keeper_state)
+        ]
+        assert len(rendered) == len(expected)
+        assert [order for order, _ in rendered] == sorted(order for order, _ in rendered)
+        for _, text in rendered:
+            assert not text.endswith("\n\n\n"), "空内容却渲染了标题"
 
 
 def test_audit_fields_are_merged_from_every_capability() -> None:

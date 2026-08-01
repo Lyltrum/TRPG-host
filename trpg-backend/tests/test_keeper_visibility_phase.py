@@ -9,7 +9,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.agenda_state import AGENDA_FIRED_KEY
+from app.core.keeper.capabilities.agenda.state import AGENDA_FIRED_KEY
 from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.phase import (
@@ -178,7 +178,7 @@ def test_format_turn_includes_visibility_and_phase() -> None:
         ["调查者"],
         "调查者",
         "搜查门厅",
-        agenda_status="- a · 夜",
+        capability_blocks=[(50.0, "## 议程状态\n- a · 夜\n\n")],
         visibility_status="- pair-x：公开 a ↔ 真相 b",
         phase_status=format_phase_status("investigation"),
         is_heartbeat=True,

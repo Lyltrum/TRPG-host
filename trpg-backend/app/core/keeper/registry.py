@@ -153,5 +153,14 @@ class KeeperCapability:
     prompt_blocks: Sequence[PromptBlock] = ()
     executors: Sequence[ExecutorHook] = ()
     situations: Sequence[SituationBlock] = ()
-    #: 往 `keeper_decision` 日志贡献的字段（None = 这个能力没什么好审计的）。
+    #: 往 `keeper_decision` 日志与 `keeper.decision` 事件贡献的字段
+    #:（None = 这个能力没什么好审计的）。
     audit: AuditFn | None = None
+    #: 这个能力在 `keeper_state` 里占的键：**由代码写，`state_updates` 不许碰**。
+    #: 🔴 第六个钩子，切 `agenda` 时暴露的——`tools._RESERVED_STATE_KEYS` 与
+    #: `agent._hidden_keys` 两处同样在逐个列举各能力的键。漏了后果不小：模型
+    #: 可以用一条 `state_updates` 把代码维护的记账覆盖掉。
+    reserved_state_keys: Sequence[str] = ()
+    #: 这个能力在 `keeper_state` 里**不该原样喂给模型**的键（通常是机器格式，
+    #: 模型看到的是渲染好的 situation 块）。与上一条常常相同但不必然。
+    hidden_state_keys: Sequence[str] = ()

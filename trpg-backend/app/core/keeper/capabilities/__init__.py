@@ -15,6 +15,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel
 
+from app.core.keeper.capabilities.agenda import CAPABILITY as AGENDA
 from app.core.keeper.capabilities.health import CAPABILITY as HEALTH
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.registry import (
@@ -25,8 +26,8 @@ from app.core.keeper.registry import (
     PromptSlot,
 )
 
-#: 已经垂直切出来的能力。其余七个还散在骨架里，逐个切（exec/27 阶段 3）。
-CAPABILITIES: tuple[KeeperCapability, ...] = (HEALTH,)
+#: 已经垂直切出来的能力。其余的还散在骨架里，逐个切（exec/27 阶段 3）。
+CAPABILITIES: tuple[KeeperCapability, ...] = (HEALTH, AGENDA)
 
 
 def field_capabilities() -> dict[str, Capability]:
@@ -78,6 +79,16 @@ def audit_fields(decision: BaseModel) -> dict[str, object]:
                 raise ValueError(f"能力 {capability.name!r} 的审计字段 {key!r} 与别的能力撞名")
             merged[key] = value
     return merged
+
+
+def reserved_state_keys() -> frozenset[str]:
+    """各能力占用的 `keeper_state` 键：`state_updates` 一律不许写。"""
+    return frozenset(k for c in CAPABILITIES for k in c.reserved_state_keys)
+
+
+def hidden_state_keys() -> frozenset[str]:
+    """各能力**不该原样喂给模型**的 `keeper_state` 键。"""
+    return frozenset(k for c in CAPABILITIES for k in c.hidden_state_keys)
 
 
 def registered_schemas() -> Sequence[type[BaseModel]]:

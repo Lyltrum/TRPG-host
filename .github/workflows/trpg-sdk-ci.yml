@@ -4,7 +4,8 @@ name: SDK CI
 # 一样按目录拆开独立 workflow，改哪个包只跑哪个包的检查。
 on:
   push:
-    branches: [main]
+    # feat/keeper-agent 不开 PR，push 是它唯一可能的 CI 触发点。
+    branches: [main, feat/keeper-agent]
     paths:
       - "trpg-sdk/**"
       - ".github/workflows/trpg-sdk-ci.yml"

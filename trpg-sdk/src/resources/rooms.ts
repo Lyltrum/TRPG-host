@@ -11,6 +11,8 @@ import type {
   RoomSummary,
   ReplayEvent,
   PartyCharacter,
+  RoomPlayerSummary,
+  AddAiPlayerInput,
 } from '../types';
 
 /**
@@ -81,6 +83,24 @@ export class RoomsResource {
   /** GET /api/v1/rooms/{roomCode} — 获取房间信息 + 玩家列表 */
   getInfo(roomCode: string): Promise<RoomPreview> {
     return this.client.get<RoomPreview>(`/rooms/${roomCode}`);
+  }
+
+  /**
+   * POST /api/v1/rooms/{roomId}/ai-players — 房主加一个 AI 队友（exec/21）
+   *
+   * 人不齐时补位。返回的成员带 `isAi`，且它落座就是 `ready`/`hasCharacter`
+   * 状态（它没有连接，点不了「已就绪」，也不走建卡向导）。只能在开局前加。
+   */
+  addAiPlayer(
+    roomId: string,
+    reconnectToken: string,
+    payload?: AddAiPlayerInput
+  ): Promise<RoomPlayerSummary> {
+    return this.client.post<RoomPlayerSummary>(
+      `/rooms/${roomId}/ai-players`,
+      payload ?? {},
+      this.roomAuth(reconnectToken)
+    );
   }
 
   /** POST /api/v1/rooms/{roomId}/start-story — 房主开始游戏 */

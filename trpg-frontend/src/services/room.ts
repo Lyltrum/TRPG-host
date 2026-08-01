@@ -1,4 +1,10 @@
-import type { CreateRoomResult, ModuleSummary, MyRoomSummary, RoomPreview } from 'trpg-sdk';
+import type {
+  CreateRoomResult,
+  ModuleSummary,
+  MyRoomSummary,
+  RoomPlayerSummary,
+  RoomPreview,
+} from 'trpg-sdk';
 import { useRoomStore } from '@/stores/room-store';
 import { getAuthToken, sdk } from './api-client';
 
@@ -67,6 +73,12 @@ export async function getRoomInfo(roomCode: string): Promise<RoomPreview> {
 // 房主点击「开始游戏」，从大厅推进到背景介绍——访客端轮询这个标记自动跟进
 export async function startStory(roomId: string): Promise<void> {
   await sdk.rooms.startStory(roomId, requireReconnectToken());
+}
+
+// 房主在大厅加一个 AI 队友补位（exec/21）。它落座就带一张合法角色卡、状态即
+// 「已就绪」，所以不会挡住开始游戏；只能在开局前加。
+export async function addAiPlayer(roomId: string): Promise<RoomPlayerSummary> {
+  return sdk.rooms.addAiPlayer(roomId, requireReconnectToken());
 }
 
 // 我的房间列表——用于「浏览已有游戏」入口。issue #106 起按**账号**返回该用户

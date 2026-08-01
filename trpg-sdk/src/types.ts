@@ -28,6 +28,7 @@ export type {
   JoinRoomBody as JoinRoomInput,
   RoomPlayerRead as RoomPlayerSummary,
   RoomPreview,
+  AiPlayerCreateBody as AddAiPlayerInput,
   // 角色建卡（Character）模块 —— 对应后端 dto/character.py
   EquipmentItem as CharacterEquipmentItem,
   CharacterUpdateBody as UpdateCharacterInput,

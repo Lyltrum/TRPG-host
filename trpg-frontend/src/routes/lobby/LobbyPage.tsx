@@ -1,10 +1,10 @@
 import { useNavigate } from 'react-router-dom'
 import { useEffect, useState, useRef } from 'react'
-import { UserPlus, ArrowLeft } from 'lucide-react'
+import { UserPlus, ArrowLeft, Bot, Plus } from 'lucide-react'
 import { useRoomStore } from '@/stores/room-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { connectWebSocket, sdk, onWsMessage, waitForWsOpen, disconnectWebSocket, friendlyErrorMessage } from '@/services/api-client'
-import { startStory } from '@/services/room'
+import { startStory, addAiPlayer } from '@/services/room'
 import { useRoomPlayers } from '@/hooks/useRoomPlayers'
 
 // 第一个等待界面：等所有玩家进入房间、都标记"已就绪"，才能一起往下走到
@@ -95,6 +95,22 @@ export default function LobbyPage() {
     }
   }
 
+  // 人不齐时房主点空位补一个 AI 队友（exec/21）。列表靠 useRoomPlayers 轮询
+  // 刷新，所以这里不手动改本地状态，只在等待期间禁用按钮避免连点加出两个。
+  const [addingAi, setAddingAi] = useState(false)
+  const handleAddAiPlayer = async () => {
+    if (!roomId || addingAi) return
+    setAddingAi(true)
+    try {
+      setError('')
+      await addAiPlayer(roomId)
+    } catch (err) {
+      setError(friendlyErrorMessage(err, '加 AI 队友失败'))
+    } finally {
+      setAddingAi(false)
+    }
+  }
+
   const toggleReady = () => {
     if (!playerId) return
     const next = !ready
@@ -160,11 +176,12 @@ export default function LobbyPage() {
           return (
             <div key={p.playerId} className="flex items-center gap-3 px-3.5 py-3 bg-card border border-border-light rounded-md">
               <div className={`w-10 h-10 rounded-full bg-panel border border-border-mid flex items-center justify-center text-lg flex-shrink-0 ${p.ready ? 'border-brass' : ''}`}>
-                {p.ready ? '🔍' : '○'}
+                {p.isAi ? <Bot className="w-5 h-5 text-brass" strokeWidth={2} /> : p.ready ? '🔍' : '○'}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-semibold text-text-primary">{p.nickname}{isSelf && ' (你)'}</div>
-                <div className="text-xs text-text-muted">{p.isHost ? '房主' : '玩家'}</div>
+                {/* 玩家有权知道桌上哪个是补位的 AI，这不是该藏起来的信息 */}
+                <div className="text-xs text-text-muted">{p.isAi ? 'AI 队友' : p.isHost ? '房主' : '玩家'}</div>
               </div>
               <span
                 className={`text-[11px] font-semibold px-2.5 py-[3px] rounded-[99px] ${
@@ -182,6 +199,21 @@ export default function LobbyPage() {
               ?
             </div>
             <div className="flex-1 min-w-0 text-xs text-text-dim">等待玩家加入…</div>
+            {/* 空位本身就是"人不齐"的位置，补位入口放在这里最好找 */}
+            {isHost && (
+              <button
+                onClick={handleAddAiPlayer}
+                disabled={addingAi}
+                className={`flex items-center gap-1 text-[11px] font-semibold px-2.5 py-[5px] rounded-sm border transition-all ${
+                  addingAi
+                    ? 'border-border-light text-text-dim cursor-not-allowed'
+                    : 'border-brass text-brass active:bg-brass active:text-white active:scale-[0.96]'
+                }`}
+              >
+                <Plus className="w-3 h-3" strokeWidth={3} />
+                {addingAi ? '加入中…' : '加 AI 队友'}
+              </button>
+            )}
           </div>
         ))}
       </div>

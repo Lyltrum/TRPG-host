@@ -58,6 +58,24 @@ ws_controller.async_session_factory = TestSessionLocal  # type: ignore[assignmen
 
 
 @pytest.fixture(autouse=True)
+def _no_background_writer() -> Generator[None, None, None]:
+    """🔴 钉死背景生成器，默认关掉——别让开发机 `.env` 决定测试会不会打真实 API。
+
+    配了 `DEEPSEEK_API_KEY` 的机器上 `app.state.background_writer` 是真的，而
+    「一键生成」和「加 AI 队友」两条路径都会调它：任何人新写一条建卡用例，都会
+    在本地悄悄发一次真请求（慢、要钱、结果还不稳定），到了 CI 上又因为没有 key
+    而走另一条分支——同一份代码两个结果，正是本项目已踩三次的那个坑。
+
+    要验生成本身的用例自己覆盖 `app.state.background_writer`（见
+    `test_character_background.py`）。
+    """
+    previous = getattr(app.state, "background_writer", None)
+    app.state.background_writer = None
+    yield
+    app.state.background_writer = previous
+
+
+@pytest.fixture(autouse=True)
 async def _prepare_database() -> AsyncGenerator[None, None]:
     """每个测试函数跑之前建表、跑完之后清表，保证测试之间互不影响
     （不用手动在每个测试里管理数据库状态）。autouse=True 表示不需要在测试

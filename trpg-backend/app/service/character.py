@@ -12,6 +12,7 @@ from dataclasses import asdict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background_writer import BackgroundWriter
 from app.core.coc7_age import (
     apply_app_loss,
     distribute_scd_loss,
@@ -50,6 +51,7 @@ from app.dto.character import (
 )
 from app.dto.game import RulesetRead
 from app.models.room import Character, Player, Room
+from app.service.character_background import generate_background
 from app.service.room import (
     RoomAuthorizationError,
     find_room_by_id,
@@ -110,7 +112,11 @@ async def create_character_draft(
 
 
 async def quick_build_character(
-    db: AsyncSession, room_id: str, reconnect_token: str | None, name: str
+    db: AsyncSession,
+    room_id: str,
+    reconnect_token: str | None,
+    name: str,
+    writer: BackgroundWriter | None = None,
 ) -> CharacterDraftResult:
     """「一键生成」：给这个玩家造一张**规则上合法**的完成态角色卡。
 
@@ -155,6 +161,18 @@ async def quick_build_character(
     character.derived_stats = compute_derived_stats(sheet.attributes, sheet.age)
     character.skills = sheet.skills
     character.generation_method = GENERATION_POINT_BUY
+    # 背景是可选润色：写不出来（没配 key／超时／模型崩）就保持空，卡照常成立。
+    written = await generate_background(
+        db,
+        room_id,
+        writer,
+        name=trimmed,
+        occupation=sheet.occupation.name,
+        age=sheet.age,
+        skills=sheet.skills,
+    )
+    if written is not None:
+        character.background, character.background_detail = written
     if existing is None:
         db.add(character)
     player.has_character = True

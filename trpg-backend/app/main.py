@@ -22,6 +22,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.controller.v1.router import api_router
 from app.controller.ws import router as ws_router
 from app.core.ai_actor import AiActor
+from app.core.background_writer import BackgroundWriter
 from app.core.config import get_settings
 from app.core.db import async_session_factory
 from app.core.errors import AppException, ErrorCode
@@ -133,6 +134,12 @@ def create_app() -> FastAPI:
     # 说了句话"会让人以为第三层在工作，实际上是占位文案在演（同 CLAUDE.md
     # "禁止静默兜底"）。
     app.state.ai_actor = AiActor(settings.deepseek_api_key) if settings.deepseek_api_key else None
+
+    # 一键生成的角色卡背景（exec/23 #55 遗留的另一半）。同样是没配 key 就 None
+    # ——那时卡照常生成，只是没有过去，正是本功能上线前的状态。
+    app.state.background_writer = (
+        BackgroundWriter(settings.deepseek_api_key) if settings.deepseek_api_key else None
+    )
 
     # 房间行动锁的超时兜底改从配置读（keeper agent 一轮多跳工具调用会超过
     # 默认 60s，keeper 模式下 .env 配 180）。实例属性赋值，遮蔽类默认值。

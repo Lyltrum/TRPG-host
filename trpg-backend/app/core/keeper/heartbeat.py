@@ -185,8 +185,9 @@ async def maybe_fire_room(
     if not ws_manager.has_connections(room_id):
         return False
 
-    if pending_check_manager.first(room_id) is not None:
-        return False
+    async with session_factory() as db:
+        if await pending_check_manager.first(db, room_id) is not None:
+            return False
 
     now = _now()
     last_hb = _last_heartbeat_at.get(room_id, 0.0)

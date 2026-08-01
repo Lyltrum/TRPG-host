@@ -312,7 +312,8 @@ class KeeperAgent(Narrator):
         # 两段式玩家掷骰：还有待掷的检定时不再裁决新一轮——先让玩家把手头的
         # 骰子掷完。重发同一个请求（而不是静默不回应），防前端刷新丢卡片。
         # 主动心跳 / 开场仪式：有待掷时直接放弃（开场不该卡在旧检定上）。
-        pending = pending_check_manager.first(room_id)
+        async with self._session_factory() as db:
+            pending = await pending_check_manager.first(db, room_id)
         if pending is not None:
             if is_heartbeat or is_opening_ceremony:
                 return NarrationOutcome(text="")
@@ -676,7 +677,9 @@ class KeeperAgent(Narrator):
             logger.info("keeper_unresolved_conflict", room_id=room_id)
 
         if pending_checks:
-            pending_check_manager.add(room_id, pending_checks)
+            async with self._session_factory() as db:
+                await pending_check_manager.add(db, room_id, pending_checks)
+                await db.commit()
             # 🔴 真人实测 2026-07-29：检定发起前的铺垫文字，不止会提前泄露
             # 检定结果（"东北角矮墓碑"这类招供内容），还会提前把检定对应的
             # 动作本身写成已经在成功进行（追踪检定前先写"沿着小径走了十几
@@ -774,12 +777,16 @@ class KeeperAgent(Narrator):
         后续（可能链式追加新的检定，比如目击后的理智检定，自然进入下一轮
         pending）。
         """
-        pending = pending_check_manager.pop(room_id, check_request_id)
-        if pending is None:
-            raise KeeperToolError("没有这个待掷的检定（可能已被结算）")
-        if pending.player_id != player_id:
-            pending_check_manager.requeue_front(room_id, pending)
-            raise KeeperToolError(f"这个检定应由 {pending.player_nickname} 来掷")
+        # 🔴 pop 与"掷错人时放回队首"必须在**同一个事务**里：中间那次判断如果
+        # 跨了事务，pop 已经提交而 requeue 失败就会把一次待掷检定凭空吃掉。
+        async with self._session_factory() as db:
+            pending = await pending_check_manager.pop(db, room_id, check_request_id)
+            if pending is None:
+                raise KeeperToolError("没有这个待掷的检定（可能已被结算）")
+            if pending.player_id != player_id:
+                await db.rollback()
+                raise KeeperToolError(f"这个检定应由 {pending.player_nickname} 来掷")
+            await db.commit()
 
         deps = KeeperDeps(
             room_id=room_id,
@@ -863,7 +870,8 @@ class KeeperAgent(Narrator):
         if on_result is not None:
             await on_result(notice)
 
-        next_pending = pending_check_manager.first(room_id)
+        async with self._session_factory() as db:
+            next_pending = await pending_check_manager.first(db, room_id)
         if next_pending is not None:
             return NarrationOutcome(
                 text="",

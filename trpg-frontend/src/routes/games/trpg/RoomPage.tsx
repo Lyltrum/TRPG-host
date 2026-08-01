@@ -926,12 +926,11 @@ export default function RoomPage() {
             {roomInfo ? `${roomInfo.players.length} 位调查员` : '克苏鲁的呼唤'}
           </div>
         </div>
-        <button
-          onClick={() => setOpenPanel(openPanel === 'members' ? null : 'members')}
-          className="w-8 h-8 rounded-full bg-card border border-border-light flex items-center justify-center active:bg-panel"
-        >
-          <Users className="w-4 h-4 text-text-muted" strokeWidth={2.5} />
-        </button>
+        {/* 顶栏原本还有一个开「队友角色卡」的小人图标，与底部那个带文字的
+            「队友」tab 开的是同一个面板（`openPanel === 'members'`）。删掉图标
+            保留 tab：exec/14 P5.3 做完队友卡之后入口只有这个无文字图标，真人
+            实测的反馈是"没有实现"——功能完整但找不到，底部 tab 正是为此加的。
+            留图标等于把那次修复退回去。顶部的「N 位调查员」已经在表达同一件事。 */}
       </div>
 
       {/* 退出确认——不是结束游戏，房间对其他人继续存在 */}

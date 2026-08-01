@@ -27,5 +27,4 @@ CAPABILITY = KeeperCapability(
     situations=(SituationBlock(order=50, heading="议程状态", render=render_agenda_status),),
     audit=audit_fields,
     reserved_state_keys=(AGENDA_FIRED_KEY,),
-    hidden_state_keys=(AGENDA_FIRED_KEY,),
 )

@@ -35,6 +35,7 @@ from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.primitives.npcs import resolve_npc_id
+from app.core.keeper.tools import update_state_impl
 from app.core.keeper.turn_executor import execute_side_effects
 from app.models.room import Character, Player, Room
 
@@ -216,3 +217,25 @@ async def _character_id(room_id: str) -> str:
         character = result.scalars().first()
         assert character is not None
         return character.id
+
+
+async def test_state_updates_cannot_clobber_the_npc_ledger() -> None:
+    """🔴 回归（exec/27 阶段 3 复查复现出来的真数据丢失路径）。
+
+    `NPC状态` 此前既不在"保留键"里也不在"不喂给模型的键"里，于是裁决器写一条
+    `{"key": "NPC状态", "value": "管家看起来还行"}` 就能把那个 dict 覆盖成字符串，
+    `load_npc_states` 随即返回 `{}`——**全部 NPC 血量记录静默消失**，日志里什么
+    都没有。修法不是往两张清单各补一行，是让第二张清单不再独立存在。
+    """
+    room_id, player_id = await _seed("NPC005")
+    deps = _deps(room_id, player_id)
+    await adjust_npc_hp_impl(deps, -4, "被铁铲砍中", "管家")
+
+    with pytest.raises(KeeperToolError) as exc:
+        await update_state_impl(deps, NPC_STATE_KEY, "管家看起来还行")
+    assert "系统记账" in str(exc.value)
+
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        assert load_npc_states(room.keeper_state) == {"butler-public": {"hp": 6}}

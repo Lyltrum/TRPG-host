@@ -36,7 +36,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.keeper.capabilities import audit_fields, hidden_state_keys, situation_blocks
+from app.core.keeper.capabilities import audit_fields, situation_blocks
 from app.core.keeper.chapter import (
     load_chapters,
     record_chapter,
@@ -62,7 +62,6 @@ from app.core.keeper.history import (
 )
 from app.core.keeper.leak_guard import log_leak_hits, scrub_meta_leaks
 from app.core.keeper.location_state import (
-    PLAYER_LOCATION_KEY,
     format_party_locations,
     group_players,
     load_hidden_players,
@@ -71,7 +70,6 @@ from app.core.keeper.location_state import (
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.pending import PendingCheck, pending_check_manager, to_notice
 from app.core.keeper.phase import (
-    ENDING_ID_KEY,
     PHASE_FINISHED,
     PHASE_KEY,
     PHASE_OPENING,
@@ -106,13 +104,13 @@ from app.core.keeper.prose_discipline import (
     scrub_kp_anti_patterns,
 )
 from app.core.keeper.registry import Capability
-from app.core.keeper.scene_state import CURRENT_NODE_KEY
 from app.core.keeper.sheet_digest import format_sheet
 from app.core.keeper.subject import KEEPER
 from app.core.keeper.tools import (
     roll_check_detail,
     san_check_detail,
     set_phase_impl,
+    visible_keeper_state,
 )
 from app.core.keeper.turn_executor import create_pending_checks, execute_side_effects
 from app.core.keeper.turn_policy import (
@@ -121,7 +119,6 @@ from app.core.keeper.turn_policy import (
     revoke,
 )
 from app.core.keeper.visibility import (
-    VISIBILITY_REVEALED_KEY,
     format_visibility_status,
     load_revealed_visibility,
 )
@@ -356,22 +353,9 @@ class KeeperAgent(Narrator):
             self._module, revealed, observer_id=context.player_id
         )
         phase_status = format_phase_status(phase, ending_id)
-        # 已切出去的能力自己声明哪些键不该原样喂给模型（exec/27 阶段 3）。
-        _hidden_keys = {
-            *hidden_state_keys(),
-            VISIBILITY_REVEALED_KEY,
-            PHASE_KEY,
-            ENDING_ID_KEY,
-            CURRENT_NODE_KEY,
-            # 逐人位置是 `player_id@node_id` 的机器格式，对 LLM 无意义——
-            # 它看到的是下面渲染好的「各自所在」（P5.2）。
-            PLAYER_LOCATION_KEY,
-        }
-        visible_state = (
-            {k: v for k, v in keeper_state.items() if k not in _hidden_keys}
-            if keeper_state
-            else keeper_state
-        )
+        # 代码记账的键一律不原样喂给模型，判据与"state_updates 不许写"同源，
+        # 见 `visible_keeper_state` 的说明。
+        visible_state = visible_keeper_state(keeper_state)
         # 事实账本 L1：读全量（不设 limit）——它必须活过 HISTORY_LIMIT 的
         # 200 条滑动窗口，这正是它存在的理由。
         async with self._session_factory() as db:

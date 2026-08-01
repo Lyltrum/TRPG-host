@@ -16,7 +16,7 @@
 """
 
 from app.core.keeper.capabilities.health.executor import execute_hp_changes
-from app.core.keeper.capabilities.health.npc_state import format_npc_states
+from app.core.keeper.capabilities.health.npc_state import NPC_STATE_KEY, format_npc_states
 from app.core.keeper.capabilities.health.prompt import PROMPT_BLOCKS
 from app.core.keeper.capabilities.health.schema import (
     FIELD_CAPABILITIES,
@@ -43,4 +43,7 @@ CAPABILITY = KeeperCapability(
         ),
     ),
     audit=audit_fields,
+    # 🔴 补登记（阶段 3 复查发现）：此前两张清单都没有它，模型一条
+    # state_updates 就能把 NPC 血量记录覆盖成字符串、记账静默清零。
+    reserved_state_keys=(NPC_STATE_KEY,),
 )

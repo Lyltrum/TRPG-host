@@ -156,11 +156,13 @@ class KeeperCapability:
     #: 往 `keeper_decision` 日志与 `keeper.decision` 事件贡献的字段
     #:（None = 这个能力没什么好审计的）。
     audit: AuditFn | None = None
-    #: 这个能力在 `keeper_state` 里占的键：**由代码写，`state_updates` 不许碰**。
-    #: 🔴 第六个钩子，切 `agenda` 时暴露的——`tools._RESERVED_STATE_KEYS` 与
-    #: `agent._hidden_keys` 两处同样在逐个列举各能力的键。漏了后果不小：模型
-    #: 可以用一条 `state_updates` 把代码维护的记账覆盖掉。
+    #: 这个能力在 `keeper_state` 里占的键。声明出来同时管两件事：
+    #: **`state_updates` 不许写**，且**不原样喂给模型**（模型看到的是 situation
+    #: 钩子渲染好的那一块）。
+    #:
+    #: 🔴 第六个钩子，切 `agenda` 时暴露的。原本 `tools._RESERVED_STATE_KEYS`
+    #: 与 `agent._hidden_keys` 是**两张各自手维护的清单**，实测已经分叉：
+    #: `NPC状态` 两张都没进，于是模型一条 `state_updates` 就能把 NPC 血量记录
+    #: 覆盖成一个字符串、`load_npc_states` 静默返回 {}。所以这里只有一张清单，
+    #: 「代码记账的键不原样喂给模型」由代码保证而不是靠两处同步。
     reserved_state_keys: Sequence[str] = ()
-    #: 这个能力在 `keeper_state` 里**不该原样喂给模型**的键（通常是机器格式，
-    #: 模型看到的是渲染好的 situation 块）。与上一条常常相同但不必然。
-    hidden_state_keys: Sequence[str] = ()

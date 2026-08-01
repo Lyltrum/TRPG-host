@@ -82,13 +82,8 @@ def audit_fields(decision: BaseModel) -> dict[str, object]:
 
 
 def reserved_state_keys() -> frozenset[str]:
-    """各能力占用的 `keeper_state` 键：`state_updates` 一律不许写。"""
+    """各能力占用的 `keeper_state` 键：`state_updates` 不许写、也不原样喂给模型。"""
     return frozenset(k for c in CAPABILITIES for k in c.reserved_state_keys)
-
-
-def hidden_state_keys() -> frozenset[str]:
-    """各能力**不该原样喂给模型**的 `keeper_state` 键。"""
-    return frozenset(k for c in CAPABILITIES for k in c.hidden_state_keys)
 
 
 def registered_schemas() -> Sequence[type[BaseModel]]:

@@ -60,13 +60,25 @@
 
 - ✅ 两阶段回合制 + 两段式玩家掷骰 + 议程 `agenda_fired` + trigger 自由文本
 - ✅ 预处理 4a/4b：组装校验、exits/contains/sub_nodes/forms/visibility_pairs
-- ✅ 路线 5 薄：`visibility_revealed` 代码记账 + 局面注入（叙事仍全员广播）
 - ✅ 路线 6：对局阶段 / `ending_reached` / 心跳（development 默认开，test 关）
 - ✅ 前情 API + game.start 开场仪式 + play replay 回补
-- ✅ 叙事纪律硬裁 + 迷茫强制引导
-- ✅ 02 `check_guard`：当前场景节点 checks 外技能不得发 request
-- ✅ 掷骰新手提示；地图无假地点；`moduleId` 进预览/访客回填
-- ❌ 真 per-player 私信 / 完整 V（exec/08 本期不做）；厚分表；线下报骰
+- ✅ 叙事纪律硬裁 + 迷茫强制引导；`check_guard`（战斗轮豁免，见 CLAUDE.md）
+- ✅ **exec/14 主体视图 P0–P5.3**：`view(subject)`、事实寻址、分头叙事按受众裁
+  历史/线索/本轮原话（P5.2d）。**P6 剧情 NPC 主体判定不做**（两局试玩零发生，
+  代价是每次对话多一次 LLM 往返，正撞延迟痛点）
+- ✅ **exec/17 技能 id 化 (A)(B) 全完成**：裁决输出 `skill_id` 白名单；模组数据
+  组装期归一，五个模组未解析技能名实测 **0 条**（原 43 条）
+- ✅ **exec/21 AI 玩家三层**：座位 / 合法卡 / 行动决策。有限视角，**会犯错走弯路
+  是代价不是 bug，别去"修"**（一修就滑向提示机）
+- ✅ **exec/22** 职业按 id 存（同名不同项的职业会错配）
+- ✅ **exec/23 零基础玩家 #50–#58 全闭环**：默认 1 人 / 一键生成卡（含 LLM 写
+  背景）/ 显示名换角色名 / 技能 ±5 / 掷骰广播拆两拍 / 角色卡进 KP 局面块 /
+  待掷落库 + 重连补发 / 输入锁
+- ✅ **exec/24 §8.1 §8.2**：待掷检定落库、世界状态自由键收口到主体 id
+- ✅ **CI 覆盖本分支**（2026-08-01）：四个 workflow 的 `push.branches` 加了
+  `feat/keeper-agent`——这条分支不开 PR，push 是唯一触发点
+- ❌ 未做：`exec/24` schema v4 章节层级 / 分层注入 / `needs_entities`（等真接
+  战役模组）；`exec/08` 完整 V 函数；`exec/20` 那十几条硬化；前端 UI v2
 - 冒烟：`e2e/scripts/sim-human-playability.py`
 
 ## 测试与产物
@@ -78,7 +90,12 @@
 ## Git 习惯
 
 - conventional commits 中文；**无** `Co-Authored-By: Claude` / Generated 徽章
-- 实验默认：commit + push 到 `origin/feat/keeper-agent`；**不要** force-push / 改写历史抹版权（用户未要求时）
+- 🔴 **`git push` 一律先问、等明确答复**——包括推自己的功能分支。本地 commit、
+  建本地分支、跑测试都可以直接做，**推送不行**。授权不向下延伸：这一轮同意推
+  不等于这条分支后续默认同意，每次重新问。
+- 🔴 **不要主动催推送**。做完一轮交付就停在本地，用户想推时会自己说。
+- 推之前确认 remote 是 `origin`（`Lyltrum/TRPG-master`），**不碰 `upstream`**。
+- **不要** force-push / 改写历史抹版权（用户未要求时）。
 
 ## 协作注意
 

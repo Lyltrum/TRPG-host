@@ -4,6 +4,7 @@ import type {
   ApplyAgeAdjustmentInput,
   Character,
   CharacterDraftResult,
+  QuickBuildCharacterInput,
   RollAttributePoolResult,
   RollAttributesResult,
   RollLuckResult,
@@ -26,6 +27,24 @@ export class CharactersResource {
     return this.client.post<CharacterDraftResult>(
       `/rooms/${roomId}/characters`,
       null,
+      this.authenticated(reconnectToken)
+    );
+  }
+
+  /**
+   * POST /api/v1/rooms/{roomId}/characters/quick-build — 一键生成一张合法角色卡
+   *
+   * 给零基础玩家的第二条建卡路径：只填名字，属性/职业/技能由服务端随机生成
+   * （与 AI 队友同一个生成器）。返回的卡已经是 `complete`，不进向导。
+   */
+  quickBuild(
+    roomId: string,
+    reconnectToken: string,
+    payload: QuickBuildCharacterInput
+  ): Promise<CharacterDraftResult> {
+    return this.client.post<CharacterDraftResult>(
+      `/rooms/${roomId}/characters/quick-build`,
+      payload,
       this.authenticated(reconnectToken)
     );
   }

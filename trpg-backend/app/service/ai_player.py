@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import random
+from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -159,6 +160,58 @@ def _allocate_skills(
     return skills
 
 
+@dataclass(frozen=True, slots=True)
+class RolledSheet:
+    """一张随机生成的、**规则上合法**的角色卡数据（未落库）。"""
+
+    occupation: OccupationSpec
+    attributes: dict[str, int]
+    skills: dict[str, int]
+    age: int = _AI_AGE
+
+
+def roll_character_sheet(
+    *, occupation_name: str | None = None, seed: int | None = None
+) -> RolledSheet:
+    """随机生成一张合法的 COC7 角色卡数据。
+
+    两个调用方共用：AI 队友（本模块）、玩家的「一键生成」（`service/character.py`
+    的 quick_build，给零基础玩家用——真人实测反馈：整套向导对新人不友好）。
+    共用一份是有意的：**同一个生成器意味着 AI 队友和新手卡强弱同源**，不会出现
+    "AI 的卡莫名其妙比我好"。
+
+    🔴 自检的目的是防**我们自己的生成器**写出不合法的卡，不是防伪造。
+    🔴 按**对象**校验，不按名字：职业表里有 6 组同名不同项的职业（律师 ×2、
+    私家侦探 ×2、工匠 ×2…），信用区间乃至技能点公式都不同。按名字查只能拿到
+    第一个匹配——我们手里明明有确切的那一个（exec/22）。
+    """
+    rng = random.Random(seed)
+    ruleset = build_coc7_ruleset()
+    if occupation_name is None:
+        occupation = rng.choice(ruleset.occupations)
+    else:
+        occupation = next((o for o in ruleset.occupations if o.name == occupation_name), None)
+        if occupation is None:
+            raise ValueError(f"没有这个职业：{occupation_name}")
+
+    attributes = _allocate_attributes(ruleset, rng)
+    skills = _allocate_skills(ruleset, occupation, attributes, rng)
+
+    issues = validate_character_with_occupation(
+        ruleset,
+        attributes=attributes,
+        occupation=occupation,
+        skills=skills,
+        generation_method=GENERATION_POINT_BUY,
+    )
+    if issues:
+        raise AiCharacterInvalidError(
+            "角色卡生成器产出了不合法的卡："
+            + "；".join(f"{i.code}@{i.field}:{i.message}" for i in issues)
+        )
+    return RolledSheet(occupation=occupation, attributes=attributes, skills=skills)
+
+
 #: AI 调查员的默认名字池。真人玩家一眼要能认出"这是个 AI 队友"，所以不取
 #: 会跟真人混淆的普通人名。
 _DEFAULT_NICKNAMES = ("阿铁", "阿铜", "阿锡", "阿锌")
@@ -220,38 +273,8 @@ async def create_ai_player(
     if room is None:
         raise ValueError(f"房间不存在：{room_id}")
 
-    rng = random.Random(seed)
-    ruleset = build_coc7_ruleset()
-    if occupation_name is None:
-        occupation = rng.choice(ruleset.occupations)
-    else:
-        occupation = next(
-            (o for o in ruleset.occupations if o.name == occupation_name),
-            None,
-        )
-        if occupation is None:
-            raise ValueError(f"没有这个职业：{occupation_name}")
-
-    attributes = _allocate_attributes(ruleset, rng)
-    skills = _allocate_skills(ruleset, occupation, attributes, rng)
-
-    # 🔴 自检：目的是防**我们自己的生成器**写出不合法的卡，不是防伪造。
-    # 🔴 按**对象**校验，不按名字：职业表里有 6 组同名不同项的职业（律师 ×2、
-    # 私家侦探 ×2、工匠 ×2…），信用区间乃至技能点公式都不同。按名字查只能拿到
-    # 第一个匹配——我们手里明明有确切的那一个。
-    # （角色卡按名字存职业这个更根本的问题见 exec/22，不在本层范围内。）
-    issues = validate_character_with_occupation(
-        ruleset,
-        attributes=attributes,
-        occupation=occupation,
-        skills=skills,
-        generation_method=GENERATION_POINT_BUY,
-    )
-    if issues:
-        raise AiCharacterInvalidError(
-            "AI 角色卡生成器产出了不合法的卡："
-            + "；".join(f"{i.code}@{i.field}:{i.message}" for i in issues)
-        )
+    sheet = roll_character_sheet(occupation_name=occupation_name, seed=seed)
+    occupation, attributes, skills = sheet.occupation, sheet.attributes, sheet.skills
 
     # 🔴 `ready=True` 不是图省事：大厅的「全员就绪」按非房主玩家逐个判，而 AI
     # 没有连接、永远点不了那个按钮——留 False 会让房主的「开始游戏」永久点不亮。

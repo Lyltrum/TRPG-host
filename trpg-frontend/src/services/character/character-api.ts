@@ -54,6 +54,17 @@ export async function createCharacterDraft(roomId: string): Promise<string> {
   return res.characterId;
 }
 
+/**
+ * 一键生成一张合法角色卡（给零基础玩家的第二条建卡路径）。
+ *
+ * 属性/职业/技能全部由**服务端**随机生成，返回时这张卡已经是完成态——前端
+ * 不参与任何数值决定，也不需要再走 complete。玩家只提供名字。
+ */
+export async function quickBuildCharacter(roomId: string, name: string): Promise<string> {
+  const res = await sdk.characters.quickBuild(roomId, requireReconnectToken(), { name });
+  return res.characterId;
+}
+
 export async function saveCharacter(
   roomId: string,
   characterId: string,

@@ -21,6 +21,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from app.core.narrator import (
+    CheckResultCallback,
     CheckResultNotice,
     FallbackNarrator,
     NarrationContext,
@@ -241,7 +242,11 @@ class _FakeCheckNarrator(Narrator):
         raise AssertionError("这些用例不应该调用 narrate()")
 
     async def resolve_check(
-        self, room_id: str, player_id: str, check_request_id: str
+        self,
+        room_id: str,
+        player_id: str,
+        check_request_id: str,
+        on_result: CheckResultCallback | None = None,
     ) -> NarrationOutcome:
         notice = CheckResultNotice(
             check_request_id=check_request_id,
@@ -260,7 +265,11 @@ class _RejectingCheckNarrator(Narrator):
         raise AssertionError("这些用例不应该调用 narrate()")
 
     async def resolve_check(
-        self, room_id: str, player_id: str, check_request_id: str
+        self,
+        room_id: str,
+        player_id: str,
+        check_request_id: str,
+        on_result: CheckResultCallback | None = None,
     ) -> NarrationOutcome:
         raise ValueError("没有这个待掷的检定（可能已被结算）")
 

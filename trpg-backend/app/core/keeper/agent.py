@@ -124,6 +124,7 @@ from app.core.narrator import (
     DEEPSEEK_BASE_URL,
     DEEPSEEK_MODEL,
     CheckRequestNotice,
+    CheckResultCallback,
     CheckResultNotice,
     NarrationContext,
     NarrationOutcome,
@@ -758,7 +759,11 @@ class KeeperAgent(Narrator):
         return NarrationOutcome(text=narration, stat_changes=deps.stat_changes, segments=segments)
 
     async def resolve_check(
-        self, room_id: str, player_id: str, check_request_id: str
+        self,
+        room_id: str,
+        player_id: str,
+        check_request_id: str,
+        on_result: CheckResultCallback | None = None,
     ) -> NarrationOutcome:
         """结算一次玩家确认的掷骰（两段式玩家掷骰）。
 
@@ -848,6 +853,14 @@ class KeeperAgent(Narrator):
             kind=pending.kind,
             player=pending.player_nickname,
         )
+
+        # 🔴 骰子已经落地了——立刻告诉调用方，不要等下面那次结算叙事。
+        # 掷骰是纯代码毫秒级，结算叙事是 10 秒级的 LLM 往返；两件事一起等完
+        # 再广播，玩家点完「投掷」得盯着屏幕十几秒才看得到自己掷了多少
+        # （真人实测反馈：「反馈太慢」）。真人桌上骰子是**当场**停下的，
+        # KP 想怎么描述是他自己的事。
+        if on_result is not None:
+            await on_result(notice)
 
         next_pending = pending_check_manager.first(room_id)
         if next_pending is not None:

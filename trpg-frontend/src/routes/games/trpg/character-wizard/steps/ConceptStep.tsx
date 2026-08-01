@@ -1,3 +1,4 @@
+import { Wand2 } from 'lucide-react'
 import type { Ruleset } from 'trpg-sdk'
 import { StepShell, StepSection } from '../components/StepShell'
 import type { WizardAction, WizardState } from '../wizard-state'
@@ -6,12 +7,20 @@ import type { WizardAction, WizardState } from '../wizard-state'
 export function ConceptStep({
   state,
   dispatch,
+  onQuickBuild,
+  quickBuilding,
+  quickBuildError,
 }: {
   state: WizardState
   dispatch: (action: WizardAction) => void
   ruleset: Ruleset
+  /** 一键生成（零基础玩家的第二条路）。名字仍然要玩家自己填。 */
+  onQuickBuild: () => void
+  quickBuilding: boolean
+  quickBuildError: string
 }) {
   const { info } = state
+  const canQuickBuild = info.name.trim().length > 0 && !quickBuilding
   return (
     <StepShell title="基本信息" lead="先给你的调查员起个名字，其余信息随时可以回来改。">
       <StepSection title="调查员信息">
@@ -62,6 +71,33 @@ export function ConceptStep({
             </div>
           </div>
         </div>
+      </StepSection>
+
+      {/* 零基础玩家的第二条路（真人实测反馈：八步向导对新人不友好）。
+          放在第一步、名字输入框正下方——这是新人唯一确定会看到的一屏。 */}
+      <StepSection title="不想一步步来？">
+        <p className="text-[12px] text-text-muted mb-2.5">
+          填好上面的角色姓名，点这里由系统随机生成一张完整合法的调查员卡，直接开局。
+          想自己捏就继续走下面的「下一步」。
+        </p>
+        <button
+          onClick={onQuickBuild}
+          disabled={!canQuickBuild}
+          className={`w-full flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-sm text-[13px] font-semibold transition-all ${
+            canQuickBuild
+              ? 'bg-card border border-brass text-brass-dark active:bg-brass active:text-white active:scale-[0.97]'
+              : 'bg-panel border border-border-light text-text-dim cursor-not-allowed'
+          }`}
+        >
+          <Wand2 className="w-4 h-4" />
+          {quickBuilding ? '生成中…' : '一键生成一张角色卡'}
+        </button>
+        {!info.name.trim() && (
+          <p className="text-[11px] text-text-dim text-center mt-2">请先填写角色姓名</p>
+        )}
+        {quickBuildError && (
+          <p className="text-[11px] text-[#c04040] text-center mt-2">{quickBuildError}</p>
+        )}
       </StepSection>
     </StepShell>
   )

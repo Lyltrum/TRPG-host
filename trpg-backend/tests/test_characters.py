@@ -1,9 +1,10 @@
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.seed import BUILTIN_GAME_ID
 from app.models.content import GameSystem
-from app.models.room import Room
+from app.models.room import Character, Player, Room
 from tests.helpers import ROOMS_BASE, create_room, join_room, reconnect, register
 
 # 「存在但没配规则数据」的规则系统，只出现在测试里（见文件末尾用例的说明）。
@@ -401,3 +402,149 @@ async def test_complete_character_rejects_unconfigured_ruleset(
 
     assert response.status_code == 409, response.text
     assert response.json()["error"]["code"] == "RULESET_NOT_CONFIGURED"
+
+
+async def test_completing_a_character_renames_the_player_to_the_character_name(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """建完卡之后，这个房间里的显示名要变成**角色名**（真人实测反馈）。
+
+    玩家给调查员起了名字，守秘人却还在用账号昵称叫他——桌上没人会用登录名
+    称呼你的角色。`Player.nickname` 是全链路唯一的称呼来源（原话广播 / 守秘人
+    roster 与历史行 / 检定请求 / 队友列表都读它），所以断言落在它上面。
+    """
+    room = await create_room(client, nickname="账号昵称")
+    draft = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
+    )
+    character_id = draft.json()["data"]["characterId"]
+    await client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+        json={
+            "name": "凌铭辉",
+            "attributes": BUILT_CHARACTER["attributes"],
+            "derivedStats": {},
+            "skills": {},
+            "equipment": [],
+            "occupation": None,
+            "background": "",
+            "notes": "",
+        },
+        headers=reconnect(room["reconnectToken"]),
+    )
+    completed = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/complete",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert completed.status_code == 200, completed.text
+
+    player = await db_session.get(Player, room["playerId"])
+    assert player is not None
+    assert player.nickname == "凌铭辉"
+
+
+async def test_completing_a_nameless_character_keeps_the_old_nickname(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """角色名是空的（老卡/异常数据）时不要把显示名清成空串——空名字比账号名更糟。"""
+    room = await create_room(client, nickname="账号昵称")
+    draft = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
+    )
+    character_id = draft.json()["data"]["characterId"]
+    await client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+        json={
+            "name": "   ",
+            "attributes": BUILT_CHARACTER["attributes"],
+            "derivedStats": {},
+            "skills": {},
+            "equipment": [],
+            "occupation": None,
+            "background": "",
+            "notes": "",
+        },
+        headers=reconnect(room["reconnectToken"]),
+    )
+    await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/complete",
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    player = await db_session.get(Player, room["playerId"])
+    assert player is not None
+    assert player.nickname == "账号昵称"
+
+
+# ── 一键生成（零基础玩家的第二条建卡路径）────────────
+
+
+async def test_quick_build_produces_a_complete_and_valid_character(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """填个名字就能开局：生成的卡必须是**完成态**且**规则上合法**。
+
+    合法性不靠这条用例的断言保证——`roll_character_sheet` 内部跑的是与
+    `complete_character` 同一套 `validate_character_with_occupation`，不合法
+    会直接抛。这里断言的是"它确实落库了、状态对、玩家被标记成已建卡"。
+    """
+    room = await create_room(client, nickname="账号昵称")
+    response = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/quick-build",
+        json={"name": "凌铭辉"},
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["status"] == "complete"
+
+    character = await db_session.get(Character, response.json()["data"]["characterId"])
+    assert character is not None
+    assert character.name == "凌铭辉"
+    assert character.occupation_id is not None
+    assert character.attributes and character.skills
+    assert (character.derived_stats or {}).get("HP")
+    # 生成器固定 30 岁：该区间无年龄修正，两份属性天然相同
+    assert character.allocated_attributes == character.attributes
+
+    player = await db_session.get(Player, room["playerId"])
+    assert player is not None
+    assert player.has_character is True
+    # 跟走完向导一样，显示名换成角色名
+    assert player.nickname == "凌铭辉"
+
+
+async def test_quick_build_rejects_a_blank_name(client: AsyncClient) -> None:
+    """名字必填、不做兜底——它是代入感的落点，静默塞个"无名调查员"只会让人
+    以为坏了。"""
+    room = await create_room(client)
+    response = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/quick-build",
+        json={"name": "   "},
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert response.status_code == 422
+
+
+async def test_quick_build_reuses_the_existing_draft_row(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """先点了「创建角色」建了草稿、又改主意点一键生成——不能留下两张卡。
+
+    留两张的后果不是多一行数据：`_get_own_character` 之外的地方按
+    (room_id, player_id) 查卡，两张会让"我的卡是哪张"变成掷硬币。
+    """
+    room = await create_room(client)
+    draft = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
+    )
+    draft_id = draft.json()["data"]["characterId"]
+
+    response = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/quick-build",
+        json={"name": "阿玲"},
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert response.json()["data"]["characterId"] == draft_id
+
+    rows = await db_session.execute(select(Character).where(Character.room_id == room["roomId"]))
+    assert len(list(rows.scalars())) == 1

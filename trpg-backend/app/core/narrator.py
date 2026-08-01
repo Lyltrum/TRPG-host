@@ -20,6 +20,7 @@ KP（守秘人）风格的场景描写。**不做 AI 编排**：意图解析（�
 
 import asyncio
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -155,6 +156,10 @@ class NarrationSegment:
     covert: bool = False
 
 
+#: 「骰子已经掷出来了」的即时回调（见 `Narrator.resolve_check`）。
+CheckResultCallback = Callable[["CheckResultNotice"], Awaitable[None]]
+
+
 @dataclass
 class NarrationOutcome:
     """`Narrator.narrate()`/`resolve_check()` 的统一返回形状。
@@ -184,9 +189,21 @@ class Narrator(ABC):
         """根据上下文生成一段叙事文本（及本轮的检定请求/结果通知）。"""
 
     async def resolve_check(
-        self, room_id: str, player_id: str, check_request_id: str
+        self,
+        room_id: str,
+        player_id: str,
+        check_request_id: str,
+        on_result: CheckResultCallback | None = None,
     ) -> NarrationOutcome:
         """结算一次玩家确认的掷骰（两段式玩家掷骰）。
+
+        `on_result`：**骰子一落地就回调**，不等结算叙事。骰值本身是纯代码、
+        毫秒级，而它后面那次结算叙事是 10 秒级的 LLM 往返——两件事一起等完再
+        广播，玩家点完「投掷」要盯着屏幕十几秒才看得到自己掷了多少（真人实测
+        反馈）。传了这个回调，WS 层就能先把 `check.result` 推出去。
+
+        ⚠️ 结果**仍然会**出现在返回的 `check_results` 里（老调用方不受影响）。
+        用了回调的调用方要自己去重，别广播两遍。
 
         默认不支持：单轮叙事实现（Fallback/DeepSeek）没有"待掷检定"的概念，
         WS 层收到 check.roll/san.check.roll 时应把 NotImplementedError 转成
@@ -271,10 +288,14 @@ class DelayedNarrator(Narrator):
         return await self._inner.narrate(context)
 
     async def resolve_check(
-        self, room_id: str, player_id: str, check_request_id: str
+        self,
+        room_id: str,
+        player_id: str,
+        check_request_id: str,
+        on_result: CheckResultCallback | None = None,
     ) -> NarrationOutcome:
         await asyncio.sleep(self._delay_seconds)
-        return await self._inner.resolve_check(room_id, player_id, check_request_id)
+        return await self._inner.resolve_check(room_id, player_id, check_request_id, on_result)
 
 
 class RoomAwareKeeperNarrator(Narrator):
@@ -340,10 +361,16 @@ class RoomAwareKeeperNarrator(Narrator):
         return await self._agent_for(path).narrate(context)
 
     async def resolve_check(
-        self, room_id: str, player_id: str, check_request_id: str
+        self,
+        room_id: str,
+        player_id: str,
+        check_request_id: str,
+        on_result: CheckResultCallback | None = None,
     ) -> NarrationOutcome:
         path = await self._resolve_path(room_id)
-        return await self._agent_for(path).resolve_check(room_id, player_id, check_request_id)
+        return await self._agent_for(path).resolve_check(
+            room_id, player_id, check_request_id, on_result
+        )
 
 
 def build_narrator(settings: Settings) -> Narrator:

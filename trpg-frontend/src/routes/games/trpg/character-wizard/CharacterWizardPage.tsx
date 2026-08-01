@@ -4,6 +4,8 @@ import { ArrowLeft } from 'lucide-react'
 import { useCharacterStore, type CompletedCharacter } from '@/stores/character-store'
 import { useRoomStore } from '@/stores/room-store'
 import { useRuleset } from '@/hooks/useRuleset'
+import { quickBuildCharacter } from '@/services/character/character-api'
+import { translateCharacterValidationError } from '@/services/character/ruleset-api'
 import { WIZARD_STEPS } from './wizard-steps'
 import { DEFAULT_AGE, createInitialWizardState, wizardReducer, type WizardState } from './wizard-state'
 import { useWizardPreview } from './useWizardPreview'
@@ -77,6 +79,30 @@ export default function CharacterWizardPage() {
 
   const [pendingConfirm, setPendingConfirm] = useState(false)
   useEffect(() => setPendingConfirm(false), [state.step])
+
+  // 一键生成（真人实测反馈：八步向导对新人不友好）。数值全部由后端生成并
+  // 直接落成完成态，前端只负责把名字送过去、拿到结果跳走——**不复用向导的
+  // 提交流程**：那条路要先把一屋子本地状态凑齐才能提交，而这条路根本没有
+  // 本地状态。跳转前不写 character-store，让 ready 页按 roomId 从后端水合。
+  const [quickBuilding, setQuickBuilding] = useState(false)
+  const [quickBuildError, setQuickBuildError] = useState('')
+  const handleQuickBuild = async () => {
+    if (!roomId) {
+      setQuickBuildError('房间信息丢失，请重新创建/加入房间')
+      return
+    }
+    setQuickBuilding(true)
+    setQuickBuildError('')
+    try {
+      const characterId = await quickBuildCharacter(roomId, state.info.name)
+      useRoomStore.getState().setCharacterId(characterId)
+      navigate('/room/ready')
+    } catch (err) {
+      setQuickBuildError(translateCharacterValidationError(err))
+    } finally {
+      setQuickBuilding(false)
+    }
+  }
 
   if (rulesetLoading) {
     return (
@@ -177,7 +203,16 @@ export default function CharacterWizardPage() {
         )}
       </div>
 
-      {stepMeta.id === 'concept' && <ConceptStep state={state} dispatch={dispatch} ruleset={ruleset} />}
+      {stepMeta.id === 'concept' && (
+        <ConceptStep
+          state={state}
+          dispatch={dispatch}
+          ruleset={ruleset}
+          onQuickBuild={() => void handleQuickBuild()}
+          quickBuilding={quickBuilding}
+          quickBuildError={quickBuildError}
+        />
+      )}
       {stepMeta.id === 'attrs' && (
         <AttributesStep state={state} dispatch={dispatch} ruleset={ruleset} preview={preview} previewError={previewError} />
       )}

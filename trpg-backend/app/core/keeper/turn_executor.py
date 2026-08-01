@@ -22,7 +22,6 @@ from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.deps import KeeperDeps, KeeperToolError, resolve_character
 from app.core.keeper.location_state import location_of
 from app.core.keeper.pending import PendingCheck
-from app.core.keeper.phase import PHASE_FINISHED, PHASE_INVESTIGATION
 from app.core.keeper.registry import ExecutorHook
 from app.core.keeper.skill_names import resolve_skill_id
 from app.core.keeper.subject import KEEPER, Subject, authorize_decision, sanitize_decision
@@ -32,7 +31,6 @@ from app.core.keeper.tools import (
     mark_visibility_revealed_impl,
     move_player_impl,
     set_current_node_impl,
-    set_phase_impl,
     set_stealth_impl,
     update_state_impl,
 )
@@ -53,7 +51,6 @@ _SKELETON_STEP_ORDERS = {
     "moves": 40.0,
     "stealth": 50.0,
     "visibility": 70.0,
-    "phase": 80.0,
 }
 
 
@@ -174,24 +171,6 @@ async def execute_side_effects(
                 except KeeperToolError as exc:
                     issues.append(f"密级揭开未执行：{exc}")
 
-    async def _step_phase() -> None:
-        # 对局阶段推进（路线 6）
-        if decision.ending_reached:
-            eid = decision.ending_reached
-            if deps.module.endings and not any(e.id == eid for e in deps.module.endings):
-                issues.append(f"结局收束未执行：剧本里没有 ending id={eid}")
-            else:
-                try:
-                    # 收束当轮直接 finished：叙事仍可写终章，下一行动立即拒
-                    report.append(await set_phase_impl(deps, PHASE_FINISHED, ending_id=eid))
-                except KeeperToolError as exc:
-                    issues.append(f"结局收束未执行：{exc}")
-        elif decision.opening_complete:
-            try:
-                report.append(await set_phase_impl(deps, PHASE_INVESTIGATION))
-            except KeeperToolError as exc:
-                issues.append(f"开场完成未执行：{exc}")
-
     steps: list[tuple[float, Callable[[], Awaitable[None]]]] = [
         (_SKELETON_STEP_ORDERS[name], step)
         for name, step in (
@@ -200,7 +179,6 @@ async def execute_side_effects(
             ("moves", _step_moves),
             ("stealth", _step_stealth),
             ("visibility", _step_visibility),
-            ("phase", _step_phase),
         )
     ]
     steps.extend((hook.order, partial(_run_hook, hook)) for hook in executors())

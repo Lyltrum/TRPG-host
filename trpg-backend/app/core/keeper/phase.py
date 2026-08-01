@@ -8,9 +8,27 @@
 - finished：本局已结束，后续行动拒收
 
 推进由代码写（opening_complete / ending_reached），不交给 state_updates 自由键。
+
+## 🔴 为什么它没有跟着 `progression` 能力一起搬走（exec/27 阶段 3）
+
+阶段值本身是**整局的生命周期状态**，编排层到处在读它：心跳要知道局是不是完了、
+叙事长度按阶段给（`prose_discipline.narration_limit`）、`finished` 之后行动直接
+拒收、开场轮要走仪式模式。把它塞进某一片能力，等于让 `runtime` 反向依赖那片
+能力——「加一个能力不改 runtime 一行」当场破功。
+
+判据沿用本项目对 `pending`（两段式待掷队列）的处理：**共享的流程机制归 runtime，
+用它做裁决的字段与执行归能力。** 所以这里留下"阶段是什么、怎么读、怎么写"，
+而"什么时候该推进"（`opening_complete` / `ending_reached` 两个裁决字段、规则 10、
+结局条件的局面块）在 `capabilities/progression/`。
+
+`format_endings_status` 跟着能力走了——它是喂给裁决器判断"该不该收束"的材料，
+不是编排层要读的状态。
 """
 
 from __future__ import annotations
+
+from app.core.keeper.deps import KeeperDeps, KeeperToolError, record_event
+from app.models.room import Room
 
 PHASE_KEY = "对局阶段"
 ENDING_ID_KEY = "结局"
@@ -54,25 +72,25 @@ def format_phase_status(phase: str | None, ending_id: str | None = None) -> str:
     return labels.get(phase, phase)
 
 
-def format_endings_status(module) -> str:  # noqa: ANN001 — ScenarioModule，避免循环 import
-    """每轮注入的「可能的结局与触发条件」（exec/19 #47）。
-
-    试玩实测 2026-08-01：最后一轮叙事已经完整写出了结局（警察进屋、FBI 封锁、
-    烧掉房子、官方声明），而 `phase` 仍是 investigation、`ending_id` 仍是 None
-    ——**故事结束了，对局没结束**，系统还在等下一轮。
-
-    收束靠裁决器写 `ending_reached`，而结局条件此前只存在于 system prompt 里
-    那份剧本全文的末尾。议程能被可靠触发，正是因为它每轮都以「议程状态」小节
-    出现在局面块里、就在眼前。这里给结局同样的待遇——**把该判断的东西摆到
-    它面前**，比在规则里多写一句"记得判断"可靠。
-
-    ⚠️ 如实说：这仍是概率性改进。"这段剧情算不算命中结局"是纯语义判断，
-    没有代码手段能确定性地判定它。
-    """
-    if not module.endings:
-        return ""
-    lines = []
-    for ending in module.endings:
-        trigger = (ending.trigger or ending.condition or "").strip()
-        lines.append(f"- {ending.id} · {ending.title}：{trigger or '（未写触发条件）'}")
-    return "\n".join(lines)
+async def set_phase_impl(deps: KeeperDeps, phase: str, ending_id: str | None = None) -> str:
+    """写入对局阶段（及可选结局 id）。仅允许 VALID_PHASES。"""
+    if phase not in VALID_PHASES:
+        raise KeeperToolError(f"非法对局阶段：{phase!r}")
+    async with deps.write_lock, deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            raise KeeperToolError("房间不存在")
+        current_state = dict(room.keeper_state or {})
+        current_state[PHASE_KEY] = phase
+        if ending_id:
+            current_state[ENDING_ID_KEY] = ending_id
+        room.keeper_state = current_state
+        await record_event(
+            db,
+            deps,
+            "keeper.phase",
+            {"phase": phase, "ending_id": ending_id},
+        )
+    if ending_id:
+        return f"对局阶段 → {phase}（结局 {ending_id}）"
+    return f"对局阶段 → {phase}"

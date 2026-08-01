@@ -30,6 +30,7 @@ from pydantic import Field
 
 from app.core.keeper.capabilities.agenda.schema import AgendaDecisionFields
 from app.core.keeper.capabilities.health.schema import HealthDecisionFields
+from app.core.keeper.capabilities.progression.schema import ProgressionDecisionFields
 from app.core.keeper.registry import DecisionModel
 
 
@@ -142,7 +143,9 @@ class StealthChange(DecisionModel):
     hidden: bool = Field(description="true=潜行成功进入隐匿；false=现身/被发现")
 
 
-class KeeperDecision(AgendaDecisionFields, HealthDecisionFields, DecisionModel):
+class KeeperDecision(
+    AgendaDecisionFields, HealthDecisionFields, ProgressionDecisionFields, DecisionModel
+):
     """裁决阶段的完整输出契约。
 
     所有列表字段默认空——"本轮不需要检定"表现为 `checks=[]` 加上 `thinking`
@@ -186,9 +189,6 @@ class KeeperDecision(AgendaDecisionFields, HealthDecisionFields, DecisionModel):
     visibility_revealed: list[str] = Field(
         default_factory=list, description="本轮揭开的 visibility_pair id"
     )
-    # 路线 6：开场仪式完成 → investigation；命中结局 → ending 收束
-    opening_complete: bool = Field(default=False, description="开场仪式是否已完成（委托已建立等）")
-    ending_reached: str | None = Field(default=None, description="本轮命中的结局 id；None=未收束")
     narration_guidance: str = Field(
         default="", description="给叙事阶段的指引：可揭示什么/须保密什么/NPC 如何反应"
     )

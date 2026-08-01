@@ -93,3 +93,23 @@ def test_hooks_are_sorted_and_do_not_collide_with_skeleton_steps() -> None:
     assert orders == sorted(orders)
     assert len(set(orders)) == len(orders)
     assert not set(orders) & set(_SKELETON_STEP_ORDERS.values())
+
+
+def test_no_rule_or_example_line_is_emitted_twice() -> None:
+    """🔴 切一片能力 = 能力里加一份 + **骨架里删一份**。忘了删就会重复。
+
+    实测（切 `progression` 时）：规则 10 与两行输出示例在成品里各出现了两次，
+    而组装机制本身一切正常——它只负责按 order 拼，不知道两段说的是同一件事。
+    当时是磁带漂移断言抓到的，但那条只覆盖一个模组一轮对话；这条直接按结构查，
+    任何一片能力切错都躲不过。
+    """
+    import re
+
+    text = build_adjudicator_instructions(_MODULE, _RULESET)
+    labels = re.findall(r"^(\d+[a-z]?)\. ", text, flags=re.MULTILINE)
+    duplicated = sorted({label for label in labels if labels.count(label) > 1})
+    assert not duplicated, f"裁决规则编号重复：{duplicated}——骨架里那份忘了删"
+
+    keys = re.findall(r'^\s+"(\w+)":', text, flags=re.MULTILINE)
+    dup_keys = sorted({k for k in keys if keys.count(k) > 1})
+    assert not dup_keys, f"输出格式示例里字段重复：{dup_keys}"

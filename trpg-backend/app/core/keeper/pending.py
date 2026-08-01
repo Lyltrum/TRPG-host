@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.narrator import CheckRequestNotice
 from app.models.event import PendingCheckRow
 
 
@@ -52,6 +53,19 @@ class PendingCheck:
     # 普通检定，结算路径与本功能上线前逐字一致。
     opposed_opponent: str | None = None
     opposed_value: int | None = None
+
+
+def to_notice(pending: PendingCheck) -> CheckRequestNotice:
+    """待掷记录 → 广播用的通知。放在这里而不是 agent.py：断线重连补发
+    （ws.py）和裁决时首发（agent.py）用的是同一份转换。"""
+    return CheckRequestNotice(
+        check_request_id=pending.check_request_id,
+        kind=pending.kind,
+        player_id=pending.player_id,
+        player_nickname=pending.player_nickname,
+        skill=pending.skill,
+        reason=pending.reason,
+    )
 
 
 def _to_row(check: PendingCheck) -> PendingCheckRow:
@@ -128,6 +142,16 @@ class PendingCheckManager:
         await db.delete(row)
         await db.flush()
         return check
+
+    async def list_all(self, db: AsyncSession, room_id: str) -> list[PendingCheck]:
+        """队列里全部待掷检定，按顺序。断线重连要靠它补发检定卡片——
+        `check.request` 只在裁决那一刻推过一次，重连的人不补就永远看不到。"""
+        rows = await db.scalars(
+            select(PendingCheckRow)
+            .where(PendingCheckRow.room_id == room_id)
+            .order_by(PendingCheckRow.seq)
+        )
+        return [_to_check(row) for row in rows]
 
     async def has(self, db: AsyncSession, room_id: str) -> bool:
         row = await db.scalar(

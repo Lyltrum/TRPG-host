@@ -69,7 +69,7 @@ from app.core.keeper.location_state import (
 )
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.npc_state import format_npc_states
-from app.core.keeper.pending import PendingCheck, pending_check_manager
+from app.core.keeper.pending import PendingCheck, pending_check_manager, to_notice
 from app.core.keeper.phase import (
     ENDING_ID_KEY,
     PHASE_FINISHED,
@@ -124,7 +124,6 @@ from app.core.llm_tape import build_llm_client
 from app.core.narrator import (
     DEEPSEEK_BASE_URL,
     DEEPSEEK_MODEL,
-    CheckRequestNotice,
     CheckResultCallback,
     CheckResultNotice,
     NarrationContext,
@@ -168,17 +167,6 @@ _FALLBACK_ADJUDICATE_GUIDANCE = (
     "有障碍就写眼前障碍；不要编造未发生的重大剧情；"
     "可请玩家用更明确的一句行动再说一次。checks 必须为空。"
 )
-
-
-def _pending_to_notice(pending: PendingCheck) -> CheckRequestNotice:
-    return CheckRequestNotice(
-        check_request_id=pending.check_request_id,
-        kind=pending.kind,
-        player_id=pending.player_id,
-        player_nickname=pending.player_nickname,
-        skill=pending.skill,
-        reason=pending.reason,
-    )
 
 
 def _build_check_boundary_hint(pending_checks: list[PendingCheck]) -> str:
@@ -324,7 +312,7 @@ class KeeperAgent(Narrator):
             )
             return NarrationOutcome(
                 text="守秘人正在等待掷骰——请先完成待掷的检定。",
-                check_requests=[_pending_to_notice(pending)],
+                check_requests=[to_notice(pending)],
             )
 
         keeper_state, history_lines, roster, players = await self._load_room_memory(room_id)
@@ -724,7 +712,7 @@ class KeeperAgent(Narrator):
             )
             return NarrationOutcome(
                 text=narration,
-                check_requests=[_pending_to_notice(c) for c in pending_checks],
+                check_requests=[to_notice(c) for c in pending_checks],
                 stat_changes=deps.stat_changes,
                 segments=segments,
             )
@@ -876,7 +864,7 @@ class KeeperAgent(Narrator):
             return NarrationOutcome(
                 text="",
                 check_results=[notice],
-                check_requests=[_pending_to_notice(next_pending)],
+                check_requests=[to_notice(next_pending)],
             )
 
         # 队列清空：结算叙事——复用 narrate()，让裁决器看到刚才的结果并续写。

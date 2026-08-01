@@ -426,3 +426,97 @@ def test_end_game_clears_chat_and_replay_stays_clean(sync_client: TestClient) ->
         "data"
     ]
     assert "这句话不该进复盘" not in str(replay)
+
+
+# ── 重连补发待掷检定（真人实测 exec/23 #56）────────
+
+
+def test_reconnect_resends_the_pending_check_card(sync_client: TestClient) -> None:
+    """🔴 刷新页面/重启后端之后，那张检定卡片必须回来。
+
+    真人实测当场复现：队列落库（exec/24 §8.1）保证了**服务端不会忘**，但
+    `check.request` 只在裁决那一刻实时推过一次——重连的人再也收不到它，而
+    `narrate` 的守卫会一直挡住新一轮，对局停在"守秘人等你掷骰、你屏幕上却
+    没有骰子"的死角。两半都做了，重启才真的能接着玩。
+
+    断言落在 `session.bound` **之后紧接着**收到 check.request 上——顺序错了
+    （比如放在别的握手步骤后面）客户端可能已经开始渲染，卡片就插不进去了。
+    """
+    import asyncio
+
+    from app.controller import ws as ws_controller
+    from app.core.keeper.pending import PendingCheck, pending_check_manager
+
+    # 🔴 **不要** `from tests.conftest import TestSessionLocal`——conftest 顶部
+    # 明文警告过：那会把 conftest 当成另一个模块再导入一次、连带新建一个引擎，
+    # 表建在旧引擎上，结果是 `no such table`（我照着踩了一次）。
+    # conftest 已经把 ws 模块的会话工厂重绑到测试库，直接用它就是同一个引擎。
+    session_factory = ws_controller.async_session_factory
+
+    token = register_and_login(sync_client, "reconnect_host")
+    room = create_room(sync_client, token)
+
+    async def _seed() -> None:
+        async with session_factory() as db:
+            await pending_check_manager.add(
+                db,
+                room["roomId"],
+                [
+                    PendingCheck(
+                        check_request_id="chk-survived",
+                        kind="skill",
+                        room_id=room["roomId"],
+                        player_id=room["playerId"],
+                        player_nickname="李明轩",
+                        skill="格斗：斗殴",
+                        loss_on_success="0",
+                        loss_on_failure="0",
+                        reason="他抬手格挡",
+                    )
+                ],
+            )
+            await db.commit()
+
+    asyncio.run(_seed())
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        ws.send_json(
+            {
+                "type": "room.join",
+                "playerId": room["playerId"],
+                "payload": {"reconnectToken": room["reconnectToken"]},
+            }
+        )
+        # 🔴 握手之后立刻发一条**必然有回复**的消息，再连读两条。
+        # 不这么做的话，功能一旦回退这个用例会**挂住**（等一条永远不来的
+        # 消息）而不是变红——CI 里挂住比失败更糟，因为没人知道它在等什么。
+        _send_chat(ws, room, "在吗", "cid-reconnect")
+        first = ws.receive_json()
+        second = ws.receive_json()
+
+    assert first["type"] == "session.bound"
+    # 补发要排在聊天回执**之前**：它属于握手的一部分，晚于客户端已经开始
+    # 处理别的消息就可能插不进渲染
+    assert second["type"] == "check.request", f"握手没有补发检定卡片：{second}"
+    assert second["payload"]["checkRequestId"] == "chk-survived"
+    assert second["payload"]["skill"] == "格斗：斗殴"
+
+
+def test_reconnect_sends_nothing_extra_when_the_queue_is_empty(
+    sync_client: TestClient,
+) -> None:
+    """没有待掷检定时，握手**逐字不变**——不能凭空多一条消息出来。"""
+    token = register_and_login(sync_client, "reconnect_clean")
+    room = create_room(sync_client, token)
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+        # 再发一条别的，能原样收到回执就说明中间没有多余消息挤进来
+        ws.send_json(
+            {
+                "type": "room.join",
+                "playerId": room["playerId"],
+                "payload": {"reconnectToken": room["reconnectToken"]},
+            }
+        )
+        assert ws.receive_json()["type"] == "session.bound"

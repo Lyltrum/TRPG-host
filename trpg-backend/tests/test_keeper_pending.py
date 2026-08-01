@@ -21,7 +21,12 @@ from app.core.db import Base
 from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.fact_ledger import revealed_fact_ids
 from app.core.keeper.module_loader import load_module
-from app.core.keeper.pending import PendingCheck, PendingCheckManager, pending_check_manager
+from app.core.keeper.pending import (
+    PendingCheck,
+    PendingCheckManager,
+    pending_check_manager,
+    to_notice,
+)
 from app.core.keeper.tools import KeeperDeps, KeeperToolError
 from app.core.narrator import CheckResultNotice, NarrationContext, NarrationOutcome
 from app.models.room import Character, Player, Room
@@ -551,3 +556,44 @@ async def test_on_result_fires_even_when_more_checks_are_pending() -> None:
     await _agent().resolve_check(room_id, player_id, "chk-a", _on_result)
 
     assert seen == ["chk-a"]
+
+
+# ── 重连补发（真人实测 exec/23 #56）────────────────
+
+
+async def test_reconnect_resends_pending_checks() -> None:
+    """🔴 队列落库只解决了一半。
+
+    `check.request` 只在裁决那一刻**实时推过一次**。刷新页面或重启后端之后，
+    队列里那条检定还在（这是 §8.1 保证的），但客户端再也收不到卡片——而
+    `narrate` 的守卫会一直挡住新一轮，对局停在"守秘人等你掷骰、你屏幕上却
+    没有骰子"的死角。真人实测当场复现。
+
+    这里断言的是**服务端能把队列重新讲出来**：`list_all` + `to_notice` 就是
+    重连握手用的那条路径（WS 侧的接线由 e2e 覆盖，pytest 起不了两个客户端）。
+    """
+    room_id, player_id = await _bare_room("QUEUE6")
+    await _enqueue(
+        room_id,
+        [
+            _check(room_id=room_id, player_id=player_id, check_request_id="chk-1"),
+            _check(
+                room_id=room_id,
+                player_id=player_id,
+                check_request_id="chk-2",
+                kind="san",
+                skill=None,
+            ),
+        ],
+    )
+
+    async with _session_factory() as db:
+        pendings = await pending_check_manager.list_all(db, room_id)
+
+    notices = [to_notice(p) for p in pendings]
+    # 顺序要保住：谁先掷是有意义的
+    assert [n.check_request_id for n in notices] == ["chk-1", "chk-2"]
+    # 两种检定各自还原成对的事件类型所需的字段
+    assert notices[0].kind == "skill" and notices[0].skill == "侦察"
+    assert notices[1].kind == "san" and notices[1].skill is None
+    assert all(n.player_nickname == "阿福" for n in notices)

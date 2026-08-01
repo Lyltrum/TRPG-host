@@ -415,12 +415,18 @@ export default function RoomPage() {
   useEffect(() => {
     reloadCharacter()
   }, [reloadCharacter])
-  const senderName = character?.info.name || nickname || '你'
-  const senderNameRef = useRef(senderName)
-  senderNameRef.current = senderName
   const roomInfo = useRoomPlayers(roomCode)
   const roomInfoRef = useRef(roomInfo)
   roomInfoRef.current = roomInfo
+  // 🔴 自己的显示名要跟别人**同源**（真人实测 exec/23 #57）：刷新之后本地
+  // 角色卡还没拉回来时，这里曾退回**账号昵称**，于是同一屏上守秘人叫「李明轩」、
+  // 自己的气泡却写着「凌铭辉」。
+  // 后端建完卡就把 `Player.nickname` 换成角色名了（#52），而房间预览每 3 秒
+  // 轮询一次、必定带着它——拿它兜底比拿账号名兜底可靠得多，也不必等角色卡。
+  const myRoomNickname = roomInfo?.players.find((p) => p.playerId === playerId)?.nickname
+  const senderName = character?.info.name || myRoomNickname || nickname || '你'
+  const senderNameRef = useRef(senderName)
+  senderNameRef.current = senderName
   const isHost = roomInfo?.players.find((p) => p.playerId === playerId)?.isHost ?? false
   // 房主选模组时落在 game-store；访客/刷新后优先 room-store.moduleId（同 StoryPage 的取值口径）
   const roomModuleId = useRoomStore((s) => s.moduleId)

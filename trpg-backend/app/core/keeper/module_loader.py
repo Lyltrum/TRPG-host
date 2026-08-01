@@ -466,7 +466,7 @@ def render_for_subject(
         parts[0] += f"（{module.meta.era}）"
 
     places: list[str] = []
-    for node in _iter_all_nodes(module.nodes):
+    for node in iter_all_nodes(module.nodes):
         text = (node.public_text or "").strip()
         places.append(f"- {node.title}：{text}" if text else f"- {node.title}")
     if places:
@@ -486,11 +486,13 @@ def render_for_subject(
     return "\n\n".join(parts)
 
 
-def _iter_all_nodes(nodes: list[ModuleNode]) -> list[ModuleNode]:
+def iter_all_nodes(nodes: list[ModuleNode]) -> list[ModuleNode]:
+    """展平节点树（含子节点）。公开是因为 tools.py 的状态主体白名单要用它
+    ——跨模块调私有函数不如把它转正。"""
     out: list[ModuleNode] = []
     for node in nodes:
         out.append(node)
         if node.sub_node is not None:
-            out.extend(_iter_all_nodes([node.sub_node]))
-        out.extend(_iter_all_nodes(node.sub_nodes))
+            out.extend(iter_all_nodes([node.sub_node]))
+        out.extend(iter_all_nodes(node.sub_nodes))
     return out

@@ -100,7 +100,10 @@ async def execute_side_effects(
             issues.append(f"HP 变更未执行：{exc}")
     for update in decision.state_updates:
         try:
-            report.append(await update_state_impl(deps, update.key, update.value))
+            line, issue = await update_state_impl(deps, update.key, update.value, update.subject)
+            report.append(line)
+            if issue is not None:
+                issues.append(issue)
         except KeeperToolError as exc:
             issues.append(f"状态更新未执行：{exc}")
 

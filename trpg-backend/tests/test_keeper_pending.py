@@ -416,3 +416,81 @@ async def test_pending_check_carries_reveals_from_the_module() -> None:
         deps, KeeperDecision(checks=[CheckRequest(skill_id=hall.checks[0].skill_ids[0])])
     )
     assert [p.reveals for p in pending] == [("fact-001",)]
+
+
+# ── 骰值先落地、叙事随后（真人实测「反馈太慢」）─────────
+
+
+async def test_on_result_fires_before_the_settlement_narration() -> None:
+    """🔴 骰子一落地就回调，**不等**后面那次结算叙事。
+
+    掷骰是纯代码毫秒级，结算叙事是 10 秒级的 LLM 往返。原来两件事跑完才一次性
+    返回，WS 层只能等到最后才广播，玩家点完「投掷」得盯着屏幕十几秒才看得到
+    自己掷了多少。真人桌上骰子是当场停下的。
+
+    断言用的是**顺序**而不是"有没有调过"：调到了但排在叙事后面，等于没改。
+    """
+    room_id, player_id, nickname = await _seed_room()
+    check_request_id = "chk-timing"
+    pending_check_manager.add(
+        room_id,
+        [
+            _check(
+                room_id=room_id,
+                check_request_id=check_request_id,
+                player_id=player_id,
+                player_nickname=nickname,
+            )
+        ],
+    )
+    agent = _stub_agent(NarrationOutcome(text="结算叙事"))
+    trace: list[str] = []
+
+    original_narrate = agent.narrate
+
+    async def _traced_narrate(context: NarrationContext) -> NarrationOutcome:
+        trace.append("narrate")
+        return await original_narrate(context)
+
+    # 直接替实例上的方法，不改类——这条用例要的是"调用顺序"，不是新行为
+    object.__setattr__(agent, "narrate", _traced_narrate)
+
+    async def _on_result(notice: CheckResultNotice) -> None:
+        trace.append(f"result:{notice.check_request_id}")
+
+    outcome = await agent.resolve_check(room_id, player_id, check_request_id, _on_result)
+
+    assert trace == [f"result:{check_request_id}", "narrate"]
+    # 结果仍然留在返回值里：没用回调的老调用方行为不变
+    assert [r.check_request_id for r in outcome.check_results] == [check_request_id]
+
+
+async def test_on_result_fires_even_when_more_checks_are_pending() -> None:
+    """队列没清空的分支（不走结算叙事）也要回调——否则多人连掷时只有最后
+    一个人的骰子是"秒出"的。"""
+    room_id, player_id, nickname = await _seed_room()
+    pending_check_manager.add(
+        room_id,
+        [
+            _check(
+                room_id=room_id,
+                check_request_id="chk-a",
+                player_id=player_id,
+                player_nickname=nickname,
+            ),
+            _check(
+                room_id=room_id,
+                check_request_id="chk-b",
+                player_id=player_id,
+                player_nickname=nickname,
+            ),
+        ],
+    )
+    seen: list[str] = []
+
+    async def _on_result(notice: CheckResultNotice) -> None:
+        seen.append(notice.check_request_id)
+
+    await _agent().resolve_check(room_id, player_id, "chk-a", _on_result)
+
+    assert seen == ["chk-a"]

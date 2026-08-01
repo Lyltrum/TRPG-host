@@ -22,6 +22,7 @@ from app.dto.character import (
     CharacterRead,
     CharacterUpdateBody,
     PartyCharacterRead,
+    QuickBuildCharacterBody,
     RollAttributePoolResult,
     RollAttributesResult,
     RollLuckResult,
@@ -315,6 +316,47 @@ async def create_character(
         result = await character_service.create_character_draft(
             db, room_id, reconnect_token, based_on_template_id
         )
+    except (
+        room_service.RoomNotFoundError,
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+    ) as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(result)
+
+
+@router.post(
+    "/{room_id}/characters/quick-build",
+    response_model=ApiResponse[CharacterDraftResult],
+    status_code=status.HTTP_201_CREATED,
+    tags=["characters"],
+)
+async def quick_build_character(
+    room_id: str,
+    payload: QuickBuildCharacterBody,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[CharacterDraftResult]:
+    """POST /api/v1/rooms/{roomId}/characters/quick-build —— 一键生成一张合法角色卡。
+
+    给零基础玩家的第二条建卡路径（真人实测反馈：八步向导对新人不友好）。
+    生成器与 AI 队友共用同一个，产出的卡是 `complete` 状态，直接可以开局。
+    想自己捏的人走原来的向导，两条路互不影响。
+    """
+    try:
+        result = await character_service.quick_build_character(
+            db, room_id, reconnect_token, payload.name
+        )
+    except character_service.CharacterInvalidError as exc:
+        raise AppException(
+            ErrorCode.CHARACTER_INVALID,
+            str(exc),
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            details=[
+                {"code": issue.code, "field": issue.field, "message": issue.message}
+                for issue in exc.issues
+            ],
+        ) from exc
     except (
         room_service.RoomNotFoundError,
         room_service.RoomAuthenticationError,

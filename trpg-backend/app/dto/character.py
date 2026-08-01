@@ -151,6 +151,16 @@ class CharacterCreateBody(CamelModel):
     based_on_template_id: str | None = Field(default=None, min_length=1)
 
 
+class QuickBuildCharacterBody(CamelModel):
+    """POST /api/v1/rooms/{roomId}/characters/quick-build 请求体。
+
+    只要一个名字。属性/职业/技能全部由服务端随机生成（与 AI 队友同一个
+    生成器），玩家不需要理解任何 COC7 规则就能开局。
+    """
+
+    name: str = Field(min_length=1, max_length=50)
+
+
 class CharacterDraftResult(CamelModel):
     """POST /api/v1/rooms/{roomId}/characters 返回"""
 

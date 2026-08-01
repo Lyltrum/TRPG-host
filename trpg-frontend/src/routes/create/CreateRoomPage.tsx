@@ -25,8 +25,10 @@ export default function CreateRoomPage() {
   const savedRoomName = useRoomStore((s) => s.createFormRoomName)
   const savedMaxPlayers = useRoomStore((s) => s.createFormMaxPlayers)
   const [roomName, setRoomName] = useState(savedRoomName || '')
-  const [maxPlayers, setMaxPlayers] = useState(savedMaxPlayers || 4)
-  const [maxPlayersInput, setMaxPlayersInput] = useState(String(savedMaxPlayers || 4))
+  // 默认 1 人：零基础玩家的第一局多半是自己先开一间试试，默认 4 会让他对着
+  // 三个空位等人（真人实测反馈）。要多人自己往上加。
+  const [maxPlayers, setMaxPlayers] = useState(savedMaxPlayers || 1)
+  const [maxPlayersInput, setMaxPlayersInput] = useState(String(savedMaxPlayers || 1))
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
 

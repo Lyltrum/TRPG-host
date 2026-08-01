@@ -48,6 +48,19 @@ export function SkillRow({
   const canAdd = !disabled && cap !== null && allocation < maxPoints && current < cap
   const canSub = !disabled && allocation > minPoints
 
+  // ±5 快捷键（真人实测：一点一点加太慢，属性步骤早就有 ±5，技能步骤没有）。
+  // 🔴 走 onSetAllocation 而不是 onChange(±5)：调用方的 onChange 只夹了下界，
+  // 上界靠按钮 disabled 拦——步长变成 5 之后"差 3 点到上限"就会一脚踩过。
+  // 这里按 [minPoints, min(maxPoints, cap-base)] 夹住，够不到 5 点就加到顶。
+  const adjustBy5 = (delta: number) => {
+    if (disabled || cap === null) return
+    const maxAlloc = Math.min(maxPoints, cap - base)
+    const next = Math.max(minPoints, Math.min(maxAlloc, allocation + delta))
+    if (next !== allocation) onSetAllocation(next)
+  }
+  const step5Class =
+    'w-7 h-6 rounded-full flex items-center justify-center text-[10px] font-mono font-semibold transition-all'
+
   const [inputValue, setInputValue] = useState(String(current))
   useEffect(() => {
     setInputValue(String(current))
@@ -89,6 +102,17 @@ export function SkillRow({
       </div>
       <div className="text-[10px] text-text-muted font-mono min-w-[32px] text-center">{base}%</div>
       <button
+        onClick={() => adjustBy5(-5)}
+        className={`${step5Class} ${
+          canSub
+            ? 'bg-card border border-border-light text-text-muted active:bg-panel active:scale-90'
+            : 'bg-transparent text-border-light cursor-not-allowed'
+        }`}
+        disabled={!canSub}
+      >
+        −5
+      </button>
+      <button
         onClick={() => onChange(-1)}
         className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${
           canSub ? 'bg-card border border-border-light text-text-muted active:bg-panel active:scale-90' : 'bg-transparent text-border-light cursor-not-allowed'
@@ -114,6 +138,17 @@ export function SkillRow({
         disabled={!canAdd}
       >
         <Plus className="w-3 h-3" />
+      </button>
+      <button
+        onClick={() => adjustBy5(5)}
+        className={`${step5Class} ${
+          canAdd
+            ? 'bg-card border border-border-light text-text-muted active:bg-panel active:scale-90'
+            : 'bg-transparent text-border-light cursor-not-allowed'
+        }`}
+        disabled={!canAdd}
+      >
+        +5
       </button>
     </div>
   )

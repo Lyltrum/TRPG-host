@@ -90,6 +90,13 @@ export function OccupationPointsStep({
         </div>
         <div className="flex items-center gap-3 mt-2">
           <button
+            onClick={() => handleCreditChange(-5)}
+            disabled={creditValue <= selectedOcc.creditMin}
+            className="w-8 h-8 rounded-full bg-card border border-border-light text-text-muted text-[11px] font-mono font-semibold flex items-center justify-center active:bg-panel active:scale-90 transition-all disabled:opacity-40 disabled:active:scale-100"
+          >
+            −5
+          </button>
+          <button
             onClick={() => handleCreditChange(-1)}
             disabled={creditValue <= selectedOcc.creditMin}
             className="w-8 h-8 rounded-full bg-card border border-border-light text-text-muted flex items-center justify-center active:bg-panel active:scale-90 transition-all disabled:opacity-40 disabled:active:scale-100"
@@ -103,6 +110,13 @@ export function OccupationPointsStep({
             className="w-8 h-8 rounded-full bg-card border border-border-light text-text-muted flex items-center justify-center active:bg-panel active:scale-90 transition-all disabled:opacity-40 disabled:active:scale-100"
           >
             <Plus className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => handleCreditChange(5)}
+            disabled={creditValue >= selectedOcc.creditMax}
+            className="w-8 h-8 rounded-full bg-card border border-border-light text-text-muted text-[11px] font-mono font-semibold flex items-center justify-center active:bg-panel active:scale-90 transition-all disabled:opacity-40 disabled:active:scale-100"
+          >
+            +5
           </button>
         </div>
       </StepSection>

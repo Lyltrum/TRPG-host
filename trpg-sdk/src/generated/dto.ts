@@ -737,6 +737,16 @@ export interface PlayerReadyPayload {
 }
 
 /**
+ * POST /api/v1/rooms/{roomId}/characters/quick-build 请求体。
+ *
+ * 只要一个名字。属性/职业/技能全部由服务端随机生成（与 AI 队友同一个
+ * 生成器），玩家不需要理解任何 COC7 规则就能开局。
+ */
+export interface QuickBuildCharacterBody {
+  name: string;
+}
+
+/**
  * POST /api/v1/auth/register 请求体
  */
 export interface RegisterBody {

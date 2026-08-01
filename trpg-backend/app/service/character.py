@@ -109,6 +109,61 @@ async def create_character_draft(
     return CharacterDraftResult(character_id=character.id, status=character.status)
 
 
+async def quick_build_character(
+    db: AsyncSession, room_id: str, reconnect_token: str | None, name: str
+) -> CharacterDraftResult:
+    """「一键生成」：给这个玩家造一张**规则上合法**的完成态角色卡。
+
+    真人实测反馈（零基础玩家）：八步向导对新人不友好，光是"职业技能点该怎么
+    分"就足以劝退。这条路径让他填个名字就能开局，卡仍然完全合法——生成器与
+    AI 队友共用同一个（`ai_player.roll_character_sheet`），所以新手卡不会莫名
+    其妙比 AI 队友弱或强。
+
+    生成完就是 `complete`：这张卡不进向导。想改的人走原来那条路。
+
+    🔴 角色名必填、不做兜底：名字是代入感的落点（建完卡之后守秘人就用它称呼
+    你，见 `complete_character`），静默塞一个"无名调查员"只会让人以为坏了。
+    """
+    from app.service.ai_player import roll_character_sheet
+
+    trimmed = (name or "").strip()
+    if not trimmed:
+        raise CharacterInvalidError(
+            [ValidationIssue(code="NAME_REQUIRED", field="name", message="请先给调查员起个名字")]
+        )
+
+    room = await find_room_by_id(db, room_id)
+    player = await get_player_by_reconnect_token(db, reconnect_token)
+    if player.room_id != room.id:
+        raise RoomAuthorizationError("你不在这个房间里")
+
+    sheet = roll_character_sheet()
+    existing = await db.scalar(
+        select(Character).where(Character.room_id == room_id, Character.player_id == player.id)
+    )
+    character = (
+        existing if existing is not None else Character(room_id=room_id, player_id=player.id)
+    )
+    character.status = "complete"
+    character.name = trimmed
+    character.occupation_id = sheet.occupation.id
+    character.occupation = sheet.occupation.name
+    character.age = sheet.age
+    character.attributes = sheet.attributes
+    # 生成器固定 30 岁 —— COC7 在这个区间没有年龄修正，分配值与有效值天然相同
+    character.allocated_attributes = dict(sheet.attributes)
+    character.derived_stats = compute_derived_stats(sheet.attributes, sheet.age)
+    character.skills = sheet.skills
+    character.generation_method = GENERATION_POINT_BUY
+    if existing is None:
+        db.add(character)
+    player.has_character = True
+    # 跟 complete_character 同一条规矩：这一局里别人怎么叫你 = 角色名
+    player.nickname = trimmed
+    await db.commit()
+    return CharacterDraftResult(character_id=character.id, status=character.status)
+
+
 async def _get_own_character(
     db: AsyncSession, room_id: str, character_id: str, reconnect_token: str | None
 ) -> Character:
@@ -245,6 +300,17 @@ async def complete_character(
     player = await db.get(Player, character.player_id)
     if player is not None:
         player.has_character = True
+        # 🔴 建完卡之后，这个房间里的显示名 = **角色名**（真人实测反馈）。
+        # 玩家给调查员起了名字，守秘人却还在叫他的账号昵称——桌上没人会用
+        # "登录名"称呼你的角色，代入感当场破掉。
+        #
+        # 改在这里而不是各个展示点：`Player.nickname` 是全链路唯一的称呼来源
+        # （原话广播、守秘人 roster 与历史行、检定请求、队友列表都读它），
+        # 逐处去 join 角色卡既啰嗦又必然漏掉一处。账号昵称仍留在 `users` 表上，
+        # 这里改的只是"在这一局里别人怎么叫你"。
+        name = (character.name or "").strip()
+        if name:
+            player.nickname = name
     await db.commit()
 
 

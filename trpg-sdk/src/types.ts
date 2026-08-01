@@ -33,6 +33,7 @@ export type {
   EquipmentItem as CharacterEquipmentItem,
   CharacterUpdateBody as UpdateCharacterInput,
   CharacterDraftResult,
+  QuickBuildCharacterBody as QuickBuildCharacterInput,
   RollAttributesResult,
   // 年龄调整 / 掷点池生成法（迁移自 coc-char-gen，character-build-migration）
   // —— 对应后端 dto/character.py

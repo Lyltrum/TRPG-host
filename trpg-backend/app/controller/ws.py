@@ -558,13 +558,22 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
         return
 
     narrator = websocket.app.state.narrator
+    # 已经在"骰子落地"那一刻推过的检定 id。整个函数共用一个集合而不是每轮新建
+    # 一个——闭包捕获循环内的变量是 B023 那类经典陷阱，而 id 本来就全局唯一。
+    rolled: set[str] = set()
+
+    async def _push(notice: CheckResultNotice) -> None:
+        await _broadcast_check_result(room_id, notice)
+        rolled.add(notice.check_request_id)
+
     for _ in range(_AI_AUTO_ROLL_LIMIT):
         pending = pending_check_manager.first(room_id)
         if pending is None or pending.player_id not in ai_ids:
             return
         try:
+            # AI 的骰子同样先落地再等叙事——真人在旁边看着，没理由让他多等
             outcome = await narrator.resolve_check(
-                room_id, pending.player_id, pending.check_request_id
+                room_id, pending.player_id, pending.check_request_id, _push
             )
         except Exception:  # noqa: BLE001 — 失败就让它留在队列里，真人可见地卡住好过静默丢骰
             logger.warning(
@@ -575,6 +584,8 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
             )
             return
         for notice in outcome.check_results:
+            if notice.check_request_id in rolled:
+                continue
             await _broadcast_check_result(room_id, notice)
         for notice in outcome.stat_changes:
             await _broadcast_stat_change(room_id, notice)
@@ -697,7 +708,20 @@ async def _handle_check_roll(
     try:
         narrator = websocket.app.state.narrator
         try:
-            outcome = await narrator.resolve_check(room_id, player_id, check_request_id)
+            # 🔴 骰值先落地、叙事随后（真人实测反馈「反馈太慢」）。
+            # 掷骰是纯代码毫秒级，紧跟其后的结算叙事是 10 秒级的 LLM 往返——
+            # 原来两件事跑完才一次性广播，玩家点完「投掷」得盯着屏幕十几秒
+            # 才看得到自己掷了多少。真人桌上骰子是当场停下的。
+            # ⚠️ 回调推过的这几条要记下来，下面别再广播一遍。
+            pushed: set[str] = set()
+
+            async def _push_result(notice: CheckResultNotice) -> None:
+                await _broadcast_check_result(room_id, notice)
+                pushed.add(notice.check_request_id)
+
+            outcome = await narrator.resolve_check(
+                room_id, player_id, check_request_id, _push_result
+            )
         except NotImplementedError:
             # 非 keeper 模式（Fallback/DeepSeekNarrator）没有"待掷检定"这个
             # 概念，明确告知发起者，而不是让请求悬空等不到任何回应。
@@ -716,6 +740,8 @@ async def _handle_check_roll(
             return
 
         for notice in outcome.check_results:
+            if notice.check_request_id in pushed:
+                continue  # 骰子落地那一刻已经推过了
             await _broadcast_check_result(room_id, notice)
         for notice in outcome.stat_changes:
             await _broadcast_stat_change(room_id, notice)

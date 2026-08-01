@@ -52,6 +52,7 @@ _MODELS: list[type[BaseModel]] = [
     # character（issue #59 + issue #77 卡库）
     character.EquipmentItem,
     character.CharacterUpdateBody,
+    character.QuickBuildCharacterBody,
     character.CharacterDraftResult,
     character.CharacterRead,
     character.PartyCharacterRead,

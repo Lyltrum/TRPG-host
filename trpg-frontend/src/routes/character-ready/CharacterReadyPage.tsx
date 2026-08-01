@@ -1,8 +1,8 @@
 import { useNavigate } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, UserPlus, Swords, Eye } from 'lucide-react'
+import { ArrowLeft, UserPlus, Swords, Eye, RefreshCw } from 'lucide-react'
 import { useCharacterStore } from '@/stores/character-store'
-import { fetchCharacter } from '@/services/character/character-api'
+import { fetchCharacter, regenerateBackground } from '@/services/character/character-api'
 import { toCompletedCharacter } from '@/services/character/character-view'
 import { useRoomStore } from '@/stores/room-store'
 import { useAuthStore } from '@/stores/auth-store'
@@ -16,8 +16,23 @@ const SHEET_PAGES = [
   { key: 'background', label: '背景装备' },
 ] as const
 
-function CharacterSheetModal({ character, onClose }: { character: NonNullable<ReturnType<typeof useCharacterStore.getState>['character']>; onClose: () => void }) {
+function CharacterSheetModal({
+  character,
+  onClose,
+  onRegenerate,
+  regenerating,
+  regenerateError,
+}: {
+  character: NonNullable<ReturnType<typeof useCharacterStore.getState>['character']>
+  onClose: () => void
+  onRegenerate: () => void
+  regenerating: boolean
+  regenerateError: string
+}) {
   const [page, setPage] = useState<typeof SHEET_PAGES[number]['key']>('info')
+  // 二次点击确认：走向导手写过背景的人点下去会被覆盖，而移动端弹 confirm
+  // 体验差。第一次点变成确认态，再点才真执行。
+  const [confirmingRegen, setConfirmingRegen] = useState(false)
   const { ruleset } = useRuleset()
   const occupation = character.info.occupationId
     ? ruleset?.occupations.find(o => o.id === character.info.occupationId)
@@ -133,6 +148,42 @@ function CharacterSheetModal({ character, onClose }: { character: NonNullable<Re
               <div>
                 <h4 className="text-[11px] font-semibold text-brass-dark mb-2">背景故事</h4>
                 <p className="text-[13px] text-text-primary whitespace-pre-wrap">{character.background || '暂未填写'}</p>
+                {/* exec/20 §1.9 定的方向：内容质量不该由代码判，该给玩家一个
+                    重摇的按钮，让人来判。只换过去，属性/技能一个都不动。 */}
+                <button
+                  onClick={() => {
+                    if (regenerating) return
+                    if (!confirmingRegen) {
+                      setConfirmingRegen(true)
+                      return
+                    }
+                    setConfirmingRegen(false)
+                    onRegenerate()
+                  }}
+                  disabled={regenerating}
+                  className={`mt-2.5 w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded-sm text-[12px] font-semibold transition-all ${
+                    regenerating
+                      ? 'bg-panel border border-border-light text-text-dim cursor-not-allowed'
+                      : confirmingRegen
+                        ? 'bg-brass border border-brass text-white active:scale-[0.97]'
+                        : 'bg-card border border-brass text-brass-dark active:bg-brass active:text-white active:scale-[0.97]'
+                  }`}
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${regenerating ? 'animate-spin' : ''}`} />
+                  {regenerating
+                    ? '正在重写…'
+                    : confirmingRegen
+                      ? '确定？当前背景会被替换'
+                      : '换一段过去'}
+                </button>
+                {confirmingRegen && !regenerating && (
+                  <p className="text-[11px] text-text-dim text-center mt-1.5">
+                    只换背景故事，属性、技能、职业都不变
+                  </p>
+                )}
+                {regenerateError && (
+                  <p className="text-[11px] text-[#c04040] text-center mt-1.5">{regenerateError}</p>
+                )}
               </div>
               <div>
                 <h4 className="text-[11px] font-semibold text-brass-dark mb-2">备注</h4>
@@ -182,6 +233,24 @@ export default function CharacterReadyPage() {
       cancelled = true
     }
   }, [roomId, characterId, readyRuleset])
+
+  const [regeneratingBackground, setRegeneratingBackground] = useState(false)
+  const [regenerateBackgroundError, setRegenerateBackgroundError] = useState('')
+  const handleRegenerateBackground = async () => {
+    if (!roomId || !characterId || !readyRuleset) return
+    setRegeneratingBackground(true)
+    setRegenerateBackgroundError('')
+    try {
+      const updated = await regenerateBackground(roomId, characterId)
+      setRemoteCharacter(toCompletedCharacter(updated, readyRuleset))
+    } catch {
+      // 后端在生成服务不可用时返回 503（而不是静默保持原样）——这里如实告诉他，
+      // 否则他会以为按钮坏了然后一直点。
+      setRegenerateBackgroundError('这次没写出来，稍后再试试')
+    } finally {
+      setRegeneratingBackground(false)
+    }
+  }
 
   const character = remoteCharacter ?? cachedCharacter
   const roomCode = useRoomStore((s) => s.roomCode)
@@ -342,7 +411,13 @@ export default function CharacterReadyPage() {
 
       {/* Character Sheet Modal */}
       {showSelfSheet && character && (
-        <CharacterSheetModal character={character} onClose={() => setShowSelfSheet(false)} />
+        <CharacterSheetModal
+          character={character}
+          onClose={() => setShowSelfSheet(false)}
+          onRegenerate={handleRegenerateBackground}
+          regenerating={regeneratingBackground}
+          regenerateError={regenerateBackgroundError}
+        />
       )}
     </div>
   )

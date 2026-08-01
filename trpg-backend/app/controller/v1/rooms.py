@@ -429,6 +429,49 @@ async def get_character(
     return ApiResponse.ok(character)
 
 
+@router.post(
+    "/{room_id}/characters/{character_id}/regenerate-background",
+    response_model=ApiResponse[CharacterRead],
+    tags=["characters"],
+)
+async def regenerate_background(
+    room_id: str,
+    character_id: str,
+    request: Request,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[CharacterRead]:
+    """POST /api/v1/rooms/{roomId}/characters/{characterId}/regenerate-background
+
+    重摇一次角色背景（exec/25 P1 #5）。只换过去，属性/技能/职业一个都不动。
+
+    `exec/20 §1.9` 定的方向：内容质量不该由代码判，该给玩家一个重摇的按钮。
+    """
+    try:
+        character = await character_service.regenerate_background(
+            db,
+            room_id,
+            character_id,
+            reconnect_token,
+            writer=getattr(request.app.state, "background_writer", None),
+        )
+    except character_service.BackgroundUnavailableError as exc:
+        # 🔴 显式失败而不是静默保持原样：玩家主动点了「换一个」，没反应会让他
+        # 以为按钮坏了然后一直点。503 = 依赖的外部服务这会儿不可用。
+        raise AppException(
+            ErrorCode.INTERNAL_ERROR,
+            "背景生成服务暂时不可用，请稍后再试",
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        ) from exc
+    except (
+        character_service.CharacterNotFoundError,
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+    ) as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(character)
+
+
 @router.patch(
     "/{room_id}/characters/{character_id}",
     response_model=ApiResponse[None],

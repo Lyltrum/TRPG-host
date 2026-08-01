@@ -116,6 +116,11 @@ export async function completeCharacter(roomId: string, characterId: string): Pr
   await sdk.characters.complete(roomId, characterId, requireReconnectToken());
 }
 
+/** 重摇一次角色背景（exec/25 P1 #5）。只换过去，属性/技能/职业不动。 */
+export async function regenerateBackground(roomId: string, characterId: string) {
+  return sdk.characters.regenerateBackground(roomId, characterId, requireReconnectToken());
+}
+
 /**
  * 服务端权威掷骰生成 8+1 项属性（character-build-migration）。跟其余四个
  * 函数保持同样的薄封装风格，页面组件不直接碰 sdk/reconnectToken。

@@ -98,6 +98,17 @@ export interface AgeRangeSpec {
 }
 
 /**
+ * 加一个 AI 队友（exec/21）。三个字段都可选。
+ *
+ * `seed` 用于可复现——同一个 seed 造出同一张卡，测试与试玩装置需要它。
+ */
+export interface AiPlayerCreateBody {
+  nickname?: string | null;
+  occupation?: string | null;
+  seed?: number | null;
+}
+
+/**
  * 点数购买法的约束（issue #96）。
  *
  * 这些数字此前只存在于前端代码里、后端既不校验也不暴露，导致 ①任何 SDK

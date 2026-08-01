@@ -253,7 +253,10 @@ async def create_ai_player(
             + "；".join(f"{i.code}@{i.field}:{i.message}" for i in issues)
         )
 
-    player = Player(room_id=room_id, nickname=nickname, is_ai=True, has_character=True)
+    # 🔴 `ready=True` 不是图省事：大厅的「全员就绪」按非房主玩家逐个判，而 AI
+    # 没有连接、永远点不了那个按钮——留 False 会让房主的「开始游戏」永久点不亮。
+    # 它一落座就带着一张完成态的卡，"就绪"对它是事实描述而不是待办。
+    player = Player(room_id=room_id, nickname=nickname, is_ai=True, has_character=True, ready=True)
     db.add(player)
     await db.flush()
     db.add(

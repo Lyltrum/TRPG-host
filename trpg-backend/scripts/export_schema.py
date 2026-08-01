@@ -45,6 +45,7 @@ _MODELS: list[type[BaseModel]] = [
     room.JoinRoomBody,
     room.RoomCreateResult,
     room.RoomPlayerRead,
+    room.AiPlayerCreateBody,
     room.ModuleRead,
     room.RoomPreview,
     room.MyRoomSummary,

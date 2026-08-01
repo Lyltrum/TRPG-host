@@ -146,6 +146,9 @@ async def test_created_ai_player_is_seated_with_a_complete_card() -> None:
         assert saved.is_ai is True
         # 开局条件是"所有人建卡完成"——AI 的卡一落库就是完成态，天然满足
         assert saved.has_character is True
+        # 🔴 另一个开局条件是"非房主全员已就绪"。AI 没有连接、点不了那个按钮，
+        # 留 False 会让房主的「开始游戏」永久点不亮。
+        assert saved.ready is True
         character = (
             await db.execute(select(Character).where(Character.player_id == player.id))
         ).scalar_one()

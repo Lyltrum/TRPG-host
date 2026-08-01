@@ -5,7 +5,7 @@ import type {
   RoomPlayerSummary,
   RoomPreview,
 } from 'trpg-sdk';
-import { useRoomStore } from '@/stores/room-store';
+import { DEFAULT_MAX_PLAYERS, useRoomStore } from '@/stores/room-store';
 import { getAuthToken, sdk } from './api-client';
 
 export type { CreateRoomResult, ModuleSummary, MyRoomSummary, RoomPreview };
@@ -35,7 +35,7 @@ export async function createGameRoom(
   maxPlayers?: number
 ): Promise<CreateRoomResult> {
   return sdk.rooms.create(
-    { nickname, roomName: roomName ?? '', maxPlayers: maxPlayers ?? 4 },
+    { nickname, roomName: roomName ?? '', maxPlayers: maxPlayers ?? DEFAULT_MAX_PLAYERS },
     requireAuthToken()
   );
 }

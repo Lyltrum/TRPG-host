@@ -4,7 +4,7 @@ import { ArrowLeft, Plus, Minus } from 'lucide-react'
 import { GAME_REGISTRY, SYSTEM_COLORS, getScenarioById } from '@/config/games'
 import { useGameStore } from '@/stores/game-store'
 import { useAuthStore } from '@/stores/auth-store'
-import { useRoomStore } from '@/stores/room-store'
+import { DEFAULT_MAX_PLAYERS, useRoomStore } from '@/stores/room-store'
 import { createGameRoom, listModules, selectModule } from '@/services/room'
 import { friendlyErrorMessage } from '@/services/api-client'
 
@@ -26,9 +26,12 @@ export default function CreateRoomPage() {
   const savedMaxPlayers = useRoomStore((s) => s.createFormMaxPlayers)
   const [roomName, setRoomName] = useState(savedRoomName || '')
   // 默认 1 人：零基础玩家的第一局多半是自己先开一间试试，默认 4 会让他对着
-  // 三个空位等人（真人实测反馈）。要多人自己往上加。
-  const [maxPlayers, setMaxPlayers] = useState(savedMaxPlayers || 1)
-  const [maxPlayersInput, setMaxPlayersInput] = useState(String(savedMaxPlayers || 1))
+  // 三个空位等人（真人实测反馈 exec/23 #50）。要多人自己往上加。
+  // 默认值只有 room-store 那一个来源，这里不再写第二份字面量。
+  const [maxPlayers, setMaxPlayers] = useState(savedMaxPlayers || DEFAULT_MAX_PLAYERS)
+  const [maxPlayersInput, setMaxPlayersInput] = useState(
+    String(savedMaxPlayers || DEFAULT_MAX_PLAYERS)
+  )
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
 
@@ -87,7 +90,7 @@ export default function CreateRoomPage() {
   return (
     <div className="animate-screen-in min-h-screen bg-page pb-24">
       <div className="flex items-center gap-2.5 px-5 pt-3 pb-2">
-        <button onClick={() => { store.reset(); setCreateForm({ roomName: '', maxPlayers: 4 }); navigate('/home') }} className="w-[34px] h-[34px] rounded-full bg-card border border-border-light flex items-center justify-center active:bg-panel active:scale-[0.94] transition-all">
+        <button onClick={() => { store.reset(); setCreateForm({ roomName: '', maxPlayers: DEFAULT_MAX_PLAYERS }); navigate('/home') }} className="w-[34px] h-[34px] rounded-full bg-card border border-border-light flex items-center justify-center active:bg-panel active:scale-[0.94] transition-all">
           <ArrowLeft className="w-[18px] h-[18px] text-text-muted" strokeWidth={2.5} />
         </button>
         <h2 className="text-lg font-bold text-text-primary">创建房间</h2>

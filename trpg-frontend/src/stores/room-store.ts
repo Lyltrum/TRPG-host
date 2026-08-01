@@ -42,6 +42,10 @@ interface RoomState {
   reset: () => void
 }
 
+// 创建房间页的默认人数上限。**只在这里定义一次**：初始值、reset、页面兜底
+// 三处曾各写一份 4，改默认值时漏掉 store 那两处等于没改（页面读的正是 store）。
+export const DEFAULT_MAX_PLAYERS = 1
+
 // ★ 用 sessionStorage 持久化房间身份（roomId/playerId/roomCode/isHost 等）——
 // 否则页面一刷新这些全部归零，大厅/建卡向导直接死锁（见 2026-07-13 测试报告 P0）。
 // 用 sessionStorage 而不是 localStorage：房间会话只该活在当前标签页/会话内，
@@ -59,7 +63,7 @@ export const useRoomStore = create<RoomState>()(
       isConnected: false,
       isHost: false,
       createFormRoomName: '',
-      createFormMaxPlayers: 4,
+      createFormMaxPlayers: DEFAULT_MAX_PLAYERS,
       setRoom: (code, players) => set({ roomCode: code, players }),
       setRoomIdentity: ({ roomId, roomCode, playerId, reconnectToken, characterId }) =>
         set((state) => ({
@@ -114,7 +118,7 @@ export const useRoomStore = create<RoomState>()(
           isConnected: false,
           isHost: false,
           createFormRoomName: '',
-          createFormMaxPlayers: 4,
+          createFormMaxPlayers: DEFAULT_MAX_PLAYERS,
         }),
     }),
     { name: 'aidm-room', storage: createJSONStorage(() => sessionStorage) }

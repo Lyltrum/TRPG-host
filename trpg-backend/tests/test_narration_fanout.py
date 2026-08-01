@@ -405,7 +405,7 @@ async def _seed_split_room_with_history(room_code: str):
 async def test_each_segment_context_excludes_the_other_groups_history() -> None:
     """🔴 P5.2d 的核心断言：门厅那段的 prompt 里**根本没有**地下室的历史。
 
-    这一条替代了"靠范围提示请模型别说"。变异检验：把 `_visible_history` 改成
+    这一条替代了"靠范围提示请模型别说"。变异检验：把 `visible_history` 改成
     无条件返回全部，这条立刻红。
     """
     agent = _keeper()

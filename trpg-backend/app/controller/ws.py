@@ -388,6 +388,53 @@ async def _handle_chat_send(
     await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
 
 
+async def _ingest_utterance(
+    db: AsyncSession,
+    room_id: str,
+    player_id: str,
+    nickname: str,
+    utterance: str,
+    *,
+    private: bool = False,
+) -> bool:
+    """把一句原话记进本轮：落库 → 按受众广播 → 并入收集窗口。返回"是否开了新的一轮"。
+
+    真人和 AI 队友（exec/21 第三层）走的是**同一个函数**。AI 不该有任何特权
+    路径——它说的话一样落 events 表、一样按位置裁受众、一样并进同一个收集
+    窗口，于是历史重放、per-audience 裁剪、复盘对它天然成立。
+    """
+    # 原话先广播：不管这条是开窗的还是并入的，同处一地的人都该**立刻**看见。
+    # 分头后只发给在场的那几个（P5.2）；未分头时 audience 是 None，走原来的
+    # 全房间广播，行为逐字不变。
+    audience = await _audience_at_speaker_location(db, room_id, player_id, private=private)
+    # 🔴 受众随事件一起落库：历史重放要能回答"这句话当时谁听见了"。没有它，
+    # P5.2d 的 per-audience 上下文裁剪就无从判断历史行的可见性——事后再猜位置
+    # 是猜不回来的。不写这个键 = 公开。
+    # 落库在广播**之前**：广播 payload 要带这一行的 id，前端按事件身份去重
+    # （exec/19 #42：此前只能按原话文本去重，同一句话说第二次就被永久吞掉）。
+    event_payload: dict = {"utterance": utterance, "private": private}
+    if audience is not None:
+        event_payload["audience"] = audience
+    event_id = await room_service.record_event(
+        db, room_id, player_id, "action.submit", event_payload
+    )
+    action_envelope = ServerEnvelope(
+        type="action.broadcast",
+        payload=ActionBroadcastPayload(
+            player_id=player_id, nickname=nickname, utterance=utterance, event_id=event_id
+        ).model_dump(by_alias=True),
+    ).model_dump(by_alias=True)
+    if audience is None:
+        await manager.broadcast(room_id, action_envelope)
+    else:
+        await manager.send_to_players(room_id, audience, action_envelope)
+
+    return turn_window_manager.join(
+        room_id,
+        Submission(player_id=player_id, nickname=nickname, utterance=utterance, private=private),
+    )
+
+
 async def _handle_action_submit(
     db: AsyncSession,
     websocket: WebSocket,
@@ -418,36 +465,7 @@ async def _handle_action_submit(
     player = await room_service.get_player(db, player_id)
     nickname = player.nickname if player is not None else "玩家"
 
-    # 原话先广播：不管这条是开窗的还是并入的，同处一地的人都该**立刻**看见。
-    # 分头后只发给在场的那几个（P5.2）；未分头时 audience 是 None，走原来的
-    # 全房间广播，行为逐字不变。
-    audience = await _audience_at_speaker_location(db, room_id, player_id, private=private)
-    # 🔴 受众随事件一起落库：历史重放要能回答"这句话当时谁听见了"。没有它，
-    # P5.2d 的 per-audience 上下文裁剪就无从判断历史行的可见性——事后再猜位置
-    # 是猜不回来的。不写这个键 = 公开。
-    # 落库在广播**之前**：广播 payload 要带这一行的 id，前端按事件身份去重
-    # （exec/19 #42：此前只能按原话文本去重，同一句话说第二次就被永久吞掉）。
-    event_payload: dict = {"utterance": utterance, "private": private}
-    if audience is not None:
-        event_payload["audience"] = audience
-    event_id = await room_service.record_event(
-        db, room_id, player_id, "action.submit", event_payload
-    )
-    action_envelope = ServerEnvelope(
-        type="action.broadcast",
-        payload=ActionBroadcastPayload(
-            player_id=player_id, nickname=nickname, utterance=utterance, event_id=event_id
-        ).model_dump(by_alias=True),
-    ).model_dump(by_alias=True)
-    if audience is None:
-        await manager.broadcast(room_id, action_envelope)
-    else:
-        await manager.send_to_players(room_id, audience, action_envelope)
-
-    opened = turn_window_manager.join(
-        room_id,
-        Submission(player_id=player_id, nickname=nickname, utterance=utterance, private=private),
-    )
+    opened = await _ingest_utterance(db, room_id, player_id, nickname, utterance, private=private)
     if not opened:
         # 已经有人在收集本轮：并入即可，不另起一个裁决循环。
         return
@@ -469,6 +487,10 @@ async def _handle_action_submit(
         while turn_window_manager.is_collecting(room_id):
             connected = manager.connection_count(room_id)
             await _await_window(room_id, connected)
+            # 🔴 AI 队友在这里补话：窗口已关（真人都说完了）、裁决还没开始。
+            # 位置刻意选在真人之后——反过来会变成真人跟着 AI 走，它是补位的
+            # 不是主角。它的话并进**同一轮**，所以桌上只出现一段守秘人回应。
+            await _join_ai_players(db, websocket, room_id)
             submissions = turn_window_manager.drain(room_id)
             if not submissions:
                 break
@@ -476,10 +498,92 @@ async def _handle_action_submit(
                 await _run_turn(db, websocket, room_id, submissions)
             except Exception:  # noqa: BLE001 — 一轮失败不该把排在后面的人一起丢掉
                 logger.warning("turn_failed", room_id=room_id, exc_info=True)
+            # 守秘人可能给 AI 发了检定：它没有连接、点不了那个按钮，得替它掷。
+            # 放在锁内：resolve_check 同样是"读状态→跑 AI→写回"，不能并发。
+            await _auto_roll_ai_checks(db, websocket, room_id)
     finally:
         # 只释放锁。**不要在这里 drain**——缓冲里可能正排着别人的话，清掉就是
         # 把他们的发言吞了（这正是 exec/19 #36 的病灶）。
         action_lock_manager.release(room_id, lock_token)
+
+
+async def _join_ai_players(db: AsyncSession, websocket: WebSocket, room_id: str) -> None:
+    """问 AI 队友要不要跟一句，要的话按真人同样的路径并进本轮（exec/21 第三层）。
+
+    整块**失败即沉默**：AI 补位是锦上添花，它的模型抽风不能把真人这一轮拖垮。
+    """
+    from app.service.ai_turn import collect_ai_submissions
+
+    actor = getattr(websocket.app.state, "ai_actor", None)
+    try:
+        submissions = await collect_ai_submissions(db, room_id, actor)
+    except Exception:  # noqa: BLE001 — 同上，AI 队友的任何故障都不该炸掉真人的回合
+        logger.warning("ai_players_failed", room_id=room_id, exc_info=True)
+        return
+    for submission in submissions:
+        await _ingest_utterance(
+            db, room_id, submission.player_id, submission.nickname, submission.utterance
+        )
+
+
+#: 一轮里最多替 AI 掷几次骰。防的是"结算叙事又给它发了个新检定"无限套娃——
+#: 真人靠"要不要点那个按钮"天然限流，AI 没有这道闸。
+_AI_AUTO_ROLL_LIMIT = 6
+
+
+async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: str) -> None:
+    """替 AI 队友掷掉排在队首的待掷检定（exec/21 第三层）。
+
+    AI 没有连接，那张检定卡片永远等不到点击——而 `narrate` 有 pending 守卫，
+    一个掷不出去的骰子会**把整桌卡死**在"请先完成待掷的检定"。
+
+    只处理**队首**属于 AI 的：队首是真人时就停手，等他自己点。那位点完之后，
+    `_handle_check_roll` 会再调一次本函数，排在后面的 AI 检定接着掷。
+
+    🔴 掷骰本身仍走 `narrator.resolve_check` 的服务端权威路径，与真人逐字相同
+    ——AI 没有自己掷骰的特权，只是省掉了"点击"这个它做不到的动作。
+    """
+    from sqlalchemy import select
+
+    from app.core.keeper.pending import pending_check_manager
+    from app.models.room import Player
+
+    if not pending_check_manager.has(room_id):
+        return
+    rows = await db.execute(
+        select(Player.id).where(Player.room_id == room_id, Player.is_ai.is_(True))
+    )
+    ai_ids = set(rows.scalars())
+    if not ai_ids:
+        return
+
+    narrator = websocket.app.state.narrator
+    for _ in range(_AI_AUTO_ROLL_LIMIT):
+        pending = pending_check_manager.first(room_id)
+        if pending is None or pending.player_id not in ai_ids:
+            return
+        try:
+            outcome = await narrator.resolve_check(
+                room_id, pending.player_id, pending.check_request_id
+            )
+        except Exception:  # noqa: BLE001 — 失败就让它留在队列里，真人可见地卡住好过静默丢骰
+            logger.warning(
+                "ai_auto_roll_failed",
+                room_id=room_id,
+                player_id=pending.player_id,
+                exc_info=True,
+            )
+            return
+        for notice in outcome.check_results:
+            await _broadcast_check_result(room_id, notice)
+        for notice in outcome.stat_changes:
+            await _broadcast_stat_change(room_id, notice)
+        if outcome.text:
+            await _broadcast_narration(db, room_id, pending.player_id, outcome.text)
+        await _deliver_narration_segments(db, room_id, outcome.segments)
+        for notice in outcome.check_requests:
+            await _broadcast_check_request(room_id, notice)
+    logger.warning("ai_auto_roll_limit_reached", room_id=room_id, limit=_AI_AUTO_ROLL_LIMIT)
 
 
 #: 等窗口时的轮询粒度。只影响"人到齐后多久发现"，不影响窗口上限。
@@ -620,6 +724,8 @@ async def _handle_check_roll(
         await _deliver_narration_segments(db, room_id, outcome.segments)
         for notice in outcome.check_requests:
             await _broadcast_check_request(room_id, notice)
+        # 这位掷完了，排在他后面的 AI 检定该轮到了（exec/21 第三层）
+        await _auto_roll_ai_checks(db, websocket, room_id)
     finally:
         action_lock_manager.release(room_id, lock_token)
 

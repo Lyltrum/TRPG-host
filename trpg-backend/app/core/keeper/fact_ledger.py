@@ -92,7 +92,7 @@ async def record_revelations(
 async def revealed_fact_ids(db: AsyncSession, *, room_id: str) -> set[str]:
     """房间内已揭开的全部事实 id（**守秘人视图**，不过滤受众）。
 
-    **不设 limit** —— 这正是账本存在的理由：它必须活过 `_HISTORY_LIMIT`
+    **不设 limit** —— 这正是账本存在的理由：它必须活过 `HISTORY_LIMIT`
     那个 200 条的滑动窗口。
     """
     rows = await db.execute(

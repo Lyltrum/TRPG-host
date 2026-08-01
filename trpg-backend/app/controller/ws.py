@@ -548,7 +548,7 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
     from app.core.keeper.pending import pending_check_manager
     from app.models.room import Player
 
-    if not pending_check_manager.has(room_id):
+    if not await pending_check_manager.has(db, room_id):
         return
     rows = await db.execute(
         select(Player.id).where(Player.room_id == room_id, Player.is_ai.is_(True))
@@ -567,7 +567,7 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
         rolled.add(notice.check_request_id)
 
     for _ in range(_AI_AUTO_ROLL_LIMIT):
-        pending = pending_check_manager.first(room_id)
+        pending = await pending_check_manager.first(db, room_id)
         if pending is None or pending.player_id not in ai_ids:
             return
         try:

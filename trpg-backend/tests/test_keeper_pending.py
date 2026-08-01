@@ -40,9 +40,8 @@ async def _fresh_db():
     yield
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
-    # `pending_check_manager` 是进程内存单例，不随 DB 一起清空——测试用例
-    # 之间必须手动隔离，否则一个用例遗留的队列会泄漏进下一个。
-    pending_check_manager._queues.clear()
+    # 队列现在**在数据库里**（exec/24 §8.1），drop_all 就是隔离，不再需要手动
+    # 清进程内存单例。
 
 
 class _StubKeeperAgent(KeeperAgent):
@@ -136,48 +135,103 @@ def _check(room_id: str = "room-1", check_request_id: str = "chk-1", **overrides
     return PendingCheck(**defaults)  # ty: ignore[invalid-argument-type]
 
 
-def test_manager_add_first_has() -> None:
+async def _bare_room(code: str) -> tuple[str, str]:
+    """只要房间 + 一名玩家——队列那两列是真外键，`player_id` 还是 Uuid 列。"""
+    async with _session_factory() as db:
+        room = Room(room_code=code, room_name="队列测试房", max_players=4, phase="InGame")
+        db.add(room)
+        await db.flush()
+        player = Player(room_id=room.id, nickname="阿福")
+        db.add(player)
+        await db.commit()
+        return room.id, player.id
+
+
+async def test_manager_add_first_has() -> None:
+    room_id, player_id = await _bare_room("QUEUE1")
     manager = PendingCheckManager()
-    assert manager.first("room-1") is None
-    assert manager.has("room-1") is False
+    async with _session_factory() as db:
+        assert await manager.first(db, room_id) is None
+        assert await manager.has(db, room_id) is False
 
-    c1 = _check(check_request_id="chk-1")
-    c2 = _check(check_request_id="chk-2")
-    manager.add("room-1", [c1, c2])
+        c1 = _check(room_id=room_id, player_id=player_id, check_request_id="chk-1")
+        c2 = _check(room_id=room_id, player_id=player_id, check_request_id="chk-2")
+        await manager.add(db, room_id, [c1, c2])
+        await db.commit()
 
-    assert manager.has("room-1") is True
-    assert manager.first("room-1") is c1  # 先进先出
+    async with _session_factory() as db:
+        assert await manager.has(db, room_id) is True
+        first = await manager.first(db, room_id)
+        # 先进先出：排序靠自增 seq，不是 created_at——同一轮挂起的多个检定
+        # 毫秒级时间戳分不出先后
+        assert first is not None and first.check_request_id == "chk-1"
 
 
-def test_manager_add_empty_list_is_noop() -> None:
+async def test_manager_add_empty_list_is_noop() -> None:
+    room_id, _player_id = await _bare_room("QUEUE2")
     manager = PendingCheckManager()
-    manager.add("room-1", [])
-    assert manager.has("room-1") is False
+    async with _session_factory() as db:
+        await manager.add(db, room_id, [])
+        assert await manager.has(db, room_id) is False
 
 
-def test_manager_pop_by_id_and_queue_isolation() -> None:
+async def test_manager_pop_by_id_and_queue_isolation() -> None:
+    room_a, player_a = await _bare_room("QUEUE3")
+    room_b, player_b = await _bare_room("QUEUE4")
     manager = PendingCheckManager()
-    manager.add("room-1", [_check(room_id="room-1", check_request_id="chk-1")])
-    manager.add("room-2", [_check(room_id="room-2", check_request_id="chk-2")])
+    async with _session_factory() as db:
+        await manager.add(
+            db, room_a, [_check(room_id=room_a, player_id=player_a, check_request_id="chk-1")]
+        )
+        await manager.add(
+            db, room_b, [_check(room_id=room_b, player_id=player_b, check_request_id="chk-2")]
+        )
+        await db.commit()
 
-    assert manager.pop("room-1", "not-an-id") is None  # 找不到不炸
-    popped = manager.pop("room-1", "chk-1")
-    assert popped is not None and popped.check_request_id == "chk-1"
-    assert manager.has("room-1") is False  # 弹空后队列本身也被清理
-    assert manager.has("room-2") is True  # 不影响其它房间
+    async with _session_factory() as db:
+        assert await manager.pop(db, room_a, "not-an-id") is None  # 找不到不炸
+        popped = await manager.pop(db, room_a, "chk-1")
+        assert popped is not None and popped.check_request_id == "chk-1"
+        await db.commit()
+
+    async with _session_factory() as db:
+        assert await manager.has(db, room_a) is False
+        assert await manager.has(db, room_b) is True  # 不影响其它房间
 
 
-def test_manager_requeue_front() -> None:
-    manager = PendingCheckManager()
-    c1 = _check(check_request_id="chk-1")
-    c2 = _check(check_request_id="chk-2")
-    manager.add("room-1", [c1])
-    popped = manager.pop("room-1", "chk-1")
-    assert popped is not None
-    manager.add("room-1", [c2])  # 模拟"掷错玩家"发生时队列里还有别的检定
-    manager.requeue_front("room-1", popped)
+async def test_queue_survives_a_process_restart() -> None:
+    """🔴 这条就是落库的全部理由（exec/24 §8.1）。
 
-    assert [c.check_request_id for c in manager._queues["room-1"]] == ["chk-1", "chk-2"]
+    队列原先在进程内存里：后端一重启就清空，而 `narrate` 有 pending 守卫，
+    玩家等的那张检定卡片永远不会来、守秘人一直回「请先完成待掷的检定」，
+    **整局死锁且没有出路**（重发行动也撞在守卫上）。
+
+    这里用「换一个全新的 manager 实例 + 全新的 session」模拟重启——manager
+    现在无实例状态，能读回来就说明状态真的不在进程里。
+    """
+    room_id, player_id = await _bare_room("QUEUE5")
+    async with _session_factory() as db:
+        await PendingCheckManager().add(
+            db,
+            room_id,
+            [_check(room_id=room_id, player_id=player_id, check_request_id="chk-survive")],
+        )
+        await db.commit()
+
+    async with _session_factory() as db:
+        survived = await PendingCheckManager().first(db, room_id)
+    assert survived is not None
+    assert survived.check_request_id == "chk-survive"
+    # 结构化字段要原样活过一个来回，不能只剩个 id
+    assert survived.reveals == ()
+    assert survived.kind == "skill"
+
+
+async def _enqueue(room_id: str, checks: list[PendingCheck]) -> None:
+    """把检定挂进队列（队列已落库，exec/24 §8.1）。"""
+    async with _session_factory() as db:
+        await pending_check_manager.add(db, room_id, checks)
+        await db.commit()
 
 
 # ── KeeperAgent.resolve_check ────────────────────────
@@ -192,7 +246,7 @@ async def test_resolve_check_unknown_id_raises() -> None:
 async def test_resolve_check_wrong_player_raises_and_requeues() -> None:
     room_id, player_id, nickname = await _seed_room()
     check_request_id = "chk-wrong-player"
-    pending_check_manager.add(
+    await _enqueue(
         room_id,
         [_check(room_id=room_id, check_request_id=check_request_id, player_id=player_id)],
     )
@@ -201,7 +255,8 @@ async def test_resolve_check_wrong_player_raises_and_requeues() -> None:
         await _agent().resolve_check(room_id, "someone-else", check_request_id)
 
     # 检定仍然待掷——错玩家掷不能让它凭空消失。
-    still_pending = pending_check_manager.first(room_id)
+    async with _session_factory() as db:
+        still_pending = await pending_check_manager.first(db, room_id)
     assert still_pending is not None
     assert still_pending.check_request_id == check_request_id
 
@@ -211,7 +266,7 @@ async def test_resolve_check_queue_not_empty_only_broadcasts_result() -> None:
     check_requests 带下一个的通知，不触碰 LLM。"""
     room_id, player_id, nickname = await _seed_room()
     first_id, second_id = "chk-first", "chk-second"
-    pending_check_manager.add(
+    await _enqueue(
         room_id,
         [
             _check(
@@ -247,7 +302,8 @@ async def test_resolve_check_queue_not_empty_only_broadcasts_result() -> None:
     assert outcome.check_requests[0].check_request_id == second_id
 
     # 第一个已经被弹出，第二个还在队列里等着。
-    next_pending = pending_check_manager.first(room_id)
+    async with _session_factory() as db:
+        next_pending = await pending_check_manager.first(db, room_id)
     assert next_pending is not None
     assert next_pending.check_request_id == second_id
 
@@ -255,7 +311,7 @@ async def test_resolve_check_queue_not_empty_only_broadcasts_result() -> None:
 async def test_resolve_check_san_result_fields() -> None:
     room_id, player_id, nickname = await _seed_room()
     check_request_id = "chk-san"
-    pending_check_manager.add(
+    await _enqueue(
         room_id,
         [
             _check(
@@ -293,7 +349,7 @@ async def test_resolve_check_queue_empty_triggers_settlement_narration() -> None
     刚结算的这次结果排在最前面，其余是 narrate() 桩返回的）。"""
     room_id, player_id, nickname = await _seed_room()
     check_request_id = "chk-only"
-    pending_check_manager.add(
+    await _enqueue(
         room_id,
         [
             _check(
@@ -324,7 +380,8 @@ async def test_resolve_check_queue_empty_triggers_settlement_narration() -> None
     assert [r.check_request_id for r in outcome.check_results] == [check_request_id, "chained-san"]
     assert len(agent.narrate_calls) == 1
     assert agent.narrate_calls[0].utterance == "（掷骰完成，请根据检定结果继续）"
-    assert pending_check_manager.has(room_id) is False
+    async with _session_factory() as db:
+        assert await pending_check_manager.has(db, room_id) is False
 
 
 # ── 事实账本接线（exec/14 P4）──────────────────────────────
@@ -343,7 +400,7 @@ class _FixedRoll(random.Random):
 
 async def _resolve_with_roll(roll: int, reveals: tuple[str, ...]) -> tuple[str, NarrationOutcome]:
     room_id, player_id, nickname = await _seed_room()
-    pending_check_manager.add(
+    await _enqueue(
         room_id,
         [
             _check(
@@ -432,7 +489,7 @@ async def test_on_result_fires_before_the_settlement_narration() -> None:
     """
     room_id, player_id, nickname = await _seed_room()
     check_request_id = "chk-timing"
-    pending_check_manager.add(
+    await _enqueue(
         room_id,
         [
             _check(
@@ -469,7 +526,7 @@ async def test_on_result_fires_even_when_more_checks_are_pending() -> None:
     """队列没清空的分支（不走结算叙事）也要回调——否则多人连掷时只有最后
     一个人的骰子是"秒出"的。"""
     room_id, player_id, nickname = await _seed_room()
-    pending_check_manager.add(
+    await _enqueue(
         room_id,
         [
             _check(

@@ -155,3 +155,70 @@ async def test_same_decision_as_normal_still_advances() -> None:
     assert [c.skill for c in outcome.check_requests] == ["侦察"]
     assert node == "cellar"
     assert "玩家在问你" not in captured["guidance"]
+
+
+async def test_feasibility_question_takes_away_every_way_to_advance_the_world() -> None:
+    """🔴 exec/25 #59：「我能不能做 X」跟「你还记得吗」共用同一条代码强制。
+
+    真人实测：玩家问「我们能直接去他的地下室吗」被分成 `clear_action`，叙事
+    直接推进了剧情。裁决器自己的 thinking 写着"需判断可行性并推进行动"——它
+    知道玩家在问可行性，但六个格子里没有这一类。
+    """
+    outcome, captured, node = await _run("KPQ003", "feasibility_question")
+    assert outcome.check_requests == []
+    assert node == "hall"
+    assert "裁决给出的原始指引" in captured["guidance"]
+
+
+async def test_feasibility_question_gets_its_own_guidance_not_the_recall_one() -> None:
+    """🔴 两类共用"收走推进手段"，但 guidance **必须分开**。
+
+    `question_to_kp` 那段通篇在教叙事器"把他角色应该记得的部分告诉他、用
+    「你记得」起头"——那是为**回忆**写的。玩家问「能不能去地下室」时套那段，
+    叙事器会去翻他的记忆，而不是回答"能不能、代价是什么"。
+
+    这条独立于上一条：把 `inject` 那行改回永远用 `inject_kp_question_guidance`，
+    上一条照样绿（推进手段一样被收走了），只有这条会红。
+    """
+    _, feasibility, _ = await _run("KPQ004", "feasibility_question")
+    _, recall, _ = await _run("KPQ005", "question_to_kp")
+
+    assert "玩家在问能不能" in feasibility["guidance"]
+    assert "他还没有决定要做" in feasibility["guidance"]
+    # 没有串味：回忆那段的特征句不该出现在可行性这段里
+    assert "玩家在问你" not in feasibility["guidance"]
+    assert "你记得" not in feasibility["guidance"]
+    # 反向同理
+    assert "玩家在问能不能" not in recall["guidance"]
+
+
+async def test_the_decision_itself_gets_recorded() -> None:
+    """🔴 exec/25 #61：裁决的分类与理由要落 events 表。
+
+    诊断 #59 时拿不到那一轮 `player_state` 的实际值——state/node/narration 都
+    落了表，唯独裁决本身没有，而它才是"叙事为什么这么写"的唯一解释，只能靠
+    复现探针推断（而探针复现的是新的一次调用，不是当时那次）。
+
+    `forced` 记的是哪几条代码强制命中了，不是 `narration_guidance` 的内容：
+    guidance 里有"须保密什么"，不写进去就永远不会从这条路漏出去。
+    """
+    from sqlalchemy import select
+
+    from app.models.event import Event
+
+    await _run("KPQ006", "feasibility_question")
+    async with _session_factory() as db:
+        rows = list(
+            (await db.scalars(select(Event).where(Event.event_type == "keeper.decision"))).all()
+        )
+    assert len(rows) == 1
+    payload = rows[0].payload
+    assert payload["player_state"] == "feasibility_question"
+    assert payload["thinking"] == "玩家发问"
+    assert "feasibility_question" in payload["forced"]
+    # 记的是最终形态：推进手段已被代码收走
+    assert payload["check_skill_ids"] == []
+    assert payload["current_node_id"] is None
+    # 🔴 guidance 的内容一个字都不落库
+    assert "narration_guidance" not in payload
+    assert "裁决给出的原始指引" not in str(payload)

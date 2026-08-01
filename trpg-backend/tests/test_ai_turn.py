@@ -198,16 +198,24 @@ def _ai_room(client: TestClient, account: str) -> tuple[dict, str]:
     return room, token
 
 
-def test_ai_teammate_joins_the_same_turn(sync_client: TestClient, stub_narrator) -> None:  # noqa: ANN001
-    """真人说一句 → AI 补一句 → **只出一段守秘人回应**。
+def test_ai_teammate_speaks_in_discussion_not_to_the_keeper(
+    sync_client: TestClient,
+    stub_narrator,  # noqa: ANN001
+) -> None:
+    """🔴 exec/25 #60：AI 队友的话进**讨论区**，且**不进守秘人这一轮**。
 
-    两句话必须并进同一轮：分成两轮意味着桌上凭空多出一段叙事，而 AI 是补位的
-    不是主角。断言落在"守秘人那段文本里同时出现两个人的话"上——占位叙事器
-    原样回显合并后的宣告，正好能验证合并确实发生了。
+    第一版让它走跟真人完全相同的 `action.submit`，本意是防作弊。真人实测暴露
+    了这条原则选错了方向——玩家问「我们能直接去他的地下室吗」，AI 答「先别急，
+    看看动静」，裁决器收到两条**等权**发言、按其中的行动宣言推进了世界：
+    **AI 把玩家的提问变成了一次行动。**
+
+    最后那条断言（AI 的话**不在**叙事文本里）是这次改动的**全部保证**：占位
+    叙事器原样回显本轮合并后的宣告，AI 那句要是混进去了，它必然出现在文本里。
+    把 `_post_ai_suggestion` 改回 `_ingest_utterance` 这条就会红。
     """
     room, token = _ai_room(sync_client, "ai_turn_host")
     previous = app.state.ai_actor
-    app.state.ai_actor = _StubActor(AiPlayerIntent(act=True, utterance="我跟上去看看后门"))
+    app.state.ai_actor = _StubActor(AiPlayerIntent(act=True, utterance="后门那边我们还没看过"))
     try:
         with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
             ws.send_json(
@@ -233,15 +241,15 @@ def test_ai_teammate_joins_the_same_turn(sync_client: TestClient, stub_narrator)
 
     assert first["type"] == "action.broadcast"
     assert first["payload"]["utterance"] == "检查门锁"
-    # AI 的原话走同一个 action.broadcast，带自己的 playerId 和事件 id
-    assert second["type"] == "action.broadcast"
-    assert second["payload"]["utterance"] == "我跟上去看看后门"
+    # AI 走讨论区通道，不是 action.broadcast
+    assert second["type"] == "chat.message"
+    assert second["payload"]["text"] == "后门那边我们还没看过"
     assert second["payload"]["playerId"] != room["playerId"]
-    assert second["payload"]["eventId"]
-    # 只有一段守秘人回应，且两句话都进了这一轮
+    # 仍然只有一段守秘人回应
     assert third["type"] == "narration.push"
     assert "检查门锁" in third["payload"]["text"]
-    assert "我跟上去看看后门" in third["payload"]["text"]
+    # 🔴 核心保证：AI 说的话**够不到**裁决器
+    assert "后门那边我们还没看过" not in third["payload"]["text"]
 
 
 def test_silent_ai_teammate_changes_nothing(sync_client: TestClient, stub_narrator) -> None:  # noqa: ANN001

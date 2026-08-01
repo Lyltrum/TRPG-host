@@ -115,15 +115,27 @@ class StateUpdate(_DecisionModel):
 
 
 class PlayerMove(_DecisionModel):
-    """一名调查员**单独**去了别处（分头探索，exec/14 P5.2）。
+    """一名调查员的位置**单独**被指定（分头探索，exec/14 P5.2）。
 
     跟 `KeeperDecision.current_node_id` 的分工是"默认 vs 覆盖"，不是同一份
     数据的两个角色：`current_node_id` 说的是「本轮发言的人共同到了哪」，
-    这里说的是「谁没跟着大家、单独在哪」，后者覆盖前者。全队在一起的常见
+    这里说的是「谁的位置不由那个默认值决定」，后者覆盖前者。全队在一起的常见
     情形下 `moves` 恒为空数组，行为与 P5.2 之前逐字一致。
+
+    🔴 exec/25 #60：它有**两个**用途，不只是"分头"——
+    1. 有人单独去了别处（原本的分头探索）；
+    2. **有人被真人带上了**。AI 队友不再自己宣告行动（它只在讨论区出主意），
+       所以真人说「我和阿铁一起去地下室」时，阿铁不在"本轮发言的人"里、
+       不会被 `current_node_id` 带走，必须在这里显式写一条，否则他被留在原地。
+
+    两个用途写法完全一样，区别只在语义。docstring 第一版只写了用途 1，
+    于是模型不会想到用它表达用途 2——**能表达但描述挡住了**，同
+    「schema 表达不了的东西会从叙事里漏出去」是一族。
     """
 
-    player: str = Field(description="调查员昵称或角色名，必须是在场名单里的人")
+    player: str = Field(
+        description="调查员昵称或角色名，必须是在场名单里的人（含被真人带上的 AI 队友）"
+    )
     node_id: str = Field(description="他单独所在的剧本节点 id，不得编造")
 
 
@@ -197,12 +209,13 @@ class KeeperDecision(_DecisionModel):
         "weird_or_meta",
         "clear_action",
         "question_to_kp",
+        "feasibility_question",
         "physical_conflict",
         "normal",
     ] = Field(
         default="normal",
         description=(
             "玩家本轮发言的分类：迷茫求指引/怪话或元指令/明确行动/向守秘人问已知信息/"
-            "对他人动手或强行突破/都不是"
+            "征询可行性或许可/对他人动手或强行突破/都不是"
         ),
     )

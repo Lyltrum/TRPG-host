@@ -81,14 +81,31 @@ async def test_write_returns_all_seven_fields() -> None:
 
 
 async def test_write_clips_an_overlong_field() -> None:
-    """模型写小作文时代码硬裁——`sheet_digest` 那边还会再裁一次，但没理由
-    先把 5000 字存进数据库。"""
+    """模型写小作文时代码硬裁。
+
+    🔴 上限是**兜底**：字数要求写在 prompt 里（每项 40-60 字），代码上限必须
+    宽到正常输出永远碰不到。第一版设成 60 正好卡在模型的正常长度上，真实探针
+    里六项有三项被切成半截句子——上限贴着期望值就不是兜底了。
+    """
     long_json = f'{{"summary": "{"总" * 500}", "traits": "{"特" * 500}"}}'
     writer, _ = _writer_with(long_json)
     background = await writer.write("提示")
     assert background is not None
-    assert len(background.summary) == 120
-    assert len(background.traits) == 60
+    assert len(background.summary) == 200
+    assert len(background.traits) == 120
+
+
+async def test_write_leaves_a_normal_length_field_untouched() -> None:
+    """正常长度（60 字上下）的一项必须**原样**存下来——这是上面那条的另一半，
+    单独立一条：只断言"超长会裁"的话，把上限改回 60 它照样绿。"""
+    sentence = (
+        "他相信只有自己才能保护自己，法律和警察对他来说意味着遣返和绝望，"
+        "因此活在自己隐秘的道德准则里。"
+    )
+    writer, _ = _writer_with(f'{{"summary": "总述", "ideology": "{sentence}"}}')
+    background = await writer.write("提示")
+    assert background is not None
+    assert background.ideology == sentence
 
 
 @pytest.mark.parametrize(

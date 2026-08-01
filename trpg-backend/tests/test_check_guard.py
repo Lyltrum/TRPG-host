@@ -84,7 +84,8 @@ def test_find_node_prefers_structured_node_id() -> None:
 
 def test_find_node_falls_back_to_scene_hint_when_node_id_missing() -> None:
     m = _mod()
-    assert find_node_for_scene(m, "科比特宅邸", node_id=None).id == "house"
+    node = find_node_for_scene(m, "科比特宅邸", node_id=None)
+    assert node is not None and node.id == "house"
 
 
 def test_find_node_falls_back_to_scene_hint_when_node_id_unknown() -> None:

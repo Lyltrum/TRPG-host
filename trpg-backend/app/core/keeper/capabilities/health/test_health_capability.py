@@ -1,4 +1,4 @@
-"""NPC 的对局内状态（exec/19 #39）。
+"""health 能力的验收（跟能力代码放在同一个目录里，exec/27 阶段 2）。
 
 真人实测 2026-07-31 日志：
     keeper_decision_issues issues=['HP 变更未执行：找不到玩家「科比特」…']
@@ -6,10 +6,11 @@
 完全没有落点、只活在叙事文字里，下一轮裁决器只能从上一段散文里猜它伤到
 什么程度。
 
-这里验证三件事：
+这里验证四件事：
 1. 名字解析走**白名单**（模组 npc id / name / 形态），解析不出就报错、不新建条目；
 2. 有数据卡 HP → 维护 hp；没有 → 显式降级成累计伤害（不编初始值）；
-3. 执行层按 `npc` 字段分流，且状态真的写进 keeper_state、渲染进局面块。
+3. 调查员那条路（角色卡 derived_stats，首次修改备份上限）；
+4. 执行层按 `npc` 字段分流，且状态真的写进 keeper_state、渲染进局面块。
 """
 
 import tempfile
@@ -21,21 +22,24 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.decision import HpChange, KeeperDecision
-from app.core.keeper.module_loader import load_module
-from app.core.keeper.npc_state import (
+from app.core.keeper.capabilities.health.executor import adjust_hp_impl, adjust_npc_hp_impl
+from app.core.keeper.capabilities.health.npc_state import (
     NPC_STATE_KEY,
     apply_hp_delta,
     format_npc_states,
     initial_hp,
     load_npc_states,
-    resolve_npc_id,
 )
-from app.core.keeper.tools import KeeperDeps, KeeperToolError, adjust_npc_hp_impl
+from app.core.keeper.capabilities.health.schema import HpChange
+from app.core.keeper.decision import KeeperDecision
+from app.core.keeper.deps import KeeperDeps, KeeperToolError
+from app.core.keeper.module_loader import load_module
+from app.core.keeper.primitives.npcs import resolve_npc_id
 from app.core.keeper.turn_executor import execute_side_effects
-from app.models.room import Player, Room
+from app.models.room import Character, Player, Room
 
-_FIXTURE_MODULE = str(Path(__file__).parent / "fixtures" / "keeper_module.json")
+_REPO_TESTS = Path(__file__).resolve().parents[5] / "tests"
+_FIXTURE_MODULE = str(_REPO_TESTS / "fixtures" / "keeper_module.json")
 _MODULE = load_module(_FIXTURE_MODULE)
 
 _db_path = Path(tempfile.mkdtemp(prefix="trpg-keeper-npc-test-")) / "npc.db"
@@ -103,7 +107,7 @@ def test_format_marks_downed_npc() -> None:
     assert "管家" in text and "HP 0" in text and "已倒地" in text
 
 
-# ── 3. 执行层接线 ───────────────────────────────────
+# ── 3. 调查员那条路 / 4. 执行层接线 ────────────────
 
 
 async def _seed(room_code: str) -> tuple[str, str]:
@@ -164,3 +168,51 @@ async def test_executor_routes_npc_field_without_touching_players() -> None:
         room = await db.get(Room, room_id)
         assert room is not None
         assert load_npc_states(room.keeper_state)["butler-public"]["hp"] == 6
+
+
+async def _seed_with_character(room_code: str) -> tuple[str, str]:
+    room_id, player_id = await _seed(room_code)
+    async with _session_factory() as db:
+        db.add(
+            Character(
+                room_id=room_id,
+                player_id=player_id,
+                name="阿福",
+                attributes={"STR": 50, "CON": 50},
+                skills={},
+                derived_stats={"HP": 10, "SAN": 55, "MP": 11},
+            )
+        )
+        await db.commit()
+    return room_id, player_id
+
+
+async def test_adjust_player_hp_damage_and_floor() -> None:
+    """调查员那条路：改角色卡的 derived_stats，首次修改把上限备份成 HP_MAX。"""
+    room_id, player_id = await _seed_with_character("NPC004")
+    deps = _deps(room_id, player_id)
+
+    text = await adjust_hp_impl(deps, -3, "被食尸鬼抓伤")
+    assert "10 → 7" in text
+
+    text = await adjust_hp_impl(deps, -99, "致命打击")
+    assert "→ 0" in text and "倒地" in text
+    # 两次 HP 变动都进了可见性记录——掷骰/伤害的可见性不靠模型自觉
+    assert len(deps.check_results) == 2
+
+    async with _session_factory() as db:
+        character = await db.get(Character, (await _character_id(room_id)))
+        assert character is not None
+        derived = character.derived_stats or {}
+        assert derived["HP"] == 0
+        assert derived["HP_MAX"] == 10
+
+
+async def _character_id(room_id: str) -> str:
+    from sqlalchemy import select
+
+    async with _session_factory() as db:
+        result = await db.execute(select(Character).where(Character.room_id == room_id))
+        character = result.scalars().first()
+        assert character is not None
+        return character.id

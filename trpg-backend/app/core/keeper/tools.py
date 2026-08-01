@@ -21,17 +21,20 @@ JSON（首次修改时把上限备份为 `HP_MAX`/`SAN_MAX`）——正经做法
 「当前状态」存储，等实验验证过玩法再抽。
 """
 
-import asyncio
-import random
-from dataclasses import dataclass, field
-
 import structlog
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.coc7_rules import evaluate_skill_base
 from app.core.keeper import dice, module_loader
 from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, load_fired_agenda
+from app.core.keeper.deps import (
+    KeeperDeps,
+    KeeperToolError,
+    current_stat,
+    record_event,
+    resolve_character,
+    write_stat,
+)
 from app.core.keeper.location_state import (
     HIDDEN_PLAYERS_KEY,
     PLAYER_LOCATION_KEY,
@@ -42,19 +45,12 @@ from app.core.keeper.location_state import (
     serialize_player_locations,
 )
 from app.core.keeper.module_loader import ScenarioModule
-from app.core.keeper.npc_state import (
-    NPC_STATE_KEY,
-    apply_hp_delta,
-    initial_hp,
-    load_npc_states,
-    npc_display_name,
-    resolve_npc_id,
-)
 from app.core.keeper.phase import (
     ENDING_ID_KEY,
     PHASE_KEY,
     VALID_PHASES,
 )
+from app.core.keeper.primitives.npcs import resolve_npc_id
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
 from app.core.keeper.skill_names import canonical_skill_name
 from app.core.keeper.visibility import (
@@ -63,9 +59,6 @@ from app.core.keeper.visibility import (
     load_revealed_visibility,
     serialize_revealed_visibility,
 )
-from app.core.narration.contract import StatChangeNotice
-from app.dto.game import RulesetRead
-from app.models.event import Event
 from app.models.room import Character, Player, Room
 
 logger = structlog.get_logger()
@@ -87,85 +80,7 @@ _RESERVED_STATE_KEYS = frozenset(
 )
 
 
-@dataclass
-class KeeperDeps:
-    """一轮回合的运行时依赖，由 KeeperAgent 构造后传给执行器/各 `*_impl`。
-    room_id/player_id 从不进任何 LLM 可控的输入——LLM 伪造不了"给哪个房间
-    掷骰"。"""
-
-    room_id: str
-    player_id: str  # 本轮行动的发起玩家
-    session_factory: async_sessionmaker[AsyncSession]
-    module: ScenarioModule
-    ruleset: RulesetRead
-    # 本轮**一起发言**的全部玩家（收集窗口合并的那一批，见 service/turn_window.py）。
-    # 空 = 只有发起者。`set_current_node_impl` 把这些人**以及此刻与他们同处
-    # 一地的人**挪到新场景——"跟你站在一起的人跟你一起走"，见该函数 docstring
-    # 里那次真人实测打脸（exec/19 #37）。
-    turn_player_ids: tuple[str, ...] = ()
-    rng: random.Random = field(default_factory=random.Random)
-    # 「读-改-写」操作（update_state/adjust_hp/san_check）的串行锁。v2 的
-    # 执行器本身是顺序执行、用不上它，但保留：v1 实测过 openai-agents 会并发
-    # 执行同轮工具（三次 update_state 只留最后一个键的 lost update），`*_impl`
-    # 若再被并发调用方复用，这把锁就是防线。
-    write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    # 本轮的检定/理智/伤害结果记录。掷骰可见性不能依赖模型自觉——真机实测
-    # 它会把数字藏进叙事（玩家掷出 94/29 失败，叙事只说"什么也没找到"，玩家
-    # 以为根本没掷）。`*_impl` 往这里记，KeeperAgent.narrate 由**代码**把它们
-    # 强制附加在叙事末尾广播。
-    check_results: list[str] = field(default_factory=list)
-    # 本轮发生的 HP 变更（结构化，供 WS 层广播 `character.stat_changed`，
-    # 供前端把角色卡的 HP 从"建卡快照"更新成实时值——真人实测 09-#4）。
-    stat_changes: list[StatChangeNotice] = field(default_factory=list)
-
-
-class KeeperToolError(ValueError):
-    """操作参数/状态错误（找不到玩家、未知技能名等）。消息面向 LLM——
-    执行器收集后作为 issues 喂给叙事阶段，让它自然圆场。"""
-
-
 # ── 内部查询辅助 ──────────────────────────────────────
-
-
-async def _resolve_character(
-    db: AsyncSession, deps: KeeperDeps, player_name: str | None
-) -> tuple[Player, Character]:
-    """按玩家昵称/角色名找到房间内的 (Player, Character)。不传名字 = 本轮
-    行动的发起玩家。找不到时报错并列出房间里实际有谁，方便模型纠正。"""
-    players = list(
-        (await db.execute(select(Player).where(Player.room_id == deps.room_id))).scalars()
-    )
-    characters = list(
-        (await db.execute(select(Character).where(Character.room_id == deps.room_id))).scalars()
-    )
-    chars_by_player = {c.player_id: c for c in characters}
-
-    if player_name is None:
-        player = next((p for p in players if p.id == deps.player_id), None)
-    else:
-        wanted = player_name.strip()
-        player = next(
-            (
-                p
-                for p in players
-                if p.nickname == wanted
-                or (chars_by_player.get(p.id) is not None and chars_by_player[p.id].name == wanted)
-            ),
-            None,
-        )
-    if player is None:
-        roster = "、".join(
-            f"{p.nickname}（角色：{chars_by_player[p.id].name}）"
-            if p.id in chars_by_player and chars_by_player[p.id].name
-            else p.nickname
-            for p in players
-        )
-        raise KeeperToolError(f"找不到玩家「{player_name}」。房间里的玩家：{roster or '（无）'}")
-
-    character = chars_by_player.get(player.id)
-    if character is None:
-        raise KeeperToolError(f"玩家「{player.nickname}」还没有角色卡")
-    return player, character
 
 
 # 常见同义写法归一：规则表用的规范名 vs. 模组原文/裁决器口语化说法。
@@ -233,35 +148,6 @@ def _resolve_skill_target(
     )
 
 
-async def _record(db: AsyncSession, deps: KeeperDeps, event_type: str, payload: dict) -> None:
-    """工具调用留痕：写一行 events（复盘可审计守秘人的每次裁决）。"""
-    db.add(
-        Event(
-            room_id=deps.room_id, player_id=deps.player_id, event_type=event_type, payload=payload
-        )
-    )
-    await db.commit()
-
-
-def _current_stat(character: Character, key: str) -> int:
-    """读衍生值的"当前值"。derived_stats 里建卡时写入的是上限，keeper 修改
-    时会把原值备份成 `{key}_MAX`（见 _write_stat），当前值就是 key 本身。"""
-    derived: dict = character.derived_stats or {}
-    value = derived.get(key)
-    if not isinstance(value, int):
-        raise KeeperToolError(f"角色卡缺少 {key} 数据")
-    return value
-
-
-def _write_stat(character: Character, key: str, new_value: int) -> None:
-    """写回衍生值当前值。⚠️ JSON 列必须整体重新赋值——SQLAlchemy 不追踪
-    dict 的原地修改，直接 `derived[key] = x` 不会落库。"""
-    derived = dict(character.derived_stats or {})
-    derived.setdefault(f"{key}_MAX", derived.get(key))
-    derived[key] = new_value
-    character.derived_stats = derived
-
-
 # ── 六个工具的业务实现（普通函数，可直接单测） ──────────────
 
 
@@ -283,7 +169,7 @@ async def roll_check_detail(
     """
     is_opposed = opposed_opponent is not None and opposed_value is not None
     async with deps.session_factory() as db:
-        player, character = await _resolve_character(db, deps, player_name)
+        player, character = await resolve_character(db, deps, player_name)
         display_name, target = _resolve_skill_target(deps, character, skill_name)
         outcome = dice.evaluate_check(dice.roll_d100(deps.rng), target)
         opponent_outcome = (
@@ -311,7 +197,7 @@ async def roll_check_detail(
                 "level": opponent_outcome.level,
                 "won": won,
             }
-        await _record(db, deps, "keeper.check", record)
+        await record_event(db, deps, "keeper.check", record)
 
     if opponent_outcome is not None:
         verdict = "胜" if won else "负"
@@ -378,7 +264,7 @@ _BACKGROUND_DETAIL_LABELS: dict[str, str] = {
 
 async def get_character_sheet_impl(deps: KeeperDeps, player_name: str | None = None) -> str:
     async with deps.session_factory() as db:
-        player, character = await _resolve_character(db, deps, player_name)
+        player, character = await resolve_character(db, deps, player_name)
     attributes = character.attributes or {}
     derived = character.derived_stats or {}
     skills = character.skills or {}
@@ -528,9 +414,9 @@ async def update_state_impl(
         room = await db.get(Room, deps.room_id)
         if room is None:
             raise KeeperToolError("房间不存在")
-        # ⚠️ JSON 列整体重新赋值（同 _write_stat 的原因）。
+        # ⚠️ JSON 列整体重新赋值（同 write_stat 的原因）。
         room.keeper_state = {**(room.keeper_state or {}), stored_key: value}
-        await _record(db, deps, "keeper.state", {"key": stored_key, "value": value})
+        await record_event(db, deps, "keeper.state", {"key": stored_key, "value": value})
     return f"已记录：{stored_key} = {value}", issue
 
 
@@ -618,7 +504,7 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
         current_state[PLAYER_LOCATION_KEY] = serialize_player_locations(locations)
         _drop_stealth_on_move(current_state, moved_away)
         room.keeper_state = current_state
-        await _record(db, deps, "keeper.node", {"node_id": node_id, "title": node.title})
+        await record_event(db, deps, "keeper.node", {"node_id": node_id, "title": node.title})
     return f"当前场景节点：{node.title}（{node_id}）"
 
 
@@ -642,7 +528,7 @@ async def clear_current_node_impl(deps: KeeperDeps) -> str:
         current_state.pop(CURRENT_NODE_KEY, None)
         current_state.pop(PLAYER_LOCATION_KEY, None)
         room.keeper_state = current_state
-        await _record(db, deps, "keeper.node", {"node_id": None, "title": None})
+        await record_event(db, deps, "keeper.node", {"node_id": None, "title": None})
     return "场景已离开剧本节点范围，节点指针清空"
 
 
@@ -658,7 +544,7 @@ async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> 
     if node is None:
         raise KeeperToolError(f"剧本里没有场景节点 id={node_id}")
     async with deps.write_lock, deps.session_factory() as db:
-        player, _character = await _resolve_character(db, deps, player_name)
+        player, _character = await resolve_character(db, deps, player_name)
         room = await db.get(Room, deps.room_id)
         if room is None:
             raise KeeperToolError("房间不存在")
@@ -670,7 +556,7 @@ async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> 
         # 离开原地点 → 解除隐匿（exec/19 #46），与 set_current_node_impl 同口径
         _drop_stealth_on_move(current_state, moved_away)
         room.keeper_state = current_state
-        await _record(
+        await record_event(
             db,
             deps,
             "keeper.move",
@@ -686,7 +572,7 @@ async def set_stealth_impl(deps: KeeperDeps, player_name: str, hidden: bool) -> 
     "自己听得见"是这条规则的一半，另一半靠 per-observer 投递实现。
     """
     async with deps.write_lock, deps.session_factory() as db:
-        player, _character = await _resolve_character(db, deps, player_name)
+        player, _character = await resolve_character(db, deps, player_name)
         room = await db.get(Room, deps.room_id)
         if room is None:
             raise KeeperToolError("房间不存在")
@@ -698,7 +584,9 @@ async def set_stealth_impl(deps: KeeperDeps, player_name: str, hidden: bool) -> 
             hidden_ids.discard(player.id)
         current_state[HIDDEN_PLAYERS_KEY] = serialize_hidden_players(hidden_ids)
         room.keeper_state = current_state
-        await _record(db, deps, "keeper.stealth", {"player": player.nickname, "hidden": hidden})
+        await record_event(
+            db, deps, "keeper.stealth", {"player": player.nickname, "hidden": hidden}
+        )
     return f"{player.nickname}{'进入隐匿' if hidden else '不再隐匿'}"
 
 
@@ -741,7 +629,7 @@ async def mark_agenda_fired_impl(deps: KeeperDeps, event_ids: list[str]) -> str:
             # ⚠️ JSON 列整体重新赋值（同 update_state_impl / _write_stat）。
             current_state[AGENDA_FIRED_KEY] = ", ".join(already)
             room.keeper_state = current_state
-            await _record(db, deps, "keeper.agenda", {"event_ids": newly})
+            await record_event(db, deps, "keeper.agenda", {"event_ids": newly})
         # 纯跳过（全部已触发过）时不写库、不留痕，但返回可读报告让调用方知情。
 
     if not report_parts:
@@ -790,7 +678,7 @@ async def mark_visibility_revealed_impl(
         if newly:
             current_state[VISIBILITY_REVEALED_KEY] = serialize_revealed_visibility(entries)
             room.keeper_state = current_state
-            await _record(
+            await record_event(
                 db,
                 deps,
                 "keeper.visibility",
@@ -813,7 +701,7 @@ async def set_phase_impl(deps: KeeperDeps, phase: str, ending_id: str | None = N
         if ending_id:
             current_state[ENDING_ID_KEY] = ending_id
         room.keeper_state = current_state
-        await _record(
+        await record_event(
             db,
             deps,
             "keeper.phase",
@@ -822,74 +710,6 @@ async def set_phase_impl(deps: KeeperDeps, phase: str, ending_id: str | None = N
     if ending_id:
         return f"对局阶段 → {phase}（结局 {ending_id}）"
     return f"对局阶段 → {phase}"
-
-
-async def adjust_hp_impl(
-    deps: KeeperDeps, delta: int, reason: str, player_name: str | None = None
-) -> str:
-    # write_lock：见 KeeperDeps 注释——并行工具调用下的读-改-写必须串行。
-    async with deps.write_lock, deps.session_factory() as db:
-        player, character = await _resolve_character(db, deps, player_name)
-        current = _current_stat(character, "HP")
-        new_value = max(0, current + delta)
-        _write_stat(character, "HP", new_value)
-        await _record(
-            db,
-            deps,
-            "keeper.hp",
-            {"player": player.nickname, "delta": delta, "hp": new_value, "reason": reason},
-        )
-    status = "（已倒地/濒死）" if new_value == 0 else ""
-    deps.check_results.append(f"{player.nickname} · HP {current} → {new_value}{status}")
-    deps.stat_changes.append(
-        StatChangeNotice(
-            player_id=player.id,
-            hp=new_value,
-            hp_max=character.derived_stats.get("HP_MAX") if character.derived_stats else None,
-            reason=reason,
-        )
-    )
-    return f"{player.nickname} HP {current} → {new_value}{status}（{reason}）"
-
-
-async def adjust_npc_hp_impl(deps: KeeperDeps, delta: int, reason: str, npc_label: str) -> str:
-    """给 NPC 记一笔生命值变化（exec/19 #39）。
-
-    NPC 没有角色卡可写，状态挂在 `keeper_state` 的 NPC 状态表上。名字必须能
-    解析成模组里的 npc id（白名单，见 `npc_state.resolve_npc_id`）——解析不出
-    就报错让上层记 issue，**不新建条目**：凭裁决器随口写的名字建状态，等于
-    让自由文本当标识符，下一轮换个称呼就成了两个 NPC。
-    """
-    npc_id = resolve_npc_id(deps.module, npc_label)
-    if npc_id is None:
-        known = "、".join(n.name for n in deps.module.npcs) or "（剧本没有登场 NPC）"
-        raise KeeperToolError(f"剧本里没有 NPC「{npc_label}」。登场 NPC：{known}")
-    # write_lock：见 KeeperDeps 注释——读-改-写必须串行。
-    async with deps.write_lock, deps.session_factory() as db:
-        room = await db.get(Room, deps.room_id)
-        if room is None:
-            raise KeeperToolError("房间不存在")
-        current_state = dict(room.keeper_state or {})
-        states = load_npc_states(current_state)
-        state = apply_hp_delta(states, npc_id, delta, base_hp=initial_hp(deps.module, npc_id))
-        current_state[NPC_STATE_KEY] = states
-        # ⚠️ JSON 列整体重新赋值（同 _write_stat 的原因）。
-        room.keeper_state = current_state
-        await _record(
-            db,
-            deps,
-            "keeper.npc_hp",
-            {"npc": npc_id, "delta": delta, "state": state, "reason": reason},
-        )
-    name = npc_display_name(deps.module, npc_id)
-    if isinstance(state.get("hp"), int):
-        hp = state["hp"]
-        status = "（已倒地/失去行动力）" if hp == 0 else ""
-        summary = f"{name} HP → {hp}{status}"
-    else:
-        summary = f"{name} 累计受伤 {state.get('damage', 0)} 点（数据卡无 HP）"
-    deps.check_results.append(summary)
-    return f"{summary}（{reason}）"
 
 
 async def san_check_detail(
@@ -903,14 +723,14 @@ async def san_check_detail(
     薄包装，保持旧签名不破坏现有调用方/测试。"""
     # write_lock：见 KeeperDeps 注释——并行工具调用下的读-改-写必须串行。
     async with deps.write_lock, deps.session_factory() as db:
-        player, character = await _resolve_character(db, deps, player_name)
-        current = _current_stat(character, "SAN")
+        player, character = await resolve_character(db, deps, player_name)
+        current = current_stat(character, "SAN")
         outcome = dice.evaluate_check(dice.roll_d100(deps.rng), current)
         loss_expr = loss_on_success if outcome.succeeded else loss_on_failure
         loss = max(0, dice.roll_dice_expr(loss_expr, deps.rng))
         new_value = max(0, current - loss)
-        _write_stat(character, "SAN", new_value)
-        await _record(
+        write_stat(character, "SAN", new_value)
+        await record_event(
             db,
             deps,
             "keeper.san",

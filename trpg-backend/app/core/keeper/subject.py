@@ -29,33 +29,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, create_model
 
-from app.core.keeper.decision import KeeperDecision, _DecisionModel
-
-
-class Capability(StrEnum):
-    """一个主体**有权做**的事。与 `KeeperDecision` 的动作字段一一对应。"""
-
-    REQUEST_CHECK = "request_check"
-    REQUEST_SAN_CHECK = "request_san_check"
-    ADJUST_HP = "adjust_hp"
-    UPDATE_STATE = "update_state"
-    SET_SCENE = "set_scene"
-    FIRE_AGENDA = "fire_agenda"
-    REVEAL_VISIBILITY = "reveal_visibility"
-    ADVANCE_PHASE = "advance_phase"
-
+from app.core.keeper.capabilities import field_capabilities
+from app.core.keeper.decision import KeeperDecision
+from app.core.keeper.registry import Capability, DecisionModel
 
 #: 裁决字段 → 需要的能力。不在这张表里的字段（thinking / narration_guidance /
 #: player_state）不是"动作"，任何主体都可以产出。
+#:
+#: 🔴 已经垂直切出去的能力（exec/27）自带这一行，从注册表汇总进来——它们的
+#: 权限声明跟 schema 躺在同一个目录里，不必回这里改一次。下面手写的那些是
+#: 还没切的能力，逐个切走（阶段 3）。
 DECISION_FIELD_CAPABILITIES: dict[str, Capability] = {
     "checks": Capability.REQUEST_CHECK,
     "san_checks": Capability.REQUEST_SAN_CHECK,
-    "hp_changes": Capability.ADJUST_HP,
     "state_updates": Capability.UPDATE_STATE,
     "current_node_id": Capability.SET_SCENE,
     # 分头探索 / 潜行（P5.2）：位置与"在场但不可见"都是空间状态，与设置场景
@@ -66,6 +56,7 @@ DECISION_FIELD_CAPABILITIES: dict[str, Capability] = {
     "visibility_revealed": Capability.REVEAL_VISIBILITY,
     "opening_complete": Capability.ADVANCE_PHASE,
     "ending_reached": Capability.ADVANCE_PHASE,
+    **field_capabilities(),
 }
 
 ALL_CAPABILITIES = frozenset(Capability)
@@ -173,6 +164,6 @@ def build_decision_model(capabilities: frozenset[Capability]) -> type[BaseModel]
             continue
         fields[name] = (info.annotation, info)
     name = f"Decision_{'_'.join(sorted(c.value for c in capabilities)) or 'readonly'}"
-    # 基类取 _DecisionModel（而不是 KeeperDecision）才能真正"少字段"——继承
+    # 基类取 DecisionModel（而不是 KeeperDecision）才能真正"少字段"——继承
     # KeeperDecision 会把被禁的字段一起带过来。extra='ignore' 也从它继承。
-    return create_model(name, __base__=_DecisionModel, **fields)
+    return create_model(name, __base__=DecisionModel, **fields)

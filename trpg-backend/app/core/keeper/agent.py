@@ -37,6 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.keeper.agenda_state import AGENDA_FIRED_KEY, format_agenda_status, load_fired_agenda
+from app.core.keeper.capabilities import situation_blocks
 from app.core.keeper.chapter import (
     load_chapters,
     record_chapter,
@@ -45,6 +46,7 @@ from app.core.keeper.chapter import (
     turns_since_last_chapter,
 )
 from app.core.keeper.decision import KeeperDecision
+from app.core.keeper.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.dice import is_success
 from app.core.keeper.fact_ledger import (
     record_revelations,
@@ -68,7 +70,6 @@ from app.core.keeper.location_state import (
     location_of,
 )
 from app.core.keeper.module_loader import ScenarioModule
-from app.core.keeper.npc_state import format_npc_states
 from app.core.keeper.pending import PendingCheck, pending_check_manager, to_notice
 from app.core.keeper.phase import (
     ENDING_ID_KEY,
@@ -109,8 +110,6 @@ from app.core.keeper.scene_state import CURRENT_NODE_KEY
 from app.core.keeper.sheet_digest import format_sheet
 from app.core.keeper.subject import KEEPER
 from app.core.keeper.tools import (
-    KeeperDeps,
-    KeeperToolError,
     roll_check_detail,
     san_check_detail,
     set_phase_impl,
@@ -378,8 +377,11 @@ class KeeperAgent(Narrator):
         chapters_status = render_chapters(chapters)
         # 分头探索（P5.2）：全队同处一地时是空串，整块不渲染。
         locations_status = format_party_locations(self._module, keeper_state, players)
-        # NPC 对局内状态（exec/19 #39）：没记过账时是空串，整块不渲染。
-        npc_status = format_npc_states(self._module, keeper_state)
+        # 已经垂直切出去的能力要摆在模型眼前的状态（exec/27 阶段 2）：
+        # 目前是 health 的「NPC 当前状态」。没记过账时该块整块不渲染。
+        # 🔴 这个钩子是切 health 时才发现漏掉的——能力不只要能改世界，还得让
+        # 模型**看见**自己改成了什么样，否则下一轮只能从上一段散文里猜。
+        capability_status = situation_blocks(self._module, keeper_state)
         # 可能的结局（exec/19 #47）：与议程同一待遇，每轮摆在裁决器眼前。
         endings_status = format_endings_status(self._module)
 
@@ -408,7 +410,7 @@ class KeeperAgent(Narrator):
                 ledger_status=ledger,
                 chapters_status=chapters_status,
                 locations_status=locations_status,
-                npc_status=npc_status,
+                capability_blocks=capability_status,
                 endings_status=endings_status,
                 is_heartbeat=is_heartbeat,
                 is_opening_ceremony=is_opening_ceremony,

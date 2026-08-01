@@ -11,20 +11,28 @@ agent 的"自由工具调用"，实测被模型的写作本能碾压（该掷不
 （`execute_side_effects`/`create_pending_checks`），2026-07-30 从本文件
 拆出去，理由见工程规范整理那次讨论：契约（是什么）和编排（怎么执行）
 是两件事，混在一个文件里不容易一眼看出"这是哪一层"。
+
+## 🔴 这份 schema 是**组装**出来的（exec/27 阶段 2）
+
+LLM 只能收一份整体 schema，切不了片；但"哪些字段属于哪个能力"该由能力自己
+说了算。做法是每个能力提供一个字段片段（pydantic mixin），`KeeperDecision`
+显式继承它们——**继承顺序就是字段顺序**，稳定、可读、静态类型看得见。
+
+为什么不用 `create_model` 动态拼基类（省掉下面那行显式继承）：那样
+`decision.hp_changes` 在类型检查器眼里就不存在了，整条链的类型安全为一行
+样板买单，不划算。漏继承的风险由 `test_capability_registry.py` 兜住——
+注册了却没继承会当场变红，不会静默。
 """
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
+
+from app.core.keeper.capabilities.health.schema import HealthDecisionFields
+from app.core.keeper.registry import DecisionModel
 
 
-class _DecisionModel(BaseModel):
-    # 裁决 JSON 由 LLM 生成，多给的字段忽略、不报错——校验的重点是"必要的
-    # 结构在"，不是"一个字都不能多"。
-    model_config = ConfigDict(extra="ignore")
-
-
-class OpposedTarget(_DecisionModel):
+class OpposedTarget(DecisionModel):
     """对抗检定的对手侧（exec/19 #38）。
 
     真人实测 2026-07-31：裁决器想要「凌铭辉，体质对抗 POT 16」，而 schema 里
@@ -41,7 +49,7 @@ class OpposedTarget(_DecisionModel):
     value: int = Field(description="对手侧的百分位目标值 0-100（属性点要 ×5）")
 
 
-class CheckRequest(_DecisionModel):
+class CheckRequest(DecisionModel):
     """一次技能/属性检定请求。player 为 None = 本轮行动的发起玩家。
 
     🔴 `skill_id` 是**白名单 id**，不是中文名（exec/17）：技能用规则表 id
@@ -65,31 +73,14 @@ class CheckRequest(_DecisionModel):
     opposed: OpposedTarget | None = Field(default=None, description="对抗检定时填；普通检定留 null")
 
 
-class SanCheckRequest(_DecisionModel):
+class SanCheckRequest(DecisionModel):
     player: str | None = None
     loss_on_success: str = "0"
     loss_on_failure: str = "1"
     reason: str = ""
 
 
-class HpChange(_DecisionModel):
-    """一笔生命值变化。目标要么是调查员（`player`），要么是 NPC（`npc`）。
-
-    `npc` 是 exec/19 #39 补的口子：战斗里 NPC 当然会掉血，而此前 HP 变更只
-    认房间里的玩家，裁决器写「科比特 -4」一律执行失败，NPC 的伤势只活在叙事
-    文字里。两个字段分开而不是让 `player` 兼收并蓄——一个字段扮演两个角色
-    必出结构性 bug，而且"这个名字指的是玩家还是 NPC"本来就不该靠猜。
-    """
-
-    delta: int
-    player: str | None = None
-    npc: str | None = Field(
-        default=None, description="NPC 的 id 或名字，必须取自剧本登场 NPC，与 player 二选一"
-    )
-    reason: str = ""
-
-
-class StateUpdate(_DecisionModel):
+class StateUpdate(DecisionModel):
     """世界状态的一条记账。
 
     🔴 `subject` 是 exec/24 §8.2 的收口：此前只有自由文本 `key`，模型现编键名
@@ -114,7 +105,7 @@ class StateUpdate(_DecisionModel):
     value: str
 
 
-class PlayerMove(_DecisionModel):
+class PlayerMove(DecisionModel):
     """一名调查员的位置**单独**被指定（分头探索，exec/14 P5.2）。
 
     跟 `KeeperDecision.current_node_id` 的分工是"默认 vs 覆盖"，不是同一份
@@ -139,7 +130,7 @@ class PlayerMove(_DecisionModel):
     node_id: str = Field(description="他单独所在的剧本节点 id，不得编造")
 
 
-class StealthChange(_DecisionModel):
+class StealthChange(DecisionModel):
     """潜行/现身（exec/18 ②）。
 
     「在场但不可见」：隐匿的调查员照常**听得见**这里发生的一切，但他自己的
@@ -150,7 +141,7 @@ class StealthChange(_DecisionModel):
     hidden: bool = Field(description="true=潜行成功进入隐匿；false=现身/被发现")
 
 
-class KeeperDecision(_DecisionModel):
+class KeeperDecision(HealthDecisionFields, DecisionModel):
     """裁决阶段的完整输出契约。
 
     所有列表字段默认空——"本轮不需要检定"表现为 `checks=[]` 加上 `thinking`
@@ -166,7 +157,6 @@ class KeeperDecision(_DecisionModel):
     thinking: str = Field(default="", description="裁决理由，最多 30 字（审计用，不广播给玩家）")
     checks: list[CheckRequest] = Field(default_factory=list)
     san_checks: list[SanCheckRequest] = Field(default_factory=list)
-    hp_changes: list[HpChange] = Field(default_factory=list)
     state_updates: list[StateUpdate] = Field(default_factory=list)
     # 场景指针结构化（04 遗留项）：state_updates 里的「当前场景」是人类可读
     # 地名，这个字段是同一件事的机器可读版——剧本节点树里真实存在的 id

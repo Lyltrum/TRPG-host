@@ -73,10 +73,10 @@ from app.core.keeper.phase import (
     PHASE_FINISHED,
     PHASE_KEY,
     PHASE_OPENING,
-    format_endings_status,
     format_phase_status,
     load_ending_id,
     load_phase,
+    set_phase_impl,
 )
 from app.core.keeper.prompts import (
     CHAPTER_SUMMARY_INSTRUCTIONS,
@@ -109,7 +109,6 @@ from app.core.keeper.subject import KEEPER
 from app.core.keeper.tools import (
     roll_check_detail,
     san_check_detail,
-    set_phase_impl,
     visible_keeper_state,
 )
 from app.core.keeper.turn_executor import create_pending_checks, execute_side_effects
@@ -370,8 +369,6 @@ class KeeperAgent(Narrator):
         # 🔴 这个钩子是切 health 时才发现漏掉的——能力不只要能改世界，还得让
         # 模型**看见**自己改成了什么样，否则下一轮只能从上一段散文里猜。
         capability_status = situation_blocks(self._module, keeper_state)
-        # 可能的结局（exec/19 #47）：与议程同一待遇，每轮摆在裁决器眼前。
-        endings_status = format_endings_status(self._module)
 
         def build_situation(
             *,
@@ -398,7 +395,6 @@ class KeeperAgent(Narrator):
                 chapters_status=chapters_status,
                 locations_status=locations_status,
                 capability_blocks=capability_status,
-                endings_status=endings_status,
                 is_heartbeat=is_heartbeat,
                 is_opening_ceremony=is_opening_ceremony,
                 phase=phase,
@@ -678,8 +674,6 @@ class KeeperAgent(Narrator):
             state_updates=[u.key for u in decision.state_updates],
             moves=[f"{m.player}→{m.node_id}" for m in decision.moves],
             visibility_revealed=decision.visibility_revealed,
-            opening_complete=decision.opening_complete,
-            ending_reached=decision.ending_reached,
             # 已经垂直切出去的能力自带审计字段（exec/27 阶段 2）——否则每加一片
             # 能力都得回来改这行，而漏了不报错、只是那片能力在日志里隐身。
             **audit_fields(decision),
@@ -948,7 +942,6 @@ class KeeperAgent(Narrator):
                             "check_skill_ids": [c.skill_id for c in decision.checks],
                             "san_check_count": len(decision.san_checks),
                             "current_node_id": decision.current_node_id,
-                            "ending_reached": decision.ending_reached,
                             # 已切出去的能力自带留痕字段（exec/27 阶段 3 · A 族）。
                             # 跟 keeper_decision 日志复用同一份——否则每加一片
                             # 能力，它的裁决在 events 表里就没有痕迹，且不报错。

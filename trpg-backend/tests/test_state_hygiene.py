@@ -20,12 +20,12 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
+from app.core.keeper.capabilities.progression.endings import format_endings_status
 from app.core.keeper.decision import KeeperDecision, PlayerMove, StateUpdate, StealthChange
+from app.core.keeper.deps import KeeperDeps
 from app.core.keeper.location_state import HIDDEN_PLAYERS_KEY, load_hidden_players
 from app.core.keeper.module_loader import load_module
-from app.core.keeper.phase import format_endings_status
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
-from app.core.keeper.tools import KeeperDeps
 from app.core.keeper.turn_executor import execute_side_effects
 from app.models.room import Character, Player, Room
 

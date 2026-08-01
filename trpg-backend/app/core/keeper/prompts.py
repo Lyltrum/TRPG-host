@@ -100,15 +100,6 @@ _SKELETON_RULES: tuple[tuple[float, str], ...] = (
    未揭开的 secret_ref 侧内容禁止写进 narration_guidance 的"可揭示"清单。""",
     ),
     (
-        10.0,
-        """10. **对局阶段**：
-   ①开场仪式（opening）：按剧本【开场脚本】建立委托与初始线索；一般不发起高风险检定；
-     当委托/开场目标已建立时设 opening_complete=true（代码会推进到 investigation）；
-   ②调查阶段：正常裁决；玩家已行动时优先 opening_complete=true 并进入实质调查；
-   ③每轮顺带判断 endings[].trigger 是否满足——满足则 ending_reached 填该结局 id
-     （代码收束对局）；未满足时 ending_reached 必须为 null。""",
-    ),
-    (
         11.0,
         """11. **主动推进轮**（局面块标注「主动推进轮」时）：checks 与 san_checks **必须空数组**；
    只推一小步（环境/NPC 一句/议程到点事件）；不许替玩家行动、不许大幅跳剧情。""",
@@ -162,8 +153,6 @@ _SKELETON_OUTPUT_EXAMPLE: tuple[tuple[float, str], ...] = (
     (60, '  "moves": []'),
     (70, '  "stealth": []'),
     (90, '  "visibility_revealed": ["pair-id"]'),
-    (100, '  "opening_complete": false'),
-    (110, '  "ending_reached": null'),
     (120, '  "narration_guidance": "给叙事者的指引"'),
     (130, '  "player_state": "normal"'),
 )
@@ -280,7 +269,6 @@ def format_turn_input(
     ledger_status: str = "",
     chapters_status: str = "",
     locations_status: str = "",
-    endings_status: str = "",
     capability_blocks: Sequence[tuple[float, str]] = (),
     *,
     is_heartbeat: bool = False,
@@ -328,14 +316,6 @@ def format_turn_input(
         if locations_status
         else ""
     )
-    # 可能的结局（exec/19 #47）：与议程同一个待遇——每轮摆在眼前，而不是
-    # 只躺在 system prompt 末尾的剧本全文里。
-    endings_block = (
-        f"## 可能的结局（每轮判断触发条件是否已满足；满足才写 ending_reached，"
-        f"未满足必须为 null）\n{endings_status}\n\n"
-        if endings_status
-        else ""
-    )
     mode_block = ""
     if is_heartbeat:
         mode_block = (
@@ -358,7 +338,6 @@ def format_turn_input(
     blocks = [
         (10.0, locations_block),
         (30.0, phase_block),
-        (40.0, endings_block),
         (60.0, visibility_block),
         (70.0, chapters_block),
         (80.0, ledger_block),

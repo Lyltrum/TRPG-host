@@ -54,8 +54,6 @@ DECISION_FIELD_CAPABILITIES: dict[str, Capability] = {
     # （exec/27 阶段 3 · B 族，`turn_policy` 模块说明里有完整理由）。
     "stealth": Capability.SET_HIDING,
     "visibility_revealed": Capability.REVEAL_VISIBILITY,
-    "opening_complete": Capability.ADVANCE_PHASE,
-    "ending_reached": Capability.ADVANCE_PHASE,
     **field_capabilities(),
 }
 

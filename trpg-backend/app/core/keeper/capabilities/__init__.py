@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from app.core.keeper.capabilities.agenda import CAPABILITY as AGENDA
 from app.core.keeper.capabilities.health import CAPABILITY as HEALTH
+from app.core.keeper.capabilities.progression import CAPABILITY as PROGRESSION
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.registry import (
     Capability,
@@ -27,7 +28,7 @@ from app.core.keeper.registry import (
 )
 
 #: 已经垂直切出来的能力。其余的还散在骨架里，逐个切（exec/27 阶段 3）。
-CAPABILITIES: tuple[KeeperCapability, ...] = (HEALTH, AGENDA)
+CAPABILITIES: tuple[KeeperCapability, ...] = (HEALTH, AGENDA, PROGRESSION)
 
 
 def field_capabilities() -> dict[str, Capability]:

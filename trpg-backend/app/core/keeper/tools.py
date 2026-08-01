@@ -45,11 +45,6 @@ from app.core.keeper.location_state import (
     serialize_player_locations,
 )
 from app.core.keeper.module_loader import ScenarioModule
-from app.core.keeper.phase import (
-    ENDING_ID_KEY,
-    PHASE_KEY,
-    VALID_PHASES,
-)
 from app.core.keeper.primitives.npcs import resolve_npc_id
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
 from app.core.keeper.skill_names import canonical_skill_name
@@ -74,8 +69,6 @@ logger = structlog.get_logger()
 RESERVED_STATE_KEYS = reserved_state_keys() | frozenset(
     {
         VISIBILITY_REVEALED_KEY,
-        PHASE_KEY,
-        ENDING_ID_KEY,
         CURRENT_NODE_KEY,
         PLAYER_LOCATION_KEY,
         HIDDEN_PLAYERS_KEY,
@@ -659,30 +652,6 @@ async def mark_visibility_revealed_impl(
             )
 
     return "密级揭开：" + "、".join(report) if report else "密级揭开：（无）"
-
-
-async def set_phase_impl(deps: KeeperDeps, phase: str, ending_id: str | None = None) -> str:
-    """写入对局阶段（及可选结局 id）。仅允许 VALID_PHASES。"""
-    if phase not in VALID_PHASES:
-        raise KeeperToolError(f"非法对局阶段：{phase!r}")
-    async with deps.write_lock, deps.session_factory() as db:
-        room = await db.get(Room, deps.room_id)
-        if room is None:
-            raise KeeperToolError("房间不存在")
-        current_state = dict(room.keeper_state or {})
-        current_state[PHASE_KEY] = phase
-        if ending_id:
-            current_state[ENDING_ID_KEY] = ending_id
-        room.keeper_state = current_state
-        await record_event(
-            db,
-            deps,
-            "keeper.phase",
-            {"phase": phase, "ending_id": ending_id},
-        )
-    if ending_id:
-        return f"对局阶段 → {phase}（结局 {ending_id}）"
-    return f"对局阶段 → {phase}"
 
 
 async def san_check_detail(

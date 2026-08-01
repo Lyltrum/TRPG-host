@@ -190,6 +190,118 @@ def test_layers_do_not_invert() -> None:
     )
 
 
+#: 垂直切出去的能力所在的包（exec/27 阶段 2）。
+_CAPABILITIES_PKG = "app.core.keeper.capabilities"
+_PRIMITIVES_PKG = "app.core.keeper.primitives"
+
+#: 编排层：决定"何时问谁"，不该被任何一个能力反向依赖。
+#: （阶段 5 它们会搬进 `runtime/`，那时这里换成一个前缀。）
+_ORCHESTRATION = (
+    "app.core.keeper.agent",
+    "app.core.keeper.turn_executor",
+    "app.core.keeper.heartbeat",
+)
+
+
+def _capability_of(module: str) -> str | None:
+    """模块属于哪个能力。
+
+    两个不算：包门面 `capabilities` 本身（它就是那个唯一认识所有能力的地方），
+    以及**与能力代码同目录的测试文件**——测试要 import 编排层把整条链跑通，
+    那是它的本职，不是架构违规。
+    """
+    prefix = _CAPABILITIES_PKG + "."
+    if not module.startswith(prefix):
+        return None
+    parts = module[len(prefix) :].split(".")
+    if parts[-1].startswith("test_"):
+        return None
+    return parts[0]
+
+
+def test_capabilities_do_not_import_each_other() -> None:
+    """🔴 一个能力 = 一个新人能单独读懂、单独改的目录。
+
+    它一旦 import 了另一个能力，"只读一个目录"就不成立了，两个人也没法各改
+    各的。真出现共用的东西，正确做法是**下沉**（`primitives/` 或 `deps.py`）
+    或者承认边界切错了——`exec/27` 里 `checks` 被拆成 `skill_check`/`san_check`
+    加 `primitives`，就是这条断言在设计阶段先抓出来的。
+    """
+    violations: set[tuple[str, str]] = set()
+    for mod, deps in _build_graph().items():
+        mine = _capability_of(mod)
+        if mine is None:
+            continue
+        for dep in deps:
+            theirs = _capability_of(dep)
+            if theirs is not None and theirs != mine:
+                violations.add((mod, dep))
+    assert not violations, "能力之间互相 import 了：\n" + "\n".join(
+        f"  {a}  →  {b}" for a, b in sorted(violations)
+    )
+
+
+def test_capabilities_do_not_import_the_orchestrator() -> None:
+    """能力只被编排层调用，不反过来认识它——否则"加一个能力不改编排层"这条
+    验收标准就没了着力点。"""
+    violations: set[tuple[str, str]] = set()
+    for mod, deps in _build_graph().items():
+        if _capability_of(mod) is None:
+            continue
+        violations.update((mod, dep) for dep in deps if dep in _ORCHESTRATION)
+    assert not violations, "能力反向依赖了编排层：\n" + "\n".join(
+        f"  {a}  →  {b}" for a, b in sorted(violations)
+    )
+
+
+def test_primitives_never_know_about_capabilities() -> None:
+    """规则原语是给能力用的，方向单向。反过来就说明那东西根本不是原语。"""
+    graph = _build_graph()
+    violations = {
+        (mod, dep)
+        for mod, deps in graph.items()
+        if mod.startswith(_PRIMITIVES_PKG)
+        for dep in deps
+        if dep.startswith(_CAPABILITIES_PKG)
+    }
+    assert not violations, "原语依赖了能力：\n" + "\n".join(
+        f"  {a}  →  {b}" for a, b in sorted(violations)
+    )
+
+
+def _runtime_imports_of(path: pathlib.Path) -> set[str]:
+    """只算**运行时真的会执行**的 `app.*` import，跳过 `if TYPE_CHECKING:` 块。
+
+    ⚠️ 这个放宽只用在下面那一条断言里。别处一律用 `_imports_of`——函数体内的
+    延迟导入照样算，那正是当年用来绕过循环的写法。`TYPE_CHECKING` 块是**可证明
+    不执行**的，构不成 import 环；把它算进去，`registry` 就只能放弃精确的类型
+    标注（`Callable[..., str]`），代价落在每一个写能力的人身上。
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    skip: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and ast.unparse(node.test) == "TYPE_CHECKING":
+            skip.update(id(child) for child in ast.walk(node) if child is not node)
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if id(node) in skip:
+            continue
+        if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            found.add(node.module)
+        elif isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+    return {m for m in found if m.startswith("app.")}
+
+
+def test_registry_is_a_leaf_at_runtime() -> None:
+    """注册表定义的是**机制**，能力都要 import 它。
+
+    它只要在运行时碰一个 `app.*`，`contract → capabilities → contract` 就有
+    成环的余地——阶段 1 刚用 `narration/contract.py` 交过一次学费，这里提前钉死。
+    """
+    assert _runtime_imports_of(APP / "core" / "keeper" / "registry.py") == set()
+
+
 def test_exemption_lists_only_shrink() -> None:
     """🔴 棘轮：豁免清单里的条目**修好之后必须删掉**。
 

@@ -17,8 +17,8 @@ NPC 的伤势完全没有落点，只活在叙事文字里；下一轮裁决器�
 存在 `keeper_state[NPC_STATE_KEY]`，`npc_id` → 状态字典。**键必须是模组里
 的 npc id**（白名单），不是裁决器随口写的名字——自由文本当标识符会退化成
 同义词打地鼠（项目 CLAUDE.md 判据，先例 `current_node_id`）。解析在
-`resolve_npc_id`：id 精确 → name 精确 → 形态 id/name 精确，都不中就报错，
-**不新建条目**。
+`primitives/npcs.resolve_npc_id`（world_state 也要用它，所以不属于本能力），
+都不中就报错、**不新建条目**。
 
 ## HP 缺数据时怎么办
 
@@ -31,6 +31,7 @@ NPC 的伤势完全没有落点，只活在叙事文字里；下一轮裁决器�
 from __future__ import annotations
 
 from app.core.keeper.module_loader import ScenarioModule
+from app.core.keeper.primitives.npcs import npc_display_name
 
 NPC_STATE_KEY = "NPC状态"
 
@@ -38,33 +39,6 @@ NPC_STATE_KEY = "NPC状态"
 #: 全称都有），这里只认这几种**精确**写法——认不出就走累计伤害那条显式降级，
 #: 不做模糊匹配（模糊匹配会把 "HP_MAX"、"HPS" 这类也认成 HP）。
 _HP_KEYS = ("HP", "hp", "耐久", "生命", "生命值")
-
-
-def resolve_npc_id(module: ScenarioModule, label: str) -> str | None:
-    """把裁决器写的名字解析成模组里的 npc id。解析不出返回 None。
-
-    匹配顺序：npc id → npc name → 形态 id → 形态 name。全部**精确**匹配
-    （去空白、忽略大小写），不做包含/模糊——`exec/17` 记过一次，模糊匹配
-    是同义词打地鼠的开始，正解是白名单。
-    """
-    key = (label or "").strip().casefold()
-    if not key:
-        return None
-    for npc in module.npcs:
-        if npc.id.casefold() == key or npc.name.casefold() == key:
-            return npc.id
-    for npc in module.npcs:
-        for form in npc.forms:
-            if form.id.casefold() == key or (form.name or "").casefold() == key:
-                return npc.id
-    return None
-
-
-def npc_display_name(module: ScenarioModule, npc_id: str) -> str:
-    for npc in module.npcs:
-        if npc.id == npc_id:
-            return npc.name
-    return npc_id
 
 
 def initial_hp(module: ScenarioModule, npc_id: str) -> int | None:

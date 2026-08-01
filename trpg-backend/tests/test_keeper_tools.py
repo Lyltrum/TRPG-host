@@ -20,18 +20,16 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper import dice
+from app.core.keeper.capabilities.health.schema import HpChange
 from app.core.keeper.decision import (
     CheckRequest,
-    HpChange,
     KeeperDecision,
     SanCheckRequest,
     StateUpdate,
 )
+from app.core.keeper.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.tools import (
-    KeeperDeps,
-    KeeperToolError,
-    adjust_hp_impl,
     get_character_sheet_impl,
     read_module_impl,
     roll_check_impl,
@@ -382,20 +380,8 @@ async def test_update_state_merges_and_persists(deps: KeeperDeps) -> None:
     assert len(await _events(deps, "keeper.state")) == 3
 
 
-# ── adjust_hp ───────────────────────────────────────
-
-
-async def test_adjust_hp_damage_and_floor(deps: KeeperDeps) -> None:
-    text = await adjust_hp_impl(deps, -3, "被食尸鬼抓伤")
-    assert "10 → 7" in text
-    derived = await _derived(deps)
-    assert derived["HP"] == 7
-    assert derived["HP_MAX"] == 10  # 首次修改备份上限
-
-    text = await adjust_hp_impl(deps, -99, "致命打击")
-    assert "→ 0" in text and "倒地" in text
-    assert (await _derived(deps))["HP"] == 0
-    assert len(deps.check_results) == 2  # 两次 HP 变动都进了可见性记录
+# HP 变更的用例跟着 health 能力走了（exec/27 阶段 2）：
+# `app/core/keeper/capabilities/health/test_health_capability.py`
 
 
 # ── san_check ───────────────────────────────────────

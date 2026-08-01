@@ -1,0 +1,132 @@
+"""一轮回合的运行时底座：依赖包 + 错误类型 + 各能力都要用的读写辅助。
+
+从 `tools.py` 抽出来（exec/27 阶段 2）。原因很直接：切 `health` 时它的两个
+执行函数搬进了 `capabilities/health/`，而它们要用 `KeeperDeps`、
+`resolve_character`、`write_stat` 这些东西——留在 `tools.py` 就意味着
+**能力要 import 那个 961 行的大杂烩**，等于把待拆的耦合原样搬进新目录。
+
+这里只放"所有能力共用、且不属于任何一个能力"的东西。业务动词（`*_impl`）
+不在这里：它们要么已经属于某个能力，要么还留在 `tools.py` 等着被切走。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import random
+from dataclasses import dataclass, field
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.core.keeper.module_loader import ScenarioModule
+from app.core.narration.contract import StatChangeNotice
+from app.dto.game import RulesetRead
+from app.models.event import Event
+from app.models.room import Character, Player
+
+
+@dataclass
+class KeeperDeps:
+    """一轮回合的运行时依赖，由 KeeperAgent 构造后传给执行器/各 `*_impl`。
+    room_id/player_id 从不进任何 LLM 可控的输入——LLM 伪造不了"给哪个房间
+    掷骰"。"""
+
+    room_id: str
+    player_id: str  # 本轮行动的发起玩家
+    session_factory: async_sessionmaker[AsyncSession]
+    module: ScenarioModule
+    ruleset: RulesetRead
+    # 本轮**一起发言**的全部玩家（收集窗口合并的那一批，见 service/turn_window.py）。
+    # 空 = 只有发起者。`set_current_node_impl` 把这些人**以及此刻与他们同处
+    # 一地的人**挪到新场景——"跟你站在一起的人跟你一起走"，见该函数 docstring
+    # 里那次真人实测打脸（exec/19 #37）。
+    turn_player_ids: tuple[str, ...] = ()
+    rng: random.Random = field(default_factory=random.Random)
+    # 「读-改-写」操作（update_state/adjust_hp/san_check）的串行锁。v2 的
+    # 执行器本身是顺序执行、用不上它，但保留：v1 实测过 openai-agents 会并发
+    # 执行同轮工具（三次 update_state 只留最后一个键的 lost update），`*_impl`
+    # 若再被并发调用方复用，这把锁就是防线。
+    write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # 本轮的检定/理智/伤害结果记录。掷骰可见性不能依赖模型自觉——真机实测
+    # 它会把数字藏进叙事（玩家掷出 94/29 失败，叙事只说"什么也没找到"，玩家
+    # 以为根本没掷）。`*_impl` 往这里记，KeeperAgent.narrate 由**代码**把它们
+    # 强制附加在叙事末尾广播。
+    check_results: list[str] = field(default_factory=list)
+    # 本轮发生的 HP 变更（结构化，供 WS 层广播 `character.stat_changed`，
+    # 供前端把角色卡的 HP 从"建卡快照"更新成实时值——真人实测 09-#4）。
+    stat_changes: list[StatChangeNotice] = field(default_factory=list)
+
+
+class KeeperToolError(ValueError):
+    """操作参数/状态错误（找不到玩家、未知技能名等）。消息面向 LLM——
+    执行器收集后作为 issues 喂给叙事阶段，让它自然圆场。"""
+
+
+async def resolve_character(
+    db: AsyncSession, deps: KeeperDeps, player_name: str | None
+) -> tuple[Player, Character]:
+    """按玩家昵称/角色名找到房间内的 (Player, Character)。不传名字 = 本轮
+    行动的发起玩家。找不到时报错并列出房间里实际有谁，方便模型纠正。"""
+    players = list(
+        (await db.execute(select(Player).where(Player.room_id == deps.room_id))).scalars()
+    )
+    characters = list(
+        (await db.execute(select(Character).where(Character.room_id == deps.room_id))).scalars()
+    )
+    chars_by_player = {c.player_id: c for c in characters}
+
+    if player_name is None:
+        player = next((p for p in players if p.id == deps.player_id), None)
+    else:
+        wanted = player_name.strip()
+        player = next(
+            (
+                p
+                for p in players
+                if p.nickname == wanted
+                or (chars_by_player.get(p.id) is not None and chars_by_player[p.id].name == wanted)
+            ),
+            None,
+        )
+    if player is None:
+        roster = "、".join(
+            f"{p.nickname}（角色：{chars_by_player[p.id].name}）"
+            if p.id in chars_by_player and chars_by_player[p.id].name
+            else p.nickname
+            for p in players
+        )
+        raise KeeperToolError(f"找不到玩家「{player_name}」。房间里的玩家：{roster or '（无）'}")
+
+    character = chars_by_player.get(player.id)
+    if character is None:
+        raise KeeperToolError(f"玩家「{player.nickname}」还没有角色卡")
+    return player, character
+
+
+async def record_event(db: AsyncSession, deps: KeeperDeps, event_type: str, payload: dict) -> None:
+    """工具调用留痕：写一行 events（复盘可审计守秘人的每次裁决）。"""
+    db.add(
+        Event(
+            room_id=deps.room_id, player_id=deps.player_id, event_type=event_type, payload=payload
+        )
+    )
+    await db.commit()
+
+
+def current_stat(character: Character, key: str) -> int:
+    """读衍生值的"当前值"。derived_stats 里建卡时写入的是上限，keeper 修改
+    时会把原值备份成 `{key}_MAX`（见 write_stat），当前值就是 key 本身。"""
+    derived: dict = character.derived_stats or {}
+    value = derived.get(key)
+    if not isinstance(value, int):
+        raise KeeperToolError(f"角色卡缺少 {key} 数据")
+    return value
+
+
+def write_stat(character: Character, key: str, new_value: int) -> None:
+    """写回衍生值当前值。⚠️ JSON 列必须整体重新赋值——SQLAlchemy 不追踪
+    dict 的原地修改，直接 `derived[key] = x` 不会落库。"""
+    derived = dict(character.derived_stats or {})
+    derived.setdefault(f"{key}_MAX", derived.get(key))
+    derived[key] = new_value
+    character.derived_stats = derived

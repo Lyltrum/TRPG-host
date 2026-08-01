@@ -21,6 +21,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.controller.v1.router import api_router
 from app.controller.ws import router as ws_router
+from app.core.ai_actor import AiActor
 from app.core.config import get_settings
 from app.core.db import async_session_factory
 from app.core.errors import AppException, ErrorCode
@@ -126,6 +127,12 @@ def create_app() -> FastAPI:
     # ASGITransport 不一定会触发 lifespan——挂在 create_app 里保证"有 app
     # 实例就一定有 narrator"。
     app.state.narrator = build_narrator(settings)
+
+    # AI 玩家的行动决策器（exec/21 第三层）。没配 key 就是 None——AI 队友照样
+    # 能占座位、有卡、被叙事提到，只是不开口。**不给它一个假实现**：假的"AI
+    # 说了句话"会让人以为第三层在工作，实际上是占位文案在演（同 CLAUDE.md
+    # "禁止静默兜底"）。
+    app.state.ai_actor = AiActor(settings.deepseek_api_key) if settings.deepseek_api_key else None
 
     # 房间行动锁的超时兜底改从配置读（keeper agent 一轮多跳工具调用会超过
     # 默认 60s，keeper 模式下 .env 配 180）。实例属性赋值，遮蔽类默认值。

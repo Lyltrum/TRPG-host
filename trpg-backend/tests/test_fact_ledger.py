@@ -1,7 +1,7 @@
 """线索账本 L1（exec/14 P4）。
 
 核心断言是计划里那条：**合成一局 300+ 事件的对局，第 3 轮拿到的线索在
-第 200 轮之后仍然可用**——即账本活过 `_HISTORY_LIMIT` 的滑动窗口。
+第 200 轮之后仍然可用**——即账本活过 `HISTORY_LIMIT` 的滑动窗口。
 """
 
 from __future__ import annotations
@@ -13,13 +13,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.db import Base
-from app.core.keeper.agent import _HISTORY_LIMIT
 from app.core.keeper.fact_ledger import (
     record_revelations,
     render_ledger,
     revealed_fact_ids,
     revelations,
 )
+from app.core.keeper.history import HISTORY_LIMIT
 from app.core.keeper.module_loader import KeeperTruth, ModuleFact, ModuleMeta, ScenarioModule
 from app.models.event import Event
 from app.models.room import Player, Room
@@ -105,7 +105,7 @@ async def test_same_fact_via_two_paths_is_recorded_once(room) -> None:
 async def test_ledger_survives_the_history_window(room) -> None:
     """🔴 P4 的核心断言：第 3 轮拿到的线索，在 300+ 事件之后仍然读得到。
 
-    历史重放是 `_HISTORY_LIMIT`（200）条的**滑动窗口**，几十小时的战役会把
+    历史重放是 `HISTORY_LIMIT`（200）条的**滑动窗口**，几十小时的战役会把
     开头挤出去。账本读全量、不设 limit，正是为了不受它影响。
     """
     factory, (room_id, player_id) = room
@@ -172,7 +172,7 @@ async def test_history_window_really_would_have_dropped_it(room) -> None:
             select(Event.payload)
             .where(Event.room_id == room_id, Event.event_type == "action.submit")
             .order_by(Event.created_at.desc(), Event.id.desc())
-            .limit(_HISTORY_LIMIT)
+            .limit(HISTORY_LIMIT)
         )
         window = [(p or {}).get("utterance") for (p,) in rows]
     assert "最早的一句" not in window

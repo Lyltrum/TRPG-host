@@ -28,7 +28,7 @@ openai-agents SDK 不再出现在这条主路径上（依赖暂保留，未来�
 import asyncio
 import random
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 import structlog
 from openai.types.chat import ChatCompletionMessageParam
@@ -51,6 +51,13 @@ from app.core.keeper.fact_ledger import (
     render_ledger,
     revealed_fact_ids,
     visible_fact_ids,
+)
+from app.core.keeper.history import (
+    HISTORY_EVENT_TYPES,
+    HISTORY_LIMIT,
+    HistoryLine,
+    history_lines_from_events,
+    visible_history,
 )
 from app.core.keeper.leak_guard import log_leak_hits, scrub_meta_leaks
 from app.core.keeper.location_state import (
@@ -140,10 +147,6 @@ logger = structlog.get_logger()
 # 不再无界等待。
 _REQUEST_TIMEOUT_SECONDS = 60.0
 
-# 全量重放 events 的上限条数。短模组一场 2-3 小时也就几百条，全放得下
-# （DeepSeek 64K 上下文）；上限只是防御异常膨胀的房间。
-_HISTORY_LIMIT = 200
-
 # 裁决 JSON 解析失败时的重试次数（把解析错误喂回去让模型改）。
 # 空响应常见于模型偶发不返回 content；多给一次机会，仍失败则兜底决策。
 _ADJUDICATE_RETRIES = 2
@@ -163,45 +166,6 @@ _FALLBACK_ADJUDICATE_GUIDANCE = (
     "有障碍就写眼前障碍；不要编造未发生的重大剧情；"
     "可请玩家用更明确的一句行动再说一次。checks 必须为空。"
 )
-
-# 历史重放里守秘人旧叙事的截断长度。不截断的话历史里全是它自己的 300-550 字
-# 长篇，模型会模仿自己的旧文风越写越长（自我强化）；重要事实的长期记忆靠
-# keeper_state 状态笔记承担，历史行只需要"发生过什么"的梗概。
-_HISTORY_NARRATION_CLIP = 160
-
-# 事件类型 → 历史行格式化器。keeper.state 不进历史（状态笔记单独整体注入），
-# 工具留痕（检定/HP/San）进历史是为了让守秘人记得自己此前的裁决结果。
-_EVENT_LABELS = {
-    "keeper.check": "检定",
-    "keeper.san": "理智",
-    "keeper.hp": "生命",
-}
-
-
-@dataclass(frozen=True, slots=True)
-class _HistoryLine:
-    """一条历史行 + 它当时的受众（exec/14 P5.2d）。
-
-    `audience=None` = 公开，全房间都经历过（未分头时的常态，也是 P5.2d 之前
-    所有老数据的形态）。分头/隐匿/私密时只有那几个人经历过。
-    """
-
-    text: str
-    audience: frozenset[str] | None = None
-
-
-def _visible_history(lines: list[_HistoryLine], audience: frozenset[str] | None) -> list[str]:
-    """裁剪出这组观察者**共同经历过**的历史（exec/14 P5.2d）。
-
-    `audience=None` = 守秘人视图，全给（它对整局一致性负责，必须看见全部）。
-
-    否则判据是**交集**、朝保密方向失败：只有当 `audience` 里每个人当时都在场，
-    这一行才进他们那一段的上下文。这是 P5.2 从"提示词请你别说"升级成"根本
-    不知道"的关键一步——门厅那段的模型看不到地下室的历史，就漏不出来。
-    """
-    if audience is None:
-        return [line.text for line in lines]
-    return [line.text for line in lines if line.audience is None or audience <= line.audience]
 
 
 def _pending_to_notice(pending: PendingCheck) -> CheckRequestNotice:
@@ -414,7 +378,7 @@ class KeeperAgent(Narrator):
             if keeper_state
             else keeper_state
         )
-        # 事实账本 L1：读全量（不设 limit）——它必须活过 _HISTORY_LIMIT 的
+        # 事实账本 L1：读全量（不设 limit）——它必须活过 HISTORY_LIMIT 的
         # 200 条滑动窗口，这正是它存在的理由。
         async with self._session_factory() as db:
             known_facts = await revealed_fact_ids(db, room_id=room_id)
@@ -443,7 +407,7 @@ class KeeperAgent(Narrator):
             """
             return format_turn_input(
                 visible_state,
-                _visible_history(history_lines, audience),
+                visible_history(history_lines, audience),
                 roster,
                 nickname,
                 utterance,
@@ -1289,11 +1253,11 @@ class KeeperAgent(Narrator):
 
     async def _load_room_memory(
         self, room_id: str
-    ) -> tuple[dict | None, list[_HistoryLine], list[str], list[tuple[str, str]]]:
+    ) -> tuple[dict | None, list[HistoryLine], list[str], list[tuple[str, str]]]:
         """读取世界状态笔记 + 全量事件历史 + 在场调查员名单。
 
         与 build_narration_context 的 6 条窗口不同：守秘人要对整局的一致性
-        负责，所以这里重放的是**最近 `_HISTORY_LIMIT`（200）条**事件，比叙事
+        负责，所以这里重放的是**最近 `HISTORY_LIMIT`（200）条**事件，比叙事
         那 6 条宽得多。
 
         ⚠️ 这是**滑动窗口，不是完整历史**（此处 docstring 曾写"重放完整历史"，
@@ -1335,12 +1299,10 @@ class KeeperAgent(Narrator):
                 select(Event)
                 .where(
                     Event.room_id == room_id,
-                    Event.event_type.in_(
-                        ["action.submit", "narration.push", *_EVENT_LABELS.keys()]
-                    ),
+                    Event.event_type.in_(HISTORY_EVENT_TYPES),
                 )
                 .order_by(Event.created_at.desc(), Event.id.desc())
-                .limit(_HISTORY_LIMIT)
+                .limit(HISTORY_LIMIT)
             )
             events = list(result.scalars())
             events.reverse()
@@ -1349,51 +1311,7 @@ class KeeperAgent(Narrator):
             # 不存在，player_rows 就是全量）。
             nicknames = {p.id: p.nickname for p in player_rows}
 
-        lines: list[_HistoryLine] = []
-        for event in events:
-            payload = event.payload or {}
-            # 受众：payload 里带 `audience` 的事件只有那几个人经历过（分头/隐匿/
-            # 私密时写入，见 ws.py）。没有这个字段 = 公开，老数据天然如此。
-            raw_audience = payload.get("audience")
-            audience = frozenset(str(x) for x in raw_audience) if raw_audience else None
-            if event.event_type == "action.submit":
-                who = nicknames.get(event.player_id or "", "玩家")
-                lines.append(_HistoryLine(f"{who}：{payload.get('utterance', '')}", audience))
-            elif event.event_type == "narration.push":
-                text = payload.get("text", "")
-                if len(text) > _HISTORY_NARRATION_CLIP:
-                    text = text[:_HISTORY_NARRATION_CLIP] + "……"
-                lines.append(_HistoryLine(f"守秘人：{text}", audience))
-            elif event.event_type == "keeper.check":
-                # 🔴 2026-07-30（exec/11 待办2）：曾用 `[检定] 玩家 技能：a/b → 结果`
-                # 这种方括号"记账行"格式喂给叙事 LLM 看历史，真人实测复现过
-                # 叙事正文里编造出一句格式几乎一样但数值全假的"记账"（见
-                # prose_discipline.py 的 _FAKE_STAT_LOG_LEAK）——模型照猫画虎
-                # 模仿了这里看到的模板。改成普通叙述句，不留可逐字复刻的模板。
-                # ⑦⑧ 定稿：检定过程与结果、HP/SAN 一律公开 → 受众恒为 None
-                lines.append(
-                    _HistoryLine(
-                        f"{payload.get('player', '')}进行了一次{payload.get('skill', '')}"
-                        f"检定，掷出{payload.get('rolled', '?')}，目标"
-                        f"{payload.get('target', '?')}，结果{payload.get('level', '')}。",
-                        None,
-                    )
-                )
-            elif event.event_type == "keeper.san":
-                lines.append(
-                    _HistoryLine(
-                        f"{payload.get('player', '')}遭受理智冲击，损失"
-                        f"{payload.get('loss', '?')}点理智，当前理智值{payload.get('san', '?')}。",
-                        None,
-                    )
-                )
-            elif event.event_type == "keeper.hp":
-                lines.append(
-                    _HistoryLine(
-                        f"{payload.get('player', '')}的生命值发生变化："
-                        f"{payload.get('delta', '?')}点（{payload.get('reason', '')}），"
-                        f"当前生命值{payload.get('hp', '?')}。",
-                        None,
-                    )
-                )
+        # 🔴 渲染逻辑在 history.py，与 AI 玩家共用同一份（exec/21 第三层）——
+        # 两份读法迟早会不一致，而不一致的方向一定是"AI 看到了不该看的"。
+        lines = history_lines_from_events(events, nicknames)
         return keeper_state, lines, roster, players

@@ -105,6 +105,7 @@ from app.core.keeper.prose_discipline import (
     scrub_kp_anti_patterns,
 )
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
+from app.core.keeper.sheet_digest import format_sheet
 from app.core.keeper.subject import KEEPER
 from app.core.keeper.tools import (
     KeeperDeps,
@@ -1293,13 +1294,11 @@ class KeeperAgent(Narrator):
                 (await db.execute(select(Character).where(Character.room_id == room_id))).scalars()
             )
             chars_by_player = {c.player_id: c for c in character_rows}
+            # 🔴 名单里带上角色卡摘要（exec/23 #55）：此前守秘人对玩家的全部
+            # 认知就是"名字 + 职业"两项，玩家问「我是谁」时它只能现编个人史。
+            # 真人 KP 面前摊着每个人的卡——这里把卡摆到桌面上。
             roster = [
-                f"{p.nickname}"
-                + (
-                    f"（角色：{c.name}，{c.occupation or '无职业'}）"
-                    if (c := chars_by_player.get(p.id)) is not None and c.name
-                    else "（未建卡）"
-                )
+                format_sheet(p.nickname, chars_by_player.get(p.id), self._ruleset)
                 for p in player_rows
             ]
             # (player_id, 昵称)：位置分组要按 id 分，渲染给 LLM 要用昵称。

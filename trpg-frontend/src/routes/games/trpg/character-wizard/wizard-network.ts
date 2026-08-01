@@ -83,6 +83,7 @@ export async function syncCurrentStateToBackend(
     derived,
     skillValues: buildSkillsPayload(state.skillAlloc, skillComputeMap),
     equipment: state.equipment,
+    occupationId: state.occupationId,
     occupationName,
     background: state.background,
     notes: state.notes,

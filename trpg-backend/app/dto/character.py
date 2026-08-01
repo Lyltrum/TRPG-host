@@ -36,6 +36,12 @@ class CharacterUpdateBody(CamelModel):
     derived_stats: dict[str, int]
     skills: dict[str, int]
     equipment: list[EquipmentItem] = Field(default_factory=list)
+    # 🔴 职业用 id 定位（exec/22）：职业名不唯一，规则表里有 6 组同名不同项的
+    # 职业，信用区间乃至技能点公式都不同。前端在预览步骤本来就拿着 id
+    # （`CharacterPreviewRequest.occupation_id`），保存时也要把它带过来——
+    # 信息此前正是在这一步丢的。
+    occupation_id: int | None = None
+    # 展示名。id 缺失时（老客户端）回退按名字查，行为与改动前一致。
     occupation: str | None = None
     background: str = Field(default="", max_length=4000)
     notes: str = Field(default="", max_length=4000)
@@ -87,6 +93,7 @@ class CharacterRead(CamelModel):
     derived_stats: dict[str, int | str] = Field(default_factory=dict)
     skills: dict[str, int] = Field(default_factory=dict)
     equipment: list[str] = Field(default_factory=list)
+    occupation_id: int | None = None
     occupation: str | None = None
     background: str = ""
     notes: str = ""
@@ -126,6 +133,7 @@ class PartyCharacterRead(CamelModel):
     derived_stats: dict[str, int | str] = Field(default_factory=dict)
     skills: dict[str, int] = Field(default_factory=dict)
     equipment: list[str] = Field(default_factory=list)
+    occupation_id: int | None = None
     occupation: str | None = None
     background: str = ""
     background_detail: dict[str, str] | None = None

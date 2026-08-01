@@ -26,6 +26,10 @@ export interface BuiltCharacter {
   derived: { hp: number; san: number; mp: number };
   skillValues: Record<string, number>; // skillId -> 最终值（base+分配）
   equipment: string;
+  // 🔴 职业用 id 定位（exec/22）：职业名不唯一——规则表里有 6 组同名不同项的
+  // 职业，信用区间乃至技能点公式都不同。向导在预览步骤本来就拿着 id，保存时
+  // 也要带上；只传名字的话"玩家选的是哪一个"在落库那一刻就丢了。
+  occupationId: number | null;
   occupationName: string | null;
   background: string;
   notes: string;
@@ -75,6 +79,7 @@ export async function saveCharacter(
             .filter(Boolean)
             .map((name) => ({ name }))
         : [],
+      occupationId: built.occupationId,
       occupation: built.occupationName,
       background: built.background,
       notes: built.notes,

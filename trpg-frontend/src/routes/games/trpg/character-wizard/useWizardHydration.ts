@@ -32,12 +32,19 @@ export function useWizardHydration(ruleset: Ruleset | null, dispatch: (action: W
         // 两者视为相同，跟 attrAfterAge 保持 null 是一致的（wizard-bugfix-
         // round4.md 方案 A）。
         const savedAllocated = saved.allocatedAttributes ?? saved.attributes
-        const matched = saved.occupation ? (ruleset.occupations.find((o) => o.name === saved.occupation) ?? null) : null
+        // 优先用后端存的 occupationId（exec/22）：职业名不唯一，按名字 find
+        // 只会拿回第一个匹配，同名不同项的职业（律师/私家侦探/工匠…）会被
+        // 认成同一个——重新打开向导时选中项就悄悄换成了另一个变体。
+        const matchedId =
+          saved.occupationId ??
+          (saved.occupation
+            ? (ruleset.occupations.find((o) => o.name === saved.occupation)?.id ?? null)
+            : null)
 
         const view = await previewCharacter({
           attributes: savedAttrs,
           allocatedAttributes: saved.allocatedAttributes ?? null,
-          occupationId: matched?.id ?? null,
+          occupationId: matchedId,
           skills: saved.skills ?? {},
           age: saved.age ?? null,
           // 这条调用漏传这两个字段会导致 roll_pool/roll 角色卡在水合阶段
@@ -68,7 +75,7 @@ export function useWizardHydration(ruleset: Ruleset | null, dispatch: (action: W
             birthplace: saved.birthplace ?? '',
           },
           age: saved.age ?? DEFAULT_AGE,
-          occupationId: matched?.id ?? null,
+          occupationId: matchedId,
           skillAlloc: alloc,
           equipment: (saved.equipment ?? []).join('、'),
           background: saved.background ?? '',

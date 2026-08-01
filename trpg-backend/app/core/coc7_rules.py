@@ -746,8 +746,14 @@ def validate_character_with_occupation(
     generation_method: str = GENERATION_POINT_BUY,
     attribute_pool_total: int | None = None,
     allocated_attributes: dict[str, int] | None = None,
+    occupation_not_found: bool = False,
 ) -> list[ValidationIssue]:
     """按**职业对象**校验（`validate_character` 的按名字版本是它的包装）。
+
+    ⚠️ `occupation=None` 与 `occupation_not_found=True` 是**两件事**：前者是
+    "这张卡没选职业"（合法，COC7 允许无职业角色），后者是"选了但查不到"
+    （非法）。第一版把 `occupation_not_found` 写成 `occupation is None`，
+    于是所有未选职业的卡都被误判成 OCCUPATION_NOT_FOUND。
 
     为什么需要这个入口：职业表里存在**同名不同项**的职业（律师 ×2、私家侦探
     ×2、工匠 ×2…共 6 组），它们的信用区间乃至技能点公式都不同。按名字查只能
@@ -762,7 +768,7 @@ def validate_character_with_occupation(
         attributes,
         occupation,
         skills,
-        occupation_not_found=occupation is None,
+        occupation_not_found=occupation_not_found,
         generation_method=generation_method,
         attribute_pool_total=attribute_pool_total,
         allocated_attributes=allocated_attributes,

@@ -90,6 +90,7 @@ export function useWizardSubmit(
         derived: { hp: finalDerived.hp, san: finalDerived.san, mp: finalDerived.mp },
         skillValues: skillsPayload,
         equipment: state.equipment,
+        occupationId: state.occupationId,
         occupationName,
         background: state.background,
         notes: state.notes,

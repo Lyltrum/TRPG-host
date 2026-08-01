@@ -106,6 +106,7 @@ from app.core.keeper.prose_discipline import (
     narration_max_tokens,
     scrub_kp_anti_patterns,
 )
+from app.core.keeper.registry import Capability
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
 from app.core.keeper.sheet_digest import format_sheet
 from app.core.keeper.subject import KEEPER
@@ -115,6 +116,11 @@ from app.core.keeper.tools import (
     set_phase_impl,
 )
 from app.core.keeper.turn_executor import create_pending_checks, execute_side_effects
+from app.core.keeper.turn_policy import (
+    CHECK_CAPABILITIES,
+    SCENE_ADVANCE_CAPABILITIES,
+    revoke,
+)
 from app.core.keeper.visibility import (
     VISIBILITY_REVEALED_KEY,
     format_visibility_status,
@@ -477,9 +483,15 @@ class KeeperAgent(Narrator):
 
         # 阶段1·裁决：结构化输出，检定是 schema 字段，不存在"忘了裁决"。
         decision = await self._adjudicate(situation)
-        # 主动轮 / 开场仪式硬约束：丢弃检定请求（设计：开场不发起高风险检定）
-        if (is_heartbeat or is_opening_ceremony) and (decision.checks or decision.san_checks):
-            decision = decision.model_copy(update={"checks": [], "san_checks": []})
+        # 🔴 本轮撤销哪些能力（exec/27 阶段 3 · B 族）。此前这四处写成
+        # `model_copy(update={"checks": [], ...})`——看着像清字段，实际是编排层在
+        # 决定"这一轮禁止哪些能力生效"。写死字段名会把 agent.py 焊在具体能力上，
+        # 而且加一片能力时没有任何地方提醒你"迷茫轮该不该收走它"。
+        # 收口成能力集之后，这里只出现 Capability，不出现任何能力的字段名。
+        revoked: set[Capability] = set()
+        # 主动轮 / 开场仪式硬约束：不发起检定（设计：开场不发起高风险检定）
+        if is_heartbeat or is_opening_ceremony:
+            revoked |= CHECK_CAPABILITIES
 
         # 迷茫 / 怪话 / 明确行动：代码注入 guidance（不靠模型自觉）。
         # 🔴 2026-07-29：分类信号从正则改为裁决 LLM 在同一次调用里顺手给出的
@@ -534,14 +546,9 @@ class KeeperAgent(Narrator):
             inject = (
                 inject_feasibility_question_guidance if feasibility else inject_kp_question_guidance
             )
+            revoked |= CHECK_CAPABILITIES | SCENE_ADVANCE_CAPABILITIES
             decision = decision.model_copy(
-                update={
-                    "checks": [],
-                    "san_checks": [],
-                    "moves": [],
-                    "current_node_id": None,
-                    "narration_guidance": inject(decision.narration_guidance),
-                }
+                update={"narration_guidance": inject(decision.narration_guidance)}
             )
         elif confused:
             # 🔴 裁决走兜底（_FALLBACK_ADJUDICATE_GUIDANCE）时不要把它和迷茫引导拼
@@ -551,22 +558,21 @@ class KeeperAgent(Narrator):
             # 前情复述而非建议）。迷茫引导本身已自洽（给方向不需要先问清楚），
             # 兜底走这条分支时直接丢弃、不拼接。
             base_guidance = "" if is_adjudicate_fallback else decision.narration_guidance
+            revoked |= CHECK_CAPABILITIES
             decision = decision.model_copy(
-                update={
-                    "checks": [],
-                    "san_checks": [],
-                    "narration_guidance": inject_confusion_guidance(base_guidance),
-                }
+                update={"narration_guidance": inject_confusion_guidance(base_guidance)}
             )
         elif weird and not is_heartbeat and not is_opening_ceremony:
             # 怪话接招：元/玩笑清检定；暴力边界保留检定（伤害/SAN）但同样强制接招
-            update: dict = {
-                "narration_guidance": inject_weird_response_guidance(decision.narration_guidance),
-            }
             if not is_violence_edge_utterance(context.utterance):
-                update["checks"] = []
-                update["san_checks"] = []
-            decision = decision.model_copy(update=update)
+                revoked |= CHECK_CAPABILITIES
+            decision = decision.model_copy(
+                update={
+                    "narration_guidance": inject_weird_response_guidance(
+                        decision.narration_guidance
+                    ),
+                }
+            )
         elif action_intent and not is_heartbeat and not is_opening_ceremony:
             # 明确行动：强制推进，禁止街景挡枪（全模组通用）
             decision = decision.model_copy(
@@ -576,6 +582,8 @@ class KeeperAgent(Narrator):
                     ),
                 }
             )
+
+        decision = revoke(decision, frozenset(revoked))
 
         # 聚光灯（exec/14 P5.2）：导演层算出"谁最久没被点到"，这里强制注入。
         # 与上面三选一叠加生效——被冷落跟他说的那句话是什么类型无关。
@@ -961,6 +969,10 @@ class KeeperAgent(Narrator):
                             "san_check_count": len(decision.san_checks),
                             "current_node_id": decision.current_node_id,
                             "ending_reached": decision.ending_reached,
+                            # 已切出去的能力自带留痕字段（exec/27 阶段 3 · A 族）。
+                            # 跟 keeper_decision 日志复用同一份——否则每加一片
+                            # 能力，它的裁决在 events 表里就没有痕迹，且不报错。
+                            **audit_fields(decision),
                         },
                     )
                 )

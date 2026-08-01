@@ -48,10 +48,11 @@ DECISION_FIELD_CAPABILITIES: dict[str, Capability] = {
     "san_checks": Capability.REQUEST_SAN_CHECK,
     "state_updates": Capability.UPDATE_STATE,
     "current_node_id": Capability.SET_SCENE,
-    # 分头探索 / 潜行（P5.2）：位置与"在场但不可见"都是空间状态，与设置场景
-    # 同一件事的不同粒度，共用一个能力。
+    # 分头探索（P5.2）：逐人位置与设置场景是同一件事的不同粒度，共用一条。
     "moves": Capability.SET_SCENE,
-    "stealth": Capability.SET_SCENE,
+    # 潜行**单独一条**：它是已经成立的状态，不该跟着"世界不推进"一起被收走
+    # （exec/27 阶段 3 · B 族，`turn_policy` 模块说明里有完整理由）。
+    "stealth": Capability.SET_HIDING,
     "agenda_fired": Capability.FIRE_AGENDA,
     "visibility_revealed": Capability.REVEAL_VISIBILITY,
     "opening_complete": Capability.ADVANCE_PHASE,

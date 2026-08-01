@@ -1,6 +1,6 @@
 """COC 守秘人 agent（feat/keeper-agent 实验分支）。
 
-对外只暴露 `KeeperAgent`——它实现 `app.core.narrator.Narrator` 接口，
+对外只暴露 `KeeperAgent`——它实现 `app.core.narration.contract.Narrator` 接口，
 WS 层/协议/锁完全感知不到内部实现。v2 架构（裁决→执行→叙事两阶段回合制，
 见 04-两阶段回合制架构.md）：openai-agents SDK 已不在主路径上（v1 自由
 工具调用被实测证明不可靠，见 agent.py 模块 docstring）。
@@ -26,8 +26,14 @@ WS 层/协议/锁完全感知不到内部实现。v2 架构（裁决→执行→
 - **基础设施（非 keeper 决策逻辑，暂留在此目录）**：pending.py（待掷检定
   进程内队列）、heartbeat.py（世界心跳后台任务）、catalog.py（模组目录
   注册表）。
+
+🔴 **本文件故意不 re-export `KeeperAgent`。**
+
+原先这里写着 `from app.core.keeper.agent import KeeperAgent`，而 `tools.py` 写
+`from app.core.keeper import dice, module_loader`——`from 包 import 子模块` 会先
+执行包的 `__init__`，于是 `tools → 包 → agent → tools` 成环。现在没炸只是加载
+顺序凑巧。`exec/27` 阶段 0 的架构测试第一次跑就抓到了它。
+
+包门面看着方便，代价是**任何人 import 包内任何东西都会顺带加载那个实现**。
+要 `KeeperAgent` 就写 `from app.core.keeper.agent import KeeperAgent`。
 """
-
-from app.core.keeper.agent import KeeperAgent
-
-__all__ = ["KeeperAgent"]

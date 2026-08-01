@@ -33,7 +33,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, Field, ValidationError
 
 from app.core.llm_tape import build_llm_client
-from app.core.narrator import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from app.core.narration.deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 
 logger = structlog.get_logger()
 

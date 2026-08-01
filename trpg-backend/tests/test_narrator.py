@@ -9,14 +9,11 @@
 import pytest
 
 from app.core.config import Settings
-from app.core.narrator import (
-    DeepSeekNarrator,
-    FallbackNarrator,
-    NarrationContext,
-    RoomAwareKeeperNarrator,
-    _build_messages,
-    build_narrator,
-)
+from app.core.narration.contract import NarrationContext
+from app.core.narration.deepseek import DeepSeekNarrator, _build_messages
+from app.core.narration.factory import build_narrator
+from app.core.narration.fallback import FallbackNarrator
+from app.core.narration.room_aware import RoomAwareKeeperNarrator
 
 
 async def test_fallback_narrator_returns_deterministic_placeholder_with_utterance() -> None:

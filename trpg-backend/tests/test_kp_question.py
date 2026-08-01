@@ -24,7 +24,7 @@ from app.core.keeper.decision import CheckRequest, KeeperDecision, PlayerMove
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
-from app.core.narrator import NarrationContext
+from app.core.narration.contract import NarrationContext
 from app.models.room import Character, Player, Room
 
 _FIXTURE_MODULE = str(Path(__file__).parent / "fixtures" / "keeper_module.json")

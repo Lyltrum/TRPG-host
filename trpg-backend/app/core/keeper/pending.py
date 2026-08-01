@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.narrator import CheckRequestNotice
+from app.core.narration.contract import CheckRequestNotice
 from app.models.event import PendingCheckRow
 
 

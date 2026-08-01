@@ -43,7 +43,7 @@ async def _run(module_path: Path, rounds: list[str]) -> int:
     from app.core.db import Base
     from app.core.keeper.agent import KeeperAgent
     from app.core.keeper.module_loader import ModuleNode, load_module
-    from app.core.narrator import NarrationContext
+    from app.core.narration.contract import NarrationContext
     from app.models.room import Character, Player, Room
 
     print(f"module: {module_path}", flush=True)

@@ -28,7 +28,7 @@ from app.core.db import async_session_factory
 from app.core.errors import AppException, ErrorCode
 from app.core.llm_tape import activate_from_env
 from app.core.logging import configure_logging
-from app.core.narrator import build_narrator
+from app.core.narration.factory import build_narrator
 from app.core.seed import ensure_seed_content
 from app.dto.common import ApiResponse
 from app.service.action_lock import action_lock_manager

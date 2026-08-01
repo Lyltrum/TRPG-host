@@ -674,6 +674,8 @@ export default function RoomPage() {
             : [...prev, envelope.payload]
         )
       } else if (envelope.type === 'check.request') {
+        // 球回到玩家手上了（该谁掷骰），守秘人这一拍写完了
+        setTyping(false)
         const isSelf = envelope.payload.playerId === playerId
         if (isSelf) {
           setPendingCheck({ id: envelope.payload.checkRequestId, kind: 'skill', skill: envelope.payload.skill, rolling: false })
@@ -686,6 +688,7 @@ export default function RoomPage() {
           time: now,
         }])
       } else if (envelope.type === 'san.check.request') {
+        setTyping(false)
         const isSelf = envelope.payload.playerId === playerId
         if (isSelf) {
           setPendingCheck({ id: envelope.payload.checkRequestId, kind: 'san', skill: null, rolling: false })
@@ -709,10 +712,10 @@ export default function RoomPage() {
           time: now,
           isSelf: rollerId === playerId,
         }])
-        // 掷骰确认时置了 typing——如果这不是链式检定里的最后一步，队列还有
-        // 下一个待掷检定，不会再有 narration.push 来关掉这个指示器，这里必须
-        // 主动关掉（掷完这个才知道，不能提前判断）。
-        setTyping(false)
+        // 🔴 这里**不能**关打字指示器（exec/23 #58）。骰值与结算叙事拆成两拍
+        // 广播之后（#54），中间隔着一次 10 秒级的 LLM 往返——在这里关掉的话，
+        // 那十秒里指示器是灭的、输入框看起来完全空闲，玩家自然会去打字。
+        // 改由「叙事到达」或「新的 check.request 到达」（球回到玩家手上）来关。
         if (checkRequestId) {
           setPendingCheck(prev => (prev && prev.id === checkRequestId ? null : prev))
         }
@@ -725,7 +728,7 @@ export default function RoomPage() {
           time: now,
           isSelf: rollerId === playerId,
         }])
-        setTyping(false)
+        // 同上：结算叙事还没到，指示器不能在这里关（exec/23 #58）
         if (checkRequestId) {
           setPendingCheck(prev => (prev && prev.id === checkRequestId ? null : prev))
         }
@@ -820,10 +823,22 @@ export default function RoomPage() {
   // 发送路径与手动打字完全一致，转写不直接发送（给用户一次改错的机会）。
   const speech = useSpeechInput((text) => setInput(prev => (prev ? prev + text : text)))
 
+  // 🔴 只在**自己这一轮还在跑**时锁输入，不是"守秘人一忙就全场禁言"
+  // （exec/23 #58）。`typing` 只由自己的提交/掷骰置位，所以多人局里别人回合
+  // 期间你照样能说话——那是 exec/19 #36 定过的规矩：真人桌上不存在"你这句
+  // 无效、请重说"，你说出口的话在空气里，服务端会缓冲进下一轮。
+  //
+  // 手头还有自己的待掷检定时也锁：此刻该做的是掷骰，不是打字（打了也会被
+  // 守秘人的 pending 守卫挡回来）。讨论区永远不锁——那是玩家之间的通道。
+  const myPendingRoll = pendingCheck !== null
+  const dmBusy = channel === 'dm' && (typing || myPendingRoll)
+
   const sendMessage = (e?: FormEvent) => {
     e?.preventDefault()
     const text = input.trim()
     if (!text || !playerId) return
+    // 回车提交绕得过按钮的 disabled，这里再拦一次
+    if (channel === 'dm' && dmBusy) return
     if (channel === 'chat') {
       // 讨论区：发送前生成稳定 ID，发送失败时恢复输入框内容——
       // SDK 在 WS 非 OPEN 时静默丢弃，用户无感知；保留输入让用户重试，
@@ -1203,14 +1218,24 @@ export default function RoomPage() {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            readOnly={dmBusy}
             placeholder={
-              channel === 'chat' ? '和队友讨论…' : privateAction ? '私密行动，只有你看得到…' : '对守秘人说…'
+              channel === 'chat'
+                ? '和队友讨论…'
+                : dmBusy
+                  ? (myPendingRoll ? '先掷骰吧…' : '守秘人正在回应…')
+                  : privateAction
+                    ? '私密行动，只有你看得到…'
+                    : '对守秘人说…'
             }
-            className="flex-1 bg-input border border-border-mid rounded-[20px] px-4 py-2.5 text-sm text-text-primary font-sans outline-none min-h-[40px] placeholder:text-text-dim focus:border-brass transition-colors"
+            className={`flex-1 bg-input border border-border-mid rounded-[20px] px-4 py-2.5 text-sm text-text-primary font-sans outline-none min-h-[40px] placeholder:text-text-dim focus:border-brass transition-colors ${
+              dmBusy ? 'opacity-60' : ''
+            }`}
           />
           <button
             type="submit"
-            className="w-10 h-10 rounded-full bg-brass border-none text-white flex items-center justify-center flex-shrink-0 active:scale-[0.92] transition-all hover:bg-brass-dark"
+            disabled={dmBusy}
+            className="w-10 h-10 rounded-full bg-brass border-none text-white flex items-center justify-center flex-shrink-0 active:scale-[0.92] transition-all hover:bg-brass-dark disabled:opacity-40 disabled:active:scale-100"
           >
             <SendHorizontal className="w-[18px] h-[18px]" strokeWidth={2.5} />
           </button>

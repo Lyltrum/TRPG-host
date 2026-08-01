@@ -7,7 +7,8 @@ name: E2E CI
 # 前端改动不该触发它（这也是选 SDK 层而不是浏览器层的直接好处之一）。
 on:
   push:
-    branches: [main]
+    # feat/keeper-agent 不开 PR，push 是它唯一可能的 CI 触发点。
+    branches: [main, feat/keeper-agent]
     paths:
       - "trpg-backend/**"
       - "trpg-sdk/**"

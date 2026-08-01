@@ -10,7 +10,8 @@ name: Backend CI
 # 的实际版本由它们锁定：升级生成器而不重新生成，产物同样会静默过时。
 on:
   push:
-    branches: [main]
+    # feat/keeper-agent 不开 PR，push 是它唯一可能的 CI 触发点。
+    branches: [main, feat/keeper-agent]
     paths:
       - "trpg-backend/**"
       - "trpg-sdk/scripts/generate-types.ts"

@@ -6,7 +6,8 @@ name: Frontend CI
 # 跑不起来的情况下绿灯合并，这正是 CI 应该拦住的问题。
 on:
   push:
-    branches: [main]
+    # feat/keeper-agent 不开 PR，push 是它唯一可能的 CI 触发点。
+    branches: [main, feat/keeper-agent]
     paths:
       - "trpg-frontend/**"
       - "trpg-sdk/**"

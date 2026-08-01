@@ -63,7 +63,7 @@ from app.core.keeper.visibility import (
     load_revealed_visibility,
     serialize_revealed_visibility,
 )
-from app.core.narrator import StatChangeNotice
+from app.core.narration.contract import StatChangeNotice
 from app.dto.game import RulesetRead
 from app.models.event import Event
 from app.models.room import Character, Player, Room

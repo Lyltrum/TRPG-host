@@ -192,7 +192,7 @@ def test_format_turn_includes_visibility_and_phase() -> None:
 @pytest.mark.asyncio
 async def test_heartbeat_gate_skips_without_keeper() -> None:
     from app.core.keeper import heartbeat as hb
-    from app.core.narrator import FallbackNarrator
+    from app.core.narration.fallback import FallbackNarrator
 
     hb.reset_heartbeat_state_for_tests()
     ok = await hb.maybe_fire_room(

@@ -49,7 +49,7 @@ async def _run(module_path: Path, out_path: Path, rounds: list[str]) -> int:
     from app.core.keeper.agent import KeeperAgent
     from app.core.keeper.module_loader import load_module
     from app.core.llm_tape import recording
-    from app.core.narrator import NarrationContext
+    from app.core.narration.contract import NarrationContext
     from app.models.room import Character, Player, Room
 
     module = load_module(module_path)

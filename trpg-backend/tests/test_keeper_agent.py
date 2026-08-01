@@ -19,13 +19,11 @@ from app.core.db import Base
 from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.prompts import format_turn_input
-from app.core.narrator import (
-    DeepSeekNarrator,
-    FallbackNarrator,
-    NarrationContext,
-    RoomAwareKeeperNarrator,
-    build_narrator,
-)
+from app.core.narration.contract import NarrationContext
+from app.core.narration.deepseek import DeepSeekNarrator
+from app.core.narration.factory import build_narrator
+from app.core.narration.fallback import FallbackNarrator
+from app.core.narration.room_aware import RoomAwareKeeperNarrator
 from app.models.event import Event
 from app.models.room import Player, Room
 

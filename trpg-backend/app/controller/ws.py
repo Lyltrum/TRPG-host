@@ -42,7 +42,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory
-from app.core.narrator import (
+from app.core.narration.contract import (
     CheckRequestNotice,
     CheckResultNotice,
     NarrationSegment,
@@ -199,7 +199,7 @@ async def _run_opening_ceremony(
     2. LLM 失败/空结果（含 Fallback 无 key 场景）→ structured 脚本原样兜底。
     3. 都没有 → 中性兜底。
     """
-    from app.core.narrator import NarrationContext
+    from app.core.narration.contract import NarrationContext
 
     script = (fallback_text or "").strip()
     player = await room_service.get_player(db, player_id)

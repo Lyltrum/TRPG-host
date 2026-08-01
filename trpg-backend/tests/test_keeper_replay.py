@@ -27,7 +27,7 @@ from app.core.db import Base
 from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.module_loader import load_module
 from app.core.llm_tape import Tape, replaying
-from app.core.narrator import NarrationContext
+from app.core.narration.contract import NarrationContext
 from app.models.room import Character, Player, Room
 
 TAPE_PATH = Path(__file__).parent / "tapes" / "keeper_minimal.json"

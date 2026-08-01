@@ -33,7 +33,7 @@ def stub_narrator():  # noqa: ANN201
     用例就会去连真实模组目录、报"房间未绑定可玩模组"。这里要验的是**接线**
     （AI 的话有没有并进同一轮），叙事内容用占位回显反而更好断言。
     """
-    from app.core.narrator import FallbackNarrator
+    from app.core.narration.fallback import FallbackNarrator
 
     previous = app.state.narrator
     app.state.narrator = FallbackNarrator()

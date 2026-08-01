@@ -28,7 +28,7 @@ from app.core.keeper.pending import (
     to_notice,
 )
 from app.core.keeper.tools import KeeperDeps, KeeperToolError
-from app.core.narrator import CheckResultNotice, NarrationContext, NarrationOutcome
+from app.core.narration.contract import CheckResultNotice, NarrationContext, NarrationOutcome
 from app.models.room import Character, Player, Room
 
 _FIXTURE_MODULE = Path(__file__).parent / "fixtures" / "keeper_module.json"

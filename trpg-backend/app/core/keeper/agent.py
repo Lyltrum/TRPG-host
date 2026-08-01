@@ -122,9 +122,7 @@ from app.core.keeper.visibility import (
     load_revealed_visibility,
 )
 from app.core.llm_tape import build_llm_client
-from app.core.narrator import (
-    DEEPSEEK_BASE_URL,
-    DEEPSEEK_MODEL,
+from app.core.narration.contract import (
     CheckResultCallback,
     CheckResultNotice,
     NarrationContext,
@@ -133,6 +131,7 @@ from app.core.narrator import (
     Narrator,
     PlayerUtterance,
 )
+from app.core.narration.deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from app.dto.game import RulesetRead
 from app.models.event import Event
 from app.models.room import Character, Player, Room

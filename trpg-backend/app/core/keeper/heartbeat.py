@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.keeper.pending import pending_check_manager
-from app.core.narrator import NarrationContext, Narrator
+from app.core.narration.contract import NarrationContext, Narrator
 from app.models.event import Event
 from app.models.room import Player, Room
 from app.service.action_lock import action_lock_manager

@@ -54,21 +54,19 @@ _LAYER_EXEMPTIONS: set[tuple[str, str]] = {
     ("app.core.keeper.heartbeat", "app.service.ws_manager"),
 }
 
-#: 已知的循环依赖边（`exec/27` 阶段 1 修）。
-#: 全部源于 `narrator.py` 同时是抽象层、工厂和一个实现——抽象反向依赖了具体。
-#: 阶段 1 把它拆成 contract / 实现 / factory 之后，这个集合应该清空。
-_CYCLE_EXEMPTIONS: set[tuple[str, str]] = {
-    # 🔴 包门面制造的环，本测试第一次跑就抓到（手工分析时漏了）：
-    #   tools.py           from app.core.keeper import dice, module_loader
-    #   keeper/__init__.py from app.core.keeper.agent import KeeperAgent
-    # `from 包 import 子模块` 会先执行包的 __init__，于是 tools → 包 → agent
-    # → tools。现在没炸只是加载顺序凑巧。阶段 1 一并修：__init__ 不再 export
-    # 具体实现，tools 直接 import 子模块。
-    ("app.core.keeper", "app.core.keeper.agent"),
-    # narrator 同时是抽象层、工厂和一个实现——抽象反向依赖具体。阶段 1 拆成
-    # contract / 实现 / factory 之后清空。
-    ("app.core.narrator", "app.core.keeper.agent"),
-}
+#: 已知的循环依赖边。
+#:
+#: 🔴 **`exec/27` 阶段 1 之后这里是空的——请让它保持空。**
+#:
+#: 原先有两组环：
+#: 1. `narrator.py` 同时是抽象层、工厂和一个实现，抽象反向依赖具体；
+#: 2. `keeper/__init__.py` re-export `KeeperAgent`，而 `tools.py` 走
+#:    `from app.core.keeper import dice`——`from 包 import 子模块` 会先执行包的
+#:    `__init__`，于是 `tools → 包 → agent → tools`。
+#:
+#: 两组都靠**函数内 import / 加载顺序凑巧**撑着，不会有任何东西变红。真要往这里
+#: 加条目之前，先确认不是"抽象层依赖了具体实现"或"包门面"这两种老毛病。
+_CYCLE_EXEMPTIONS: set[tuple[str, str]] = set()
 
 
 def _layer_of(module: str) -> tuple[int, str] | None:

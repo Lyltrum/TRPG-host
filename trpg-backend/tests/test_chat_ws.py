@@ -20,14 +20,14 @@ from collections.abc import Iterator
 import pytest
 from starlette.testclient import TestClient
 
-from app.core.narrator import (
+from app.core.narration.contract import (
     CheckResultCallback,
     CheckResultNotice,
-    FallbackNarrator,
     NarrationContext,
     NarrationOutcome,
     Narrator,
 )
+from app.core.narration.fallback import FallbackNarrator
 from app.main import app
 from app.service.action_lock import RoomActionLockManager
 from tests.test_ws import ROOMS_BASE, create_room, register_and_login

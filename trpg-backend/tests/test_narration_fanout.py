@@ -27,7 +27,7 @@ from app.core.keeper.location_state import HIDDEN_PLAYERS_KEY, PLAYER_LOCATION_K
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
-from app.core.narrator import NarrationContext, PlayerUtterance
+from app.core.narration.contract import NarrationContext, PlayerUtterance
 from app.models.event import Event
 from app.models.room import Player, Room
 from app.service.ws_manager import ConnectionManager

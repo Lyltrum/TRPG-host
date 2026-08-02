@@ -11,6 +11,7 @@ from app.core.keeper.capabilities.clue_reveal.pairs import (
     serialize_revealed_clues,
 )
 from app.core.keeper.deps import KeeperDeps, KeeperToolError, record_event
+from app.core.keeper.registry import TurnFacts
 from app.models.room import Room
 
 
@@ -66,7 +67,7 @@ async def mark_clues_revealed_impl(
 
 
 async def execute_clues_revealed(
-    deps: KeeperDeps, decision: BaseModel
+    deps: KeeperDeps, decision: BaseModel, _facts: TurnFacts
 ) -> tuple[list[str], list[str]]:
     """先校验 pair id 合法性，再交给 `mark_clues_revealed_impl`。
 

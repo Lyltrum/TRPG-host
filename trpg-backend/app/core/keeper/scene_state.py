@@ -14,6 +14,14 @@ from __future__ import annotations
 
 CURRENT_NODE_KEY = "当前场景节点"
 
+#: 同一件事的人类可读那一面：裁决器用 `state_updates` 写的地名。
+#:
+#: 🔴 两个键必须一起看：`world_state` 写地名、`movement` 维护节点指针，两者脱节
+#: 就是 `exec/19 #48`（人已经站在屋外，护栏还拿地下室的 checks[] 卡他）。常量
+#: 放在这里而不是任一片能力里，是因为**两片都要用它**——放进其中一片就会造成
+#: 跨能力 import。
+SCENE_NAME_KEY = "当前场景"
+
 
 def load_current_node_id(keeper_state: dict | None) -> str | None:
     if not keeper_state:

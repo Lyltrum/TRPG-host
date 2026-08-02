@@ -255,12 +255,17 @@ def test_capabilities_do_not_import_the_orchestrator() -> None:
 
 
 def test_primitives_never_know_about_capabilities() -> None:
-    """规则原语是给能力用的，方向单向。反过来就说明那东西根本不是原语。"""
+    """规则原语是给能力用的，方向单向。反过来就说明那东西根本不是原语。
+
+    与能力目录同样的豁免：**同目录的测试文件不算**——测试要把整条链跑通是它
+    的本职。（`primitives/test_skills.py` 会 import `skill_check` 的护栏来验
+    "id 白名单两侧口径一致"，那是有意的。）
+    """
     graph = _build_graph()
     violations = {
         (mod, dep)
         for mod, deps in graph.items()
-        if mod.startswith(_PRIMITIVES_PKG)
+        if mod.startswith(_PRIMITIVES_PKG) and not mod.rpartition(".")[2].startswith("test_")
         for dep in deps
         if dep.startswith(_CAPABILITIES_PKG)
     }

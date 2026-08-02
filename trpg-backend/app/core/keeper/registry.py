@@ -184,10 +184,33 @@ class PendingHook:
     run: PendingFn
 
 
+@dataclass
+class TurnFacts:
+    """能力之间按执行顺序传递的**本轮事实**。
+
+    🔴 它解决的是一条真实存在的领域耦合：「当前场景」是人类可读地名，走
+    `world_state` 的自由文本记账；而「场景变了却没给出剧本节点 id 就要清空
+    节点指针」（`exec/19 #48`）是 `movement` 的规则。切分之前这条规则直接读
+    `decision.state_updates`——**一片能力伸手进另一片的字段**。
+
+    没有 import 跨过去，所以架构测试抓不到；但耦合是真的，而且是最坏的那种：
+    **隐式的**。改 `world_state` 的人不会知道有人在读他的字段。
+
+    正解不是加注释，是把它变成**显式契约**：上游能力 `publish`，下游能力
+    `consume`，顺序由各自注册的 `order` 保证（`world_state`=20 早于
+    `movement`=30，`test_capability_registry` 盯着这条）。字段而不是自由键的
+    黑板——同项目判据：**不要用自由文本当标识符**。
+    """
+
+    #: 本轮裁决声明的新「当前场景」（人类可读地名）。`world_state` 写，
+    #: `movement` 读。没声明就是 None。
+    scene_name_declared: str | None = None
+
+
 #: 执行钩子：拿到本轮裁决，做完自己那部分副作用，返回 (执行报告, 问题清单)。
 #: 报告喂给叙事阶段（叙事必须知道"发生了什么"），问题清单是"裁决里不合法的项"
 #: ——跳过不炸，一并交给叙事自然圆场。
-ExecutorFn = Callable[["KeeperDeps", BaseModel], Awaitable[tuple[list[str], list[str]]]]
+ExecutorFn = Callable[["KeeperDeps", BaseModel, TurnFacts], Awaitable[tuple[list[str], list[str]]]]
 
 
 @dataclass(frozen=True)

@@ -24,6 +24,7 @@ from app.core.keeper.deps import (
     write_stat,
 )
 from app.core.keeper.primitives.npcs import npc_display_name, resolve_npc_id
+from app.core.keeper.registry import TurnFacts
 from app.core.narration.contract import StatChangeNotice
 from app.models.room import Room
 
@@ -98,7 +99,9 @@ async def adjust_npc_hp_impl(deps: KeeperDeps, delta: int, reason: str, npc_labe
     return f"{summary}（{reason}）"
 
 
-async def execute_hp_changes(deps: KeeperDeps, decision: BaseModel) -> tuple[list[str], list[str]]:
+async def execute_hp_changes(
+    deps: KeeperDeps, decision: BaseModel, _facts: TurnFacts
+) -> tuple[list[str], list[str]]:
     """注册进执行阶段的钩子。
 
     `decision` 标成 `BaseModel` 而不是 `KeeperDecision`：受限主体拿到的是

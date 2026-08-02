@@ -11,32 +11,28 @@ from app.core.keeper.location_state import (
     set_current_node_impl,
     set_stealth_impl,
 )
-
-#: `state_updates` 里那个人类可读的场景键。它和 `current_node_id` 是同一件事的
-#: 两个面（人读的地名 / 机器读的节点 id），两者脱节就会出 exec/19 #48。
-_SCENE_KEY = "当前场景"
+from app.core.keeper.registry import TurnFacts
 
 
-def _scene_moved_off_the_map(decision: BaseModel) -> bool:
+def _scene_moved_off_the_map(decision: BaseModel, facts: TurnFacts) -> bool:
     """本轮换了场景，却没给出任何剧本节点 id（exec/19 #48）。
 
     只在裁决器**明确写了新的「当前场景」**时才成立——没提场景的普通轮次
     （对话、检定结算）不该动节点指针。
 
-    ⚠️ 如实记一处**跨能力耦合**（exec/27 阶段 3）：这里读的
-    `state_updates` 是 `world_state` 的字段。「当前场景」是人类可读地名、
-    走自由文本记账，而节点指针是本能力的——这条规则天然横跨两片。没有 import
-    跨过去（架构测试因此不会报），但耦合是真的。**根治要把「当前场景」提升成
-    本能力的一等字段**，那是 schema 变更＋行为变更，不在阶段 3 范围内。
+    「有没有声明新场景」由 `world_state` publish 进 `TurnFacts`（那个字段是它
+    的），本能力只 consume。切分之初这里直接读 `decision.state_updates`——一片
+    能力伸手进另一片的字段，没有 import 所以架构测试抓不到，正是最坏的那种
+    **隐式**耦合。
     """
     if getattr(decision, "current_node_id", None):
         return False
-    return any(
-        u.key == _SCENE_KEY and u.value.strip() for u in getattr(decision, "state_updates", ())
-    )
+    return facts.scene_name_declared is not None
 
 
-async def execute_movement(deps: KeeperDeps, decision: BaseModel) -> tuple[list[str], list[str]]:
+async def execute_movement(
+    deps: KeeperDeps, decision: BaseModel, facts: TurnFacts
+) -> tuple[list[str], list[str]]:
     """三步顺序不能换：
 
     1. `current_node_id` 是"本轮发言者的默认落点"；
@@ -54,7 +50,7 @@ async def execute_movement(deps: KeeperDeps, decision: BaseModel) -> tuple[list[
             report.append(await set_current_node_impl(deps, node_id))
         except KeeperToolError as exc:
             issues.append(f"场景定位未执行：{exc}")
-    elif _scene_moved_off_the_map(decision):
+    elif _scene_moved_off_the_map(decision, facts):
         # 🔴 场景变了、但没有任何剧本节点对应得上（exec/19 #48）。
         #
         # 试玩实测：终局「当前场景 = 科比特家门外（警察到场）」，而节点指针还

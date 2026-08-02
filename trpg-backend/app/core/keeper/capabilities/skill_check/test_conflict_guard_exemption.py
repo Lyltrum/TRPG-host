@@ -30,7 +30,9 @@ from app.core.keeper.scene_state import CURRENT_NODE_KEY
 from app.core.narration.contract import NarrationContext
 from app.models.room import Character, Player, Room
 
-_FIXTURE_MODULE = str(Path(__file__).parent / "fixtures" / "keeper_module.json")
+_FIXTURE_MODULE = str(
+    Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "keeper_module.json"
+)
 
 _db_path = Path(tempfile.mkdtemp(prefix="trpg-keeper-conflict-test-")) / "conflict.db"
 _engine = create_async_engine(f"sqlite+aiosqlite:///{_db_path}", poolclass=NullPool)

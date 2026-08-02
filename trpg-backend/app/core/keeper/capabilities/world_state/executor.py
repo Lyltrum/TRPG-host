@@ -14,6 +14,8 @@ from pydantic import BaseModel
 from app.core.keeper.deps import KeeperDeps, KeeperToolError, record_event
 from app.core.keeper.module_loader import ScenarioModule, iter_all_nodes
 from app.core.keeper.primitives.npcs import resolve_npc_id
+from app.core.keeper.registry import TurnFacts
+from app.core.keeper.scene_state import SCENE_NAME_KEY
 from app.models.room import Room
 
 logger = structlog.get_logger()
@@ -98,12 +100,20 @@ async def update_state_impl(
 
 
 async def execute_state_updates(
-    deps: KeeperDeps, decision: BaseModel
+    deps: KeeperDeps, decision: BaseModel, facts: TurnFacts
 ) -> tuple[list[str], list[str]]:
-    """逐条记账。非法主体/保留键跳过并记 issue，不炸整轮。"""
+    """逐条记账。非法主体/保留键跳过并记 issue，不炸整轮。
+
+    顺带 publish 一条本轮事实：裁决器有没有声明新的「当前场景」。`movement`
+    要用它决定要不要清空节点指针（`exec/19 #48`），见 `TurnFacts` 的说明。
+    **在这里设而不是在写库成功之后**：判定条件与切分前逐字一致（那时它读的是
+    `decision.state_updates` 原始值，不管写没写成功）。
+    """
     report: list[str] = []
     issues: list[str] = []
     for update in getattr(decision, "state_updates", ()):
+        if update.key == SCENE_NAME_KEY and update.value.strip():
+            facts.scene_name_declared = update.value
         try:
             line, issue = await update_state_impl(deps, update.key, update.value, update.subject)
             report.append(line)

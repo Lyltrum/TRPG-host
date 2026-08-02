@@ -76,7 +76,8 @@ class Capability(StrEnum):
     #: 要收走移动与场景指针，但**不该让藏起来的人现身**（exec/27 阶段 3 · B 族）。
     SET_HIDING = "set_hiding"
     FIRE_AGENDA = "fire_agenda"
-    REVEAL_VISIBILITY = "reveal_visibility"
+    #: 揭开一条线索密级配对（原 REVEAL_VISIBILITY，exec/27 三处撞名一起改）。
+    REVEAL_CLUE = "reveal_clue"
     ADVANCE_PHASE = "advance_phase"
 
 
@@ -99,6 +100,26 @@ class PromptBlock:
 
 
 @dataclass(frozen=True)
+class SituationContext:
+    """渲染局面块要用到的全部输入。
+
+    🔴 **它是被第四片能力撑出来的。** 前三片（health/agenda/progression）只需要
+    「剧本 + keeper_state」，于是第一版签名就写成了那两个参数。切 `clue_reveal`
+    时才发现它要按**观察者**渲染（哪条配对对**这个玩家**揭开了），两个参数怎么
+    也表达不出来。
+
+    与其给 render 不断加位置参数，不如给它一个可以长的上下文对象——加字段不必
+    改已有能力的签名。同项目判据：**参数表是会长的，长在一个对象里比长在签名里
+    便宜。**
+    """
+
+    module: ScenarioModule
+    keeper_state: dict | None
+    #: 这一块是渲染给谁看的（`None` = 守秘人自己的全量视图）。
+    observer_id: str | None = None
+
+
+@dataclass(frozen=True)
 class SituationBlock:
     """往「局面块」贡献一段模型每轮都看得见的状态。
 
@@ -111,7 +132,7 @@ class SituationBlock:
 
     order: float
     heading: str
-    render: Callable[[ScenarioModule, dict | None], str]
+    render: Callable[[SituationContext], str]
 
 
 #: 审计钩子：从本轮裁决里挑出该进 `keeper_decision` 结构化日志的字段。

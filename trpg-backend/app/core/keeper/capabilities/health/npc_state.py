@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.primitives.npcs import npc_display_name
+from app.core.keeper.registry import SituationContext
 
 NPC_STATE_KEY = "NPC状态"
 
@@ -89,9 +90,10 @@ def apply_hp_delta(
     return state
 
 
-def format_npc_states(module: ScenarioModule, keeper_state: dict | None) -> str:
+def format_npc_states(context: SituationContext) -> str:
     """注入局面块的「NPC 当前状态」。没有任何记录时返回空串（整块不渲染）。"""
-    states = load_npc_states(keeper_state)
+    module = context.module
+    states = load_npc_states(context.keeper_state)
     if not states:
         return ""
     lines: list[str] = []

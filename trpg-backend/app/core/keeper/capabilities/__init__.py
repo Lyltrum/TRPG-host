@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from pydantic import BaseModel
 
 from app.core.keeper.capabilities.agenda import CAPABILITY as AGENDA
+from app.core.keeper.capabilities.clue_reveal import CAPABILITY as CLUE_REVEAL
 from app.core.keeper.capabilities.health import CAPABILITY as HEALTH
 from app.core.keeper.capabilities.progression import CAPABILITY as PROGRESSION
 from app.core.keeper.module_loader import ScenarioModule
@@ -25,10 +26,11 @@ from app.core.keeper.registry import (
     KeeperCapability,
     PromptBlock,
     PromptSlot,
+    SituationContext,
 )
 
 #: 已经垂直切出来的能力。其余的还散在骨架里，逐个切（exec/27 阶段 3）。
-CAPABILITIES: tuple[KeeperCapability, ...] = (HEALTH, AGENDA, PROGRESSION)
+CAPABILITIES: tuple[KeeperCapability, ...] = (HEALTH, AGENDA, PROGRESSION, CLUE_REVEAL)
 
 
 def field_capabilities() -> dict[str, Capability]:
@@ -50,16 +52,19 @@ def executors() -> list[ExecutorHook]:
     return sorted((h for c in CAPABILITIES for h in c.executors), key=lambda h: h.order)
 
 
-def situation_blocks(module: ScenarioModule, keeper_state: dict | None) -> list[tuple[float, str]]:
+def situation_blocks(
+    module: ScenarioModule, keeper_state: dict | None, *, observer_id: str | None = None
+) -> list[tuple[float, str]]:
     """渲染各能力要摆在模型眼前的状态，返回 (order, 成品文本块)。
 
     `render` 返回空串 = 本轮没有内容，整块连标题一起不渲染——没记过账的对局
     局面块与切分前逐字一致。
     """
+    context = SituationContext(module=module, keeper_state=keeper_state, observer_id=observer_id)
     rendered: list[tuple[float, str]] = []
     for capability in CAPABILITIES:
         for block in capability.situations:
-            body = block.render(module, keeper_state)
+            body = block.render(context)
             if body:
                 rendered.append((block.order, f"## {block.heading}\n{body}\n\n"))
     return sorted(rendered, key=lambda item: item[0])

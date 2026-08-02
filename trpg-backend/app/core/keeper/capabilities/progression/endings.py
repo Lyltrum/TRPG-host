@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from app.core.keeper.module_loader import ScenarioModule
+from app.core.keeper.registry import SituationContext
 
 
-def format_endings_status(module: ScenarioModule, keeper_state: dict | None = None) -> str:
+def format_endings_status(context: SituationContext) -> str:
     """每轮注入的「可能的结局与触发条件」（exec/19 #47）。
 
     试玩实测 2026-08-01：最后一轮叙事已经完整写出了结局（警察进屋、FBI 封锁、
@@ -20,9 +20,9 @@ def format_endings_status(module: ScenarioModule, keeper_state: dict | None = No
     ⚠️ 如实说：这仍是概率性改进。"这段剧情算不算命中结局"是纯语义判断，
     没有代码手段能确定性地判定它。
 
-    `keeper_state` 用不上（结局条件来自剧本，不随对局状态变），签名对齐
-    `SituationBlock.render` 的形状。
+    只用到 `context.module`——结局条件来自剧本，不随对局状态变。
     """
+    module = context.module
     if not module.endings:
         return ""
     lines = []

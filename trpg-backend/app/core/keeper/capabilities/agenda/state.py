@@ -9,6 +9,7 @@ KEY 常量 + `load_*`（从 `keeper_state` 解析）+ `format_*`（渲染进局�
 from __future__ import annotations
 
 from app.core.keeper.module_loader import ScenarioModule
+from app.core.keeper.registry import SituationContext
 
 AGENDA_FIRED_KEY = "已触发议程"
 
@@ -61,10 +62,10 @@ def format_agenda_status(module: ScenarioModule, fired_ids: list[str]) -> str:
     return "\n\n".join(parts)
 
 
-def render_agenda_status(module: ScenarioModule, keeper_state: dict | None) -> str:
+def render_agenda_status(context: SituationContext) -> str:
     """注册进局面块的 situation 钩子：从 `keeper_state` 直接渲染。
 
     `once` 语义和"别重复触发"是硬约束，靠模型从剧本全文里自己记等于没有——
     所以这块由代码每轮算好摆在它眼前。
     """
-    return format_agenda_status(module, load_fired_agenda(keeper_state))
+    return format_agenda_status(context.module, load_fired_agenda(context.keeper_state))

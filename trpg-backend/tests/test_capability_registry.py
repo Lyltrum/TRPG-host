@@ -13,6 +13,7 @@ from app.core.keeper import capabilities as registry_pkg
 from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.prompts import build_adjudicator_instructions
+from app.core.keeper.registry import SituationContext
 from app.core.keeper.subject import DECISION_FIELD_CAPABILITIES
 from app.core.keeper.turn_executor import _SKELETON_STEP_ORDERS
 
@@ -67,7 +68,7 @@ def test_situation_blocks_skip_capabilities_with_nothing_to_say() -> None:
             block
             for capability in registry_pkg.CAPABILITIES
             for block in capability.situations
-            if block.render(_MODULE, keeper_state)
+            if block.render(SituationContext(_MODULE, keeper_state))
         ]
         assert len(rendered) == len(expected)
         assert [order for order, _ in rendered] == sorted(order for order, _ in rendered)

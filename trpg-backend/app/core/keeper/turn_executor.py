@@ -28,7 +28,6 @@ from app.core.keeper.subject import KEEPER, Subject, authorize_decision, sanitiz
 from app.core.keeper.tools import (
     _resolve_skill_target,
     clear_current_node_impl,
-    mark_visibility_revealed_impl,
     move_player_impl,
     set_current_node_impl,
     set_stealth_impl,
@@ -50,7 +49,6 @@ _SKELETON_STEP_ORDERS = {
     "current_node": 30.0,
     "moves": 40.0,
     "stealth": 50.0,
-    "visibility": 70.0,
 }
 
 
@@ -155,22 +153,6 @@ async def execute_side_effects(
             except KeeperToolError as exc:
                 issues.append(f"潜行状态未执行：{exc}")
 
-    async def _step_visibility() -> None:
-        # 密级配对揭开（路线 5）
-        if decision.visibility_revealed:
-            pair_ids_ok = {p.id for p in deps.module.visibility_pairs}
-            valid_pairs: list[str] = []
-            for pid in decision.visibility_revealed:
-                if pid not in pair_ids_ok:
-                    issues.append(f"密级揭开未执行：剧本里没有 pair id={pid}")
-                    continue
-                valid_pairs.append(pid)
-            if valid_pairs:
-                try:
-                    report.append(await mark_visibility_revealed_impl(deps, valid_pairs))
-                except KeeperToolError as exc:
-                    issues.append(f"密级揭开未执行：{exc}")
-
     steps: list[tuple[float, Callable[[], Awaitable[None]]]] = [
         (_SKELETON_STEP_ORDERS[name], step)
         for name, step in (
@@ -178,7 +160,6 @@ async def execute_side_effects(
             ("current_node", _step_current_node),
             ("moves", _step_moves),
             ("stealth", _step_stealth),
-            ("visibility", _step_visibility),
         )
     ]
     steps.extend((hook.order, partial(_run_hook, hook)) for hook in executors())

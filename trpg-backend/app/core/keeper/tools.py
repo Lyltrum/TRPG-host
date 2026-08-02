@@ -48,12 +48,6 @@ from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.primitives.npcs import resolve_npc_id
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
 from app.core.keeper.skill_names import canonical_skill_name
-from app.core.keeper.visibility import (
-    ROOM_WIDE_OBSERVER,
-    VISIBILITY_REVEALED_KEY,
-    load_revealed_visibility,
-    serialize_revealed_visibility,
-)
 from app.models.room import Character, Player, Room
 
 logger = structlog.get_logger()
@@ -68,7 +62,6 @@ logger = structlog.get_logger()
 # 跟着对应能力一起搬走。
 RESERVED_STATE_KEYS = reserved_state_keys() | frozenset(
     {
-        VISIBILITY_REVEALED_KEY,
         CURRENT_NODE_KEY,
         PLAYER_LOCATION_KEY,
         HIDDEN_PLAYERS_KEY,
@@ -462,7 +455,7 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
     """写入调查员当前所在的模组场景节点 id（结构化场景指针）。
 
     校验 node_id 必须真实存在于剧本节点树（module.node_by_id）——拒绝模型
-    编造不存在的 id，与 mark_agenda_fired_impl/mark_visibility_revealed_impl
+    编造不存在的 id，与 mark_agenda_fired_impl/mark_clues_revealed_impl
     同一套"未知 id 拒绝写入、上报为 issue"原则一致。
 
     P5.2 起同时写两处：房间级指针 + 逐人位置。
@@ -601,57 +594,6 @@ async def set_stealth_impl(deps: KeeperDeps, player_name: str, hidden: bool) -> 
             db, deps, "keeper.stealth", {"player": player.nickname, "hidden": hidden}
         )
     return f"{player.nickname}{'进入隐匿' if hidden else '不再隐匿'}"
-
-
-async def mark_visibility_revealed_impl(
-    deps: KeeperDeps,
-    pair_ids: list[str],
-    *,
-    room_wide: bool = True,
-) -> str:
-    """标记密级配对已揭开。默认房间级（@*）；幂等。"""
-    if not pair_ids:
-        return "密级揭开：（无）"
-
-    async with deps.write_lock, deps.session_factory() as db:
-        room = await db.get(Room, deps.room_id)
-        if room is None:
-            raise KeeperToolError("房间不存在")
-
-        current_state = dict(room.keeper_state or {})
-        entries = load_revealed_visibility(current_state)
-        existing = set(entries)
-        newly: list[str] = []
-        observer = ROOM_WIDE_OBSERVER if room_wide else deps.player_id
-        report: list[str] = []
-
-        for pid in pair_ids:
-            pair = next(
-                (p for p in deps.module.visibility_pairs if p.id == pid),
-                None,
-            )
-            if pair is None:
-                raise KeeperToolError(f"剧本里没有 visibility_pair id={pid}")
-            key = (pid, observer)
-            if key in existing or (pid, ROOM_WIDE_OBSERVER) in existing:
-                report.append(f"{pid}（已揭开）")
-                continue
-            entries.append(key)
-            existing.add(key)
-            newly.append(pid)
-            report.append(pid)
-
-        if newly:
-            current_state[VISIBILITY_REVEALED_KEY] = serialize_revealed_visibility(entries)
-            room.keeper_state = current_state
-            await record_event(
-                db,
-                deps,
-                "keeper.visibility",
-                {"pair_ids": newly, "observer": observer},
-            )
-
-    return "密级揭开：" + "、".join(report) if report else "密级揭开：（无）"
 
 
 async def san_check_detail(

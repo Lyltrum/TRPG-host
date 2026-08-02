@@ -94,12 +94,6 @@ _SKELETON_RULES: tuple[tuple[float, str], ...] = (
         """7. **检定结果结算**：游戏历史末尾若有尚未被叙述的检定或理智结果，本轮任务是基于该结果裁决后续（成功给成功的信息，失败给失败的代价；目击恐怖之物时追加 san_checks）——**绝不重复发起刚刚已出结果的同一项检定**。""",
     ),
     (
-        9.0,
-        """9. **密级配对（Visibility）**：局面块的「密级配对状态」列出尚未揭开 / 已揭开的 pair。
-   玩家通过成功检定或明确剧情挣得 public 侧信息时，把对应 pair 的 id 写入 visibility_revealed；
-   未揭开的 secret_ref 侧内容禁止写进 narration_guidance 的"可揭示"清单。""",
-    ),
-    (
         11.0,
         """11. **主动推进轮**（局面块标注「主动推进轮」时）：checks 与 san_checks **必须空数组**；
    只推一小步（环境/NPC 一句/议程到点事件）；不许替玩家行动、不许大幅跳剧情。""",
@@ -152,7 +146,6 @@ _SKELETON_OUTPUT_EXAMPLE: tuple[tuple[float, str], ...] = (
     (50, '  "current_node_id": "some-node-id"'),
     (60, '  "moves": []'),
     (70, '  "stealth": []'),
-    (90, '  "visibility_revealed": ["pair-id"]'),
     (120, '  "narration_guidance": "给叙事者的指引"'),
     (130, '  "player_state": "normal"'),
 )
@@ -264,7 +257,6 @@ def format_turn_input(
     roster: list[str],
     player_nickname: str,
     utterance: str,
-    visibility_status: str = "",
     phase_status: str = "",
     ledger_status: str = "",
     chapters_status: str = "",
@@ -280,7 +272,7 @@ def format_turn_input(
     名单必须显式给出：真实 DeepSeek 冒烟里 agent 曾把单人局幻觉成"你们三人"
     ——桌上有几个人不该靠猜。
 
-    visibility/phase/ledger/chapters 默认空 → 整块不渲染（旧调用点行为不变，
+    phase/ledger/chapters 默认空 → 整块不渲染（旧调用点行为不变，
     短模组开局时输出也不会变脏）。已经垂直切出去的能力不走这些参数，走
     `capability_blocks`（成品文本 + order，由 `capabilities.situation_blocks`
     渲染），空内容同样整块不渲染。
@@ -296,7 +288,6 @@ def format_turn_input(
     )
     history_text = "\n".join(history_lines) if history_lines else "（无）"
     phase_block = f"## 对局阶段\n{phase_status}\n\n" if phase_status else ""
-    visibility_block = f"## 密级配对状态\n{visibility_status}\n\n" if visibility_status else ""
     # 事实账本（exec/14 P4）：已经被调查员确认拿到的线索。**代码记账**，
     # 不随 200 条历史窗口滑走——长战役里第 3 轮拿到的线索第 300 轮仍在这里。
     # 分段摘要 L2（exec/14 P4.2）：更早的剧情梗概，同样活过 200 条历史窗口。
@@ -338,7 +329,6 @@ def format_turn_input(
     blocks = [
         (10.0, locations_block),
         (30.0, phase_block),
-        (60.0, visibility_block),
         (70.0, chapters_block),
         (80.0, ledger_block),
         *capability_blocks,

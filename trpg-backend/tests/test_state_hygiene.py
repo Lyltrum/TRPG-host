@@ -20,7 +20,6 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.capabilities.progression.endings import format_endings_status
 from app.core.keeper.decision import KeeperDecision, PlayerMove, StateUpdate, StealthChange
 from app.core.keeper.deps import KeeperDeps
 from app.core.keeper.location_state import HIDDEN_PLAYERS_KEY, load_hidden_players
@@ -204,29 +203,6 @@ async def test_ordinary_turn_does_not_touch_the_pointer() -> None:
         deps, KeeperDecision(state_updates=[StateUpdate(key="游戏内时间", value="第1天 深夜")])
     )
     assert (await _state(deps.room_id))[CURRENT_NODE_KEY] == "hall"
-
-
-# ── #47 结局条件进局面块 ────────────────────────────
-
-
-def test_endings_status_lists_every_ending_with_its_trigger() -> None:
-    """结局条件此前只躺在 system prompt 末尾的剧本全文里；议程能被可靠触发，
-    正是因为它每轮都以独立小节出现在局面块中。这里给结局同样的待遇。
-
-    ⚠️ 如实说：这是概率性改进。"这段剧情算不算命中结局"是纯语义判断，
-    没有代码手段能确定性判定。
-    """
-    text = format_endings_status(_MODULE)
-    assert text  # fixture 模组有结局
-    for ending in _MODULE.endings:
-        assert ending.id in text
-        assert ending.title in text
-
-
-def test_endings_status_is_empty_for_a_module_without_endings() -> None:
-    """没有结局的模组 → 空串 → 整块不渲染（退化保证）。"""
-    stripped = _MODULE.model_copy(update={"endings": []})
-    assert format_endings_status(stripped) == ""
 
 
 # ── 代码记账的键不原样喂给模型（exec/27 阶段 3） ─────

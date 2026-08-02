@@ -267,7 +267,10 @@ def normalize_skill_name(skill_name: str) -> str:
 
 
 def skill_resolvable(skill_name: str, ruleset: RulesetRead) -> bool:
-    """与 app.core.keeper.runtime.tools._resolve_skill_target 同源口径（不依赖角色卡）。
+    """与运行时执行层同源口径（不依赖角色卡）。
+
+    运行时那一侧是
+    `app.core.keeper.capabilities.skill_check.executor.resolve_skill_target`。
 
     支持：技能中文名 / 技能 id / 英文名 / 属性中文名或缩写；
     另接受组装层常见别名（见 SKILL_ALIASES）。

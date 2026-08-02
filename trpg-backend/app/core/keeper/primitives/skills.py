@@ -6,7 +6,7 @@
 
 | 层 | 位置 | 条目数 |
 |---|---|---|
-| 执行层 | `tools._SKILL_SYNONYMS` | 3 |
+| 执行层 | 当时是 `keeper/tools.py` 里的一份私有表 | 3 |
 | 组装层 | `scripts/module_probe/validate_module.SKILL_ALIASES` | 26 |
 | **运行时护栏** | `check_guard` | **0（没有）** |
 
@@ -20,7 +20,8 @@
 
 ## 🔴 不变量：护栏不该拦住执行层能解析的技能名
 
-护栏（`check_guard`）和执行层（`tools._resolve_skill_target`）必须用**同一套**
+护栏（`check_guard`）和执行层（`capabilities/skill_check/executor.py` 的
+`resolve_skill_target`）必须用**同一套**
 归一口径。护栏比执行层严，就会出现"裁决判对了、执行层也认得，却在中间被
 拦掉"——而且拦截理由只进 issue 日志，玩家侧完全静默。
 

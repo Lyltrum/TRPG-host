@@ -1,4 +1,4 @@
-"""`app/core/narrator.py` 单元测试（issue #107 地基）：
+"""`app/core/narration/` 单元测试（issue #107 地基）：
 
 - `FallbackNarrator` 是确定性占位实现，验证不需要 mock 网络。
 - `build_narrator` 按 `Settings.deepseek_api_key` 二选一。

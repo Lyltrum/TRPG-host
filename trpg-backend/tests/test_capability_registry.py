@@ -30,7 +30,7 @@ def test_every_registered_schema_is_actually_inherited() -> None:
     for fragment in registry_pkg.registered_schemas():
         assert issubclass(KeeperDecision, fragment), (
             f"{fragment.__name__} 注册了但 KeeperDecision 没有继承它——"
-            "在 app/core/keeper/decision.py 的基类列表里加上"
+            "在 app/core/keeper/contract/decision.py 的基类列表里加上"
         )
         for name in fragment.model_fields:
             assert name in KeeperDecision.model_fields

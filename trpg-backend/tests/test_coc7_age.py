@@ -1,4 +1,4 @@
-"""COC7 建卡期年龄修正模块（`app/core/coc7_age.py`，迁移自 coc-char-gen
+"""COC7 建卡期年龄修正模块（`app/core/coc7/age.py`，迁移自 coc-char-gen
 `js/plugins/age.js`）的单元测试：年龄分档表边界 + 减值分摊算法 + EDU 改进
 检定的服务端权威掷骰。
 """

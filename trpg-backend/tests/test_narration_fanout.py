@@ -457,5 +457,9 @@ async def test_ledger_is_scoped_to_the_audience() -> None:
         assert (
             await visible_fact_ids(db, room_id=room_id, audience=frozenset({a_id, b_id})) == set()
         )
+        # 🔴 空受众 = 没有人，只给公开账目。`frozenset().issubset(x)` 恒为真，
+        # 不显式挡住的话"谁都不是"会拿到**全部**线索——朝泄密方向失败，跟这个
+        # 函数 docstring 声称的"朝保密方向失败"正相反（exec/27 阶段 4 修）。
+        assert await visible_fact_ids(db, room_id=room_id, audience=frozenset()) == set()
         # 守秘人视图不过滤
         assert await revealed_fact_ids(db, room_id=room_id) == {"f-hall", "f-cellar"}

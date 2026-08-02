@@ -41,7 +41,6 @@ from app.core.keeper.prompts import format_turn_input
 class SituationBuilder:
     """整轮不变的那部分局面块。`render()` 负责每次调用变的那部分。"""
 
-    module: ScenarioModule
     #: 已经滤掉代码记账键的世界状态笔记。
     visible_state: dict | None
     history_lines: list[HistoryLine]
@@ -112,7 +111,6 @@ async def build_situation(
         known_facts = await revealed_fact_ids(db, room_id=room_id)
         chapters = await load_chapters(db, room_id=room_id)
     return SituationBuilder(
-        module=module,
         # 代码记账的键一律不原样喂给模型，判据与"state_updates 不许写"同源。
         visible_state=visible_keeper_state(keeper_state),
         history_lines=history_lines,

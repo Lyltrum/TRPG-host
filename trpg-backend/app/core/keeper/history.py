@@ -52,12 +52,23 @@ def visible_history(lines: list[HistoryLine], audience: frozenset[str] | None) -
 
     `audience=None` = 守秘人视图，全给（它对整局一致性负责，必须看见全部）。
 
+    `audience=frozenset()`（空集）= 没有人，只给公开行（见下面那段注释）。
+
     否则判据是**交集**、朝保密方向失败：只有当 `audience` 里每个人当时都在场，
     这一行才进他们那一段的上下文。这是 P5.2 从"提示词请你别说"升级成"根本
     不知道"的关键一步——门厅那段的模型看不到地下室的历史，就漏不出来。
     """
     if audience is None:
         return [line.text for line in lines]
+    if not audience:
+        # 🔴 空受众 = 没有人。**必须显式挡住**：`frozenset() <= x` 恒为真，
+        # 不挡的话"谁都不是"会拿到**全部**历史（含私密行）——朝泄密方向失败，
+        # 跟上面那句"朝保密方向失败"正相反。
+        #
+        # 目前不可达（分组来自 `group_players`，恒非空），但可达性是调用方的
+        # 性质，不是本函数的保证。发现于 exec/27 阶段 4 的变异检验：那个变异体
+        # 本身是无效的（改成空集不改行为），**恰恰因为不改行为才暴露了这里**。
+        return [line.text for line in lines if line.audience is None]
     return [line.text for line in lines if line.audience is None or audience <= line.audience]
 
 

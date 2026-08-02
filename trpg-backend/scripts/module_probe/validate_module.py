@@ -32,7 +32,7 @@ from typing import Any
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.keeper.module_loader import ModuleNode, ScenarioModule
-from app.core.keeper.skill_names import skill_id_catalog
+from app.core.keeper.primitives.skills import skill_id_catalog
 from app.dto.game import RulesetRead
 
 # 不泄密：从 key_facts 切出的关键词最短长度。太短（如「先生」）会误伤。

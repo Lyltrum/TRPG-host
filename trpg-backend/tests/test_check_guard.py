@@ -1,6 +1,6 @@
 """设计 02：模组 checks 护栏。"""
 
-from app.core.keeper.check_guard import (
+from app.core.keeper.capabilities.skill_check.guard import (
     collect_module_check_skills,
     filter_checks_against_module,
     find_node_for_scene,

@@ -42,6 +42,8 @@ from app.core.keeper.capabilities import (
     situation_blocks,
     visible_keeper_state,
 )
+from app.core.keeper.capabilities.san_check.executor import san_check_detail
+from app.core.keeper.capabilities.skill_check.executor import roll_check_detail
 from app.core.keeper.chapter import (
     load_chapters,
     record_chapter,
@@ -51,7 +53,6 @@ from app.core.keeper.chapter import (
 )
 from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.deps import KeeperDeps, KeeperToolError
-from app.core.keeper.dice import is_success
 from app.core.keeper.fact_ledger import (
     record_revelations,
     render_ledger,
@@ -82,6 +83,7 @@ from app.core.keeper.phase import (
     load_phase,
     set_phase_impl,
 )
+from app.core.keeper.primitives.dice import is_success
 from app.core.keeper.prompts import (
     CHAPTER_SUMMARY_INSTRUCTIONS,
     build_adjudicator_instructions,
@@ -110,10 +112,6 @@ from app.core.keeper.prose_discipline import (
 from app.core.keeper.registry import Capability
 from app.core.keeper.sheet_digest import format_sheet
 from app.core.keeper.subject import KEEPER
-from app.core.keeper.tools import (
-    roll_check_detail,
-    san_check_detail,
-)
 from app.core.keeper.turn_executor import create_pending_checks, execute_side_effects
 from app.core.keeper.turn_policy import (
     CHECK_CAPABILITIES,
@@ -667,8 +665,6 @@ class KeeperAgent(Narrator):
         logger.info(
             "keeper_decision",
             thinking=decision.thinking,
-            checks=[c.skill_id for c in decision.checks],
-            san_checks=len(decision.san_checks),
             # 已经垂直切出去的能力自带审计字段（exec/27 阶段 2）——否则每加一片
             # 能力都得回来改这行，而漏了不报错、只是那片能力在日志里隐身。
             **audit_fields(decision),
@@ -935,8 +931,6 @@ class KeeperAgent(Narrator):
                             "player_state": decision.player_state,
                             "thinking": decision.thinking,
                             "forced": forced,
-                            "check_skill_ids": [c.skill_id for c in decision.checks],
-                            "san_check_count": len(decision.san_checks),
                             "current_node_id": decision.current_node_id,
                             # 已切出去的能力自带留痕字段（exec/27 阶段 3 · A 族）。
                             # 跟 keeper_decision 日志复用同一份——否则每加一片

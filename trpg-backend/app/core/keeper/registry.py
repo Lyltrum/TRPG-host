@@ -42,8 +42,11 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:  # pragma: no cover - 仅为类型标注，运行时不产生依赖边
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from app.core.keeper.deps import KeeperDeps
     from app.core.keeper.module_loader import ScenarioModule
+    from app.core.keeper.pending import PendingCheck
 
 
 class DecisionModel(BaseModel):
@@ -149,6 +152,38 @@ class SituationBlock:
 AuditFn = Callable[[BaseModel], Mapping[str, object]]
 
 
+@dataclass(frozen=True)
+class PendingContext:
+    """两段式玩家掷骰里，"把裁决解析成待掷记录"这一步的共享输入。
+
+    🔴 **第七个钩子的上下文。** `create_pending_checks` 是独立于
+    `execute_side_effects` 的第二条执行路径（检定不当场掷骰，先排队等玩家点，
+    见 `pending.py`），所以它需要自己的钩子——否则 `skill_check` / `san_check`
+    两片根本切不出去。
+
+    共享输入放这里而不是让每片各查一遍：`keeper_state` 与「当前场景」两片都要，
+    数据库会话也只该开一次。
+    """
+
+    db: AsyncSession
+    keeper_state: dict | None
+    #: `state_updates` 里那个人类可读的场景名（护栏按它找剧本节点）。
+    current_scene: str | None
+
+
+#: 待掷钩子：把本轮裁决里属于自己的检定解析成待掷记录，返回 (待掷记录, 问题清单)。
+#: **不掷骰**——骰子由玩家在前端点确认后才服务端权威生成。
+PendingFn = Callable[
+    ["KeeperDeps", BaseModel, PendingContext], Awaitable[tuple[list["PendingCheck"], list[str]]]
+]
+
+
+@dataclass(frozen=True)
+class PendingHook:
+    order: float
+    run: PendingFn
+
+
 #: 执行钩子：拿到本轮裁决，做完自己那部分副作用，返回 (执行报告, 问题清单)。
 #: 报告喂给叙事阶段（叙事必须知道"发生了什么"），问题清单是"裁决里不合法的项"
 #: ——跳过不炸，一并交给叙事自然圆场。
@@ -182,6 +217,8 @@ class KeeperCapability:
     #: 往 `keeper_decision` 日志与 `keeper.decision` 事件贡献的字段
     #:（None = 这个能力没什么好审计的）。
     audit: AuditFn | None = None
+    #: 两段式玩家掷骰：把裁决解析成待掷记录（见 `PendingContext`）。
+    pendings: Sequence[PendingHook] = ()
     #: 这个能力在 `keeper_state` 里占的键。声明出来同时管两件事：
     #: **`state_updates` 不许写**，且**不原样喂给模型**（模型看到的是 situation
     #: 钩子渲染好的那一块）。

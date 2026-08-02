@@ -450,7 +450,8 @@ async def test_pending_check_carries_reveals_from_the_module() -> None:
     变异检验发现这段接线原本没有测试守着：把绑定改成空元组，全部用例照样绿。
     绑定时机是"创建待掷记录时"而不是"结算时再查"——待掷期间场景可能已经变了。
     """
-    from app.core.keeper.decision import CheckRequest, KeeperDecision
+    from app.core.keeper.capabilities.skill_check.schema import CheckRequest
+    from app.core.keeper.decision import KeeperDecision
     from app.core.keeper.module_loader import ModuleFact
     from app.core.keeper.turn_executor import create_pending_checks
 

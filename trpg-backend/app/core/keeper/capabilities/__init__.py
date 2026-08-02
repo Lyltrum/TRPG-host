@@ -20,12 +20,15 @@ from app.core.keeper.capabilities.clue_reveal import CAPABILITY as CLUE_REVEAL
 from app.core.keeper.capabilities.health import CAPABILITY as HEALTH
 from app.core.keeper.capabilities.movement import CAPABILITY as MOVEMENT
 from app.core.keeper.capabilities.progression import CAPABILITY as PROGRESSION
+from app.core.keeper.capabilities.san_check import CAPABILITY as SAN_CHECK
+from app.core.keeper.capabilities.skill_check import CAPABILITY as SKILL_CHECK
 from app.core.keeper.capabilities.world_state import CAPABILITY as WORLD_STATE
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.registry import (
     Capability,
     ExecutorHook,
     KeeperCapability,
+    PendingHook,
     PromptBlock,
     PromptSlot,
     SituationContext,
@@ -39,6 +42,8 @@ CAPABILITIES: tuple[KeeperCapability, ...] = (
     CLUE_REVEAL,
     WORLD_STATE,
     MOVEMENT,
+    SKILL_CHECK,
+    SAN_CHECK,
 )
 
 
@@ -54,6 +59,11 @@ def prompt_blocks(slot: PromptSlot) -> list[PromptBlock]:
     """某个插槽下的全部文本块，按 order 升序。"""
     blocks = [b for c in CAPABILITIES for b in c.prompt_blocks if b.slot == slot]
     return sorted(blocks, key=lambda b: b.order)
+
+
+def pendings() -> list[PendingHook]:
+    """全部待掷钩子，按 order 升序。"""
+    return sorted((h for c in CAPABILITIES for h in c.pendings), key=lambda h: h.order)
 
 
 def executors() -> list[ExecutorHook]:

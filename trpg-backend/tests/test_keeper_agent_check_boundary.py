@@ -25,7 +25,8 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.agent import KeeperAgent, _build_check_boundary_hint
-from app.core.keeper.decision import CheckRequest, KeeperDecision
+from app.core.keeper.capabilities.skill_check.schema import CheckRequest
+from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.pending import PendingCheck
 from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY

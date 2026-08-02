@@ -21,7 +21,8 @@ from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.capabilities.movement.schema import PlayerMove
-from app.core.keeper.decision import CheckRequest, KeeperDecision
+from app.core.keeper.capabilities.skill_check.schema import CheckRequest
+from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
@@ -218,7 +219,9 @@ async def test_the_decision_itself_gets_recorded() -> None:
     assert payload["thinking"] == "玩家发问"
     assert "feasibility_question" in payload["forced"]
     # 记的是最终形态：推进手段已被代码收走
-    assert payload["check_skill_ids"] == []
+    # ⚠️ 键名随 exec/27 阶段 3 的 audit 钩子统一：`check_skill_ids` → `checks`
+    # （日志与事件留痕从此共用同一份字段，不再各写一遍）。
+    assert payload["checks"] == []
     assert payload["current_node_id"] is None
     # 🔴 guidance 的内容一个字都不落库
     assert "narration_guidance" not in payload

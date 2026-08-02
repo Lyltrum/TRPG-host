@@ -14,7 +14,8 @@ from app.core.keeper.turn_policy import CHECK_CAPABILITIES, SCENE_ADVANCE_CAPABI
 
 
 def _full_decision() -> KeeperDecision:
-    from app.core.keeper.decision import CheckRequest, SanCheckRequest
+    from app.core.keeper.capabilities.san_check.schema import SanCheckRequest
+    from app.core.keeper.capabilities.skill_check.schema import CheckRequest
 
     return KeeperDecision(
         thinking="都填上",

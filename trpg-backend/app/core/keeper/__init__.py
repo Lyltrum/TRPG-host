@@ -8,7 +8,7 @@ WS 层/协议/锁完全感知不到内部实现。v2 架构（裁决→执行→
 模块按层划分（2026-07-30 工程规范整理，详见对话记录/思考笔记）：
 
 - **L1 领域模型**：module_loader.py（结构化剧本数据的加载与 pydantic
-  建模，剧本文件 gitignore 不进公开仓库）、dice.py（掷骰/COC7 成功等级
+  建模，剧本文件 gitignore 不进公开仓库）、primitives/dice.py（掷骰/COC7 成功等级
   判定，纯函数）、decision.py（`KeeperDecision`——裁决阶段的 LLM 输出契约）。
 - **L2 状态编解码**：每类 `keeper_state` 保留状态各自一个文件，统一是
   `KEY 常量 + load_*（+ format_*）` 三件套——phase.py（对局阶段）、
@@ -30,7 +30,8 @@ WS 层/协议/锁完全感知不到内部实现。v2 架构（裁决→执行→
 🔴 **本文件故意不 re-export `KeeperAgent`。**
 
 原先这里写着 `from app.core.keeper.agent import KeeperAgent`，而 `tools.py` 写
-`from app.core.keeper import dice, module_loader`——`from 包 import 子模块` 会先
+`from app.core.keeper import module_loader
+from app.core.keeper.primitives import dice`——`from 包 import 子模块` 会先
 执行包的 `__init__`，于是 `tools → 包 → agent → tools` 成环。现在没炸只是加载
 顺序凑巧。`exec/27` 阶段 0 的架构测试第一次跑就抓到了它。
 

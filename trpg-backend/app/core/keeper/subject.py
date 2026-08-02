@@ -44,8 +44,6 @@ from app.core.keeper.registry import Capability, DecisionModel
 #: 权限声明跟 schema 躺在同一个目录里，不必回这里改一次。下面手写的那些是
 #: 还没切的能力，逐个切走（阶段 3）。
 DECISION_FIELD_CAPABILITIES: dict[str, Capability] = {
-    "checks": Capability.REQUEST_CHECK,
-    "san_checks": Capability.REQUEST_SAN_CHECK,
     **field_capabilities(),
 }
 

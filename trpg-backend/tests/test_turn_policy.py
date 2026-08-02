@@ -7,7 +7,8 @@
 from __future__ import annotations
 
 from app.core.keeper.capabilities.health.schema import HpChange
-from app.core.keeper.decision import KeeperDecision, PlayerMove, StealthChange
+from app.core.keeper.capabilities.movement.schema import HidingChange, PlayerMove
+from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.registry import Capability
 from app.core.keeper.turn_policy import CHECK_CAPABILITIES, SCENE_ADVANCE_CAPABILITIES, revoke
 
@@ -23,7 +24,7 @@ def _full_decision() -> KeeperDecision:
         hp_changes=[HpChange(delta=-2)],
         current_node_id="cellar",
         moves=[PlayerMove(player="阿铁", node_id="cellar")],
-        stealth=[StealthChange(player="阿铁", hidden=True)],
+        hiding=[HidingChange(player="阿铁", hidden=True)],
     )
 
 
@@ -55,7 +56,7 @@ def test_asking_the_keeper_freezes_the_world_but_not_hiding() -> None:
     assert result.moves == []
     assert result.current_node_id is None
     # 隐匿活下来了
-    assert len(result.stealth) == 1 and result.stealth[0].hidden is True
+    assert len(result.hiding) == 1 and result.hiding[0].hidden is True
 
 
 def test_hiding_and_scene_are_two_distinct_capabilities() -> None:

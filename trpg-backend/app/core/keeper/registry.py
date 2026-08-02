@@ -117,6 +117,11 @@ class SituationContext:
     keeper_state: dict | None
     #: 这一块是渲染给谁看的（`None` = 守秘人自己的全量视图）。
     observer_id: str | None = None
+    #: 在场调查员 `(player_id, 昵称)`。`movement` 的「各自所在」要按人渲染。
+    #:
+    #: 这是本对象**第二次**因为新一片能力而加字段——正好印证了当初不给 render
+    #: 加位置参数的选择：加字段不必回去改任何已有能力的签名。
+    players: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

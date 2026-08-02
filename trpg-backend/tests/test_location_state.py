@@ -15,8 +15,9 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
+from app.core.keeper.capabilities.movement.schema import PlayerMove
 from app.core.keeper.capabilities.world_state.executor import update_state_impl
-from app.core.keeper.decision import KeeperDecision, PlayerMove
+from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.location_state import (
     PLAYER_LOCATION_KEY,

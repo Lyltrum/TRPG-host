@@ -46,12 +46,6 @@ from app.core.keeper.registry import Capability, DecisionModel
 DECISION_FIELD_CAPABILITIES: dict[str, Capability] = {
     "checks": Capability.REQUEST_CHECK,
     "san_checks": Capability.REQUEST_SAN_CHECK,
-    "current_node_id": Capability.SET_SCENE,
-    # 分头探索（P5.2）：逐人位置与设置场景是同一件事的不同粒度，共用一条。
-    "moves": Capability.SET_SCENE,
-    # 潜行**单独一条**：它是已经成立的状态，不该跟着"世界不推进"一起被收走
-    # （exec/27 阶段 3 · B 族，`turn_policy` 模块说明里有完整理由）。
-    "stealth": Capability.SET_HIDING,
     **field_capabilities(),
 }
 

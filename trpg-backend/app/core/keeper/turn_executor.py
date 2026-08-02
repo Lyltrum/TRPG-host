@@ -12,8 +12,6 @@
 """
 
 import uuid
-from collections.abc import Awaitable, Callable
-from functools import partial
 
 import structlog
 
@@ -22,43 +20,13 @@ from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.deps import KeeperDeps, KeeperToolError, resolve_character
 from app.core.keeper.location_state import location_of
 from app.core.keeper.pending import PendingCheck
-from app.core.keeper.registry import ExecutorHook
 from app.core.keeper.skill_names import resolve_skill_id
 from app.core.keeper.subject import KEEPER, Subject, authorize_decision, sanitize_decision
 from app.core.keeper.tools import (
     _resolve_skill_target,
-    clear_current_node_impl,
-    move_player_impl,
-    set_current_node_impl,
-    set_stealth_impl,
 )
 
 logger = structlog.get_logger()
-
-
-#: `state_updates` 里那个人类可读的场景键。它和 `current_node_id` 是同一件事的
-#: 两个面（人读的地名 / 机器读的节点 id），两者脱节就会出 #48。
-_SCENE_KEY = "当前场景"
-
-#: 骨架自己那串副作用步骤的 order，用来跟能力钩子归并（exec/27 阶段 2）。
-#: 顺序有语义：`moves` 必须排在 `current_node_id` 之后，否则逐人位置会被
-#: "本轮发言者的默认落点"盖回去。切走一片就从这里删一行。
-_SKELETON_STEP_ORDERS = {
-    "current_node": 30.0,
-    "moves": 40.0,
-    "stealth": 50.0,
-}
-
-
-def _scene_moved_off_the_map(decision: KeeperDecision) -> bool:
-    """本轮换了场景，却没给出任何剧本节点 id（exec/19 #48）。
-
-    只在裁决器**明确写了新的「当前场景」**时才成立——没提场景的普通轮次
-    （对话、检定结算）不该动节点指针。
-    """
-    if decision.current_node_id:
-        return False
-    return any(u.key == _SCENE_KEY and u.value.strip() for u in decision.state_updates)
 
 
 async def execute_side_effects(
@@ -80,11 +48,6 @@ async def execute_side_effects(
     report: list[str] = []
     issues: list[str] = []
 
-    async def _run_hook(hook: ExecutorHook) -> None:
-        hook_report, hook_issues = await hook.run(deps, decision)
-        report.extend(hook_report)
-        issues.extend(hook_issues)
-
     # 执行边界的授权（exec/14 P2 纵深防御第二道）。受限主体的越权字段本来
     # 就无法表达（build_decision_model 已经把它从 schema 里去掉），这里再查
     # 一遍是因为：老 schema 反序列化出来的决策、测试构造的决策、以后从别处
@@ -92,64 +55,17 @@ async def execute_side_effects(
     issues.extend(authorize_decision(subject, decision))
     decision = sanitize_decision(subject, decision)
 
-    # 🔴 执行顺序有语义（`moves` 必须排在 `current_node_id` 之后，否则逐人位置
-    # 会被"本轮发言者的默认落点"盖回去），而执行报告的行序会原样喂给叙事阶段
-    # ——所以已切出去的能力的钩子跟骨架剩下的步骤是**按 order 归并**的，不是
-    # 简单地排在前面或后面。阶段 3 每切走一片，下面就少一个局部协程。
-
-    async def _step_current_node() -> None:
-        # 场景指针结构化（04 遗留项）：node_id 存在性由 set_current_node_impl
-        # 校验（module.node_by_id）——非法 id 不写入、记为 issue，不炸整轮。
-        if decision.current_node_id:
-            try:
-                report.append(await set_current_node_impl(deps, decision.current_node_id))
-            except KeeperToolError as exc:
-                issues.append(f"场景定位未执行：{exc}")
-        elif _scene_moved_off_the_map(decision):
-            # 🔴 场景变了、但没有任何剧本节点对应得上（exec/19 #48）。
-            #
-            # 试玩实测：终局「当前场景 = 科比特家门外（警察到场）」，而节点指针还
-            # 停在 basement-laboratory——玩家已经站在屋外，护栏却拿地下室的 checks[]
-            # 去卡他的检定。裁决器**做对了**（找不到对应节点就留空，不编造 id），
-            # 错在代码把"没说"当成了"没变"。
-            #
-            # 正确语义是**清空**：人在剧本节点之外的地方，护栏退化到即兴层放行。
-            # 与 #37 同族——空间状态是地基，宁可承认不知道，不可拿旧值硬撑。
-            try:
-                cleared = await clear_current_node_impl(deps)
-                if cleared:
-                    report.append(cleared)
-            except KeeperToolError as exc:
-                issues.append(f"场景指针清空未执行：{exc}")
-
-    async def _step_moves() -> None:
-        # 分头探索（P5.2）：逐人覆盖，必须排在 current_node_id 之后——那个是
-        # "本轮发言者的默认落点"，这个是"谁不跟大家一起"，顺序反了会被默认值盖掉。
-        for move in decision.moves:
-            try:
-                report.append(await move_player_impl(deps, move.player, move.node_id))
-            except KeeperToolError as exc:
-                issues.append(f"分头移动未执行：{exc}")
-
-    async def _step_stealth() -> None:
-        # 潜行状态（exec/18 ②）：与移动同一类空间状态，逐条执行、逐条记 issue。
-        for change in decision.stealth:
-            try:
-                report.append(await set_stealth_impl(deps, change.player, change.hidden))
-            except KeeperToolError as exc:
-                issues.append(f"潜行状态未执行：{exc}")
-
-    steps: list[tuple[float, Callable[[], Awaitable[None]]]] = [
-        (_SKELETON_STEP_ORDERS[name], step)
-        for name, step in (
-            ("current_node", _step_current_node),
-            ("moves", _step_moves),
-            ("stealth", _step_stealth),
-        )
-    ]
-    steps.extend((hook.order, partial(_run_hook, hook)) for hook in executors())
-    for _, step in sorted(steps, key=lambda item: item[0]):
-        await step()
+    # 🔴 **本函数已经完全由注册表驱动**（exec/27 阶段 3 收尾）：这里不再有任何
+    # 一片能力的名字，加一片能力不改这里一行。
+    #
+    # 顺序由各能力注册时的显式 `order` 决定，不能靠字典序或 import 顺序——它有
+    # 语义：`moves` 必须排在 `current_node_id` 之后（否则逐人位置会被"本轮发言者
+    # 的默认落点"盖回去），而执行报告的行序会原样喂给叙事阶段，顺序变了叙事读到
+    # 的"发生了什么"就变了。
+    for hook in executors():
+        hook_report, hook_issues = await hook.run(deps, decision)
+        report.extend(hook_report)
+        issues.extend(hook_issues)
 
     if issues:
         logger.warning("keeper_decision_issues", issues=issues)

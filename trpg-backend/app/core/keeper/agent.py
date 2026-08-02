@@ -67,7 +67,6 @@ from app.core.keeper.history import (
 )
 from app.core.keeper.leak_guard import log_leak_hits, scrub_meta_leaks
 from app.core.keeper.location_state import (
-    format_party_locations,
     group_players,
     load_hidden_players,
     location_of,
@@ -359,14 +358,15 @@ class KeeperAgent(Narrator):
             chapters = await load_chapters(db, room_id=room_id)
         ledger_status = render_ledger(self._module, known_facts)
         chapters_status = render_chapters(chapters)
-        # 分头探索（P5.2）：全队同处一地时是空串，整块不渲染。
-        locations_status = format_party_locations(self._module, keeper_state, players)
         # 已经垂直切出去的能力要摆在模型眼前的状态（exec/27 阶段 2）：
         # 目前是 health 的「NPC 当前状态」。没记过账时该块整块不渲染。
         # 🔴 这个钩子是切 health 时才发现漏掉的——能力不只要能改世界，还得让
         # 模型**看见**自己改成了什么样，否则下一轮只能从上一段散文里猜。
         capability_status = situation_blocks(
-            self._module, keeper_state, observer_id=context.player_id
+            self._module,
+            keeper_state,
+            observer_id=context.player_id,
+            players=tuple(players),
         )
 
         def build_situation(
@@ -391,7 +391,6 @@ class KeeperAgent(Narrator):
                 phase_status=phase_status,
                 ledger_status=ledger,
                 chapters_status=chapters_status,
-                locations_status=locations_status,
                 capability_blocks=capability_status,
                 is_heartbeat=is_heartbeat,
                 is_opening_ceremony=is_opening_ceremony,
@@ -670,7 +669,6 @@ class KeeperAgent(Narrator):
             thinking=decision.thinking,
             checks=[c.skill_id for c in decision.checks],
             san_checks=len(decision.san_checks),
-            moves=[f"{m.player}→{m.node_id}" for m in decision.moves],
             # 已经垂直切出去的能力自带审计字段（exec/27 阶段 2）——否则每加一片
             # 能力都得回来改这行，而漏了不报错、只是那片能力在日志里隐身。
             **audit_fields(decision),

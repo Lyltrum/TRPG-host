@@ -15,7 +15,6 @@ from app.core.keeper.module_loader import load_module
 from app.core.keeper.prompts import build_adjudicator_instructions
 from app.core.keeper.registry import SituationContext
 from app.core.keeper.subject import DECISION_FIELD_CAPABILITIES
-from app.core.keeper.turn_executor import _SKELETON_STEP_ORDERS
 
 _MODULE = load_module(str(Path(__file__).parent / "fixtures" / "keeper_module.json"))
 _RULESET = build_coc7_ruleset()
@@ -88,12 +87,15 @@ def test_audit_fields_are_merged_from_every_capability() -> None:
             assert key in merged
 
 
-def test_hooks_are_sorted_and_do_not_collide_with_skeleton_steps() -> None:
-    """order 的语义：能力钩子与骨架剩下的步骤共用一条数轴，重号就分不出先后。"""
+def test_hooks_are_sorted_and_never_share_an_order() -> None:
+    """order 的语义：执行顺序决定副作用先后与执行报告行序，重号就分不出先后。
+
+    骨架侧那份步骤表已经没有了——`execute_side_effects` 现在完全由注册表驱动
+    （exec/27 阶段 3 收尾）。
+    """
     orders = [hook.order for hook in registry_pkg.executors()]
     assert orders == sorted(orders)
     assert len(set(orders)) == len(orders)
-    assert not set(orders) & set(_SKELETON_STEP_ORDERS.values())
 
 
 def test_no_rule_or_example_line_is_emitted_twice() -> None:

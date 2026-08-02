@@ -20,7 +20,8 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.agent import KeeperAgent
-from app.core.keeper.decision import CheckRequest, KeeperDecision, PlayerMove
+from app.core.keeper.capabilities.movement.schema import PlayerMove
+from app.core.keeper.decision import CheckRequest, KeeperDecision
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
 from app.core.keeper.scene_state import CURRENT_NODE_KEY

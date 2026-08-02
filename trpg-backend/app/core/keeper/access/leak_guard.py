@@ -48,7 +48,7 @@ from dataclasses import dataclass
 
 import structlog
 
-from app.core.keeper.module_loader import ScenarioModule
+from app.core.keeper.contract.module_loader import ScenarioModule
 
 logger = structlog.get_logger()
 

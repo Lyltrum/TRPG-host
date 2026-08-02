@@ -21,7 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ai_actor import AiActor, build_view
-from app.core.keeper.history import (
+from app.core.keeper.memory.history import (
     HISTORY_EVENT_TYPES,
     HISTORY_LIMIT,
     history_lines_from_events,

@@ -20,13 +20,16 @@ from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.capabilities.world_state.executor import update_state_impl
-from app.core.keeper.deps import KeeperDeps, KeeperToolError
-from app.core.keeper.module_loader import load_module
+from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
 from app.models.event import Event
 from app.models.room import Character, Player, Room
 
 # 模组夹具几片能力共用，仍集中放在 tests/fixtures
-_FIXTURE_MODULE = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "keeper_module.json"
+#: 🔴 用锚点找，不数层数：`exec/27` 阶段 5 挪目录时 `catalog.py` 的
+#: `parents[3]` 当场指错一层，症状只是一条用例**静默 skip**（全套照样绿）。
+_TESTS_DIR = next(p for p in Path(__file__).resolve().parents if p.name == "trpg-backend") / "tests"
+_FIXTURE_MODULE = _TESTS_DIR / "fixtures" / "keeper_module.json"
 
 _db_path = Path(tempfile.mkdtemp(prefix="trpg-worldstate-test-")) / "keeper.db"
 _engine = create_async_engine(f"sqlite+aiosqlite:///{_db_path}", poolclass=NullPool)

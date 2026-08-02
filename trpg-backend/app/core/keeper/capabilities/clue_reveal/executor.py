@@ -10,8 +10,8 @@ from app.core.keeper.capabilities.clue_reveal.pairs import (
     load_revealed_clues,
     serialize_revealed_clues,
 )
-from app.core.keeper.deps import KeeperDeps, KeeperToolError, record_event
-from app.core.keeper.registry import TurnFacts
+from app.core.keeper.contract.registry import TurnFacts
+from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError, record_event
 from app.models.room import Room
 
 

@@ -13,7 +13,7 @@ health"，那正是架构测试禁止的跨能力依赖（`exec/27`：能力之�
 
 from __future__ import annotations
 
-from app.core.keeper.module_loader import ScenarioModule
+from app.core.keeper.contract.module_loader import ScenarioModule
 
 
 def resolve_npc_id(module: ScenarioModule, label: str) -> str | None:

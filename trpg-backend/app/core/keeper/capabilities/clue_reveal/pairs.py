@@ -24,8 +24,8 @@
 
 from __future__ import annotations
 
-from app.core.keeper.module_loader import ScenarioModule
-from app.core.keeper.registry import SituationContext
+from app.core.keeper.contract.module_loader import ScenarioModule
+from app.core.keeper.contract.registry import SituationContext
 
 CLUES_REVEALED_KEY = "已揭开配对"
 ROOM_WIDE_OBSERVER = "*"

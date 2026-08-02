@@ -58,7 +58,7 @@ def test_build_narrator_uses_deepseek_with_api_key_when_no_structured(tmp_path) 
 
 def test_build_narrator_uses_room_aware_keeper_when_modules_dir_ready() -> None:
     # 仓库 模组资料/ 有 structured 时，有 key 即启用按房间选剧本的 Keeper
-    from app.core.keeper.catalog import default_modules_dir
+    from app.core.keeper.contract.catalog import default_modules_dir
 
     modules_dir = default_modules_dir()
     if not modules_dir.is_dir():

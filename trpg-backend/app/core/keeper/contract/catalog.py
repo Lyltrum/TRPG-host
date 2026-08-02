@@ -122,6 +122,16 @@ def resolve_structured_path(modules_dir: Path, scenario_id: str | None) -> Path 
 
 
 def default_modules_dir() -> Path:
-    """默认：仓库根下 `模组资料/`（trpg-backend 的上一级）。"""
-    backend_root = Path(__file__).resolve().parents[3]  # app/core/keeper -> trpg-backend
+    """默认：仓库根下 `模组资料/`（trpg-backend 的上一级）。
+
+    🔴 **不要用 `parents[N]` 数层数**：`exec/27` 阶段 5 把本文件从
+    `keeper/` 挪进 `keeper/contract/`，`parents[3]` 当场指错一层，
+    `模组资料/` 整个找不到——而唯一的症状是 `test_narrator.py` 里那条用例
+    **静默 skip**（它的 skip 条件正是"本地无 模组资料/ 目录"）。全套测试照样
+    绿，只是少跑了一条。
+
+    改成向上找 `trpg-backend` 这个锚点：文件搬到哪一层都不影响。
+    """
+    here = Path(__file__).resolve()
+    backend_root = next(p for p in here.parents if p.name == "trpg-backend")
     return (backend_root.parent / "模组资料").resolve()

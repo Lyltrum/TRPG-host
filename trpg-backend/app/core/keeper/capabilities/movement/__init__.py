@@ -22,9 +22,9 @@ from app.core.keeper.capabilities.movement.schema import (
     audit_fields,
 )
 from app.core.keeper.capabilities.movement.situation import render_party_locations
-from app.core.keeper.location_state import HIDDEN_PLAYERS_KEY, PLAYER_LOCATION_KEY
-from app.core.keeper.registry import ExecutorHook, KeeperCapability, SituationBlock
-from app.core.keeper.scene_state import CURRENT_NODE_KEY
+from app.core.keeper.contract.registry import ExecutorHook, KeeperCapability, SituationBlock
+from app.core.keeper.runtime.location_state import HIDDEN_PLAYERS_KEY, PLAYER_LOCATION_KEY
+from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
 
 CAPABILITY = KeeperCapability(
     name="movement",

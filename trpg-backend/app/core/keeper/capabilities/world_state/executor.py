@@ -11,11 +11,11 @@ from __future__ import annotations
 import structlog
 from pydantic import BaseModel
 
-from app.core.keeper.deps import KeeperDeps, KeeperToolError, record_event
-from app.core.keeper.module_loader import ScenarioModule, iter_all_nodes
+from app.core.keeper.contract.module_loader import ScenarioModule, iter_all_nodes
+from app.core.keeper.contract.registry import TurnFacts
 from app.core.keeper.primitives.npcs import resolve_npc_id
-from app.core.keeper.registry import TurnFacts
-from app.core.keeper.scene_state import SCENE_NAME_KEY
+from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError, record_event
+from app.core.keeper.runtime.scene_state import SCENE_NAME_KEY
 from app.models.room import Room
 
 logger = structlog.get_logger()

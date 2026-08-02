@@ -1,6 +1,6 @@
 """叙事纪律：长度硬裁 + 迷茫/行动/怪话检测 + scrub（纯函数，无 LLM）。"""
 
-from app.core.keeper.prose_discipline import (
+from app.core.keeper.narration.prose_discipline import (
     LIMIT_HEARTBEAT,
     LIMIT_NORMAL,
     LIMIT_OPENING,

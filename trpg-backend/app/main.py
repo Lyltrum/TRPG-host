@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     heartbeat_task: asyncio.Task | None = None
     if settings.heartbeat_enabled():
-        from app.core.keeper.heartbeat import heartbeat_loop
+        from app.core.keeper.runtime.heartbeat import heartbeat_loop
 
         heartbeat_task = asyncio.create_task(
             heartbeat_loop(

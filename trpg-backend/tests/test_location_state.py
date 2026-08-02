@@ -17,9 +17,10 @@ from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.capabilities.movement.schema import PlayerMove
 from app.core.keeper.capabilities.world_state.executor import update_state_impl
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.deps import KeeperDeps, KeeperToolError
-from app.core.keeper.location_state import (
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
+from app.core.keeper.runtime.location_state import (
     PLAYER_LOCATION_KEY,
     format_party_locations,
     group_players,
@@ -28,9 +29,8 @@ from app.core.keeper.location_state import (
     location_of,
     serialize_player_locations,
 )
-from app.core.keeper.module_loader import load_module
-from app.core.keeper.scene_state import CURRENT_NODE_KEY
-from app.core.keeper.turn_executor import create_pending_checks, execute_side_effects
+from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
+from app.core.keeper.runtime.turn_executor import create_pending_checks, execute_side_effects
 from app.models.room import Character, Player, Room
 
 _FIXTURE_MODULE = Path(__file__).parent / "fixtures" / "keeper_module.json"

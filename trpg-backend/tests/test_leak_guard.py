@@ -9,8 +9,8 @@
 
 from __future__ import annotations
 
-from app.core.keeper.leak_guard import scan_meta_leaks, scrub_meta_leaks
-from app.core.keeper.module_loader import (
+from app.core.keeper.access.leak_guard import scan_meta_leaks, scrub_meta_leaks
+from app.core.keeper.contract.module_loader import (
     KeeperTruth,
     ModuleFact,
     ModuleMeta,

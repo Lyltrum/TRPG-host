@@ -156,7 +156,7 @@ async def _audience_at_speaker_location(
     """
     from sqlalchemy import select
 
-    from app.core.keeper.location_state import group_players, load_hidden_players
+    from app.core.keeper.runtime.location_state import group_players, load_hidden_players
     from app.models.room import Player, Room
 
     room = await db.get(Room, room_id)
@@ -236,7 +236,7 @@ async def _run_opening_ceremony(
         used_llm = False
 
     try:
-        from app.core.keeper.heartbeat import touch_activity
+        from app.core.keeper.runtime.heartbeat import touch_activity
 
         touch_activity(room_id)
     except Exception:  # noqa: BLE001
@@ -369,7 +369,7 @@ async def _resend_pending_checks(db: AsyncSession, websocket: WebSocket, room_id
     只发给**这一条刚绑定的连接**，不广播：别人手上的卡片好好的，重发一遍只会
     在他们屏幕上多出一张重复卡。
     """
-    from app.core.keeper.pending import pending_check_manager, to_notice
+    from app.core.keeper.runtime.pending import pending_check_manager, to_notice
 
     for pending in await pending_check_manager.list_all(db, room_id):
         notice = to_notice(pending)
@@ -627,7 +627,7 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
     """
     from sqlalchemy import select
 
-    from app.core.keeper.pending import pending_check_manager
+    from app.core.keeper.runtime.pending import pending_check_manager
     from app.models.room import Player
 
     if not await pending_check_manager.has(db, room_id):
@@ -748,7 +748,7 @@ async def _run_turn(
         return
     # 玩家行动重置心跳节流（路线 6）
     try:
-        from app.core.keeper.heartbeat import touch_activity
+        from app.core.keeper.runtime.heartbeat import touch_activity
 
         touch_activity(room_id)
     except Exception:  # noqa: BLE001 — 心跳模块不可用时不影响主路径

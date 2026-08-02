@@ -37,8 +37,8 @@ def _module_setting(scenario_id: str | None) -> tuple[str | None, str | None]:
     模组目录是 gitignored 的第三方内容，CI 和全新 clone 上都不存在；那时这里
     静默返回 (None, None)，生成器退回通用的年代设定。
     """
-    from app.core.keeper.catalog import default_modules_dir, resolve_structured_path
-    from app.core.keeper.module_loader import load_module
+    from app.core.keeper.contract.catalog import default_modules_dir, resolve_structured_path
+    from app.core.keeper.contract.module_loader import load_module
 
     settings = get_settings()
     modules_dir = (

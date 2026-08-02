@@ -23,13 +23,13 @@ import structlog
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import ValidationError
 
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.prompts import (
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.narration.prompts import (
     CHAPTER_SUMMARY_INSTRUCTIONS,
     format_chapter_input,
     format_narrator_input,
 )
-from app.core.keeper.prose_discipline import clip_narration
+from app.core.keeper.narration.prose_discipline import clip_narration
 from app.core.llm_tape import TapedClient
 from app.core.narration.deepseek import DEEPSEEK_MODEL
 

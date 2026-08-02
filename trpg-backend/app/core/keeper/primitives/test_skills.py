@@ -28,7 +28,7 @@ import pytest
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.keeper.capabilities.skill_check.guard import filter_checks_against_module
-from app.core.keeper.module_loader import (
+from app.core.keeper.contract.module_loader import (
     KeeperTruth,
     ModuleCheck,
     ModuleMeta,

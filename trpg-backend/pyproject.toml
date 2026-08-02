@@ -62,7 +62,7 @@ ignore = ["B008"]
 [tool.ruff.lint.per-file-ignores]
 # 守秘人 system prompt 是面向 LLM 的中文散文，按句意分行比按 100 列硬折
 # 更可读可维护；只豁免行宽，其余规则照常。
-"app/core/keeper/prompts.py" = ["E501"]
+"app/core/keeper/narration/prompts.py" = ["E501"]
 # 同理：各能力自己那几段 prompt 文本（exec/27 阶段 2 起，prompt 按能力垂直切）。
 "app/core/keeper/capabilities/*/prompt.py" = ["E501"]
 

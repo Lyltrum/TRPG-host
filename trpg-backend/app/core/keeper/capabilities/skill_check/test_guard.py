@@ -5,7 +5,7 @@ from app.core.keeper.capabilities.skill_check.guard import (
     filter_checks_against_module,
     find_node_for_scene,
 )
-from app.core.keeper.module_loader import (
+from app.core.keeper.contract.module_loader import (
     KeeperTruth,
     ModuleCheck,
     ModuleMeta,

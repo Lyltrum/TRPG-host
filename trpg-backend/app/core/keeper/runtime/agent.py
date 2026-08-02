@@ -33,55 +33,71 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.keeper.access.leak_guard import log_leak_hits, scrub_meta_leaks
+from app.core.keeper.access.subject import KEEPER
 from app.core.keeper.capabilities import (
     audit_fields,
     reserved_state_keys,
     settler_for,
 )
-from app.core.keeper.chapter import (
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.module_loader import ScenarioModule
+from app.core.keeper.contract.registry import Capability
+from app.core.keeper.memory.chapter import (
     record_chapter,
     should_summarize,
     turns_since_last_chapter,
 )
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.decision_log import record_decision
-from app.core.keeper.deps import KeeperDeps, KeeperToolError
-from app.core.keeper.fact_ledger import (
+from app.core.keeper.memory.fact_ledger import (
     record_revelations,
     render_ledger,
     visible_fact_ids,
 )
-from app.core.keeper.history import (
+from app.core.keeper.memory.history import (
     HISTORY_EVENT_TYPES,
     HISTORY_LIMIT,
     HistoryLine,
     history_lines_from_events,
 )
-from app.core.keeper.leak_guard import log_leak_hits, scrub_meta_leaks
-from app.core.keeper.llm_calls import (
+from app.core.keeper.narration.narration_hints import (
+    NO_PENDING_CHECK_HINT,
+    UNRESOLVED_CONFLICT_HINT,
+    build_bystander_hint,
+    build_check_boundary_hint,
+)
+from app.core.keeper.narration.prompts import (
+    build_adjudicator_instructions,
+    build_narrator_instructions,
+)
+from app.core.keeper.narration.prose_discipline import (
+    clip_narration,
+    inject_scene_transition_guidance,
+    narration_limit,
+    narration_max_tokens,
+    scrub_kp_anti_patterns,
+)
+from app.core.keeper.narration.sheet_digest import format_sheet
+from app.core.keeper.narration.situation import SituationBuilder, build_situation
+from app.core.keeper.primitives.dice import is_success
+from app.core.keeper.runtime.decision_log import record_decision
+from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
+from app.core.keeper.runtime.llm_calls import (
     FALLBACK_ADJUDICATE_GUIDANCE,
     REQUEST_TIMEOUT_SECONDS,
     adjudicate,
     narrate_prose,
     summarize_chapter,
 )
-from app.core.keeper.location_state import (
+from app.core.keeper.runtime.location_state import (
     group_players,
     load_hidden_players,
     location_of,
 )
-from app.core.keeper.location_state import (
+from app.core.keeper.runtime.location_state import (
     scene_changed as has_scene_changed,
 )
-from app.core.keeper.module_loader import ScenarioModule
-from app.core.keeper.narration_hints import (
-    NO_PENDING_CHECK_HINT,
-    UNRESOLVED_CONFLICT_HINT,
-    build_bystander_hint,
-    build_check_boundary_hint,
-)
-from app.core.keeper.pending import pending_check_manager, to_notice
-from app.core.keeper.phase import (
+from app.core.keeper.runtime.pending import pending_check_manager, to_notice
+from app.core.keeper.runtime.phase import (
     PHASE_FINISHED,
     PHASE_KEY,
     PHASE_OPENING,
@@ -89,24 +105,12 @@ from app.core.keeper.phase import (
     load_phase,
     set_phase_impl,
 )
-from app.core.keeper.primitives.dice import is_success
-from app.core.keeper.prompts import (
-    build_adjudicator_instructions,
-    build_narrator_instructions,
+from app.core.keeper.runtime.turn_executor import create_pending_checks, execute_side_effects
+from app.core.keeper.runtime.turn_policy import (
+    CHECK_CAPABILITIES,
+    apply_code_forcing,
+    classify_turn,
 )
-from app.core.keeper.prose_discipline import (
-    clip_narration,
-    inject_scene_transition_guidance,
-    narration_limit,
-    narration_max_tokens,
-    scrub_kp_anti_patterns,
-)
-from app.core.keeper.registry import Capability
-from app.core.keeper.sheet_digest import format_sheet
-from app.core.keeper.situation import SituationBuilder, build_situation
-from app.core.keeper.subject import KEEPER
-from app.core.keeper.turn_executor import create_pending_checks, execute_side_effects
-from app.core.keeper.turn_policy import CHECK_CAPABILITIES, apply_code_forcing, classify_turn
 from app.core.llm_tape import build_llm_client
 from app.core.narration.contract import (
     CheckResultCallback,

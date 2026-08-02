@@ -8,9 +8,9 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.keeper.agent import KeeperAgent
-from app.core.keeper.catalog import resolve_structured_path
-from app.core.keeper.module_loader import load_module
+from app.core.keeper.contract.catalog import resolve_structured_path
+from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.runtime.agent import KeeperAgent
 from app.core.narration.contract import (
     CheckResultCallback,
     NarrationContext,

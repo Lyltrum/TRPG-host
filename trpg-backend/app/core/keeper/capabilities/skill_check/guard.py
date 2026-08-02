@@ -15,7 +15,7 @@ exec/17 (A) 起两侧都是 id，本模块**不再做任何技能名归一**—�
 
 from __future__ import annotations
 
-from app.core.keeper.module_loader import ModuleNode, ScenarioModule
+from app.core.keeper.contract.module_loader import ModuleNode, ScenarioModule
 
 
 def iter_nodes(nodes: list[ModuleNode]) -> list[ModuleNode]:

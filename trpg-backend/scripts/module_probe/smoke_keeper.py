@@ -41,8 +41,8 @@ from probe import load_api_key  # noqa: E402
 async def _run(module_path: Path, rounds: list[str]) -> int:
     from app.core.coc7_content import build_coc7_ruleset
     from app.core.db import Base
-    from app.core.keeper.agent import KeeperAgent
-    from app.core.keeper.module_loader import ModuleNode, load_module
+    from app.core.keeper.contract.module_loader import ModuleNode, load_module
+    from app.core.keeper.runtime.agent import KeeperAgent
     from app.core.narration.contract import NarrationContext
     from app.models.room import Character, Player, Room
 

@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.coc7_content import build_coc7_ruleset
-from app.core.keeper.module_loader import ModuleNode, ScenarioModule
+from app.core.keeper.contract.module_loader import ModuleNode, ScenarioModule
 from app.core.keeper.primitives.skills import skill_id_catalog
 from app.dto.game import RulesetRead
 
@@ -267,7 +267,7 @@ def normalize_skill_name(skill_name: str) -> str:
 
 
 def skill_resolvable(skill_name: str, ruleset: RulesetRead) -> bool:
-    """与 app.core.keeper.tools._resolve_skill_target 同源口径（不依赖角色卡）。
+    """与 app.core.keeper.runtime.tools._resolve_skill_target 同源口径（不依赖角色卡）。
 
     支持：技能中文名 / 技能 id / 英文名 / 属性中文名或缩写；
     另接受组装层常见别名（见 SKILL_ALIASES）。

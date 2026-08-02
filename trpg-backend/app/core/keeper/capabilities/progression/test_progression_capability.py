@@ -14,21 +14,24 @@ from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.capabilities.progression.endings import format_endings_status
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.deps import KeeperDeps
-from app.core.keeper.module_loader import load_module
-from app.core.keeper.phase import (
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.contract.registry import SituationContext
+from app.core.keeper.runtime.deps import KeeperDeps
+from app.core.keeper.runtime.phase import (
     ENDING_ID_KEY,
     PHASE_FINISHED,
     PHASE_INVESTIGATION,
     load_phase,
 )
-from app.core.keeper.registry import SituationContext
-from app.core.keeper.turn_executor import execute_side_effects
+from app.core.keeper.runtime.turn_executor import execute_side_effects
 from app.models.room import Character, Player, Room
 
 # 模组夹具几片能力共用，仍集中放在 tests/fixtures
-_FIXTURE = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "keeper_module.json"
+#: 🔴 用锚点找，不数层数：`exec/27` 阶段 5 挪目录时 `catalog.py` 的
+#: `parents[3]` 当场指错一层，症状只是一条用例**静默 skip**（全套照样绿）。
+_TESTS_DIR = next(p for p in Path(__file__).resolve().parents if p.name == "trpg-backend") / "tests"
+_FIXTURE = _TESTS_DIR / "fixtures" / "keeper_module.json"
 _MODULE = load_module(_FIXTURE)
 
 _db_path = Path(tempfile.mkdtemp(prefix="trpg-prog-")) / "t.db"
@@ -129,7 +132,7 @@ async def test_opening_complete_advances_phase(deps: KeeperDeps) -> None:
 
 @pytest.mark.asyncio
 async def test_heartbeat_gate_skips_without_keeper() -> None:
-    from app.core.keeper import heartbeat as hb
+    from app.core.keeper.runtime import heartbeat as hb
     from app.core.narration.fallback import FallbackNarrator
 
     hb.reset_heartbeat_state_for_tests()

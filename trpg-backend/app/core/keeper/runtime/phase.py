@@ -27,7 +27,7 @@
 
 from __future__ import annotations
 
-from app.core.keeper.deps import KeeperDeps, KeeperToolError, record_event
+from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError, record_event
 from app.models.room import Room
 
 PHASE_KEY = "对局阶段"

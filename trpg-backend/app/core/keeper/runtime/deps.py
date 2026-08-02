@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.keeper.module_loader import ScenarioModule
+from app.core.keeper.contract.module_loader import ScenarioModule
 from app.core.narration.contract import StatChangeNotice
 from app.dto.game import RulesetRead
 from app.models.event import Event

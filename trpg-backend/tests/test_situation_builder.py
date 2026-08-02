@@ -22,8 +22,8 @@
 
 from __future__ import annotations
 
-from app.core.keeper.history import HistoryLine
-from app.core.keeper.situation import SituationBuilder
+from app.core.keeper.memory.history import HistoryLine
+from app.core.keeper.narration.situation import SituationBuilder
 
 _PUBLIC = "门厅里积着灰"
 _PRIVATE = "地下室的铁柜上刻着一个名字"

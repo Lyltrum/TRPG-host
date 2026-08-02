@@ -26,7 +26,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.keeper.capabilities import audit_fields
-from app.core.keeper.decision import KeeperDecision
+from app.core.keeper.contract.decision import KeeperDecision
 from app.models.event import Event
 
 logger = structlog.get_logger()

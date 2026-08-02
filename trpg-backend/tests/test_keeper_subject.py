@@ -10,16 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.core.keeper.capabilities.health.schema import HpChange
-from app.core.keeper.capabilities.world_state.schema import StateUpdate
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.module_loader import (
-    ModuleFact,
-    load_module,
-    render_for_subject,
-    render_full,
-)
-from app.core.keeper.subject import (
+from app.core.keeper.access.subject import (
     ALL_CAPABILITIES,
     KEEPER,
     Capability,
@@ -28,6 +19,15 @@ from app.core.keeper.subject import (
     build_decision_model,
     npc_subject,
     sanitize_decision,
+)
+from app.core.keeper.capabilities.health.schema import HpChange
+from app.core.keeper.capabilities.world_state.schema import StateUpdate
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.module_loader import (
+    ModuleFact,
+    load_module,
+    render_for_subject,
+    render_full,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "keeper_module.json"

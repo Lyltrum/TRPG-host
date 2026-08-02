@@ -13,12 +13,12 @@
 
 import structlog
 
+from app.core.keeper.access.subject import KEEPER, Subject, authorize_decision, sanitize_decision
 from app.core.keeper.capabilities import executors, pendings
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.deps import KeeperDeps
-from app.core.keeper.pending import PendingCheck
-from app.core.keeper.registry import PendingContext, TurnFacts
-from app.core.keeper.subject import KEEPER, Subject, authorize_decision, sanitize_decision
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.registry import PendingContext, TurnFacts
+from app.core.keeper.runtime.deps import KeeperDeps
+from app.core.keeper.runtime.pending import PendingCheck
 
 logger = structlog.get_logger()
 

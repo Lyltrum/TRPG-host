@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from app.core.keeper.deps import KeeperDeps, KeeperToolError
-from app.core.keeper.location_state import (
+from app.core.keeper.contract.registry import TurnFacts
+from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
+from app.core.keeper.runtime.location_state import (
     clear_current_node_impl,
     move_player_impl,
     set_current_node_impl,
     set_stealth_impl,
 )
-from app.core.keeper.registry import TurnFacts
 
 
 def _scene_moved_off_the_map(decision: BaseModel, facts: TurnFacts) -> bool:

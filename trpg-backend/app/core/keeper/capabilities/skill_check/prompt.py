@@ -7,7 +7,7 @@
 改写让边界对齐，要么承认它根本不属于任何一片**——不能随手判给其中一方。）
 """
 
-from app.core.keeper.registry import PromptBlock
+from app.core.keeper.contract.registry import PromptBlock
 
 PROMPT_BLOCKS = (
     PromptBlock(

@@ -8,7 +8,7 @@
 """
 
 from app.core.coc7_content import build_coc7_ruleset
-from app.core.keeper.sheet_digest import format_sheet
+from app.core.keeper.narration.sheet_digest import format_sheet
 from app.models.room import Character
 
 RULESET = build_coc7_ruleset()
@@ -88,7 +88,7 @@ def test_unknown_skill_id_falls_back_to_the_id() -> None:
 
 def test_sheet_reaches_the_turn_input_block() -> None:
     """裁决与叙事共用 `format_turn_input` 的名单块，卡摘要必须出现在里面。"""
-    from app.core.keeper.prompts import format_turn_input
+    from app.core.keeper.narration.prompts import format_turn_input
 
     sheet = format_sheet("张家豪", _character(), RULESET)
     block = format_turn_input(

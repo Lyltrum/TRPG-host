@@ -8,9 +8,9 @@
 from pathlib import Path
 
 from app.core.coc7_content import build_coc7_ruleset
-from app.core.keeper.module_loader import load_module
+from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.narration.prompts import build_adjudicator_instructions, render_skill_reference
 from app.core.keeper.primitives.skills import resolve_skill_id, skill_id_catalog
-from app.core.keeper.prompts import build_adjudicator_instructions, render_skill_reference
 
 _FIXTURE_MODULE = str(Path(__file__).parent / "fixtures" / "keeper_module.json")
 

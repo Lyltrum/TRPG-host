@@ -47,11 +47,11 @@ deps.py          一轮回合的运行时底座：KeeperDeps · 错误类型 · 
 
 ## 🔴 本文件故意不 re-export `KeeperAgent`
 
-原先这里写着 `from app.core.keeper.agent import KeeperAgent`，而 `tools.py` 写
+原先这里写着 `from app.core.keeper.runtime.agent import KeeperAgent`，而 `tools.py` 写
 `from app.core.keeper import module_loader`——`from 包 import 子模块` 会先执行
 包的 `__init__`，于是 `tools → 包 → agent → tools` 成环。当时没炸只是加载顺序
 凑巧，`exec/27` 阶段 0 的架构测试第一次跑就抓到了它。
 
 包门面看着方便，代价是**任何人 import 包内任何东西都会顺带加载那个实现**。
-要 `KeeperAgent` 就写 `from app.core.keeper.agent import KeeperAgent`。
+要 `KeeperAgent` 就写 `from app.core.keeper.runtime.agent import KeeperAgent`。
 """

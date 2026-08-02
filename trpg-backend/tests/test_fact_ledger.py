@@ -13,14 +13,19 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.db import Base
-from app.core.keeper.fact_ledger import (
+from app.core.keeper.contract.module_loader import (
+    KeeperTruth,
+    ModuleFact,
+    ModuleMeta,
+    ScenarioModule,
+)
+from app.core.keeper.memory.fact_ledger import (
     record_revelations,
     render_ledger,
     revealed_fact_ids,
     revelations,
 )
-from app.core.keeper.history import HISTORY_LIMIT
-from app.core.keeper.module_loader import KeeperTruth, ModuleFact, ModuleMeta, ScenarioModule
+from app.core.keeper.memory.history import HISTORY_LIMIT
 from app.models.event import Event
 from app.models.room import Player, Room
 
@@ -196,7 +201,7 @@ def test_ledger_block_is_injected_into_the_situation() -> None:
     变异检验发现这条接线原本没测试守着：把 ledger_block 从返回串里删掉，
     全部用例照样绿。
     """
-    from app.core.keeper.prompts import format_turn_input
+    from app.core.keeper.narration.prompts import format_turn_input
 
     with_ledger = format_turn_input(
         None, [], [], "阿福", "我四处看看", ledger_status=f"- {EARLY_CLUE}"
@@ -207,7 +212,7 @@ def test_ledger_block_is_injected_into_the_situation() -> None:
 
 def test_empty_ledger_leaves_the_situation_untouched() -> None:
     """🔴 退化证明：短模组账本为空 → 局面块与加这个功能之前逐字一致。"""
-    from app.core.keeper.prompts import format_turn_input
+    from app.core.keeper.narration.prompts import format_turn_input
 
     baseline = format_turn_input(None, [], [], "阿福", "我四处看看")
     assert "已确认的线索" not in baseline

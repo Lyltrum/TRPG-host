@@ -23,7 +23,7 @@ from app.core.keeper.capabilities.health.schema import (
     HealthDecisionFields,
     audit_fields,
 )
-from app.core.keeper.registry import ExecutorHook, KeeperCapability, SituationBlock
+from app.core.keeper.contract.registry import ExecutorHook, KeeperCapability, SituationBlock
 
 CAPABILITY = KeeperCapability(
     name="health",

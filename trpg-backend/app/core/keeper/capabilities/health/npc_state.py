@@ -30,9 +30,9 @@ NPC 的伤势完全没有落点，只活在叙事文字里；下一轮裁决器�
 
 from __future__ import annotations
 
-from app.core.keeper.module_loader import ScenarioModule
+from app.core.keeper.contract.module_loader import ScenarioModule
+from app.core.keeper.contract.registry import SituationContext
 from app.core.keeper.primitives.npcs import npc_display_name
-from app.core.keeper.registry import SituationContext
 
 NPC_STATE_KEY = "NPC状态"
 

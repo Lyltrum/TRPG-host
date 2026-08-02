@@ -13,7 +13,7 @@
 一次转义。
 """
 
-from app.core.keeper.registry import PromptBlock
+from app.core.keeper.contract.registry import PromptBlock
 
 #: 从骨架规则 3 拆出来的「伤害」那半句。order 约定：`a` → +0.2。
 _RULE_DAMAGE = PromptBlock(

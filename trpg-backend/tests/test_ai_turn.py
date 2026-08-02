@@ -15,7 +15,7 @@ from starlette.testclient import TestClient
 from test_ws import ROOMS_BASE, create_room, register_and_login
 
 from app.core.ai_actor import AiActor, AiPlayerIntent, build_view
-from app.core.keeper.history import HistoryLine
+from app.core.keeper.memory.history import HistoryLine
 from app.main import app
 from app.service.ai_turn import collect_ai_submissions
 

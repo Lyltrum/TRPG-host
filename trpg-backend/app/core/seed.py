@@ -10,7 +10,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.coc7_content import build_coc7_ruleset
-from app.core.keeper.catalog import KEEPER_MODULE_SPECS
+from app.core.keeper.contract.catalog import KEEPER_MODULE_SPECS
 from app.models.content import Game, GameSystem, Scenario
 
 BUILTIN_GAME_ID = "00000000-0000-0000-0000-000000000001"

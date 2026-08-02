@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from app.core.keeper.location_state import format_party_locations
-from app.core.keeper.registry import SituationContext
+from app.core.keeper.contract.registry import SituationContext
+from app.core.keeper.runtime.location_state import format_party_locations
 
 
 def render_party_locations(context: SituationContext) -> str:

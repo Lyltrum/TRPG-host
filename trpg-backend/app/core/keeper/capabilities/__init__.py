@@ -23,8 +23,8 @@ from app.core.keeper.capabilities.progression import CAPABILITY as PROGRESSION
 from app.core.keeper.capabilities.san_check import CAPABILITY as SAN_CHECK
 from app.core.keeper.capabilities.skill_check import CAPABILITY as SKILL_CHECK
 from app.core.keeper.capabilities.world_state import CAPABILITY as WORLD_STATE
-from app.core.keeper.module_loader import ScenarioModule
-from app.core.keeper.registry import (
+from app.core.keeper.contract.module_loader import ScenarioModule
+from app.core.keeper.contract.registry import (
     Capability,
     ExecutorHook,
     KeeperCapability,

@@ -5,8 +5,8 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from app.core.keeper.capabilities.agenda.state import AGENDA_FIRED_KEY, load_fired_agenda
-from app.core.keeper.deps import KeeperDeps, KeeperToolError, record_event
-from app.core.keeper.registry import TurnFacts
+from app.core.keeper.contract.registry import TurnFacts
+from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError, record_event
 from app.models.room import Room
 
 

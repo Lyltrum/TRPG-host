@@ -6,7 +6,7 @@ from collections.abc import Mapping
 
 from pydantic import BaseModel, Field
 
-from app.core.keeper.registry import Capability, DecisionModel
+from app.core.keeper.contract.registry import Capability, DecisionModel
 
 
 class PlayerMove(DecisionModel):

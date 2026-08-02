@@ -73,24 +73,30 @@ function BottomPanel({ open, onClose, title, children, heightVh }: { open: boole
           所以没有顶部那根"拖拽小横杠"——档案不靠拖，靠标签舌认。
           `flap` 是从档案顶部探出来的那一小片，写着这份档案叫什么。 */}
       <div
-        // 🔴 **故意不加 `theme-coc`**：档案是**浅色表面**（牛皮纸），面板内部
-        // 沿用平台的浅色 token 集（`text-text-primary` 是深墨、`bg-panel` 是浅
-        // 米色），打在牛皮纸上才读得出来。加了作用域会让文字变成浅奶白——
-        // 浅字压浅纸，整个面板等于空白。
-        // 判据：**深色表面用 `theme-coc`，纸面用默认 token。**
-        className={`fixed bottom-0 left-0 right-0 z-50 bg-dossier text-ink shadow-[0_-14px_34px_rgba(0,0,0,.66)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] max-w-[430px] mx-auto ${open ? 'translate-y-0' : 'translate-y-full'}`}
+        // 🔴 `theme-paper`：把 token **显式改回浅色**。
+        // 只是"不加 theme-coc"不够——CSS 变量沿 DOM 继承，本面板是 RoomPage
+        // 根节点的后代，祖先上的 theme-coc 照样生效。真机症状是牛皮纸上一片
+        // 空白（浅奶白的字压浅纸）。判据：**在深色页面里放纸，必须挂 theme-paper。**
+        className={`theme-paper fixed bottom-0 left-0 right-0 z-50 bg-dossier text-ink shadow-[0_-14px_34px_rgba(0,0,0,.66)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] max-w-[430px] mx-auto ${open ? 'translate-y-0' : 'translate-y-full'}`}
         style={heightVh ? { height: `${maxH}vh` } : { maxHeight: `${maxH}vh` }}
       >
-        <button
-          onClick={onClose}
-          className="tab-flap absolute left-[26px] -top-[19px] z-10 bg-dossier text-ink typed text-[9px] px-3.5 pt-[5px] pb-1"
-        >
-          {title}
-        </button>
-        {/* 装订孔：孔里透出底下桌面的暗。正文左边距要避开它 */}
-        <span className="punch absolute left-[13px] top-[30px] w-[11px] h-[11px] rounded-full" />
-        <span className="punch absolute left-[13px] top-[58px] w-[11px] h-[11px] rounded-full" />
-        <span className="punch absolute left-[13px] top-[86px] w-[11px] h-[11px] rounded-full" />
+        {/* 🔴 标签舌只在展开时渲染。它是 `-top-[19px]` 探出面板上缘的，面板
+            收起时被 translate-y-full 推下去，标签舌正好卡在屏幕底边**一直露着**
+            ——真机上五个面板的舌头全叠在输入框下面。 */}
+        {open && (
+          <>
+            <button
+              onClick={onClose}
+              className="tab-flap absolute left-[26px] -top-[19px] z-10 bg-dossier text-ink typed text-[9px] px-3.5 pt-[5px] pb-1"
+            >
+              {title}
+            </button>
+            {/* 装订孔：孔里透出底下桌面的暗。正文左边距要避开它 */}
+            <span className="punch absolute left-[13px] top-[30px] w-[11px] h-[11px] rounded-full" />
+            <span className="punch absolute left-[13px] top-[58px] w-[11px] h-[11px] rounded-full" />
+            <span className="punch absolute left-[13px] top-[86px] w-[11px] h-[11px] rounded-full" />
+          </>
+        )}
         <button
           onClick={onClose}
           aria-label="收起"
@@ -955,7 +961,7 @@ export default function RoomPage() {
     // `desk-grain`/`desk-lamp` 把这一层变成一张被台灯照着的胡桃木桌面。
     <div className="theme-coc desk-grain desk-lamp h-full flex flex-col bg-card relative max-w-[430px] mx-auto">
       {/* Header */}
-      <div className="relative z-[1] flex items-center gap-2.5 px-3 py-2 border-b border-black/50 bg-black/35 flex-shrink-0">
+      <div className="relative z-[1] flex items-center gap-2.5 px-3 py-2 border-b border-black/60 bg-page flex-shrink-0">
         <button
           onClick={() => setConfirmExit(true)}
           aria-label="退出"
@@ -1010,7 +1016,7 @@ export default function RoomPage() {
       {/* 频道切换（issue #107）：主持人 = 跟 AI 的对话（全房间可见、进 AI 上下文）；
           讨论区 = 玩家之间商量（AI 完全看不见）。两个独立界面共用下方输入框，
           发送按当前频道分流。 */}
-      <div className="relative z-[1] flex bg-black/25 flex-shrink-0">
+      <div className="relative z-[1] flex bg-panel border-b border-black/50 flex-shrink-0">
         {([
           { key: 'dm', label: '主持人', icon: Scroll },
           { key: 'chat', label: '讨论区', icon: MessagesSquare },
@@ -1098,12 +1104,14 @@ export default function RoomPage() {
           // 守秘人 = 书页：裁齐的边、版心、装订侧阴影、页码
           if (isNarr) {
             return (
-              <div key={i} className="leaf paper-grain bg-book text-ink pl-[21px] pr-[17px] pt-3 pb-[26px] animate-[msgIn_0.3s_ease]">
-                <div className="typed flex justify-between text-[9px] text-ink/50 border-b border-ink/20 pb-1.5 mb-2.5">
+              // 🔴 排版收紧过一轮：15px/1.95 + 大内边距的话，一段开场白就占满整屏，
+              // 多人局里翻记录会很痛苦（真人反馈）。改成 13.5px/1.75、内边距减半。
+              <div key={i} className="leaf paper-grain bg-book text-ink pl-4 pr-3 py-2.5 animate-[msgIn_0.3s_ease]">
+                <div className="typed flex justify-between text-[8.5px] text-ink/45 border-b border-ink/15 pb-1 mb-2">
                   <span>{msg.sender}</span>
                   <span>{msg.time}</span>
                 </div>
-                <p className="font-display text-[15px] leading-[1.95] whitespace-pre-wrap">{msg.content}</p>
+                <p className="font-display text-[13.5px] leading-[1.75] whitespace-pre-wrap">{msg.content}</p>
               </div>
             )
           }
@@ -1117,7 +1125,7 @@ export default function RoomPage() {
               }`}
             >
               <div
-                className={`memo paper-grain relative w-full text-ink pl-[30px] pr-3.5 pt-[15px] pb-3 mt-2.5 ${
+                className={`memo paper-grain relative w-full text-ink pl-[30px] pr-3 pt-3 pb-2.5 mt-2.5 ${
                   isSelf ? 'bg-memo-self rotate-[0.8deg]' : 'bg-memo-mate -rotate-[0.7deg]'
                 }`}
               >
@@ -1136,7 +1144,7 @@ export default function RoomPage() {
                     只有你能看到 · 点按查看
                   </button>
                 ) : (
-                  <p className={`font-display text-sm leading-[22px] whitespace-pre-wrap ${onRight ? 'text-right' : 'text-left'}`}>
+                  <p className={`font-display text-[13.5px] leading-[21px] whitespace-pre-wrap ${onRight ? 'text-right' : 'text-left'}`}>
                     {msg.content}
                   </p>
                 )}
@@ -1165,7 +1173,7 @@ export default function RoomPage() {
       </div>
 
       {/* Action Bar */}
-      <div className="relative z-[1] flex bg-black/50 border-t border-black/55 flex-shrink-0">
+      <div className="relative z-[1] flex bg-panel border-t border-black/55 flex-shrink-0">
         {[
           { icon: ScrollText, label: '角色卡', key: 'sheet' },
           { icon: Star, label: '技能', key: 'skills' },
@@ -1195,7 +1203,7 @@ export default function RoomPage() {
           机制这里会自然跟着变化。 */}
       {character && (
         // 方头刻度条，不是圆角进度条——机制数值该像量表
-        <div className="relative z-[1] flex items-center gap-3.5 px-3.5 py-1.5 border-t border-black/45 bg-black/30 flex-shrink-0">
+        <div className="relative z-[1] flex items-center gap-3.5 px-3.5 py-1.5 border-t border-black/50 bg-page flex-shrink-0">
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
             <Heart className="w-[11px] h-[11px] text-mold flex-shrink-0" strokeWidth={2.4} />
             <span className="typed text-[9px] text-text-muted flex-shrink-0">HP</span>
@@ -1265,7 +1273,7 @@ export default function RoomPage() {
       {/* Input area：同一个输入框按当前频道分流（主持人 → action.submit，
           讨论区 → chat.send）。麦克风是语音输入（issue #107）：浏览器本地转写
           成文字填进输入框，之后跟手动打字完全一样；浏览器不支持时按钮不渲染。 */}
-      <div className="relative z-[1] border-t border-black/50 bg-black/40 px-3 py-2.5 flex-shrink-0">
+      <div className="relative z-[1] border-t border-black/55 bg-page px-3 py-2.5 flex-shrink-0">
         <form onSubmit={sendMessage} className="flex gap-[7px] items-center">
           {speech.supported && (
             <button
@@ -1332,8 +1340,8 @@ export default function RoomPage() {
             <div className="flex gap-1.5 mb-3.5">
               {[{ key: 'info', label: '基本信息' }, { key: 'background', label: '背景装备' }].map((p) => (
                 <button key={p.key} onClick={() => setSheetPage(p.key as typeof sheetPage)}
-                  className={`flex-1 text-center text-[12px] font-semibold py-1.5 rounded-[99px] border transition-all ${
-                    sheetPage === p.key ? 'bg-brass text-white border-brass' : 'bg-panel text-text-muted border-border-light'
+                  className={`cut-corner typed flex-1 text-center text-[10px] py-2 border transition-all ${
+                    sheetPage === p.key ? 'bg-ink text-dossier border-ink' : 'bg-transparent text-text-muted border-text-muted/40'
                   }`}>
                   {p.label}
                 </button>
@@ -1356,11 +1364,11 @@ export default function RoomPage() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-1.5 mb-4">
-                  <div className="flex items-center justify-between bg-input border border-border-light rounded px-3 py-1.5">
+                  <div className="flex items-center justify-between bg-black/5 border border-ink/20 px-3 py-1.5">
                     <span className="text-[11px] text-text-muted">居住地</span>
                     <span className="text-sm font-medium text-text-primary">{character.info.residence || '—'}</span>
                   </div>
-                  <div className="flex items-center justify-between bg-input border border-border-light rounded px-3 py-1.5">
+                  <div className="flex items-center justify-between bg-black/5 border border-ink/20 px-3 py-1.5">
                     <span className="text-[11px] text-text-muted">出生地</span>
                     <span className="text-sm font-medium text-text-primary">{character.info.birthplace || '—'}</span>
                   </div>
@@ -1374,7 +1382,7 @@ export default function RoomPage() {
                     { label: 'DB', value: character.derived.db, color: 'text-text-muted' },
                     { label: 'MOV', value: `${character.derived.move}`, color: 'text-text-muted' },
                   ].map((pill) => (
-                    <div key={pill.label} className="flex-1 bg-panel rounded-md px-2.5 py-2 text-center">
+                    <div key={pill.label} className="flex-1 border border-ink/20 px-2.5 py-2 text-center">
                       <div className="text-[10px] text-text-muted font-medium">{pill.label}</div>
                       <div className={`text-base font-bold font-mono ${pill.color}`}>{pill.value}</div>
                     </div>
@@ -1389,7 +1397,7 @@ export default function RoomPage() {
                       此前三处各硬编码一份，加幸运时漏改一处就导致角色卡看不到
                       幸运值（issue #96）。 */}
                   {(ruleset?.attributes ?? []).map(attribute => (
-                    <div key={attribute.key} className="flex items-center justify-between bg-input border border-border-light rounded px-3 py-1.5">
+                    <div key={attribute.key} className="flex items-center justify-between bg-black/5 border border-ink/20 px-3 py-1.5">
                       <span className="font-mono text-[11px] font-bold text-text-muted">{attribute.key}</span>
                       <span className="font-mono text-sm font-bold text-text-primary">{character.attr[attribute.key]}</span>
                     </div>
@@ -1443,8 +1451,8 @@ export default function RoomPage() {
             <div className="flex gap-1.5 mb-3.5">
               {[{ key: 'occupation', label: '职业技能' }, { key: 'interest', label: '兴趣技能' }].map((t) => (
                 <button key={t.key} onClick={() => setSkillsTab(t.key as typeof skillsTab)}
-                  className={`flex-1 text-center text-[12px] font-semibold py-1.5 rounded-[99px] border transition-all ${
-                    skillsTab === t.key ? 'bg-brass text-white border-brass' : 'bg-panel text-text-muted border-border-light'
+                  className={`cut-corner typed flex-1 text-center text-[10px] py-2 border transition-all ${
+                    skillsTab === t.key ? 'bg-ink text-dossier border-ink' : 'bg-transparent text-text-muted border-text-muted/40'
                   }`}>
                   {t.label}
                 </button>
@@ -1468,8 +1476,8 @@ export default function RoomPage() {
                       <div className="text-sm font-medium text-text-primary">{skill.name}</div>
                       <div className="text-[10px] text-text-dim font-mono">{skill.nameEn}</div>
                     </div>
-                    <div className="flex-1 h-2 rounded-full bg-border-light overflow-hidden">
-                      <div className="h-full rounded-full bg-brass transition-all" style={{ width: `${value}%` }} />
+                    <div className="gauge flex-1 h-[7px]">
+                      <div className="h-full bg-ink transition-all" style={{ width: `${value}%` }} />
                     </div>
                     <span className="text-xs font-bold font-mono text-text-muted min-w-[36px] text-right">{value}%</span>
                   </div>
@@ -1484,7 +1492,7 @@ export default function RoomPage() {
 
       {/* Panel: 地图——结构化地点未接线，不展示假数据 */}
       <BottomPanel open={openPanel === 'map'} onClose={() => setOpenPanel(null)} title="地图">
-        <div className="bg-[#f2efe8] rounded-md flex flex-col items-center justify-center py-12 px-6 border border-border-light text-center">
+        <div className="survey flex flex-col items-center justify-center py-11 px-6 border border-ink/30 text-center">
           <Map className="w-10 h-10 text-text-dim mb-3 opacity-60" />
           <p className="text-sm text-text-primary font-medium mb-1.5">地点随叙事推进</p>
           <p className="text-xs text-text-muted leading-relaxed">
@@ -1500,14 +1508,14 @@ export default function RoomPage() {
       {/* Panel: 速记 */}
       <BottomPanel open={openPanel === 'notes'} onClose={() => setOpenPanel(null)} title="速记本">
         {playerIntro && (
-          <div className="mb-3 bg-[#f2efe8] border border-border-light rounded-md px-3.5 py-3">
+          <div className="paper-grain relative mb-3 bg-book border-l-[3px] border-brass px-3 py-2.5">
             <p className="text-xs font-bold text-text-primary mb-1.5">📋 案件简报</p>
             <p className="text-xs text-text-body leading-relaxed whitespace-pre-wrap">{playerIntro}</p>
           </div>
         )}
         <div className="flex gap-2 mb-3">
           <button onClick={() => setNotes(prev => prev + `\n\n[🔍 新线索 ${new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})}]\n`)}
-            className="flex-1 py-2 rounded-sm bg-panel border border-border-light text-text-muted text-xs font-medium flex items-center justify-center gap-1 active:bg-border-light">
+            className="cut-corner typed flex-1 py-2 bg-transparent border border-ink/30 text-ink-soft text-[10px] flex items-center justify-center gap-1 active:bg-ink/10">
             <Plus className="w-3.5 h-3.5" /> 添加线索标签
           </button>
           <button onClick={() => {
@@ -1515,7 +1523,7 @@ export default function RoomPage() {
               localStorage.setItem(notesKey, notes)
               setLastSaved(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }))
             }}
-            className="px-4 py-2 rounded-sm bg-brass text-white text-xs font-medium flex items-center justify-center gap-1 active:bg-brass-dark">
+            className="cut-corner typed px-4 py-2 bg-ink text-dossier text-[10px] flex items-center justify-center gap-1 active:bg-rust">
             <Save className="w-3.5 h-3.5" /> 保存
           </button>
         </div>
@@ -1523,7 +1531,7 @@ export default function RoomPage() {
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder="📋 案件笔记"
-          className="w-full min-h-[180px] text-sm leading-[1.7] text-text-body bg-input border border-border-light rounded-md px-3.5 py-3 resize-none outline-none focus:border-brass transition-colors font-mono placeholder:text-text-dim"
+          className="notepaper w-full min-h-[160px] text-[12px] text-ink border border-ink/28 px-2.5 py-2 resize-none outline-none focus:border-brass transition-colors font-mono placeholder:text-ink/35"
         />
         <div className="text-[10px] text-text-dim mt-2 text-right">{lastSaved ? `最后保存: ${lastSaved}` : '尚未保存'}</div>
       </BottomPanel>
@@ -1537,12 +1545,12 @@ export default function RoomPage() {
               const card = partyCharacters?.find((c) => c.playerId === p.playerId)
               const expanded = expandedMemberId === p.playerId
               return (
-                <div key={p.playerId} className="bg-panel rounded-md overflow-hidden">
+                <div key={p.playerId} className="border border-ink/25 bg-white/15 overflow-hidden">
                   <button
                     onClick={() => setExpandedMemberId(expanded ? null : p.playerId)}
                     className="w-full flex items-center gap-3 px-3 py-2 text-left active:bg-border-light"
                   >
-                    <div className="w-8 h-8 rounded-full bg-card border border-border-light flex items-center justify-center text-sm flex-shrink-0">🔍</div>
+                    <div className="w-[26px] h-[26px] bg-ink/10 border border-ink/25 flex items-center justify-center text-[13px] flex-shrink-0">🔍</div>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-text-primary">
                         {card?.name ? `${card.name}` : p.nickname}
@@ -1563,7 +1571,7 @@ export default function RoomPage() {
                         <>
                           <div className="grid grid-cols-4 gap-1 mb-2.5">
                             {(ruleset?.attributes ?? []).map((attr) => (
-                              <div key={attr.key} className="bg-card border border-border-light rounded px-1.5 py-1 text-center">
+                              <div key={attr.key} className="border border-ink/20 px-1.5 py-1 text-center">
                                 <div className="text-[10px] text-text-dim">{attr.label}</div>
                                 <div className="text-sm font-bold font-mono text-text-primary">{card.attributes?.[attr.key] ?? '—'}</div>
                               </div>
@@ -1575,7 +1583,7 @@ export default function RoomPage() {
                               { label: 'SAN', value: card.derivedStats?.SAN },
                               { label: 'MP', value: card.derivedStats?.MP },
                             ].map((s) => (
-                              <div key={s.label} className="flex-1 bg-card border border-border-light rounded px-2 py-1 flex items-center justify-between">
+                              <div key={s.label} className="flex-1 border border-ink/20 px-2 py-1 flex items-center justify-between">
                                 <span className="text-[10px] text-text-muted">{s.label}</span>
                                 <span className="text-sm font-bold font-mono text-text-primary">{s.value ?? '—'}</span>
                               </div>
@@ -1590,8 +1598,8 @@ export default function RoomPage() {
                               .map(({ skill, value }) => (
                                 <div key={skill.id} className="flex items-center gap-2">
                                   <span className="text-[11px] text-text-body flex-1 min-w-0 truncate">{skill.name}</span>
-                                  <div className="w-16 h-1.5 rounded-full bg-border-light overflow-hidden">
-                                    <div className="h-full rounded-full bg-brass" style={{ width: `${Math.min(value, 100)}%` }} />
+                                  <div className="gauge w-16 h-[6px]">
+                                    <div className="h-full bg-ink" style={{ width: `${Math.min(value, 100)}%` }} />
                                   </div>
                                   <span className="text-[11px] font-mono text-text-muted min-w-[28px] text-right">{value}</span>
                                 </div>

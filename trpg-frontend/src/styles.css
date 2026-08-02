@@ -54,6 +54,31 @@
     --c-text-dim: 101 92 78;
   }
 
+  /* 🔴 纸面：把语义 token **显式改回**平台浅色值。
+     不是"不加 .theme-coc"就行——CSS 变量沿 DOM 继承，面板是 RoomPage 根节点
+     的后代，祖先上的 .theme-coc 照样生效。真机上的症状是**牛皮纸上一片空白**
+     （浅奶白的字打在浅纸上），必须显式覆盖。
+     凡是"在深色页面里放一张纸"的地方都要挂这个类。 */
+  .theme-paper {
+    --c-page: 250 247 240;
+    --c-panel: 236 227 206;
+    --c-card: 233 222 196;
+    --c-input: 223 211 180;
+    --c-border-light: 196 180 146;
+    --c-border-mid: 170 152 116;
+    --c-brass: 138 106 46;
+    --c-brass-dark: 92 70 30;
+    --c-brass-bright: 176 138 74;
+    --c-rust: 158 59 44;
+    --c-rust-dark: 109 38 32;
+    --c-mold: 74 110 60;
+    --c-ink-blue: 58 90 122;
+    --c-text-primary: 36 29 20;
+    --c-text-body: 58 47 28;
+    --c-text-muted: 90 76 57;
+    --c-text-dim: 124 108 84;
+  }
+
   * {
     margin: 0;
     padding: 0;
@@ -221,6 +246,47 @@
   .punch {
     background: #241c14;
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.9), 0 1px 0 rgba(255, 255, 255, 0.14);
+  }
+
+  /* ── 测绘纸：地图的空状态。网格 + 两道折痕，比"灰图标 + 说明文字"有身份，
+        而且同样诚实——结构化地点还没接线，本来就不该画假地图 ── */
+  .survey {
+    position: relative;
+    background-color: #d9cdae;
+    background-image:
+      linear-gradient(rgba(36, 29, 20, 0.12) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(36, 29, 20, 0.12) 1px, transparent 1px);
+    background-size: 19px 19px, 19px 19px;
+  }
+  .survey::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 34%;
+    height: 2px;
+    background: linear-gradient(to bottom, rgba(255, 255, 255, 0.28), rgba(36, 29, 20, 0.16));
+  }
+  .survey::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 44%;
+    width: 2px;
+    background: linear-gradient(to right, rgba(255, 255, 255, 0.28), rgba(36, 29, 20, 0.16));
+  }
+  .survey > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ── 横格纸：速记本。格线跟便签同源，同一种"纸"的语言 ── */
+  .notepaper {
+    background-color: #dfd3b4;
+    line-height: 22px;
+    background-image: repeating-linear-gradient(transparent 0 21px, rgba(36, 29, 20, 0.16) 21px 22px);
+    background-position: 0 7px;
   }
 
   /* ── 通用形状：切角。代替圆角，是"不像 iOS"最省事的一处 ── */

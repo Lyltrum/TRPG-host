@@ -106,7 +106,7 @@ function BottomPanel({ open, onClose, title, children, heightVh, accent = '#8a6a
           <>
             <button
               onClick={onClose}
-              className="tab-flap absolute left-[26px] -top-[19px] z-10 typed text-[9px] px-3.5 pt-[5px] pb-1"
+              className="tab-flap absolute left-[26px] -top-[19px] z-10 typed text-[10.5px] px-3.5 pt-[5px] pb-1"
               style={{ backgroundColor: accent, color: paper }}
             >
               {title}
@@ -128,7 +128,7 @@ function BottomPanel({ open, onClose, title, children, heightVh, accent = '#8a6a
           <div className="flex justify-end pt-2.5 pb-1.5">
             <button
               onClick={onClose}
-              className="typed flex items-center gap-1 text-[9px] text-ink/45 active:text-ink px-1 py-0.5"
+              className="typed flex items-center gap-1 text-[10.5px] text-ink-soft active:text-ink px-1 py-0.5"
             >
               收起
               <X className="w-3 h-3" strokeWidth={2.5} />
@@ -173,7 +173,7 @@ function Section({
   return (
     <div className={`relative mt-[18px] px-3 pt-3.5 pb-3 ${skin}`}>
       <span
-        className="typed absolute -top-[7px] left-2.5 px-1.5 text-[8.5px] text-ink/75"
+        className="typed absolute -top-[7px] left-2.5 px-1.5 text-[10.5px] font-semibold text-ink"
         style={{ backgroundColor: 'var(--paper)' }}
       >
         {label}
@@ -186,7 +186,7 @@ function Section({
 /** 空字段：显式画成"这里是空的"，不是一句灰色的话。 */
 function Blank({ children }: { children: React.ReactNode }) {
   return (
-    <p className="typed text-[10px] text-ink/35 text-center py-1.5 border border-dashed border-ink/25">
+    <p className="typed text-[10px] text-ink-soft text-center py-1.5 border border-dashed border-ink/25">
       {children}
     </p>
   )
@@ -1053,7 +1053,7 @@ export default function RoomPage() {
           <div className="font-display text-sm text-text-primary tracking-[0.06em] truncate">
             {roomInfo?.moduleTitle || '对局中'}
           </div>
-          <div className="typed text-[9.5px] text-text-muted mt-px">
+          <div className="typed text-[10.5px] text-text-muted mt-px">
             {roomInfo ? `${roomInfo.players.length} 位调查员` : '克苏鲁的呼唤'}
           </div>
         </div>
@@ -1072,7 +1072,7 @@ export default function RoomPage() {
             className="leaf paper-grain bg-book text-ink px-[18px] pt-5 pb-4 w-full max-w-[300px] -rotate-[0.7deg]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="typed text-[9px] text-ink/50 border-b border-ink/20 pb-1.5 mb-3">离场</div>
+            <div className="typed text-[10.5px] text-ink-soft border-b border-ink/20 pb-1.5 mb-3">离场</div>
             <p className="font-display text-sm leading-[1.85] mb-3.5">
               确定要退出游戏吗？<br />房间会保留，之后可以从「我的游戏」继续。
             </p>
@@ -1165,11 +1165,11 @@ export default function RoomPage() {
                   🎲
                 </div>
                 <div className="min-w-0 text-right">
-                  <div className="typed text-[9px] text-mold mb-[3px]">{msg.sender} · 掷骰</div>
-                  <div className="font-mono text-[13px] text-text-body bg-mold/12 border-l-2 border-mold px-2.5 py-1.5 inline-block text-left">
+                  <div className="typed text-[10.5px] text-mold mb-[3px]">{msg.sender} · 掷骰</div>
+                  <div className="font-mono text-[14px] font-bold text-text-primary bg-mold/20 border-l-[3px] border-mold px-3 py-2 inline-block text-left">
                     {msg.content}
                   </div>
-                  <div className="typed text-[9px] text-text-dim mt-1">{msg.time}</div>
+                  <div className="typed text-[10.5px] text-text-dim mt-1">{msg.time}</div>
                 </div>
               </div>
             )
@@ -1201,7 +1201,7 @@ export default function RoomPage() {
                 <div className="min-w-0 flex-1">
                   <div className="typed flex items-baseline gap-2 mb-1">
                     <span className="text-[10px] text-brass-bright">{msg.sender}</span>
-                    <span className="text-[8.5px] text-text-dim">{msg.time}</span>
+                    <span className="text-[10.5px] text-text-dim">{msg.time}</span>
                   </div>
                   <div className="kp-bubble paper-grain relative bg-book text-ink px-3 py-2.5">
                     <p className="font-display text-[13.5px] leading-[1.78] whitespace-pre-wrap">{msg.content}</p>
@@ -1225,7 +1225,7 @@ export default function RoomPage() {
                 }`}
               >
                 <Paperclip metal={isSelf ? 'brass' : 'steel'} />
-                <div className={`typed text-[9px] text-ink/55 mb-1.5 ${onRight ? 'text-right' : 'text-left'}`}>
+                <div className={`typed text-[10.5px] text-ink-soft mb-1.5 ${onRight ? 'text-right' : 'text-left'}`}>
                   {msg.sender}
                   {isSelf && <span className="text-rust"> · 你</span>}
                 </div>
@@ -1233,7 +1233,7 @@ export default function RoomPage() {
                   <button
                     type="button"
                     onClick={() => setRevealedPrivate(prev => new Set(prev).add(i))}
-                    className={`flex items-center gap-1.5 text-[12px] text-ink/60 w-full ${onRight ? 'justify-end' : ''}`}
+                    className={`flex items-center gap-1.5 text-[12px] text-ink-soft w-full ${onRight ? 'justify-end' : ''}`}
                   >
                     <EyeOff className="w-3.5 h-3.5" strokeWidth={2} />
                     只有你能看到 · 点按查看
@@ -1244,7 +1244,7 @@ export default function RoomPage() {
                   </p>
                 )}
               </div>
-              <span className="typed text-[9px] text-text-muted">{msg.time}</span>
+              <span className="typed text-[10.5px] text-text-muted">{msg.time}</span>
             </div>
           )
         })}
@@ -1301,14 +1301,14 @@ export default function RoomPage() {
         <div className="relative z-[1] flex items-center gap-3.5 px-3.5 py-1.5 border-t border-black/50 bg-page flex-shrink-0">
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
             <Heart className="w-[11px] h-[11px] text-mold flex-shrink-0" strokeWidth={2.4} />
-            <span className="typed text-[9px] text-text-muted flex-shrink-0">HP</span>
+            <span className="typed text-[10.5px] text-text-muted flex-shrink-0">HP</span>
             <div className="flex-1 h-[5px] bg-black/50 overflow-hidden">
               <div className="h-full bg-mold" style={{ width: '100%' }} />
             </div>
             <span className="font-mono text-[11px] text-mold flex-shrink-0 tabular-nums">{character.derived.hp}</span>
           </div>
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
-            <span className="typed text-[9px] text-text-muted flex-shrink-0">SAN</span>
+            <span className="typed text-[10.5px] text-text-muted flex-shrink-0">SAN</span>
             <div className="flex-1 h-[5px] bg-black/50 overflow-hidden">
               <div className="h-full bg-[#8a72ad]" style={{ width: `${Math.min(100, character.derived.san)}%` }} />
             </div>
@@ -1416,7 +1416,7 @@ export default function RoomPage() {
             // 真机上"深槽压深框"两者只差几个色阶，字打上去根本看不见；而且材质
             // 也不对——你打的这段话下一秒就会变成一张便签，那就该在纸上写。
             // 浅纸 + 深墨在深色框里天然最显眼，不用靠加边框描亮。
-            className={`memo-input flex-1 min-w-0 bg-memo-self text-ink border-none px-3 py-2 font-display text-[15px] outline-none h-[38px] placeholder:text-ink/40 transition-shadow ${
+            className={`memo-input flex-1 min-w-0 bg-memo-self text-ink border-none px-3 py-2 font-display text-[15px] outline-none h-[38px] placeholder:text-ink-soft transition-shadow ${
               dmBusy ? 'opacity-70' : ''
             }`}
           />
@@ -1467,11 +1467,11 @@ export default function RoomPage() {
                 <Section label="籍贯" tone="form">
                   <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
                     <div className="flex items-center justify-between border-b border-dotted border-ink/30 pb-1">
-                      <span className="typed text-[9px] text-ink/55">居住地</span>
+                      <span className="typed text-[10.5px] text-ink-soft">居住地</span>
                       <span className="font-display text-[13px] text-ink">{character.info.residence || '—'}</span>
                     </div>
                     <div className="flex items-center justify-between border-b border-dotted border-ink/30 pb-1">
-                      <span className="typed text-[9px] text-ink/55">出生地</span>
+                      <span className="typed text-[10.5px] text-ink-soft">出生地</span>
                       <span className="font-display text-[13px] text-ink">{character.info.birthplace || '—'}</span>
                     </div>
                   </div>
@@ -1491,7 +1491,7 @@ export default function RoomPage() {
                       key={pill.label}
                       className="flex-1 border-t-2 border-ink/50 border-x border-b border-x-ink/15 border-b-ink/15 bg-black/[0.06] px-1 py-1.5 text-center"
                     >
-                      <div className="typed text-[8.5px] text-ink/55">{pill.label}</div>
+                      <div className="typed text-[10.5px] text-ink-soft">{pill.label}</div>
                       <div className={`text-[17px] font-bold font-mono tabular-nums ${pill.color}`}>{pill.value}</div>
                     </div>
                   ))}
@@ -1507,7 +1507,7 @@ export default function RoomPage() {
                       key={attribute.key}
                       className="flex items-baseline justify-between border-b border-dotted border-ink/30 py-1"
                     >
-                      <span className="typed text-[9px] text-ink/55">{attribute.key}</span>
+                      <span className="typed text-[10.5px] text-ink-soft">{attribute.key}</span>
                       <span className="font-mono text-[15px] font-bold text-ink tabular-nums">
                         {character.attr[attribute.key]}
                       </span>
@@ -1524,7 +1524,7 @@ export default function RoomPage() {
                     打字报告、备注是手写便条。空的字段显式画成空框，不是灰句子。 */}
                 <Section label="装备" tone="list">
                   {character.equipment ? (
-                    <p className="text-[13px] text-ink/85 leading-[1.75] whitespace-pre-wrap">{character.equipment}</p>
+                    <p className="text-[13px] text-ink leading-[1.75] whitespace-pre-wrap">{character.equipment}</p>
                   ) : (
                     <Blank>未填写</Blank>
                   )}
@@ -1532,7 +1532,7 @@ export default function RoomPage() {
 
                 <Section label="背景故事" tone="prose">
                   {character.background ? (
-                    <p className="font-display text-[13.5px] text-ink/90 leading-[1.85] whitespace-pre-wrap">
+                    <p className="font-display text-[13.5px] text-ink leading-[1.85] whitespace-pre-wrap">
                       {character.background}
                     </p>
                   ) : (
@@ -1542,7 +1542,7 @@ export default function RoomPage() {
 
                 <Section label="备注" tone="note">
                   {character.notes ? (
-                    <p className="font-mono text-[12px] text-ink/85 leading-[22px] whitespace-pre-wrap">{character.notes}</p>
+                    <p className="font-mono text-[12px] text-ink leading-[22px] whitespace-pre-wrap">{character.notes}</p>
                   ) : (
                     <Blank>未填写</Blank>
                   )}
@@ -1559,18 +1559,18 @@ export default function RoomPage() {
                       {/* 8 个引导字段做成**逐条的档案分录**：左侧一道细线 +
                           序号，跟上面三大段拉开层级——它们是"细节"，不是并列的章。 */}
                       <div className="mt-6 mb-1 flex items-center gap-2">
-                        <span className="typed text-[9px] text-ink/60">背景故事细节</span>
+                        <span className="typed text-[10.5px] text-ink-soft">背景故事细节</span>
                         <span className="flex-1 h-px bg-ink/20" />
                       </div>
                       {BACKGROUND_DETAIL_FIELDS.filter(({ key }) => character.backgroundDetail?.[key]).map(
                         ({ key, label }, idx) => (
                           <div key={key} className="flex gap-2.5 pt-2.5">
-                            <span className="typed text-[9px] text-ink/35 pt-0.5 w-4 flex-shrink-0 text-right">
+                            <span className="typed text-[10.5px] text-ink-soft pt-0.5 w-4 flex-shrink-0 text-right">
                               {String(idx + 1).padStart(2, '0')}
                             </span>
                             <div className="flex-1 min-w-0 border-l border-ink/20 pl-2.5">
-                              <div className="typed text-[9px] text-ink/55 mb-1">{label}</div>
-                              <p className="font-display text-[13px] text-ink/85 leading-[1.8]">
+                              <div className="typed text-[10.5px] text-ink-soft mb-1">{label}</div>
+                              <p className="font-display text-[13px] text-ink leading-[1.8]">
                                 {character.backgroundDetail?.[key]}
                               </p>
                             </div>
@@ -1655,7 +1655,7 @@ export default function RoomPage() {
           // 简报是**别人给你的**（打字报告），笔记是**你自己写的**（横格纸），
           // 两者性质相反，皮也相反
           <Section label="案件简报" tone="prose">
-            <p className="font-display text-[13px] text-ink/90 leading-[1.85] whitespace-pre-wrap">{playerIntro}</p>
+            <p className="font-display text-[13px] text-ink leading-[1.85] whitespace-pre-wrap">{playerIntro}</p>
           </Section>
         )}
         <div className="flex gap-2 mb-3">
@@ -1676,7 +1676,7 @@ export default function RoomPage() {
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder="📋 案件笔记"
-          className="notepaper w-full min-h-[160px] text-[12px] text-ink border border-ink/28 px-2.5 py-2 resize-none outline-none focus:border-brass transition-colors font-mono placeholder:text-ink/35"
+          className="notepaper w-full min-h-[160px] text-[12px] text-ink border border-ink/28 px-2.5 py-2 resize-none outline-none focus:border-brass transition-colors font-mono placeholder:text-ink-soft"
         />
         <div className="text-[10px] text-text-dim mt-2 text-right">{lastSaved ? `最后保存: ${lastSaved}` : '尚未保存'}</div>
       </BottomPanel>

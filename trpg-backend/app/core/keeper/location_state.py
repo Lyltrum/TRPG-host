@@ -39,7 +39,11 @@ from sqlalchemy import select
 
 from app.core.keeper.deps import KeeperDeps, KeeperToolError, record_event, resolve_character
 from app.core.keeper.module_loader import ScenarioModule
-from app.core.keeper.scene_state import CURRENT_NODE_KEY, load_current_node_id
+from app.core.keeper.scene_state import (
+    CURRENT_NODE_KEY,
+    SCENE_NAME_KEY,
+    load_current_node_id,
+)
 from app.models.room import Player, Room
 
 PLAYER_LOCATION_KEY = "玩家位置"
@@ -112,6 +116,34 @@ def group_players(
 def is_party_split(keeper_state: dict | None, player_ids: list[str]) -> bool:
     """全队是否已分头。单人局恒为 False（退化保证：一个人分不了头）。"""
     return len(group_players(keeper_state, player_ids)) > 1
+
+
+def scene_changed(
+    before: dict | None, after: dict | None, player_ids: list[str] | tuple[str, ...]
+) -> bool:
+    """本轮有没有人换了地方（`exec/19` 场景切换过渡拍的触发条件）。
+
+    🔴 P5.2：判据从"房间级「当前场景」字段变了没有"改成**逐人位置**比对——
+    分头探索后房间不再有单一"当前场景"，而"谁挪了窝"本来就是按人问的问题。
+    传进来的是**执行之后**的状态（位置由执行层写库，不是从 decision 字段猜），
+    因此也顺带覆盖了 `moves`。
+
+    没有任何一个人两端都有 node_id 时，退回「当前场景」自由文本比较——兼容
+    尚未产出 node id 的模组与历史房间。
+
+    从 `agent.narrate` 抽出来（exec/27 阶段 4）：它本来就是个纯函数，埋在那条
+    480 行的主流程里既没法单独测，也看不出它其实只依赖三样东西。
+    """
+    before_nodes = {pid: location_of(before, pid) for pid in player_ids}
+    after_nodes = {pid: location_of(after, pid) for pid in player_ids}
+    has_node_ids = any(
+        before_nodes[pid] is not None and after_nodes[pid] is not None for pid in player_ids
+    )
+    if has_node_ids:
+        return any(before_nodes[pid] != after_nodes[pid] for pid in player_ids)
+    prev_scene = (before or {}).get(SCENE_NAME_KEY)
+    new_scene = (after or {}).get(SCENE_NAME_KEY)
+    return prev_scene is not None and new_scene is not None and prev_scene != new_scene
 
 
 def format_party_locations(

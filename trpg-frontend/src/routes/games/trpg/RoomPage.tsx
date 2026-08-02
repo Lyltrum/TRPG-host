@@ -1279,7 +1279,7 @@ export default function RoomPage() {
             <button
               type="button"
               onClick={() => (speech.listening ? speech.stop() : speech.start())}
-              className={`cut-corner w-[34px] h-[34px] border flex items-center justify-center flex-shrink-0 active:scale-[0.94] transition-all ${
+              className={`cut-corner w-[38px] h-[38px] border flex items-center justify-center flex-shrink-0 active:scale-[0.94] transition-all ${
                 speech.listening
                   ? 'bg-mold border-mold text-page animate-pulse'
                   : 'bg-black/30 border-black/55 text-text-muted active:border-brass active:text-brass-bright'
@@ -1293,7 +1293,7 @@ export default function RoomPage() {
               type="button"
               onClick={() => setPrivateAction(v => !v)}
               title={privateAction ? '这一条只有你自己看得到' : '设为私密行动'}
-              className={`cut-corner w-[34px] h-[34px] border flex items-center justify-center flex-shrink-0 active:scale-[0.94] transition-all ${
+              className={`cut-corner w-[38px] h-[38px] border flex items-center justify-center flex-shrink-0 active:scale-[0.94] transition-all ${
                 privateAction
                   ? 'bg-brass border-brass text-page'
                   : 'bg-black/30 border-black/55 text-text-muted active:border-brass active:text-brass-bright'
@@ -1315,7 +1315,10 @@ export default function RoomPage() {
                     ? '私密行动，只有你看得到…'
                     : '对守秘人说…'
             }
-            className={`flex-1 min-w-0 bg-black/34 border border-black/55 px-2.5 py-2 font-display text-sm text-text-primary outline-none h-[34px] placeholder:text-text-dim focus:border-brass transition-colors shadow-[inset_0_2px_5px_rgba(0,0,0,.5)] ${
+            // 🔴 去掉了 `inset` 阴影。真机上那圈内阴影很重，**把输入区上下各吃掉
+            // 一条**，自己打的字挤在中间几乎看不见。想要"刻进去"的质感只保留
+            // 一条上缘暗线就够，不能用大范围内阴影。
+            className={`flex-1 min-w-0 bg-input border border-brass/30 px-3 py-2 font-display text-[15px] text-text-primary outline-none h-[38px] placeholder:text-text-dim focus:border-brass transition-colors ${
               dmBusy ? 'opacity-60' : ''
             }`}
           />
@@ -1323,7 +1326,7 @@ export default function RoomPage() {
             type="submit"
             disabled={dmBusy}
             aria-label="送出"
-            className="cut-corner h-[34px] px-3 bg-brass border-none text-page flex items-center justify-center flex-shrink-0 active:scale-[0.96] transition-all hover:bg-brass-dark disabled:opacity-40 disabled:active:scale-100"
+            className="cut-corner h-[38px] px-3.5 bg-brass border-none text-page flex items-center justify-center flex-shrink-0 active:scale-[0.96] transition-all hover:bg-brass-dark disabled:opacity-40 disabled:active:scale-100"
           >
             <SendHorizontal className="w-4 h-4" strokeWidth={2.5} />
           </button>

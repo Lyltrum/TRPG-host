@@ -38,3 +38,10 @@ e2e/artifacts/
 # LLM 磁带（exec/14 P0）：真实模组的磁带含剧本正文，版权红线同 模组资料/。
 # 只有原创迷你剧本的磁带允许进 git，放 trpg-backend/tests/tapes/。
 trpg-backend/tapes/
+
+# 设计文档与执行规格（keeper-design/ 的 exec 规格、真人实测问题清单，以及
+# character-build-migration/ 的建卡向导设计）：本地留痕，不进仓库。
+# ⚠️ 代码注释与 CLAUDE.md / AGENTS.md 里指向 docs/ 的路径仍然有效——它们指的
+# 是本地文件，clone 下来不会有。没有任何测试或 CI 依赖 docs/ 的存在（已核）。
+# 历史里的旧版本仍在 origin 上（2026-08-02 之前已推），这里只停止后续跟踪。
+docs/

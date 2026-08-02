@@ -9,7 +9,7 @@ situation 把结果再喂回模型眼前、audit 让它在日志里留得下痕�
 平均改 4.1 个文件，`agent.py` 被 90 个功能里的 46 个碰过。**那不是文件放错了
 地方，是能力被按技术层切碎了。**
 
-本模块定义那五个钩子的形状。具体能力在 `capabilities/<名字>/` 里各自组装一个
+本模块定义那些钩子的形状。具体能力在 `capabilities/<名字>/` 里各自组装一个
 `KeeperCapability` 交上来，骨架（decision/prompts/turn_executor/agent）只跟
 这份契约打交道。
 

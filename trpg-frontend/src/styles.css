@@ -263,28 +263,28 @@
      ——那是排一本书的规矩，而守秘人是个**在场的人**，他说话就该长得像说话。
      所以布局回到消息的语法，材质保留：纸色、纸纹、左上角一道撕边缺口。
      判据：**材质做氛围，布局做可读性，两件事不要互相替代。** */
+  /* 🔴 **波浪卷边**，不是折角。
+     上一版在四个角画三角形折痕，被判"像奖状"——折角是"这张纸被折过一下"，
+     而受潮起伏的旧纸是**整条边都在起伏**。所以波要走满四条边。
+
+     做法：clip-path 沿边界取点，横向边用百分比 x（波长随宽度自适应）+ 像素 y
+     （振幅恒定，不会在高气泡上被拉长）；纵向边反过来。振幅 5px、每条边 4 个波峰。
+
+     ⚠️ clip-path 会把 box-shadow 一起裁掉，所以投影必须换成 `drop-shadow`
+     ——它跟着裁剪后的形状走，波浪边才有厚度。 */
   .kp-bubble {
-    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 6px 12px -5px rgba(0, 0, 0, 0.45);
-  }
-  /* 🔴 四个角都做成翻卷的书页角。
-     一个伪元素画四层背景，每层一个三角：`background-position` 钉到四个角，
-     `linear-gradient` 的角度决定三角落在哪一侧
-     （135° 起点在左上 → 三角在左上；225° 右上；45° 左下；315° 右下）。
-     每个三角两段：外侧是纸背（受光少所以偏暗），紧接一条更深的折线
-     ——**折线才是"翻起来了"的关键**，只有一块灰三角看着像脏了。 */
-  .kp-bubble::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background-repeat: no-repeat;
-    background-size: 16px 16px;
-    background-position: left top, right top, left bottom, right bottom;
-    background-image:
-      linear-gradient(135deg, rgba(36, 29, 20, 0.16) 0 42%, rgba(36, 29, 20, 0.44) 42% 47%, transparent 47%),
-      linear-gradient(225deg, rgba(36, 29, 20, 0.16) 0 42%, rgba(36, 29, 20, 0.44) 42% 47%, transparent 47%),
-      linear-gradient(45deg, rgba(36, 29, 20, 0.16) 0 42%, rgba(36, 29, 20, 0.44) 42% 47%, transparent 47%),
-      linear-gradient(315deg, rgba(36, 29, 20, 0.16) 0 42%, rgba(36, 29, 20, 0.44) 42% 47%, transparent 47%);
+    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.42));
+    clip-path: polygon(
+      /* 上缘：左 → 右 */
+      0 5px, 12% 0, 25% 5px, 38% 1px, 50% 6px, 62% 1px, 75% 5px, 88% 0, 100% 5px,
+      /* 右缘：上 → 下 */
+      calc(100% - 5px) 25%, 100% 50%, calc(100% - 4px) 75%, 100% calc(100% - 5px),
+      /* 下缘：右 → 左 */
+      88% 100%, 75% calc(100% - 5px), 62% 100%, 50% calc(100% - 6px), 38% 100%,
+      25% calc(100% - 5px), 12% 100%, 0 calc(100% - 5px),
+      /* 左缘：下 → 上 */
+      4px 75%, 0 50%, 5px 25%
+    );
   }
 
   /* ── 输入框那张纸条：上缘一道压痕表示"刻进桌面"，聚焦时纸被点亮 ── */

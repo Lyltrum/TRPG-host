@@ -65,14 +65,25 @@ const DIFFICULTY_COLORS: Record<string, string> = {
  * 加上各自已有的结构特征（测绘纸网格 / 横格纸 / 量表刻度 / 档案条），
  * 打开任意一份，第一眼就知道是哪一份。
  */
-function BottomPanel({ open, onClose, title, children, heightVh, accent = '#8a6a2e', paper = '#cbb894' }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; heightVh?: number; accent?: string; paper?: string }) {
+/** 🔴 所有底部面板**共用一个高度**。
+ *
+ * 真人反馈：五个面板展开的高度各不相同，连同一个面板内部切 tab
+ * （基本信息 ↔ 背景装备）高度都在跳。手机网页端上这种跳动很难受——
+ * 拇指刚放到某个位置，面板一换内容就跑了。
+ *
+ * 所以：**面板高度是常量，内容超出就在里面滚**。之前是"贴着内容长、封顶
+ * 72vh"，只有技能面板单独给了 50vh —— 那正是高度不齐的来源。
+ */
+const PANEL_HEIGHT_VH = 66
+
+function BottomPanel({ open, onClose, title, children, accent = '#8a6a2e', paper = '#cbb894' }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; accent?: string; paper?: string }) {
   useEffect(() => {
     if (open) document.body.style.overflow = 'hidden'
     else document.body.style.overflow = ''
     return () => { document.body.style.overflow = '' }
   }, [open])
 
-  const maxH = heightVh ?? 72
+  const maxH = PANEL_HEIGHT_VH
 
   return (
     <>
@@ -88,7 +99,7 @@ function BottomPanel({ open, onClose, title, children, heightVh, accent = '#8a6a
         // 🔴 **不要大范围投影**（原来是 `0 -14px 34px rgba(0,0,0,.66)`）：
         // 它在面板下缘糊出一大团黑，真机上看就是"纸的底部烂了"。
         // 纸压在桌上只需要**一条上缘亮线 + 一条紧贴的暗线**，两条 1px 就够。
-        className={`theme-paper paper-grain fixed bottom-0 left-0 right-0 z-50 text-ink shadow-[0_-1px_0_rgba(255,255,255,.22),0_-3px_10px_rgba(0,0,0,.35)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] max-w-[430px] mx-auto overflow-hidden ${open ? 'translate-y-0' : 'translate-y-full'}`}
+        className={`theme-paper paper-grain fixed bottom-0 left-0 right-0 z-50 flex flex-col text-ink shadow-[0_-1px_0_rgba(255,255,255,.22),0_-3px_10px_rgba(0,0,0,.35)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] max-w-[430px] mx-auto overflow-hidden ${open ? 'translate-y-0' : 'translate-y-full'}`}
         style={{
           backgroundColor: paper,
           // 栏目标签要用纸色去"咬断"边框线（真实表单的做法），所以把纸色
@@ -96,7 +107,7 @@ function BottomPanel({ open, onClose, title, children, heightVh, accent = '#8a6a
           ['--paper' as string]: paper,
           ['--accent' as string]: accent,
           borderTop: `3px solid ${accent}`,
-          ...(heightVh ? { height: `${maxH}vh` } : { maxHeight: `${maxH}vh` }),
+          height: `${maxH}vh`,
         }}
       >
         {/* 🔴 标签舌只在展开时渲染。它是 `-top-[19px]` 探出面板上缘的，面板
@@ -117,25 +128,21 @@ function BottomPanel({ open, onClose, title, children, heightVh, accent = '#8a6a
             <span className="punch absolute left-[13px] top-[102px] w-[11px] h-[11px] rounded-full" />
           </>
         )}
-        <div
-          className="relative overflow-y-auto pl-[34px] pr-4 pb-6"
-          style={{ maxHeight: `calc(${maxH}vh - 8px)` }}
-        >
-          {/* 🔴 收起键放在**流里**，不是 absolute 浮在内容上。
-              浮的那版跟每一页的第一行都打架（角色卡的分类标签、队友的人数行…）
-              ——绝对定位的控件没有"内容会长什么样"的信息，必然撞。
-              这里它自己占一行，任何页面都不会被它压住。 */}
-          <div className="flex justify-end pt-2.5 pb-1.5">
-            <button
-              onClick={onClose}
-              className="typed flex items-center gap-1 text-[10.5px] text-ink-soft active:text-ink px-1 py-0.5"
-            >
-              收起
-              <X className="w-3 h-3" strokeWidth={2.5} />
-            </button>
-          </div>
-          {children}
+        {/* 🔴 收起键**固定在顶部不参与滚动**，且不是 absolute 浮在内容上。
+            浮的那版跟每一页的第一行都打架（角色卡的分类标签、队友的人数行…）
+            ——绝对定位的控件没有"内容会长什么样"的信息，必然撞。
+            现在它自己占一行、钉在面板顶部，任何页面、任何滚动位置都不会被压。 */}
+        <div className="flex-none flex justify-end pl-[34px] pr-4 pt-2.5 pb-1.5">
+          <button
+            onClick={onClose}
+            className="typed flex items-center gap-1 text-[10.5px] text-ink-soft active:text-ink px-1 py-0.5"
+          >
+            收起
+            <X className="w-3 h-3" strokeWidth={2.5} />
+          </button>
         </div>
+        {/* 高度是常量，内容多少都在这里滚——切 tab 面板不会跳 */}
+        <div className="relative flex-1 min-h-0 overflow-y-auto pl-[34px] pr-4 pb-6">{children}</div>
       </div>
     </>
   )
@@ -1589,7 +1596,7 @@ export default function RoomPage() {
 
       {/* Panel: 技能——按职业技能/兴趣技能分两页，各自按数值从高到低排列。
           固定半屏高度，两个页签内容多少不一样也不会让面板忽高忽低。 */}
-      <BottomPanel accent="#4e6b3e" paper="#c5c2a4" open={openPanel === 'skills'} onClose={() => setOpenPanel(null)} title="技能" heightVh={50}>
+      <BottomPanel accent="#4e6b3e" paper="#c5c2a4" open={openPanel === 'skills'} onClose={() => setOpenPanel(null)} title="技能">
         {character ? (
           <>
             <div className="flex gap-1.5 mb-3.5">

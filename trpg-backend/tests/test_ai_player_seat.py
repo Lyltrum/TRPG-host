@@ -23,10 +23,10 @@ from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.runtime.deps import KeeperDeps
 from app.core.keeper.runtime.location_state import PLAYER_LOCATION_KEY, load_player_locations
 from app.core.keeper.runtime.phase import PHASE_INVESTIGATION, PHASE_KEY
 from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
-from app.core.keeper.runtime.tools import KeeperDeps
 from app.core.keeper.runtime.turn_executor import execute_side_effects
 from app.models.room import Character, Player, Room
 

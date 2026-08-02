@@ -1,5 +1,5 @@
-"""两段式玩家掷骰：待掷检定队列（app/core/keeper/pending.py）+
-`KeeperAgent.resolve_check`（app/core/keeper/agent.py）。
+"""两段式玩家掷骰：待掷检定队列（app/core/keeper/runtime/pending.py）+
+`KeeperAgent.resolve_check`（app/core/keeper/runtime/agent.py）。
 
 `PendingCheckManager` 的单测不碰数据库/LLM，纯内存结构断言。
 `resolve_check` 的单测需要真实 DB 写入（服务端权威掷骰要落库/改角色卡），
@@ -22,13 +22,13 @@ from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.memory.fact_ledger import revealed_fact_ids
 from app.core.keeper.runtime.agent import KeeperAgent
+from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.runtime.pending import (
     PendingCheck,
     PendingCheckManager,
     pending_check_manager,
     to_notice,
 )
-from app.core.keeper.runtime.tools import KeeperDeps, KeeperToolError
 from app.core.narration.contract import CheckResultNotice, NarrationContext, NarrationOutcome
 from app.models.room import Character, Player, Room
 

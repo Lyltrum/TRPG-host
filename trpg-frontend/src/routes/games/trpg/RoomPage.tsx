@@ -1340,7 +1340,9 @@ export default function RoomPage() {
               </button>
             </div>
           )}
-          // 待掷 = 一张盖了章的表单，横排：文案在左、掷骰在右
+          {/* 待掷 = 一张盖了章的表单，横排：文案在左、掷骰在右。
+              ⚠️ 这里必须用 `{'{'}/* *{'/'}{'}'}` 而不是 `//`——JSX 的 children 位置里
+              `//` 不是注释，是**会被渲染出来的文本**。 */}
           <div className="paper-grain relative flex items-center gap-2.5 bg-dossier text-ink border-l-4 border-double border-rust px-3 py-2.5 shadow-[0_2px_0_rgba(0,0,0,.4),0_8px_16px_rgba(0,0,0,.42)]">
             <span className="flex-1 text-[12.5px] font-semibold">
               守秘人请求：{pendingCheck.skill ? `${pendingCheck.skill}检定` : '理智检定'}

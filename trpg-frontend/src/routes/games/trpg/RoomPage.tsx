@@ -1200,7 +1200,7 @@ export default function RoomPage() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="typed flex items-baseline gap-2 mb-1">
-                    <span className="text-[10px] text-brass-bright">{msg.sender}</span>
+                    <span className="text-[11.5px] text-brass-bright">{msg.sender}</span>
                     <span className="text-[10.5px] text-text-dim">{msg.time}</span>
                   </div>
                   <div className="kp-bubble paper-grain relative bg-book text-ink px-3 py-2.5">

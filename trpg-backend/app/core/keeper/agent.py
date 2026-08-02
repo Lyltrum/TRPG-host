@@ -27,7 +27,6 @@ openai-agents SDK 不再出现在这条主路径上（依赖暂保留，未来�
 
 import asyncio
 import random
-from collections.abc import Callable
 from dataclasses import replace
 
 import structlog
@@ -39,15 +38,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.keeper.capabilities import (
     audit_fields,
     reserved_state_keys,
-    situation_blocks,
-    visible_keeper_state,
 )
 from app.core.keeper.capabilities.san_check.executor import san_check_detail
 from app.core.keeper.capabilities.skill_check.executor import roll_check_detail
 from app.core.keeper.chapter import (
-    load_chapters,
     record_chapter,
-    render_chapters,
     should_summarize,
     turns_since_last_chapter,
 )
@@ -56,7 +51,6 @@ from app.core.keeper.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.fact_ledger import (
     record_revelations,
     render_ledger,
-    revealed_fact_ids,
     visible_fact_ids,
 )
 from app.core.keeper.history import (
@@ -64,7 +58,6 @@ from app.core.keeper.history import (
     HISTORY_LIMIT,
     HistoryLine,
     history_lines_from_events,
-    visible_history,
 )
 from app.core.keeper.leak_guard import log_leak_hits, scrub_meta_leaks
 from app.core.keeper.location_state import (
@@ -72,13 +65,15 @@ from app.core.keeper.location_state import (
     load_hidden_players,
     location_of,
 )
+from app.core.keeper.location_state import (
+    scene_changed as has_scene_changed,
+)
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.pending import PendingCheck, pending_check_manager, to_notice
 from app.core.keeper.phase import (
     PHASE_FINISHED,
     PHASE_KEY,
     PHASE_OPENING,
-    format_phase_status,
     load_ending_id,
     load_phase,
     set_phase_impl,
@@ -90,7 +85,6 @@ from app.core.keeper.prompts import (
     build_narrator_instructions,
     format_chapter_input,
     format_narrator_input,
-    format_turn_input,
 )
 from app.core.keeper.prose_discipline import (
     clip_narration,
@@ -101,6 +95,7 @@ from app.core.keeper.prose_discipline import (
 )
 from app.core.keeper.registry import Capability
 from app.core.keeper.sheet_digest import format_sheet
+from app.core.keeper.situation import SituationBuilder, build_situation
 from app.core.keeper.subject import KEEPER
 from app.core.keeper.turn_executor import create_pending_checks, execute_side_effects
 from app.core.keeper.turn_policy import CHECK_CAPABILITIES, apply_code_forcing, classify_turn
@@ -330,62 +325,22 @@ class KeeperAgent(Narrator):
                 PHASE_KEY: PHASE_OPENING,
             }
 
-        # 阶段状态由代码注入。
-        phase_status = format_phase_status(phase, ending_id)
-        # 代码记账的键一律不原样喂给模型，判据与"state_updates 不许写"同源，
-        # 见 `visible_keeper_state` 的说明。
-        visible_state = visible_keeper_state(keeper_state)
-        # 事实账本 L1：读全量（不设 limit）——它必须活过 HISTORY_LIMIT 的
-        # 200 条滑动窗口，这正是它存在的理由。
-        async with self._session_factory() as db:
-            known_facts = await revealed_fact_ids(db, room_id=room_id)
-            chapters = await load_chapters(db, room_id=room_id)
-        ledger_status = render_ledger(self._module, known_facts)
-        chapters_status = render_chapters(chapters)
-        # 已经垂直切出去的能力要摆在模型眼前的状态（exec/27 阶段 2）：
-        # 目前是 health 的「NPC 当前状态」。没记过账时该块整块不渲染。
-        # 🔴 这个钩子是切 health 时才发现漏掉的——能力不只要能改世界，还得让
-        # 模型**看见**自己改成了什么样，否则下一轮只能从上一段散文里猜。
-        capability_status = situation_blocks(
-            self._module,
-            keeper_state,
+        situation_builder = await build_situation(
+            session_factory=self._session_factory,
+            module=self._module,
+            room_id=room_id,
             observer_id=context.player_id,
-            players=tuple(players),
+            keeper_state=keeper_state,
+            history_lines=history_lines,
+            roster=roster,
+            players=players,
+            phase=phase,
+            ending_id=ending_id,
+            is_heartbeat=is_heartbeat,
+            is_opening_ceremony=is_opening_ceremony,
         )
-
-        def build_situation(
-            *,
-            audience: frozenset[str] | None,
-            ledger: str,
-            nickname: str,
-            utterance: str,
-        ) -> str:
-            """按受众组装局面块（exec/14 P5.2d）。
-
-            `audience=None` = 守秘人视图（裁决阶段用）：历史与账本全给。
-            分组叙事时传该组的受众，历史/账本/原话三处一起裁——**模型拿不到
-            的东西才是真的漏不出来**，这比在 prompt 末尾请它别说可靠。
-            """
-            return format_turn_input(
-                visible_state,
-                visible_history(history_lines, audience),
-                roster,
-                nickname,
-                utterance,
-                phase_status=phase_status,
-                ledger_status=ledger,
-                chapters_status=chapters_status,
-                capability_blocks=capability_status,
-                is_heartbeat=is_heartbeat,
-                is_opening_ceremony=is_opening_ceremony,
-                phase=phase,
-            )
-
-        situation = build_situation(
-            audience=None,
-            ledger=ledger_status,
-            nickname=context.player_nickname,
-            utterance=context.utterance,
+        situation = situation_builder.for_keeper(
+            nickname=context.player_nickname, utterance=context.utterance
         )
 
         # 有 structured 开场素材时：仪式轮不跑裁决（开场没有玩家行动可裁决），
@@ -514,27 +469,9 @@ class KeeperAgent(Narrator):
         # "钥匙已经转了半圈、门已经推开"，跳过了道别+赶路，读起来像瞬移。
         # 心跳/开场仪式各自已有独立的内容约束，跳过这条。
         #
-        # 🔴 P5.2：判据从"房间级「当前场景」字段变了没有"改成**逐人位置**
-        # 比对——分头探索后房间不再有单一"当前场景"，而"谁挪了窝"本来就
-        # 是按人问的问题。因此改成读**执行之后**的状态（位置由 tools 写库，
-        # 不是从 decision 字段猜），这也顺带覆盖了 decision.moves。
-        # 没有任何一个人两端都有 node_id 时，退回「当前场景」自由文本比较
-        # （兼容尚未产出 node id 的模组/历史房间）。
+        # 判据见 `location_state.scene_changed`（逐人位置比对，读执行后的状态）。
         after_state = await self._read_keeper_state(room_id)
-        before_nodes = {pid: location_of(keeper_state, pid) for pid in turn_player_ids}
-        after_nodes = {pid: location_of(after_state, pid) for pid in turn_player_ids}
-        has_node_ids = any(
-            before_nodes[pid] is not None and after_nodes[pid] is not None
-            for pid in turn_player_ids
-        )
-        if has_node_ids:
-            scene_changed = any(before_nodes[pid] != after_nodes[pid] for pid in turn_player_ids)
-        else:
-            prev_scene = (keeper_state or {}).get("当前场景")
-            new_scene = (after_state or {}).get("当前场景")
-            scene_changed = (
-                prev_scene is not None and new_scene is not None and prev_scene != new_scene
-            )
+        scene_changed = has_scene_changed(keeper_state, after_state, turn_player_ids)
         # 分段摘要 L2（exec/14 P4.2）：场景切换 = 天然的章节边界。**后台**整理，
         # 玩家等的是叙事，不该为"整理笔记"多等几秒；失败只记日志不影响这轮。
         if scene_changed and not is_heartbeat and not is_opening_ceremony:
@@ -590,7 +527,7 @@ class KeeperAgent(Narrator):
             narration, segments = await self._narrate_per_audience(
                 room_id=room_id,
                 situation=situation,
-                build_situation=build_situation,
+                situation_builder=situation_builder,
                 utterances=context.utterances,
                 fallback_nickname=context.player_nickname,
                 fallback_utterance=context.utterance,
@@ -635,7 +572,7 @@ class KeeperAgent(Narrator):
         narration, segments = await self._narrate_per_audience(
             room_id=room_id,
             situation=situation,
-            build_situation=build_situation,
+            situation_builder=situation_builder,
             utterances=context.utterances,
             fallback_nickname=context.player_nickname,
             fallback_utterance=context.utterance,
@@ -955,7 +892,7 @@ class KeeperAgent(Narrator):
         *,
         room_id: str,
         situation: str,
-        build_situation: Callable[..., str],
+        situation_builder: SituationBuilder,
         utterances: tuple[PlayerUtterance, ...],
         fallback_nickname: str,
         fallback_utterance: str,
@@ -986,7 +923,7 @@ class KeeperAgent(Narrator):
 
         ## 🔴 保密靠的是"拿不到"，不是"请你别说"（P5.2d）
 
-        每一段叙事的局面块都由 `build_situation` **按这一段的受众重建**：
+        每一段叙事的局面块都由 `situation_builder` **按这一段的受众重建**：
         历史、线索账本、本轮原话三处一起裁。门厅那段的模型上下文里根本没有
         地下室发生过什么，于是它想漏也漏不出来——这是结构性的，不是纪律性的。
 
@@ -1057,7 +994,7 @@ class KeeperAgent(Narrator):
             async with self._session_factory() as db:
                 known = await visible_fact_ids(db, room_id=room_id, audience=frozenset(audience))
             nickname, said = _said_by(audience)
-            scoped_situation = build_situation(
+            scoped_situation = situation_builder.render(
                 audience=frozenset(audience),
                 ledger=render_ledger(self._module, known),
                 nickname=nickname,

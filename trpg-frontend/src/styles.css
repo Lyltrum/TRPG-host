@@ -40,10 +40,15 @@
        ——稿子里那些框是半透明压在被台灯照亮的桌面上，实现时为了修"内容透出来"
        改成了不透明，就变成了一圈死黑。现在把框整体提亮、并且保持暖调，
        让它读起来是"桌面之外的木框"而不是"没有光的洞"。 */
-    --c-page: 38 30 21; /* 顶栏 / HP条 / 输入区这类"桌面之外"的框 */
-    --c-panel: 48 38 27; /* 频道 tab / 底部 tab */
-    --c-card: 52 41 29; /* 桌面本身：二档胡桃木，略提亮 */
-    --c-input: 30 24 17;
+    /* 🔴 第三轮提亮，这次是大幅的。前两轮各提 10% 都被判"还是太暗"——
+       因为**根本问题不是亮度，是木纹没显出来**：`overlay` 混合在暗底上几乎
+       无效，于是整块读成一片纯色（"洞"），不是木头。
+       改法是**把底提到真实胡桃木的亮度**，木纹用 `multiply` 压深纹路——
+       深纹压浅木才看得见。底亮了之后纹理才有地方显。 */
+    --c-page: 58 44 31; /* 顶栏 / HP条 / 输入区这类"桌面之外"的框 */
+    --c-panel: 71 54 37; /* 频道 tab / 底部 tab */
+    --c-card: 90 69 48; /* 桌面本身：中调胡桃木 #5a4530 */
+    --c-input: 45 34 24;
     --c-border-light: 47 40 35;
     --c-border-mid: 71 59 45;
     --c-brass: 176 138 74;
@@ -161,20 +166,23 @@
 
   /* 桌面木纹：各向异性 turbulence（横向高频 + 纵向极低频 = 顺纹长条理），
      叠一层更宽的年轮走向。纯色是"假"的最大来源。 */
+  /* 🔴 `multiply` 不是 `overlay`：深纹路压在浅木上才看得见。
+     用 overlay 时整块读成一片纯色，真机上三轮都被判"太暗"——症结在这里，
+     不在亮度数值。两层：细的顺纹条理 + 更宽的年轮走向。 */
   .theme-coc .desk-grain::before {
     content: '';
     position: absolute;
     inset: 0;
     pointer-events: none;
-    mix-blend-mode: overlay;
+    mix-blend-mode: multiply;
+    opacity: 0.85;
     background-image:
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='390' height='760'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9 0.004' numOctaves='4' seed='11'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='390' height='760' filter='url(%23g)' opacity='0.42'/%3E%3C/svg%3E"),
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='390' height='760'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.055 0.0022' numOctaves='2' seed='4'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='390' height='760' filter='url(%23b)' opacity='0.3'/%3E%3C/svg%3E");
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='390' height='760'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85 0.0035' numOctaves='4' seed='11'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='390' height='760' filter='url(%23g)' opacity='0.5'/%3E%3C/svg%3E"),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='390' height='760'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.05 0.002' numOctaves='2' seed='4'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='390' height='760' filter='url(%23b)' opacity='0.45'/%3E%3C/svg%3E");
   }
-  /* 桌面上方那盏灯。加光源比抬高底色管用——一档太暗的问题不是数值低，
-     是没有光源方向，整块读起来是"空的"。 */
+  /* 台灯：桌面提亮之后光晕也要跟着加强，否则看不出光源方向 */
   .theme-coc .desk-lamp {
-    background-image: radial-gradient(105% 50% at 50% 24%, rgba(214, 168, 96, 0.15) 0%, transparent 68%);
+    background-image: radial-gradient(110% 55% at 50% 22%, rgba(255, 206, 138, 0.22) 0%, transparent 70%);
   }
 
   /* 纸面颗粒：任何一张"纸"都该有，压在纸色上 */

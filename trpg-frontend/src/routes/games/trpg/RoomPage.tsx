@@ -1079,8 +1079,11 @@ export default function RoomPage() {
           // 系统提示：居中的一枚小铭牌，不是聊天软件的圆胶囊
           if (msg.type === 'system') {
             return (
+              // 🔴 系统提示改成**一枚浅色小纸签**。原来是深底深字加细边，
+              // 在木桌上几乎读不出来——机制信息不该比故事更难看清。
+              // 材质上也说得通：它是别在案卷上的一张便条。
               <div key={i} className="flex justify-center py-0.5 animate-[fadeIn_0.3s_ease]">
-                <span className="typed text-[10px] text-text-muted bg-black/34 border border-black/50 px-3 py-[3px]">
+                <span className="typed text-[10px] text-ink bg-book/90 border border-ink/25 px-3 py-1 shadow-[0_1px_3px_rgba(0,0,0,.4)]">
                   {msg.content}
                 </span>
               </div>

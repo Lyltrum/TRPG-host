@@ -94,17 +94,7 @@ from app.core.keeper.prompts import (
 )
 from app.core.keeper.prose_discipline import (
     clip_narration,
-    inject_action_resolution_guidance,
-    inject_confusion_guidance,
-    inject_feasibility_question_guidance,
-    inject_kp_question_guidance,
     inject_scene_transition_guidance,
-    inject_spotlight_guidance,
-    inject_weird_response_guidance,
-    is_clear_action_intent,
-    is_player_confused,
-    is_violence_edge_utterance,
-    is_weird_or_meta_utterance,
     narration_limit,
     narration_max_tokens,
     scrub_kp_anti_patterns,
@@ -113,11 +103,7 @@ from app.core.keeper.registry import Capability
 from app.core.keeper.sheet_digest import format_sheet
 from app.core.keeper.subject import KEEPER
 from app.core.keeper.turn_executor import create_pending_checks, execute_side_effects
-from app.core.keeper.turn_policy import (
-    CHECK_CAPABILITIES,
-    SCENE_ADVANCE_CAPABILITIES,
-    revoke,
-)
+from app.core.keeper.turn_policy import CHECK_CAPABILITIES, apply_code_forcing, classify_turn
 from app.core.llm_tape import build_llm_client
 from app.core.narration.contract import (
     CheckResultCallback,
@@ -465,108 +451,26 @@ class KeeperAgent(Narrator):
         if is_heartbeat or is_opening_ceremony:
             revoked |= CHECK_CAPABILITIES
 
-        # 迷茫 / 怪话 / 明确行动：代码注入 guidance（不靠模型自觉）。
-        # 🔴 2026-07-29：分类信号从正则改为裁决 LLM 在同一次调用里顺手给出的
-        # player_state 字段——正则要求关键词字面严格相邻（如"我该"必须紧邻），
-        # 真人实测"我现在该做什么"（插了"现在"）就匹配不上，这是正则做语义
-        # 分类的结构性上限，不是"这条正则不够全"。只有裁决完全失败（走
-        # _FALLBACK_ADJUDICATE_GUIDANCE 兜底、此时 player_state 只是默认值
-        # "normal"、不可信）才退回正则作为兜底安全网。
-        is_adjudicate_fallback = decision.narration_guidance == _FALLBACK_ADJUDICATE_GUIDANCE
-        if is_adjudicate_fallback:
-            confused = is_player_confused(context.utterance)
-            weird = is_weird_or_meta_utterance(context.utterance)
-            action_intent = is_clear_action_intent(context.utterance)
-        else:
-            confused = decision.player_state == "confused"
-            weird = decision.player_state == "weird_or_meta"
-            action_intent = decision.player_state == "clear_action"
-        # 玩家本轮对人动手/强行突破（exec/19 #44）。真正的注入条件还要加上
-        # "本轮没裁出任何检定"，那要等 create_pending_checks 跑完才知道，
-        # 所以这里只先记住分类。
-        physical_conflict = (
-            not is_adjudicate_fallback
-            and decision.player_state == "physical_conflict"
-            and not is_heartbeat
-            and not is_opening_ceremony
+        # 分类与代码强制（exec/27 阶段 4 抽进 `turn_policy`）。
+        # 🔴 那条 if/elif 的**顺序就是语义**，且拆错会静默改行为——所以它有一份
+        # 逐格钉死的表征测试（`test_turn_classification_characterization.py`），
+        # 抽出去前后 27 格必须逐条不变。
+        classification = classify_turn(
+            decision,
+            context.utterance,
+            fallback_guidance=_FALLBACK_ADJUDICATE_GUIDANCE,
+            is_heartbeat=is_heartbeat,
+            is_opening_ceremony=is_opening_ceremony,
         )
-        # 🔴 真人实测 2026-07-31（exec/19 #40）：玩家问「科比特先生在家吗」，
-        # 问的是守秘人（他忘了这个设定），叙事却把它演成角色在门厅里喊话、
-        # 还照常推进了场景。提问不是行动——这里代码强制把推进世界的手段全部
-        # 收走（检定/移动/场景指针），只留"回答"这一件事。
-        #
-        # 🔴 2026-08-01（exec/25 #59）：`feasibility_question` 走**同一条**分支。
-        # 玩家问「我们能直接去他的地下室吗」被分成了 `clear_action`，叙事直接
-        # 推进了剧情——裁决器自己的 thinking 写着"需判断可行性并推进行动"，
-        # 它知道玩家在问可行性，但六个格子里没有这一类。
-        #
-        # 加一格而不是拓宽 `question_to_kp` 的定义：**枚举的格子是给模型分类
-        # 用的，不是给代码分支用的**。硬把"征询许可"塞进"回忆已知设定"，那个
-        # 类别就变成"要么…要么…"，而含混的定义本身就是分类错的来源。两格行为
-        # 相同不是问题，定义能不能写干净才是目的（同 exec/17 的判据）。
-        asks_kp = (
-            not is_adjudicate_fallback
-            and not is_heartbeat
-            and not is_opening_ceremony
-            and decision.player_state in ("question_to_kp", "feasibility_question")
+        decision = apply_code_forcing(
+            decision,
+            classification,
+            utterance=context.utterance,
+            spotlight_nickname=context.spotlight_nickname,
+            is_heartbeat=is_heartbeat,
+            is_opening_ceremony=is_opening_ceremony,
+            revoked=frozenset(revoked),
         )
-        feasibility = asks_kp and decision.player_state == "feasibility_question"
-        kp_question = asks_kp and not feasibility
-        if asks_kp:
-            # 收走推进世界的手段：两类共用。guidance 分开——见
-            # prose_discipline 里那两段 prefix 的注释。
-            inject = (
-                inject_feasibility_question_guidance if feasibility else inject_kp_question_guidance
-            )
-            revoked |= CHECK_CAPABILITIES | SCENE_ADVANCE_CAPABILITIES
-            decision = decision.model_copy(
-                update={"narration_guidance": inject(decision.narration_guidance)}
-            )
-        elif confused:
-            # 🔴 裁决走兜底（_FALLBACK_ADJUDICATE_GUIDANCE）时不要把它和迷茫引导拼
-            # 一起——兜底文案说"别编造+可请玩家重说一遍"，迷茫引导说"必须给 1-2
-            # 个具体方向"，两句话方向相反，叙事模型会各退一步、缩回复述已知信息
-            # 这个最安全选项（真人实测 2026-07-28 复现：玩家问"该做什么"，回复是
-            # 前情复述而非建议）。迷茫引导本身已自洽（给方向不需要先问清楚），
-            # 兜底走这条分支时直接丢弃、不拼接。
-            base_guidance = "" if is_adjudicate_fallback else decision.narration_guidance
-            revoked |= CHECK_CAPABILITIES
-            decision = decision.model_copy(
-                update={"narration_guidance": inject_confusion_guidance(base_guidance)}
-            )
-        elif weird and not is_heartbeat and not is_opening_ceremony:
-            # 怪话接招：元/玩笑清检定；暴力边界保留检定（伤害/SAN）但同样强制接招
-            if not is_violence_edge_utterance(context.utterance):
-                revoked |= CHECK_CAPABILITIES
-            decision = decision.model_copy(
-                update={
-                    "narration_guidance": inject_weird_response_guidance(
-                        decision.narration_guidance
-                    ),
-                }
-            )
-        elif action_intent and not is_heartbeat and not is_opening_ceremony:
-            # 明确行动：强制推进，禁止街景挡枪（全模组通用）
-            decision = decision.model_copy(
-                update={
-                    "narration_guidance": inject_action_resolution_guidance(
-                        decision.narration_guidance
-                    ),
-                }
-            )
-
-        decision = revoke(decision, frozenset(revoked))
-
-        # 聚光灯（exec/14 P5.2）：导演层算出"谁最久没被点到"，这里强制注入。
-        # 与上面三选一叠加生效——被冷落跟他说的那句话是什么类型无关。
-        if context.spotlight_nickname:
-            decision = decision.model_copy(
-                update={
-                    "narration_guidance": inject_spotlight_guidance(
-                        decision.narration_guidance, context.spotlight_nickname
-                    ),
-                }
-            )
 
         char_limit = narration_limit(
             is_heartbeat=is_heartbeat,
@@ -598,20 +502,7 @@ class KeeperAgent(Narrator):
             room_id=room_id,
             player_id=context.player_id,
             decision=decision,
-            forced=[
-                name
-                for name, hit in (
-                    ("kp_question", kp_question),
-                    ("feasibility_question", feasibility),
-                    ("confused", confused),
-                    ("weird_or_meta", weird),
-                    ("clear_action", action_intent),
-                    ("physical_conflict", physical_conflict),
-                    ("adjudicate_fallback", is_adjudicate_fallback),
-                    ("spotlight", bool(context.spotlight_nickname)),
-                )
-                if hit
-            ],
+            forced=classification.forced_labels(spotlight=bool(context.spotlight_nickname)),
         )
 
         report, issues = await execute_side_effects(deps, decision, subject=KEEPER)
@@ -670,15 +561,15 @@ class KeeperAgent(Narrator):
             **audit_fields(decision),
             is_heartbeat=is_heartbeat,
             is_opening_ceremony=is_opening_ceremony,
-            player_confused=confused,
-            clear_action_intent=action_intent,
-            weird_or_meta=weird,
+            player_confused=classification.confused,
+            clear_action_intent=classification.clear_action,
+            weird_or_meta=classification.weird,
             scene_transition=scene_changed,
         )
 
         # exec/19 #44：动手了，但本轮一个检定都没裁出来（裁决器没发，或护栏
         # 拦掉）。此时叙事绝不能替玩家写出攻击的成败。
-        unresolved_conflict = physical_conflict and not pending_checks
+        unresolved_conflict = classification.physical_conflict and not pending_checks
         if unresolved_conflict:
             logger.info("keeper_unresolved_conflict", room_id=room_id)
 
@@ -709,8 +600,8 @@ class KeeperAgent(Narrator):
                 token_limit=token_limit,
                 char_limit=char_limit,
                 extra_suffix=check_boundary_hint,
-                action_intent=action_intent,
-                confused=confused,
+                action_intent=classification.clear_action,
+                confused=classification.confused,
                 keeper_state=after_state,
                 players=players,
                 turn_player_ids=turn_player_ids,
@@ -754,8 +645,8 @@ class KeeperAgent(Narrator):
             token_limit=token_limit,
             char_limit=char_limit,
             extra_suffix=no_check_suffix,
-            action_intent=action_intent,
-            confused=confused,
+            action_intent=classification.clear_action,
+            confused=classification.confused,
             keeper_state=after_state,
             players=players,
             turn_player_ids=turn_player_ids,

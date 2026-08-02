@@ -14,7 +14,10 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
+from app.core.keeper.capabilities import reserved_state_keys
+from app.core.keeper.capabilities.world_state.executor import update_state_impl
 from app.core.keeper.decision import KeeperDecision, PlayerMove
+from app.core.keeper.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.location_state import (
     PLAYER_LOCATION_KEY,
     format_party_locations,
@@ -26,7 +29,6 @@ from app.core.keeper.location_state import (
 )
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
-from app.core.keeper.tools import KeeperDeps, KeeperToolError, update_state_impl
 from app.core.keeper.turn_executor import create_pending_checks, execute_side_effects
 from app.models.room import Character, Player, Room
 
@@ -92,6 +94,7 @@ async def party() -> tuple[KeeperDeps, str, str]:
         session_factory=_session_factory,
         module=load_module(_FIXTURE_MODULE),
         ruleset=build_coc7_ruleset(),
+        reserved_state_keys=reserved_state_keys(),
         turn_player_ids=(a_id,),
         rng=random.Random(42),
     )

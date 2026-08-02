@@ -36,7 +36,12 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.keeper.capabilities import audit_fields, situation_blocks
+from app.core.keeper.capabilities import (
+    audit_fields,
+    reserved_state_keys,
+    situation_blocks,
+    visible_keeper_state,
+)
 from app.core.keeper.chapter import (
     load_chapters,
     record_chapter,
@@ -109,7 +114,6 @@ from app.core.keeper.subject import KEEPER
 from app.core.keeper.tools import (
     roll_check_detail,
     san_check_detail,
-    visible_keeper_state,
 )
 from app.core.keeper.turn_executor import create_pending_checks, execute_side_effects
 from app.core.keeper.turn_policy import (
@@ -332,6 +336,7 @@ class KeeperAgent(Narrator):
                 session_factory=self._session_factory,
                 module=self._module,
                 ruleset=self._ruleset,
+                reserved_state_keys=reserved_state_keys(),
                 turn_player_ids=turn_player_ids,
                 rng=self._rng,
             )
@@ -581,6 +586,7 @@ class KeeperAgent(Narrator):
             session_factory=self._session_factory,
             module=self._module,
             ruleset=self._ruleset,
+            reserved_state_keys=reserved_state_keys(),
             turn_player_ids=turn_player_ids,
             rng=self._rng,
         )
@@ -664,7 +670,6 @@ class KeeperAgent(Narrator):
             thinking=decision.thinking,
             checks=[c.skill_id for c in decision.checks],
             san_checks=len(decision.san_checks),
-            state_updates=[u.key for u in decision.state_updates],
             moves=[f"{m.player}→{m.node_id}" for m in decision.moves],
             # 已经垂直切出去的能力自带审计字段（exec/27 阶段 2）——否则每加一片
             # 能力都得回来改这行，而漏了不报错、只是那片能力在日志里隐身。
@@ -801,6 +806,7 @@ class KeeperAgent(Narrator):
             session_factory=self._session_factory,
             module=self._module,
             ruleset=self._ruleset,
+            reserved_state_keys=reserved_state_keys(),
             rng=self._rng,
         )
         if pending.kind == "skill":

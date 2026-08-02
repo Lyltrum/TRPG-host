@@ -32,6 +32,7 @@ from app.core.keeper.capabilities.agenda.schema import AgendaDecisionFields
 from app.core.keeper.capabilities.clue_reveal.schema import ClueRevealDecisionFields
 from app.core.keeper.capabilities.health.schema import HealthDecisionFields
 from app.core.keeper.capabilities.progression.schema import ProgressionDecisionFields
+from app.core.keeper.capabilities.world_state.schema import WorldStateDecisionFields
 from app.core.keeper.registry import DecisionModel
 
 
@@ -83,31 +84,6 @@ class SanCheckRequest(DecisionModel):
     reason: str = ""
 
 
-class StateUpdate(DecisionModel):
-    """世界状态的一条记账。
-
-    🔴 `subject` 是 exec/24 §8.2 的收口：此前只有自由文本 `key`，模型现编键名
-    （实测同一份状态里出现过 `科比特态度`、`包裹状态`、`游戏内时间`）。三个后果：
-    同一件事下一轮可能换个名字（"科比特态度" vs "科比特先生态度"）两条并存且
-    谁都不报错；键没有主体，**没法按位置/章节裁剪**，长战役里这块会线性膨胀；
-    也回答不了"这条状态谁看得见"。
-
-    收口方式是给它一个主体，而不是继续在 key 上打补丁——同 exec/17 的判据：
-    **不要用自由文本当标识符**。
-    """
-
-    subject: str = Field(
-        default="world",
-        description=(
-            "这条状态挂在谁身上：剧本里的 NPC id / 节点 id；"
-            "不属于任何具体实体的世界级状态（游戏内时间、天气、委托进度）填 world。"
-            "必须取自剧本，不得编造 id"
-        ),
-    )
-    key: str = Field(description="属性名，如 态度／状态／进度。**不要把主体名字写进 key**")
-    value: str
-
-
 class PlayerMove(DecisionModel):
     """一名调查员的位置**单独**被指定（分头探索，exec/14 P5.2）。
 
@@ -149,6 +125,7 @@ class KeeperDecision(
     ClueRevealDecisionFields,
     HealthDecisionFields,
     ProgressionDecisionFields,
+    WorldStateDecisionFields,
     DecisionModel,
 ):
     """裁决阶段的完整输出契约。
@@ -166,7 +143,6 @@ class KeeperDecision(
     thinking: str = Field(default="", description="裁决理由，最多 30 字（审计用，不广播给玩家）")
     checks: list[CheckRequest] = Field(default_factory=list)
     san_checks: list[SanCheckRequest] = Field(default_factory=list)
-    state_updates: list[StateUpdate] = Field(default_factory=list)
     # 场景指针结构化（04 遗留项）：state_updates 里的「当前场景」是人类可读
     # 地名，这个字段是同一件事的机器可读版——剧本节点树里真实存在的 id
     # （见 module_loader.render_full 每个节点标题旁的 `id: xxx`）。取代此前

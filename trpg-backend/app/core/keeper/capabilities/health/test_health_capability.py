@@ -22,6 +22,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
+from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.capabilities.health.executor import adjust_hp_impl, adjust_npc_hp_impl
 from app.core.keeper.capabilities.health.npc_state import (
     NPC_STATE_KEY,
@@ -31,12 +32,12 @@ from app.core.keeper.capabilities.health.npc_state import (
     load_npc_states,
 )
 from app.core.keeper.capabilities.health.schema import HpChange
+from app.core.keeper.capabilities.world_state.executor import update_state_impl
 from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.primitives.npcs import resolve_npc_id
 from app.core.keeper.registry import SituationContext
-from app.core.keeper.tools import update_state_impl
 from app.core.keeper.turn_executor import execute_side_effects
 from app.models.room import Character, Player, Room
 
@@ -133,6 +134,7 @@ def _deps(room_id: str, player_id: str) -> KeeperDeps:
         session_factory=_session_factory,
         module=_MODULE,
         ruleset=build_coc7_ruleset(),
+        reserved_state_keys=reserved_state_keys(),
     )
 
 

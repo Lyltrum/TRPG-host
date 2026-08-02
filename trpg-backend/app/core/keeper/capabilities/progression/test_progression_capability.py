@@ -12,6 +12,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
+from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.capabilities.progression.endings import format_endings_status
 from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.deps import KeeperDeps
@@ -87,6 +88,7 @@ async def deps() -> KeeperDeps:
         session_factory=_session_factory,
         module=module,
         ruleset=build_coc7_ruleset(),
+        reserved_state_keys=reserved_state_keys(),
     )
 
 

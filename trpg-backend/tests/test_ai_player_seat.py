@@ -20,6 +20,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
+from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.location_state import PLAYER_LOCATION_KEY, load_player_locations
 from app.core.keeper.module_loader import load_module
@@ -170,6 +171,7 @@ async def test_ai_player_moves_with_the_party() -> None:
         session_factory=_session_factory,
         module=_MODULE,
         ruleset=build_coc7_ruleset(),
+        reserved_state_keys=reserved_state_keys(),
     )
     await execute_side_effects(deps, KeeperDecision(current_node_id="cellar"))
 

@@ -11,7 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.core.keeper.capabilities.health.schema import HpChange
-from app.core.keeper.decision import KeeperDecision, StateUpdate
+from app.core.keeper.capabilities.world_state.schema import StateUpdate
+from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.module_loader import (
     ModuleFact,
     load_module,

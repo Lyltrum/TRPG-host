@@ -73,6 +73,35 @@ class KeeperToolError(ValueError):
     执行器收集后作为 issues 喂给叙事阶段，让它自然圆场。"""
 
 
+def _matches_player(player: Player, character: Character | None, wanted: str) -> bool:
+    """房间花名册的匹配规则：昵称或角色名。
+
+    单独抽出来是因为它有**两个**调用者——`resolve_character`（找人）和
+    `is_room_member`（判别名字属于哪个命名空间）。同一条规则写两遍，迟早
+    一边认得另一边不认得，而那时什么都不会变红。
+    """
+    return player.nickname == wanted or (character is not None and character.name == wanted)
+
+
+async def is_room_member(db: AsyncSession, deps: KeeperDeps, name: str) -> bool:
+    """房间里有没有这个人（按昵称或角色名）。**不抛异常。**
+
+    给"这个名字指的是调查员还是 NPC"的判别用（`exec/20` §2.4）：两边都是
+    白名单，代码自己查得出来，不该靠裁决器判对。
+    """
+    wanted = (name or "").strip()
+    if not wanted:
+        return False
+    players = list(
+        (await db.execute(select(Player).where(Player.room_id == deps.room_id))).scalars()
+    )
+    characters = list(
+        (await db.execute(select(Character).where(Character.room_id == deps.room_id))).scalars()
+    )
+    chars_by_player = {c.player_id: c for c in characters}
+    return any(_matches_player(p, chars_by_player.get(p.id), wanted) for p in players)
+
+
 async def resolve_character(
     db: AsyncSession, deps: KeeperDeps, player_name: str | None
 ) -> tuple[Player, Character]:
@@ -91,12 +120,7 @@ async def resolve_character(
     else:
         wanted = player_name.strip()
         player = next(
-            (
-                p
-                for p in players
-                if p.nickname == wanted
-                or (chars_by_player.get(p.id) is not None and chars_by_player[p.id].name == wanted)
-            ),
+            (p for p in players if _matches_player(p, chars_by_player.get(p.id), wanted)),
             None,
         )
     if player is None:

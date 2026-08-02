@@ -68,25 +68,65 @@ function BottomPanel({ open, onClose, title, children, heightVh }: { open: boole
 
   return (
     <>
-      {open && <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} />}
+      {open && <div className="fixed inset-0 z-40 bg-black/60" onClick={onClose} />}
+      {/* 🔴 面板 = 档案：牛皮纸 + 标签舌 + 装订孔。不是 iOS 的圆角抽屉，
+          所以没有顶部那根"拖拽小横杠"——档案不靠拖，靠标签舌认。
+          `flap` 是从档案顶部探出来的那一小片，写着这份档案叫什么。 */}
       <div
-        className={`fixed bottom-0 left-0 right-0 z-50 bg-card rounded-t-2xl shadow-xl transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] max-w-[430px] mx-auto ${open ? 'translate-y-0' : 'translate-y-full'}`}
+        // 🔴 **故意不加 `theme-coc`**：档案是**浅色表面**（牛皮纸），面板内部
+        // 沿用平台的浅色 token 集（`text-text-primary` 是深墨、`bg-panel` 是浅
+        // 米色），打在牛皮纸上才读得出来。加了作用域会让文字变成浅奶白——
+        // 浅字压浅纸，整个面板等于空白。
+        // 判据：**深色表面用 `theme-coc`，纸面用默认 token。**
+        className={`fixed bottom-0 left-0 right-0 z-50 bg-dossier text-ink shadow-[0_-14px_34px_rgba(0,0,0,.66)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] max-w-[430px] mx-auto ${open ? 'translate-y-0' : 'translate-y-full'}`}
         style={heightVh ? { height: `${maxH}vh` } : { maxHeight: `${maxH}vh` }}
       >
-        <div className="flex flex-col items-center pt-2.5 pb-0 cursor-pointer" onClick={onClose}>
-          <div className="w-9 h-1 rounded-full bg-border-mid" />
-        </div>
-        <div className="flex items-center justify-between px-5 pt-2 pb-3">
-          <h3 className="text-base font-bold text-text-primary">{title}</h3>
-          <button onClick={onClose} className="w-7 h-7 rounded-full bg-panel flex items-center justify-center active:scale-90 transition-transform">
-            <X className="w-4 h-4 text-text-muted" strokeWidth={2.5} />
-          </button>
-        </div>
-        <div className="overflow-y-auto px-5 pb-6" style={{ maxHeight: `calc(${maxH}vh - 60px)` }}>
+        <button
+          onClick={onClose}
+          className="tab-flap absolute left-[26px] -top-[19px] z-10 bg-dossier text-ink typed text-[9px] px-3.5 pt-[5px] pb-1"
+        >
+          {title}
+        </button>
+        {/* 装订孔：孔里透出底下桌面的暗。正文左边距要避开它 */}
+        <span className="punch absolute left-[13px] top-[30px] w-[11px] h-[11px] rounded-full" />
+        <span className="punch absolute left-[13px] top-[58px] w-[11px] h-[11px] rounded-full" />
+        <span className="punch absolute left-[13px] top-[86px] w-[11px] h-[11px] rounded-full" />
+        <button
+          onClick={onClose}
+          aria-label="收起"
+          className="absolute right-3 top-3 z-10 w-6 h-6 flex items-center justify-center border border-ink/25 active:bg-ink/10"
+        >
+          <X className="w-3.5 h-3.5 text-ink-soft" strokeWidth={2.5} />
+        </button>
+        <div
+          className="paper-grain relative overflow-y-auto pl-[34px] pr-4 pt-5 pb-6"
+          style={{ maxHeight: `calc(${maxH}vh - 8px)` }}
+        >
           {children}
         </div>
       </div>
     </>
+  )
+}
+
+/** 回形针：夹在玩家便签左上角的金属丝。
+ *
+ * 🔴 画成真的双回环丝形，不是一根小横杠——它是"这是一张便签"最强的信号。
+ * 两层描边叠出金属感：粗的一层是本体，细的一层是高光。
+ *
+ * 🔴 自己与队友用不同金属（黄铜 / 钢），跟纸色、名字后缀一起构成三重区分
+ * ——多人局里一眼分辨靠的是颜色，不是读名字。
+ */
+function Paperclip({ metal }: { metal: 'brass' | 'steel' }) {
+  const [body, shine] = metal === 'brass' ? ['#8a6a2e', '#e8c885'] : ['#9aa0a8', '#e8ecf1']
+  const d = 'M8 40V13a5.5 5.5 0 0 1 11 0v25a4.6 4.6 0 0 1-9.2 0V18a2.7 2.7 0 0 1 5.4 0v21'
+  return (
+    <span className="clip" aria-hidden="true">
+      <svg viewBox="0 0 26 46" fill="none" className="w-full h-full block">
+        <path d={d} stroke={body} strokeWidth="2.6" strokeLinecap="round" />
+        <path d={d} stroke={shine} strokeWidth="0.9" strokeLinecap="round" opacity="0.7" />
+      </svg>
+    </span>
   )
 }
 
@@ -909,20 +949,28 @@ export default function RoomPage() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-card relative max-w-[430px] mx-auto">
+    // 🔴 `theme-coc`：卷宗主题的作用域边界。语义 token 在这里换成暗色，
+    // 作用域外（大厅/建房/建卡）继续用平台中性色——UI 改造是一页一页做的，
+    // 全站同时切会留下一堆"暗但没做过"的半成品页。
+    // `desk-grain`/`desk-lamp` 把这一层变成一张被台灯照着的胡桃木桌面。
+    <div className="theme-coc desk-grain desk-lamp h-full flex flex-col bg-card relative max-w-[430px] mx-auto">
       {/* Header */}
-      <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-border-light bg-page flex-shrink-0">
-        <button onClick={() => setConfirmExit(true)} className="w-8 h-8 rounded-full bg-card border border-border-light flex items-center justify-center active:bg-panel">
-          <ArrowLeft className="w-4 h-4 text-text-muted" strokeWidth={2.5} />
+      <div className="relative z-[1] flex items-center gap-2.5 px-3 py-2 border-b border-black/50 bg-black/35 flex-shrink-0">
+        <button
+          onClick={() => setConfirmExit(true)}
+          aria-label="退出"
+          className="cut-corner w-[30px] h-[30px] bg-black/30 border border-brass/35 flex items-center justify-center active:bg-brass/20"
+        >
+          <ArrowLeft className="w-[15px] h-[15px] text-brass-bright" strokeWidth={2.5} />
         </button>
-        <div className="w-8 h-8 rounded-full bg-[#f3eef8] flex items-center justify-center text-base flex-shrink-0">
+        <div className="w-[30px] h-[30px] bg-black/25 border border-black/50 flex items-center justify-center text-[15px] flex-shrink-0">
           🏚️
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-text-primary">
+          <div className="font-display text-sm text-text-primary tracking-[0.06em] truncate">
             {roomInfo?.moduleTitle || '对局中'}
           </div>
-          <div className="text-[11px] text-text-muted">
+          <div className="typed text-[9.5px] text-text-muted mt-px">
             {roomInfo ? `${roomInfo.players.length} 位调查员` : '克苏鲁的呼唤'}
           </div>
         </div>
@@ -935,16 +983,23 @@ export default function RoomPage() {
 
       {/* 退出确认——不是结束游戏，房间对其他人继续存在 */}
       {confirmExit && (
-        <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center px-8" onClick={() => setConfirmExit(false)}>
-          <div className="bg-card border border-border-light rounded-md p-5 w-full max-w-[300px]" onClick={(e) => e.stopPropagation()}>
-            <p className="text-sm text-text-body text-center mb-4">确定要退出游戏吗？房间会保留，之后可以从「我的游戏」继续。</p>
+        <div className="fixed inset-0 z-40 bg-black/62 flex items-center justify-center px-7" onClick={() => setConfirmExit(false)}>
+          {/* 一页通知：走书页材质，不是圆角对话框 */}
+          <div
+            className="leaf paper-grain bg-book text-ink px-[18px] pt-5 pb-4 w-full max-w-[300px] -rotate-[0.7deg]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="typed text-[9px] text-ink/50 border-b border-ink/20 pb-1.5 mb-3">离场</div>
+            <p className="font-display text-sm leading-[1.85] mb-3.5">
+              确定要退出游戏吗？<br />房间会保留，之后可以从「我的游戏」继续。
+            </p>
             <div className="flex gap-2">
               <button onClick={() => setConfirmExit(false)}
-                className="flex-1 py-2 rounded-sm bg-panel border border-border-light text-text-muted text-xs font-medium active:bg-border-light">
+                className="typed flex-1 py-2 text-[10px] bg-transparent border border-ink/30 text-ink-soft active:bg-ink/10">
                 取消
               </button>
               <button onClick={handleExit}
-                className="flex-1 py-2 rounded-sm bg-[#c04040] text-white text-xs font-medium active:bg-[#a03030]">
+                className="typed flex-1 py-2 text-[10px] bg-rust text-book border-none active:bg-rust-dark">
                 确认退出
               </button>
             </div>
@@ -955,7 +1010,7 @@ export default function RoomPage() {
       {/* 频道切换（issue #107）：主持人 = 跟 AI 的对话（全房间可见、进 AI 上下文）；
           讨论区 = 玩家之间商量（AI 完全看不见）。两个独立界面共用下方输入框，
           发送按当前频道分流。 */}
-      <div className="flex border-b border-border-light bg-page flex-shrink-0">
+      <div className="relative z-[1] flex bg-black/25 flex-shrink-0">
         {([
           { key: 'dm', label: '主持人', icon: Scroll },
           { key: 'chat', label: '讨论区', icon: MessagesSquare },
@@ -963,9 +1018,9 @@ export default function RoomPage() {
           <button
             key={tab.key}
             onClick={() => setChannel(tab.key)}
-            className={`flex-1 py-2 text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-colors border-b-2 ${
+            className={`flex-1 py-2.5 text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-colors border-b-2 ${
               channel === tab.key
-                ? 'text-brass-dark border-brass'
+                ? 'text-brass-bright border-brass'
                 : 'text-text-muted border-transparent'
             }`}
           >
@@ -1006,64 +1061,87 @@ export default function RoomPage() {
             })
           )
         ) : messages.map((msg, i) => {
+          // 系统提示：居中的一枚小铭牌，不是聊天软件的圆胶囊
           if (msg.type === 'system') {
             return (
-              <div key={i} className="text-center py-1.5 animate-[fadeIn_0.3s_ease]">
-                <span className="text-[11px] text-text-dim bg-panel px-3.5 py-1 rounded-[99px] font-mono">{msg.content}</span>
+              <div key={i} className="flex justify-center py-0.5 animate-[fadeIn_0.3s_ease]">
+                <span className="typed text-[10px] text-text-muted bg-black/34 border border-black/50 px-3 py-[3px]">
+                  {msg.content}
+                </span>
               </div>
             )
           }
 
           if (msg.type === 'dice') {
             return (
-              <div key={i} className="flex flex-row-reverse gap-2.5 animate-[msgIn_0.3s_ease]">
-                <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-sm bg-[#eef6ee] border border-border-light">
+              <div key={i} className="flex flex-row-reverse gap-2 items-start animate-[msgIn_0.3s_ease]">
+                <div className="w-[26px] h-[26px] flex-shrink-0 flex items-center justify-center text-[13px] bg-mold/15 border border-mold/50">
                   🎲
                 </div>
-                <div className="flex-1 min-w-0 text-right">
-                  <div className="text-[11px] font-semibold text-mold mb-0.5">{msg.sender} · 掷骰</div>
-                  <div className="text-sm leading-[1.65] text-text-body inline-block max-w-full px-3.5 py-2.5 bg-[#eef6ee] rounded-md font-mono text-left">
+                <div className="min-w-0 text-right">
+                  <div className="typed text-[9px] text-mold mb-[3px]">{msg.sender} · 掷骰</div>
+                  <div className="font-mono text-[13px] text-text-body bg-mold/12 border-l-2 border-mold px-2.5 py-1.5 inline-block text-left">
                     {msg.content}
                   </div>
-                  <div className="text-[10px] text-text-dim mt-0.5">{msg.time}</div>
+                  <div className="typed text-[9px] text-text-dim mt-1">{msg.time}</div>
                 </div>
               </div>
             )
           }
 
-          const isPlayer = msg.type === 'player' && msg.isSelf
           const isNarr = msg.type === 'narr'
+          // 🔴 空间规则：左 = 主持人，右 = 玩家们（自己与队友都靠右）。
+          // 讨论区没有主持人，左边空出来了 → 队友回到左边，左右分栏更好读。
+          const isSelf = msg.type === 'player' && msg.isSelf
+          const onRight = channel === 'dm' ? !isNarr : isSelf
 
+          // 守秘人 = 书页：裁齐的边、版心、装订侧阴影、页码
+          if (isNarr) {
+            return (
+              <div key={i} className="leaf paper-grain bg-book text-ink pl-[21px] pr-[17px] pt-3 pb-[26px] animate-[msgIn_0.3s_ease]">
+                <div className="typed flex justify-between text-[9px] text-ink/50 border-b border-ink/20 pb-1.5 mb-2.5">
+                  <span>{msg.sender}</span>
+                  <span>{msg.time}</span>
+                </div>
+                <p className="font-display text-[15px] leading-[1.95] whitespace-pre-wrap">{msg.content}</p>
+              </div>
+            )
+          }
+
+          // 玩家 = 便签 + 回形针。自己与队友三处不同：纸色、针的金属、名字后缀
           return (
-            <div key={i} className={`flex gap-2.5 ${isPlayer ? 'flex-row-reverse' : ''} animate-[msgIn_0.3s_ease]`}>
-              <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-sm border border-border-light ${isNarr ? 'bg-[#faf5eb] border-brass' : isPlayer ? 'bg-[#eef6ee]' : 'bg-panel'}`}>
-                {isNarr ? '📜' : isPlayer ? '🔍' : '🤖'}
-              </div>
-              <div className={`flex-1 min-w-0 ${isPlayer ? 'text-right' : ''}`}>
-                <div className={`text-[11px] font-semibold text-text-muted mb-0.5 ${isPlayer ? 'text-mold' : ''} ${isNarr ? 'text-brass-dark' : ''}`}>
+            <div
+              key={i}
+              className={`max-w-[82%] flex flex-col gap-[3px] animate-[msgIn_0.3s_ease] ${
+                onRight ? 'self-end items-end' : 'self-start items-start'
+              }`}
+            >
+              <div
+                className={`memo paper-grain relative w-full text-ink pl-[30px] pr-3.5 pt-[15px] pb-3 mt-2.5 ${
+                  isSelf ? 'bg-memo-self rotate-[0.8deg]' : 'bg-memo-mate -rotate-[0.7deg]'
+                }`}
+              >
+                <Paperclip metal={isSelf ? 'brass' : 'steel'} />
+                <div className={`typed text-[9px] text-ink/55 mb-1.5 ${onRight ? 'text-right' : 'text-left'}`}>
                   {msg.sender}
+                  {isSelf && <span className="text-rust"> · 你</span>}
                 </div>
-                <div className={`
-                  text-sm leading-[1.65] text-text-body inline-block max-w-full px-3.5 py-2.5 text-left
-                  ${isPlayer ? 'bg-[#eef6ee] rounded-md' : ''}
-                  ${isNarr ? 'bg-[#fdfaf4] border-l-[3px] border-brass rounded-r-sm rounded-l-none italic text-[#4a4030]' : ''}
-                  ${!isPlayer && !isNarr ? 'bg-panel rounded-md' : ''}
-                `}>
-                  {msg.private && !revealedPrivate.has(i) ? (
-                    <button
-                      type="button"
-                      onClick={() => setRevealedPrivate(prev => new Set(prev).add(i))}
-                      className="flex items-center gap-1.5 text-[12px] not-italic text-text-muted"
-                    >
-                      <EyeOff className="w-3.5 h-3.5" strokeWidth={2} />
-                      只有你能看到 · 点按查看
-                    </button>
-                  ) : (
-                    msg.content
-                  )}
-                </div>
-                <div className="text-[10px] text-text-dim mt-0.5">{msg.time}</div>
+                {msg.private && !revealedPrivate.has(i) ? (
+                  <button
+                    type="button"
+                    onClick={() => setRevealedPrivate(prev => new Set(prev).add(i))}
+                    className={`flex items-center gap-1.5 text-[12px] text-ink/60 w-full ${onRight ? 'justify-end' : ''}`}
+                  >
+                    <EyeOff className="w-3.5 h-3.5" strokeWidth={2} />
+                    只有你能看到 · 点按查看
+                  </button>
+                ) : (
+                  <p className={`font-display text-sm leading-[22px] whitespace-pre-wrap ${onRight ? 'text-right' : 'text-left'}`}>
+                    {msg.content}
+                  </p>
+                )}
               </div>
+              <span className="typed text-[9px] text-text-muted">{msg.time}</span>
             </div>
           )
         })}
@@ -1087,7 +1165,7 @@ export default function RoomPage() {
       </div>
 
       {/* Action Bar */}
-      <div className="flex bg-card border-t border-border-light flex-shrink-0">
+      <div className="relative z-[1] flex bg-black/50 border-t border-black/55 flex-shrink-0">
         {[
           { icon: ScrollText, label: '角色卡', key: 'sheet' },
           { icon: Star, label: '技能', key: 'skills' },
@@ -1102,7 +1180,7 @@ export default function RoomPage() {
             key={item.key}
             onClick={() => setOpenPanel(openPanel === item.key ? null : item.key)}
             className={`flex-1 py-1.5 px-1 bg-none border-none text-[10px] font-medium cursor-pointer flex flex-col items-center gap-[3px] font-sans transition-colors ${
-              openPanel === item.key ? 'text-brass-dark bg-panel' : 'text-text-muted'
+              openPanel === item.key ? 'text-brass-bright bg-brass/15' : 'text-text-muted'
             }`}
           >
             <item.icon className="w-5 h-5" strokeWidth={1.5} />
@@ -1116,21 +1194,22 @@ export default function RoomPage() {
           做受伤扣血的机制，见已知局限），先按"当前即满值"画满条，以后接了扣血
           机制这里会自然跟着变化。 */}
       {character && (
-        <div className="flex items-center gap-4 px-4 py-2 border-t border-border-light bg-page flex-shrink-0">
+        // 方头刻度条，不是圆角进度条——机制数值该像量表
+        <div className="relative z-[1] flex items-center gap-3.5 px-3.5 py-1.5 border-t border-black/45 bg-black/30 flex-shrink-0">
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
-            <Heart className="w-3 h-3 text-mold flex-shrink-0" strokeWidth={2.5} />
-            <span className="text-[10px] font-semibold text-text-muted flex-shrink-0">HP</span>
-            <div className="flex-1 h-1.5 rounded-full bg-border-light overflow-hidden">
-              <div className="h-full rounded-full bg-mold" style={{ width: '100%' }} />
+            <Heart className="w-[11px] h-[11px] text-mold flex-shrink-0" strokeWidth={2.4} />
+            <span className="typed text-[9px] text-text-muted flex-shrink-0">HP</span>
+            <div className="flex-1 h-[5px] bg-black/50 overflow-hidden">
+              <div className="h-full bg-mold" style={{ width: '100%' }} />
             </div>
-            <span className="text-[11px] font-bold font-mono text-mold flex-shrink-0">{character.derived.hp}</span>
+            <span className="font-mono text-[11px] text-mold flex-shrink-0 tabular-nums">{character.derived.hp}</span>
           </div>
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
-            <span className="text-[10px] font-semibold text-text-muted flex-shrink-0">SAN</span>
-            <div className="flex-1 h-1.5 rounded-full bg-border-light overflow-hidden">
-              <div className="h-full rounded-full bg-[#7050a0]" style={{ width: `${Math.min(100, character.derived.san)}%` }} />
+            <span className="typed text-[9px] text-text-muted flex-shrink-0">SAN</span>
+            <div className="flex-1 h-[5px] bg-black/50 overflow-hidden">
+              <div className="h-full bg-[#8a72ad]" style={{ width: `${Math.min(100, character.derived.san)}%` }} />
             </div>
-            <span className="text-[11px] font-bold font-mono text-[#7050a0] flex-shrink-0">{character.derived.san}</span>
+            <span className="font-mono text-[11px] text-[#a795c4] flex-shrink-0 tabular-nums">{character.derived.san}</span>
           </div>
         </div>
       )}
@@ -1138,15 +1217,15 @@ export default function RoomPage() {
       {/* 待掷检定卡片（两段式玩家掷骰，feat/keeper-agent）：守秘人裁决需要
           检定后推给本人，骰值由服务端权威生成——点击才真正掷骰。 */}
       {channel === 'dm' && pendingCheck && (
-        <div className="px-3 pt-2 bg-page flex-shrink-0 space-y-1.5">
+        <div className="relative z-[1] px-3 pt-2 flex-shrink-0 space-y-1.5">
           {showDiceTip && (
-            <div className="text-[11px] leading-relaxed text-[#6a5a40] bg-[#f3ebe0] border border-brass/25 rounded-md px-3 py-2">
+            <div className="paper-grain relative text-[11.5px] leading-[1.65] text-ink bg-book border-l-[3px] border-brass px-3 py-2.5">
               <strong className="font-semibold">两段式掷骰：</strong>
               守秘人已发起检定，请点右侧「掷骰」由服务器生成结果；
               不点则剧情会停在这里（不是卡死）。下方自由骰与本次检定无关。
               <button
                 type="button"
-                className="ml-2 underline text-brass-dark"
+                className="typed ml-1 text-[10px] underline text-rust"
                 onClick={() => {
                   setShowDiceTip(false)
                   try {
@@ -1158,10 +1237,11 @@ export default function RoomPage() {
               </button>
             </div>
           )}
-          <div className="flex items-center justify-between gap-3 bg-[#faf5eb] border border-brass/40 rounded-md px-3.5 py-2.5">
-            <span className="text-xs font-semibold text-brass-dark">
-              🎲 守秘人请求：{pendingCheck.skill ? `${pendingCheck.skill}检定` : '理智检定'}
-              {pendingCheck.rolling ? '' : ' · 请点击掷骰'}
+          // 待掷 = 一张盖了章的表单，横排：文案在左、掷骰在右
+          <div className="paper-grain relative flex items-center gap-2.5 bg-dossier text-ink border-l-4 border-double border-rust px-3 py-2.5 shadow-[0_2px_0_rgba(0,0,0,.4),0_8px_16px_rgba(0,0,0,.42)]">
+            <span className="flex-1 text-[12.5px] font-semibold">
+              守秘人请求：{pendingCheck.skill ? `${pendingCheck.skill}检定` : '理智检定'}
+              {!pendingCheck.rolling && <em className="typed not-italic block text-[10px] text-ink-soft mt-0.5">点击掷骰</em>}
             </span>
             <button
               onClick={() => {
@@ -1174,7 +1254,7 @@ export default function RoomPage() {
                 handleRollCheck()
               }}
               disabled={pendingCheck.rolling}
-              className="px-4 py-1.5 rounded-full bg-brass text-white text-xs font-semibold flex-shrink-0 active:bg-brass-dark disabled:opacity-60 transition-colors"
+              className="typed px-3.5 py-2 bg-ink text-book text-[10px] flex-shrink-0 active:bg-rust disabled:opacity-50 transition-colors"
             >
               {pendingCheck.rolling ? '掷骰中…' : '掷骰'}
             </button>
@@ -1185,16 +1265,16 @@ export default function RoomPage() {
       {/* Input area：同一个输入框按当前频道分流（主持人 → action.submit，
           讨论区 → chat.send）。麦克风是语音输入（issue #107）：浏览器本地转写
           成文字填进输入框，之后跟手动打字完全一样；浏览器不支持时按钮不渲染。 */}
-      <div className="border-t border-border-light px-3 pb-3 pt-1.5 bg-page flex-shrink-0">
-        <form onSubmit={sendMessage} className="flex gap-2 items-end">
+      <div className="relative z-[1] border-t border-black/50 bg-black/40 px-3 py-2.5 flex-shrink-0">
+        <form onSubmit={sendMessage} className="flex gap-[7px] items-center">
           {speech.supported && (
             <button
               type="button"
               onClick={() => (speech.listening ? speech.stop() : speech.start())}
-              className={`w-10 h-10 rounded-full border flex items-center justify-center flex-shrink-0 active:scale-[0.92] transition-all ${
+              className={`cut-corner w-[34px] h-[34px] border flex items-center justify-center flex-shrink-0 active:scale-[0.94] transition-all ${
                 speech.listening
-                  ? 'bg-mold border-mold text-white animate-pulse'
-                  : 'bg-card border-border-light text-text-muted active:border-brass active:text-brass-dark'
+                  ? 'bg-mold border-mold text-page animate-pulse'
+                  : 'bg-black/30 border-black/55 text-text-muted active:border-brass active:text-brass-bright'
               }`}
             >
               <Mic className="w-[18px] h-[18px]" strokeWidth={2} />
@@ -1205,10 +1285,10 @@ export default function RoomPage() {
               type="button"
               onClick={() => setPrivateAction(v => !v)}
               title={privateAction ? '这一条只有你自己看得到' : '设为私密行动'}
-              className={`w-10 h-10 rounded-full border flex items-center justify-center flex-shrink-0 active:scale-[0.92] transition-all ${
+              className={`cut-corner w-[34px] h-[34px] border flex items-center justify-center flex-shrink-0 active:scale-[0.94] transition-all ${
                 privateAction
-                  ? 'bg-brass border-brass text-white'
-                  : 'bg-card border-border-light text-text-muted active:border-brass active:text-brass-dark'
+                  ? 'bg-brass border-brass text-page'
+                  : 'bg-black/30 border-black/55 text-text-muted active:border-brass active:text-brass-bright'
               }`}
             >
               <EyeOff className="w-[18px] h-[18px]" strokeWidth={2} />
@@ -1227,16 +1307,17 @@ export default function RoomPage() {
                     ? '私密行动，只有你看得到…'
                     : '对守秘人说…'
             }
-            className={`flex-1 bg-input border border-border-mid rounded-[20px] px-4 py-2.5 text-sm text-text-primary font-sans outline-none min-h-[40px] placeholder:text-text-dim focus:border-brass transition-colors ${
+            className={`flex-1 min-w-0 bg-black/34 border border-black/55 px-2.5 py-2 font-display text-sm text-text-primary outline-none h-[34px] placeholder:text-text-dim focus:border-brass transition-colors shadow-[inset_0_2px_5px_rgba(0,0,0,.5)] ${
               dmBusy ? 'opacity-60' : ''
             }`}
           />
           <button
             type="submit"
             disabled={dmBusy}
-            className="w-10 h-10 rounded-full bg-brass border-none text-white flex items-center justify-center flex-shrink-0 active:scale-[0.92] transition-all hover:bg-brass-dark disabled:opacity-40 disabled:active:scale-100"
+            aria-label="送出"
+            className="cut-corner h-[34px] px-3 bg-brass border-none text-page flex items-center justify-center flex-shrink-0 active:scale-[0.96] transition-all hover:bg-brass-dark disabled:opacity-40 disabled:active:scale-100"
           >
-            <SendHorizontal className="w-[18px] h-[18px]" strokeWidth={2.5} />
+            <SendHorizontal className="w-4 h-4" strokeWidth={2.5} />
           </button>
         </form>
       </div>

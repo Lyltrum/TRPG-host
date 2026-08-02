@@ -3,6 +3,57 @@
 @tailwind utilities;
 
 @layer base {
+  /* 🔴 语义 token 的默认值 = 平台中性色（多游戏聚会工具的身份）。
+     值是空格分隔的 R G B，配合 tailwind.config.ts 里的
+     `rgb(var(--c-x) / <alpha-value>)` 使用。 */
+  :root {
+    --c-page: 250 247 240;
+    --c-panel: 245 240 230;
+    --c-card: 255 255 255;
+    --c-input: 254 253 250;
+    --c-border-light: 229 222 208;
+    --c-border-mid: 212 203 184;
+    --c-brass: 184 151 106;
+    --c-brass-dark: 138 109 64;
+    --c-brass-bright: 221 193 144;
+    --c-rust: 192 64 64;
+    --c-rust-dark: 122 53 44;
+    --c-mold: 74 138 74;
+    --c-ink-blue: 74 112 152;
+    --c-text-primary: 44 36 22;
+    --c-text-body: 61 54 40;
+    --c-text-muted: 138 130 118;
+    --c-text-dim: 176 168 152;
+  }
+
+  /* 🔴 「卷宗」——COC7 对局内的作用域主题。
+     只包在已经确定进入 COC7 世界的页面外面（目前：RoomPage）。
+     **一页一页地纳入**：做完一页就把那一页的根节点加上 `theme-coc`，
+     没做过的页面继续用上面的中性色，不会变成"暗但没做过"的半成品。
+
+     配色纪律（真人反馈「像苹果备忘录，不像游戏」之后定的）：
+     底不用纯黑（是胡桃木桌面）、正文不用纯白（长叙事要读得下去）、
+     不做渐变不做发光——质感来自结构与材质，不来自滤镜。 */
+  .theme-coc {
+    --c-page: 26 21 16;         /* 顶栏 / 输入区这类"桌面之外"的框 */
+    --c-panel: 36 29 22;
+    --c-card: 43 34 25;         /* 桌面本身：二档胡桃木 */
+    --c-input: 21 18 15;
+    --c-border-light: 47 40 35;
+    --c-border-mid: 71 59 45;
+    --c-brass: 176 138 74;
+    --c-brass-dark: 125 97 50;
+    --c-brass-bright: 217 184 119;
+    --c-rust: 168 58 46;        /* 干涸的血锈，不是警报红 */
+    --c-rust-dark: 109 38 32;
+    --c-mold: 111 145 89;
+    --c-ink-blue: 91 125 158;
+    --c-text-primary: 233 225 209; /* 暖白，不是 #fff */
+    --c-text-body: 206 194 172;
+    --c-text-muted: 143 132 116;
+    --c-text-dim: 101 92 78;
+  }
+
   * {
     margin: 0;
     padding: 0;
@@ -66,6 +117,144 @@
 }
 
 @layer utilities {
+  /* ══════════════════════════════════════════════════════════════
+     卷宗方向的材质词汇。每一条都只在 `.theme-coc` 里有意义。
+
+     🔴 三种纸各司其职，不要混用：
+       书页 `.leaf`     守秘人叙事——裁切整齐、版心、装订侧阴影、页码
+       便签 `.memo`     玩家发言——撕齿、横格、卷边，配回形针 `.clip`
+       档案 `.dossier`  面板——牛皮纸、标签舌 `.tab-flap`、装订孔 `.punch`
+
+     🔴 全部**不用渐变、不用发光**。「像游戏」来自形状与材质，不来自滤镜
+     ——两次全站换色都因为只换颜色被推翻。
+     ══════════════════════════════════════════════════════════════ */
+
+  /* 桌面木纹：各向异性 turbulence（横向高频 + 纵向极低频 = 顺纹长条理），
+     叠一层更宽的年轮走向。纯色是"假"的最大来源。 */
+  .theme-coc .desk-grain::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    mix-blend-mode: overlay;
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='390' height='760'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9 0.004' numOctaves='4' seed='11'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='390' height='760' filter='url(%23g)' opacity='0.42'/%3E%3C/svg%3E"),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='390' height='760'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.055 0.0022' numOctaves='2' seed='4'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='390' height='760' filter='url(%23b)' opacity='0.3'/%3E%3C/svg%3E");
+  }
+  /* 桌面上方那盏灯。加光源比抬高底色管用——一档太暗的问题不是数值低，
+     是没有光源方向，整块读起来是"空的"。 */
+  .theme-coc .desk-lamp {
+    background-image: radial-gradient(105% 50% at 50% 24%, rgba(214, 168, 96, 0.15) 0%, transparent 68%);
+  }
+
+  /* 纸面颗粒：任何一张"纸"都该有，压在纸色上 */
+  .paper-grain::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    mix-blend-mode: multiply;
+    opacity: 0.55;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='90' height='90' filter='url(%23p)' opacity='0.085'/%3E%3C/svg%3E");
+  }
+
+  /* ── 书页：守秘人叙事 ── */
+  .leaf {
+    position: relative;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.34), 0 12px 20px -8px rgba(0, 0, 0, 0.55);
+  }
+  /* 装订侧：左缘一道由暗到无，像书脊把纸压向内页 */
+  .leaf::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 13px;
+    pointer-events: none;
+    background: linear-gradient(to right, rgba(36, 29, 20, 0.22), rgba(36, 29, 20, 0.04) 55%, transparent);
+  }
+
+  /* ── 便签：玩家发言。撕齿上缘 + 横格 + 卷边 ── */
+  .memo {
+    position: relative;
+    background-image: repeating-linear-gradient(transparent 0 21px, rgba(36, 29, 20, 0.12) 21px 22px);
+    background-position: 0 20px;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.34), 0 12px 16px -7px rgba(0, 0, 0, 0.6);
+    clip-path: polygon(
+      0 5px, 7% 1px, 15% 6px, 23% 2px, 32% 6px, 41% 1px, 50% 5px, 58% 2px,
+      67% 6px, 75% 1px, 84% 5px, 92% 2px, 100% 5px, 100% 100%, 0 100%
+    );
+  }
+  /* 卷边：下缘自身投影 */
+  .memo::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 11px;
+    pointer-events: none;
+    background: linear-gradient(to top, rgba(36, 29, 20, 0.17), transparent);
+  }
+  /* 回形针：真的金属丝形状，斜夹左上角、一半探出纸外。
+     🔴 便签左侧必须留出 pl-[30px]，且名字右对齐——否则针会压住名字。 */
+  .clip {
+    position: absolute;
+    left: 9px;
+    top: -13px;
+    width: 26px;
+    height: 46px;
+    transform: rotate(-13deg);
+    z-index: 2;
+    pointer-events: none;
+    filter: drop-shadow(1px 2px 1.5px rgba(0, 0, 0, 0.55));
+  }
+
+  /* ── 档案：面板 ── */
+  /* 标签舌：从档案顶部探出的那一小片，档案最好认的特征 */
+  .tab-flap {
+    clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 100%, 0 100%);
+    box-shadow: 0 -3px 8px rgba(0, 0, 0, 0.4);
+  }
+  /* 装订孔：孔里透出桌面的暗。正文左边距要避开它 */
+  .punch {
+    background: #241c14;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.9), 0 1px 0 rgba(255, 255, 255, 0.14);
+  }
+
+  /* ── 通用形状：切角。代替圆角，是"不像 iOS"最省事的一处 ── */
+  .cut-corner {
+    clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+  }
+
+  /* ── 量表：方头刻度条，代替圆角进度条 ── */
+  .gauge {
+    position: relative;
+    background: rgba(36, 29, 20, 0.14);
+    border: 1px solid rgba(36, 29, 20, 0.25);
+  }
+  .gauge::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(90deg, transparent 0 14px, rgba(36, 29, 20, 0.3) 14px 15px);
+  }
+
+  /* ── 盖章：轻微旋转是关键，正的就不像盖的 ── */
+  .stamped {
+    border: 1.5px solid currentColor;
+    transform: rotate(-6deg);
+    opacity: 0.82;
+  }
+
+  /* 打字机标签：机制信息（id、数值、时间）用它，跟叙事正文拉开身份 */
+  .typed {
+    font-family: theme('fontFamily.mono');
+    letter-spacing: 0.16em;
+  }
+
   .animate-screen-in {
     animation: screenIn 0.3s ease;
   }

@@ -12,14 +12,17 @@
 "这个行动该不该掷、拿哪个值掷、对手怎么比"。
 """
 
-from app.core.keeper.capabilities.skill_check.executor import create_pending_skill_checks
+from app.core.keeper.capabilities.skill_check.executor import (
+    create_pending_skill_checks,
+    settle_skill_check,
+)
 from app.core.keeper.capabilities.skill_check.prompt import PROMPT_BLOCKS
 from app.core.keeper.capabilities.skill_check.schema import (
     FIELD_CAPABILITIES,
     SkillCheckDecisionFields,
     audit_fields,
 )
-from app.core.keeper.registry import KeeperCapability, PendingHook
+from app.core.keeper.registry import KeeperCapability, PendingHook, SettleHook
 
 CAPABILITY = KeeperCapability(
     name="skill_check",
@@ -29,5 +32,6 @@ CAPABILITY = KeeperCapability(
     # 排在 san_check 之前：待掷队列的顺序就是玩家看到卡片的顺序，与切分前
     # create_pending_checks 里"先 checks 后 san_checks"一致。
     pendings=(PendingHook(order=10, run=create_pending_skill_checks),),
+    settlers=(SettleHook(kind="skill", run=settle_skill_check),),
     audit=audit_fields,
 )

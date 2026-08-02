@@ -23,6 +23,7 @@ from app.core.keeper.deps import (
 from app.core.keeper.pending import PendingCheck
 from app.core.keeper.primitives import dice
 from app.core.keeper.registry import PendingContext
+from app.core.narration.contract import CheckResultNotice
 
 logger = structlog.get_logger()
 
@@ -126,3 +127,21 @@ async def create_pending_san_checks(
             )
         )
     return pending, issues
+
+
+async def settle_san_check(deps: KeeperDeps, pending: PendingCheck) -> CheckResultNotice:
+    """玩家点了掷骰之后：掷一次理智检定并写回角色卡。"""
+    _text, detail = await san_check_detail(
+        deps, pending.loss_on_success, pending.loss_on_failure, pending.player_nickname
+    )
+    return CheckResultNotice(
+        check_request_id=pending.check_request_id,
+        kind="san",
+        player_id=detail["player_id"],
+        skill=None,
+        rolled=detail["rolled"],
+        target=detail["target"],
+        level="成功" if detail["succeeded"] else "失败",
+        san_loss=detail["loss"],
+        san_remaining=detail["san"],
+    )

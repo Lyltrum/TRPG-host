@@ -615,7 +615,7 @@ async def apply_age_adjustment(
     reconnect_token: str | None,
 ) -> AgeAdjustmentResult:
     """POST /rooms/{roomId}/characters/{characterId}/apply-age-adjustment ——
-    按 COC7 年龄表（`app/core/coc7_age.py`，迁移自 coc-char-gen
+    按 COC7 年龄表（`app/core/coc7/age.py`，迁移自 coc-char-gen
     `js/plugins/age.js`）套用建卡期年龄修正：EDU 改进检定 / STR-SIZ 或
     STR-CON-DEX 减值 / APP 减值 / 青年幸运双掷。
 

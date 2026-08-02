@@ -4,7 +4,7 @@ issue #84 S1 把 `ruleset` 从三个字符串数组加厚成结构化的属性/�
 `GET /games`、`GET /games/{gameId}/systems`、`GET /systems/{systemId}/ruleset`
 三个都是只读目录接口，本期由真实数据库支撑（`Game`/`GameSystem` 表已建好，
 建房时选模组间接引用它们），不是固定假数据——`ruleset` 的具体内容（属性生成
-公式/技能基础值/职业信用评级与技能点公式）由 `app/core/coc7_content.py` 提供
+公式/技能基础值/职业信用评级与技能点公式）由 `app/core/coc7/content.py` 提供
 权威数据，seed 时写入 `GameSystem.ruleset`。
 """
 

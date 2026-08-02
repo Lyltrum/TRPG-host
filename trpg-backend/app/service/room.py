@@ -497,7 +497,7 @@ async def get_ruleset(db: AsyncSession, system_id: str) -> RulesetRead:
     """GET /api/v1/systems/{systemId}/ruleset —— 建卡所需规则数据。
 
     真实数据来自 `GameSystem.ruleset`（`app/core/seed.py` seed 时用
-    `app/core/coc7_content.py` 的权威数据写入）。issue #84 S1 之前这里有一份
+    `app/core/coc7/content.py` 的权威数据写入）。issue #84 S1 之前这里有一份
     手写的三字符串数组兜底桩，加厚 schema 后跟 `RulesetRead` 新形状不兼容，
     且 seed 已经保证 COC7 系统一定带 ruleset，故删除——没有 ruleset 数据的
     系统（本期只有还没配置规则数据的自定义系统会出现这种情况）直接返回空
@@ -618,7 +618,7 @@ async def build_narration_context(
     说的话"单独出现在 prompt 末尾，不该在历史里重复）。靠时序排除比靠
     "player_id+内容匹配"过滤可靠：玩家完全可能重复说过一模一样的话。
 
-    Narrator（app/core/narrator.py）自己不查库，所有字段由这里备好传入。
+    Narrator（app/core/narration/）自己不查库，所有字段由这里备好传入。
     """
     player = await db.get(Player, player_id)
     nickname = player.nickname if player is not None else "玩家"

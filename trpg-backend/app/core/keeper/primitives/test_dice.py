@@ -1,4 +1,4 @@
-"""keeper agent 的掷骰与 COC7 成功等级判定（app/core/keeper/dice.py）。
+"""keeper agent 的掷骰与 COC7 成功等级判定（同目录 `dice.py`）。
 
 纯函数层：固定 seed 的 `random.Random` 让每次掷骰完全可复现——这是"服务端
 权威掷骰"的可测试性基础。

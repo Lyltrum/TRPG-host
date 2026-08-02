@@ -71,7 +71,7 @@ export function getGameById(id: string): GameManifest | undefined {
 /**
  * 前端「选择模组」列表 = 契约发现实验的可玩模组全集。
  *
- * id 必须与后端 `app/core/keeper/catalog.py` 的 scenario_id **完全一致**，
+ * id 必须与后端 `app/core/keeper/contract/catalog.py` 的 scenario_id **完全一致**，
  * 建房时 `selectModule(roomId, sceneId)` 才能命中 DB，Keeper 加载对应
  * `模组资料/*.structured.json`。
  *

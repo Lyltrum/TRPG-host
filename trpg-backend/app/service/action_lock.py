@@ -27,7 +27,7 @@ import uuid
 
 
 class RoomActionLockManager:
-    # DeepSeek 客户端自身超时 30s（app/core/narrator.py），锁的过期时间给出
+    # DeepSeek 客户端自身超时 30s（app/core/narration/deepseek.py），锁的过期时间给出
     # 一倍余量：正常路径远在 60s 内走到 finally release，走不到时这里兜底。
     LOCK_TIMEOUT_SECONDS = 60.0
 

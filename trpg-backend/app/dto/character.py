@@ -5,7 +5,7 @@
 在前端本地完成，第四步"完成"时把整份角色数据一次性 PATCH 上来。属性/衍生值/
 技能的具体数值仍由客户端整体提交、后端负责校验形状、持久化，以及把
 RoomPlayer.has_character 标记为 True；但 issue #84 S2 起，`complete_character`
-落库前会用 `app/core/coc7_rules.py` 权威重算并校验一遍（职业/兴趣技能点预算、
+落库前会用 `app/core/coc7/rules.py` 权威重算并校验一遍（职业/兴趣技能点预算、
 技能上限、信用评级区间等），不合法直接拒绝——不再只信任客户端算好的数值。
 建卡过程中的实时预览走本文件下方的 `CharacterPreviewRequest`/
 `CharacterComputeResult`（`POST /systems/{systemId}/character/preview`）。
@@ -203,7 +203,7 @@ class CharacterTemplateRead(CamelModel):
 #
 # 前端建卡过程中把当前草稿（属性/职业/技能分配）发给
 # `POST /api/v1/systems/{systemId}/character/preview`，后端用
-# `app/core/coc7_rules.py` 权威算出全部派生量 + 校验报告，前端只负责渲染，
+# `app/core/coc7/rules.py` 权威算出全部派生量 + 校验报告，前端只负责渲染，
 # 不再本地重算 COC7 规则数值——`complete_character` 最终落库前也是复用同一套
 # 计算/校验，两处结果不会不一致。
 

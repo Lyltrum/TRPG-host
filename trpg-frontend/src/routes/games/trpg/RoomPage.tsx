@@ -968,7 +968,7 @@ export default function RoomPage() {
     // 作用域外（大厅/建房/建卡）继续用平台中性色——UI 改造是一页一页做的，
     // 全站同时切会留下一堆"暗但没做过"的半成品页。
     // `desk-grain`/`desk-lamp` 把这一层变成一张被台灯照着的胡桃木桌面。
-    <div className="theme-coc desk-grain desk-lamp h-full flex flex-col bg-card relative max-w-[430px] mx-auto">
+    <div className="theme-coc desk-grain desk-lamp desk-sigil h-full flex flex-col bg-card relative max-w-[430px] mx-auto overflow-hidden">
       {/* Header */}
       <div className="relative z-[1] flex items-center gap-2.5 px-3 py-2 border-b border-black/60 bg-page flex-shrink-0">
         <button
@@ -1121,12 +1121,23 @@ export default function RoomPage() {
               // 读起来是"卡片"不是"书页"。改法是让它**出血到两侧边缘**
               // （-mx 抵消消息区的内边距）、去掉投影与页眉横线，
               // 署名/时间缩成右上角一行浅字。框由界面本身提供，纸不自带框。
-              <div key={i} className="leaf-full paper-grain bg-book text-ink -mx-3 px-4 pt-2 pb-3 animate-[msgIn_0.3s_ease]">
-                <div className="typed flex justify-between text-[8px] text-ink/35 mb-1">
+              // 🔴 用**书的排版语言**，不是聊天气泡的。真人反馈「太单调死板、
+              // 没有沉浸感」——根子是顶上挂着发送者+时间、正文平铺，那是聊天记录
+              // 的规则。书的规则是：首字下沉、段首缩进、段末花饰、落款在页脚。
+              // 首字下沉只给长段落（短句下沉很滑稽），落款缩到页脚一行浅字。
+              <div key={i} className="leaf-full paper-grain bg-book text-ink -mx-3 px-4 pt-3.5 pb-2.5 animate-[msgIn_0.3s_ease]">
+                <p
+                  className={`font-display text-[13.5px] leading-[1.78] whitespace-pre-wrap ${
+                    msg.content.length > 48 ? 'drop-cap' : 'prose-indent'
+                  }`}
+                >
+                  {msg.content}
+                </p>
+                {msg.content.length > 48 && <span className="fleuron text-[11px] mt-2">❧</span>}
+                <div className="typed flex justify-between text-[8px] text-ink/30 mt-2 pt-1.5 border-t border-ink/10">
                   <span>{msg.sender}</span>
                   <span>{msg.time}</span>
                 </div>
-                <p className="font-display text-[13.5px] leading-[1.72] whitespace-pre-wrap">{msg.content}</p>
               </div>
             )
           }

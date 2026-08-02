@@ -192,13 +192,18 @@
   .theme-coc .desk-sigil::after {
     content: '';
     position: absolute;
-    top: 12%;
+    top: 26%;
     left: 50%;
-    width: 300px;
-    height: 300px;
-    margin-left: -150px;
+    width: 340px;
+    height: 340px;
+    margin-left: -170px;
     pointer-events: none;
-    opacity: 0.055;
+    /* 🔴 0.055 真机上**完全看不见**：消息几乎铺满屏幕，桌面只在缝隙里露出
+       几十像素，那点缝里 5% 的对比等于没有。提到 0.16，并且放大、
+       位置下移到消息流之间更常露出的区段。
+       它仍然只在缝隙里可见——这是"刻在桌上"的代价，要更显眼就得换位置
+       （比如放到顶栏当水印），那是另一个决定。 */
+    opacity: 0.16;
     background-repeat: no-repeat;
     background-size: contain;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' fill='none' stroke='%23f0d9a8' stroke-width='1.1'%3E%3Ccircle cx='100' cy='100' r='92'/%3E%3Ccircle cx='100' cy='100' r='78'/%3E%3Ccircle cx='100' cy='100' r='31'/%3E%3Cpath d='M100 22 L133.8 170.3 L39 51.4 L176 117.4 L24 117.4 L161 51.4 L66.2 170.3 Z'/%3E%3Cpath d='M100 8 v14 M192 100 h-14 M100 192 v-14 M8 100 h14 M165 35 l-10 10 M165 165 l-10-10 M35 165 l10-10 M35 35 l10 10'/%3E%3Cpath d='M78 100 q22-19 44 0 q-22 19-44 0z'/%3E%3Ccircle cx='100' cy='100' r='7'/%3E%3C/svg%3E");
@@ -253,32 +258,15 @@
     background: linear-gradient(to right, rgba(36, 29, 20, 0.22), rgba(36, 29, 20, 0.04) 55%, transparent);
   }
 
-  /* 🔴 书页的排版语言。「太单调死板」的根子是它在用**聊天气泡的规则**
-     （发送者+时间在顶、正文平铺）。书有自己的一套：首字下沉、段首缩进、
-     段末装饰、页脚落款。这几条比任何配色都更能把"消息"变成"故事"。 */
-
-  /* 首字下沉：只给长段落用（短句下沉会很滑稽，由 JSX 判断长度决定加不加类） */
-  .drop-cap::first-letter {
-    float: left;
-    font-size: 3.05em;
-    line-height: 0.94;
-    padding: 0.06em 0.1em 0 0;
-    color: rgba(36, 29, 20, 0.88);
-  }
-  /* 段首缩进两字：中文正文的排版惯例，一眼就不是聊天记录 */
-  .prose-indent {
-    text-indent: 2em;
-  }
-  .drop-cap.prose-indent {
-    text-indent: 0; /* 有下沉字时不再缩进，否则首行会被推歪 */
-  }
-  /* 段末花饰：印刷品的段落终止符，同时告诉玩家"这一段说完了" */
-  .fleuron {
-    display: block;
-    text-align: center;
-    letter-spacing: 0.5em;
-    line-height: 1;
-    color: rgba(36, 29, 20, 0.3);
+  /* 🔴 守秘人的气泡。
+     **试过整页书的排版**（首字下沉 / 段末花饰 / 页脚落款），真人反馈"很怪"
+     ——那是排一本书的规矩，而守秘人是个**在场的人**，他说话就该长得像说话。
+     所以布局回到消息的语法，材质保留：纸色、纸纹、左上角一道撕边缺口。
+     判据：**材质做氛围，布局做可读性，两件事不要互相替代。** */
+  .kp-bubble {
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 6px 12px -5px rgba(0, 0, 0, 0.45);
+    /* 左上角切掉一角：气泡指向头像那一侧，同时不像 iOS 的圆角矩形 */
+    clip-path: polygon(0 9px, 9px 0, 100% 0, 100% 100%, 0 100%);
   }
 
   /* ── 输入框那张纸条：上缘一道压痕表示"刻进桌面"，聚焦时纸被点亮 ── */

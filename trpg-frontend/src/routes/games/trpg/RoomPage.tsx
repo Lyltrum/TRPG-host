@@ -1121,22 +1121,23 @@ export default function RoomPage() {
               // 读起来是"卡片"不是"书页"。改法是让它**出血到两侧边缘**
               // （-mx 抵消消息区的内边距）、去掉投影与页眉横线，
               // 署名/时间缩成右上角一行浅字。框由界面本身提供，纸不自带框。
-              // 🔴 用**书的排版语言**，不是聊天气泡的。真人反馈「太单调死板、
-              // 没有沉浸感」——根子是顶上挂着发送者+时间、正文平铺，那是聊天记录
-              // 的规则。书的规则是：首字下沉、段首缩进、段末花饰、落款在页脚。
-              // 首字下沉只给长段落（短句下沉很滑稽），落款缩到页脚一行浅字。
-              <div key={i} className="leaf-full paper-grain bg-book text-ink -mx-3 px-4 pt-3.5 pb-2.5 animate-[msgIn_0.3s_ease]">
-                <p
-                  className={`font-display text-[13.5px] leading-[1.78] whitespace-pre-wrap ${
-                    msg.content.length > 48 ? 'drop-cap' : 'prose-indent'
-                  }`}
-                >
-                  {msg.content}
-                </p>
-                {msg.content.length > 48 && <span className="fleuron text-[11px] mt-2">❧</span>}
-                <div className="typed flex justify-between text-[8px] text-ink/30 mt-2 pt-1.5 border-t border-ink/10">
-                  <span>{msg.sender}</span>
-                  <span>{msg.time}</span>
+              // 🔴 回到**消息形态**：头像 + 名字 + 气泡 + 时间，左对齐。
+              // 上一版做成整页书（首字下沉、段末花饰、页脚落款）被判"很怪"——
+              // 那是排一本书的规矩，不是"有人在跟你说话"。守秘人是个**在场的人**，
+              // 他说话就该长得像说话。材质保留（纸色 + 纸纹 + 撕边），
+              // 但布局回到消息的语法。
+              <div key={i} className="flex gap-2 items-start animate-[msgIn_0.3s_ease]">
+                <div className="w-[30px] h-[30px] mt-0.5 flex-shrink-0 flex items-center justify-center text-[15px] bg-brass/15 border border-brass/45">
+                  📜
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="typed flex items-baseline gap-2 mb-1">
+                    <span className="text-[10px] text-brass-bright">{msg.sender}</span>
+                    <span className="text-[8.5px] text-text-dim">{msg.time}</span>
+                  </div>
+                  <div className="kp-bubble paper-grain relative bg-book text-ink px-3 py-2.5">
+                    <p className="font-display text-[13.5px] leading-[1.78] whitespace-pre-wrap">{msg.content}</p>
+                  </div>
                 </div>
               </div>
             )

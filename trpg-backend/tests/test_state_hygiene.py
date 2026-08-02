@@ -21,8 +21,9 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
+from app.core.keeper.capabilities.movement.schema import HidingChange, PlayerMove
 from app.core.keeper.capabilities.world_state.schema import StateUpdate
-from app.core.keeper.decision import KeeperDecision, PlayerMove, StealthChange
+from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.deps import KeeperDeps
 from app.core.keeper.location_state import HIDDEN_PLAYERS_KEY, load_hidden_players
 from app.core.keeper.module_loader import load_module
@@ -158,7 +159,7 @@ async def test_explicit_stealth_change_still_works() -> None:
     deps, a_id, _b_id = await _seed("HYG004", {CURRENT_NODE_KEY: "hall"})
     await _hide(deps.room_id, a_id)
     await execute_side_effects(
-        deps, KeeperDecision(stealth=[StealthChange(player="阿福", hidden=False)])
+        deps, KeeperDecision(hiding=[HidingChange(player="阿福", hidden=False)])
     )
     assert load_hidden_players(await _state(deps.room_id)) == set()
 

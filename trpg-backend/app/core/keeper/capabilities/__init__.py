@@ -15,11 +15,10 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel
 
-from app.core.keeper import location_state as _location_state
-from app.core.keeper import scene_state as _scene_state
 from app.core.keeper.capabilities.agenda import CAPABILITY as AGENDA
 from app.core.keeper.capabilities.clue_reveal import CAPABILITY as CLUE_REVEAL
 from app.core.keeper.capabilities.health import CAPABILITY as HEALTH
+from app.core.keeper.capabilities.movement import CAPABILITY as MOVEMENT
 from app.core.keeper.capabilities.progression import CAPABILITY as PROGRESSION
 from app.core.keeper.capabilities.world_state import CAPABILITY as WORLD_STATE
 from app.core.keeper.module_loader import ScenarioModule
@@ -39,6 +38,7 @@ CAPABILITIES: tuple[KeeperCapability, ...] = (
     PROGRESSION,
     CLUE_REVEAL,
     WORLD_STATE,
+    MOVEMENT,
 )
 
 
@@ -62,14 +62,20 @@ def executors() -> list[ExecutorHook]:
 
 
 def situation_blocks(
-    module: ScenarioModule, keeper_state: dict | None, *, observer_id: str | None = None
+    module: ScenarioModule,
+    keeper_state: dict | None,
+    *,
+    observer_id: str | None = None,
+    players: tuple[tuple[str, str], ...] = (),
 ) -> list[tuple[float, str]]:
     """渲染各能力要摆在模型眼前的状态，返回 (order, 成品文本块)。
 
     `render` 返回空串 = 本轮没有内容，整块连标题一起不渲染——没记过账的对局
     局面块与切分前逐字一致。
     """
-    context = SituationContext(module=module, keeper_state=keeper_state, observer_id=observer_id)
+    context = SituationContext(
+        module=module, keeper_state=keeper_state, observer_id=observer_id, players=players
+    )
     rendered: list[tuple[float, str]] = []
     for capability in CAPABILITIES:
         for block in capability.situations:
@@ -105,14 +111,8 @@ def reserved_state_keys() -> frozenset[str]:
     return frozenset(k for c in CAPABILITIES for k in c.reserved_state_keys) | _SKELETON_KEYS
 
 
-#: 还没切出去的能力占的键（`movement` 那片切走后这里就空了）。
-_SKELETON_KEYS: frozenset[str] = frozenset(
-    {
-        _scene_state.CURRENT_NODE_KEY,
-        _location_state.PLAYER_LOCATION_KEY,
-        _location_state.HIDDEN_PLAYERS_KEY,
-    }
-)
+#: 还没切出去的能力占的键。**空了**——七片切完后所有保留键都由能力自己声明。
+_SKELETON_KEYS: frozenset[str] = frozenset()
 
 
 def visible_keeper_state(keeper_state: dict | None) -> dict | None:

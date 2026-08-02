@@ -58,16 +58,6 @@ _SKELETON_RULES: tuple[tuple[float, str], ...] = (
         """3. **理智**：目击恐怖之物按剧本的损失表达式给 san_checks。剧本没有要求时不要凭空扣减。""",
     ),
     (
-        4.4,
-        """4b. **分头探索**：current_node_id 只管**本轮发言的人共同去了哪**。有人**单独**去别处（"我去地窖看看，你们留在客厅"）时，把他写进 moves：`[{"player": "昵称", "node_id": "cellar"}]`；没发言的人位置不动，不要用 current_node_id 把他们隔空挪走。全队在一起时 moves 就是空数组。
-   🔴 **`moves` 也是"把一个没发言的人带上"的唯一写法**：AI 队友不会自己宣告行动（它只在讨论区出主意），所以真人说「我和阿铁一起去地下室」时，阿铁不在"本轮发言的人"里、不会被 current_node_id 带走——**必须**同时写 `moves: [{"player": "阿铁", "node_id": "cellar"}]`，否则他会被留在原地。被点名带上的同伴照此办理。
-   局面块出现「各自所在」小节时说明已经分头——**不在同一处的调查员看不见对方那边发生的事**，narration_guidance 要分别交代各处，不要让两边的人凭空知道对方的发现。""",
-    ),
-    (
-        4.6,
-        """4c. **潜行/隐匿**：调查员藏起来、贴墙躲进阴影、跟踪时不想被发现——潜行检定成功（或情境本身足以藏住）就写 `stealth: [{"player": "昵称", "hidden": true}]`。隐匿的人**照常听得见**这里发生的一切，但同处的其他人不知道他在场。被发现、主动现身、离开这个地点时必须写回 `hidden: false`。局面块标了「（隐匿中）」的人，叙事里不要让别人看见他。""",
-    ),
-    (
         5.0,
         """5. **narration_guidance 必须写清**：本轮行动如何推进、可以揭示什么（挂在检定成败上）、必须继续保密什么、NPC 应如何反应；行动模糊到无法裁决时，在这里让叙事者追问**一句**，不要用写景代替。""",
     ),
@@ -132,9 +122,6 @@ _SKELETON_OUTPUT_EXAMPLE: tuple[tuple[float, str], ...] = (
         20,
         '  "san_checks": [{"player": null, "loss_on_success": "0", "loss_on_failure": "1d6", "reason": "目击食尸鬼"}]',
     ),
-    (50, '  "current_node_id": "some-node-id"'),
-    (60, '  "moves": []'),
-    (70, '  "stealth": []'),
     (120, '  "narration_guidance": "给叙事者的指引"'),
     (130, '  "player_state": "normal"'),
 )
@@ -249,7 +236,6 @@ def format_turn_input(
     phase_status: str = "",
     ledger_status: str = "",
     chapters_status: str = "",
-    locations_status: str = "",
     capability_blocks: Sequence[tuple[float, str]] = (),
     *,
     is_heartbeat: bool = False,
@@ -288,14 +274,6 @@ def format_turn_input(
         if ledger_status
         else ""
     )
-    # 分头探索（exec/14 P5.2）：全队同处一地时 locations_status 是空串，
-    # 整块不渲染——未分头的对局 prompt 与 P5.2 之前逐字一致。
-    locations_block = (
-        f"## 各自所在（不在同一处的调查员看不见对方那边发生的事；标「隐匿中」的人"
-        f"听得见但别人看不见他）\n{locations_status}\n\n"
-        if locations_status
-        else ""
-    )
     mode_block = ""
     if is_heartbeat:
         mode_block = (
@@ -316,7 +294,6 @@ def format_turn_input(
     # 骨架自己的状态块 + 各能力注册的 situation 块，按显式 order 归位
     # （exec/27 阶段 2）。留 10 的间隔给后面七个能力插队，插进去不必重排别人。
     blocks = [
-        (10.0, locations_block),
         (30.0, phase_block),
         (70.0, chapters_block),
         (80.0, ledger_block),

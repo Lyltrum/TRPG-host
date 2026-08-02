@@ -33,7 +33,7 @@
 
 **前端选模组 → `selectModule(scenario_id)` → 房间 `scenario_id` → Keeper 按 catalog 加载 structured。**
 
-权威目录：`trpg-backend/app/core/keeper/catalog.py`（固定 UUID，与前端 `trpg-frontend/src/config/games.ts` 的 `SCENARIO_REGISTRY.id` **必须一致**）。
+权威目录：`trpg-backend/app/core/keeper/contract/catalog.py`（固定 UUID，与前端 `trpg-frontend/src/config/games.ts` 的 `SCENARIO_REGISTRY.id` **必须一致**）。
 
 | id 后缀 | 标题 | structured 文件 |
 |---------|------|-----------------|
@@ -43,7 +43,8 @@
 | `…0006` | 复足 | `模组资料/复足.structured.json` |
 | `…0007` | 死者的顿足舞 | `模组资料/死者的顿足舞.structured.json` |
 
-- 实现：`RoomAwareKeeperNarrator`（`app/core/narrator.py`）按房间解析路径；`KEEPER_MODULE_PATH` 仅兜底。
+- 实现：`RoomAwareKeeperNarrator`（`app/core/narration/room_aware.py`）按房间解析路径；`KEEPER_MODULE_PATH` 仅兜底。
+  （`core/narrator.py` 已在 `exec/27` 阶段 1 拆成 `core/narration/` 包：`contract` 叶子 + 三个实现 + `factory`。）
 - 种子：`ensure_seed_content` upsert catalog 全部 scenario。
 - 建房：`CreateRoomPage` 用所选 `store.sceneId`，**禁止**再写死 `modules[0]`。
 - 对局标题用 `roomInfo.moduleTitle`，不要写死「惠特利旧宅」。
@@ -62,7 +63,8 @@
 - ✅ 预处理 4a/4b：组装校验、exits/contains/sub_nodes/forms/visibility_pairs
 - ✅ 路线 6：对局阶段 / `ending_reached` / 心跳（development 默认开，test 关）
 - ✅ 前情 API + game.start 开场仪式 + play replay 回补
-- ✅ 叙事纪律硬裁 + 迷茫强制引导；`check_guard`（战斗轮豁免，见 CLAUDE.md）
+- ✅ 叙事纪律硬裁 + 迷茫强制引导；检定护栏（战斗轮豁免，见 CLAUDE.md）
+  ——现在在 `keeper/capabilities/skill_check/guard.py`
 - ✅ **exec/14 主体视图 P0–P5.3**：`view(subject)`、事实寻址、分头叙事按受众裁
   历史/线索/本轮原话（P5.2d）。**P6 剧情 NPC 主体判定不做**（两局试玩零发生，
   代价是每次对话多一次 LLM 往返，正撞延迟痛点）
@@ -77,13 +79,20 @@
 - ✅ **exec/24 §8.1 §8.2**：待掷检定落库、世界状态自由键收口到主体 id
 - ✅ **CI 覆盖本分支**（2026-08-01）：四个 workflow 的 `push.branches` 加了
   `feat/keeper-agent`——这条分支不开 PR，push 是唯一触发点
+- ✅ **exec/27 架构重构五阶段全完成**（2026-08-02）：`keeper/` 按能力垂直切成
+  八片 + 八个注册钩子，`agent.py` 1391→925 行。**加一片能力 = 新建一个目录 +
+  在 `capabilities/__init__` 注册一行**，编排层一行不改。
+  🔴 **动 keeper 代码前先读 `trpg-backend/app/core/keeper/ARCHITECTURE.md`**
+  （新人入口：目录各是什么 / 加功能动哪里 / 依赖方向为什么这样，有一致性测试
+  盯着不会跟代码漂）。
 - ❌ 未做：`exec/24` schema v4 章节层级 / 分层注入 / `needs_entities`（等真接
   战役模组）；`exec/08` 完整 V 函数；`exec/20` 那十几条硬化；前端 UI v2
 - 冒烟：`e2e/scripts/sim-human-playability.py`
 
 ## 测试与产物
 
-- 后端：`cd trpg-backend && .venv/bin/pytest tests/test_keeper_*.py tests/test_narrator.py -q`
+- 后端：`cd trpg-backend && .venv/bin/pytest`（**跑全量**；能力测试跟能力代码
+  同目录，只跑 `tests/` 会漏掉一半）
 - Keeper 全链路脚本（可选）：`e2e/scripts/run-keeper-full-e2e.ts`；产物在 `e2e/artifacts/`（勿提交）
 - 冒烟：`scripts/module_probe/smoke_keeper.py --module ../模组资料/….structured.json`
 

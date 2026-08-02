@@ -4,33 +4,46 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 平台默认色（多游戏聚会工具，中性身份，不带任何单一游戏系统的
-        // 视觉倾向）——只在"账号/建房/选系统"这类通用页面使用。
-        page: '#faf7f0',
-        panel: '#f5f0e6',
-        card: '#ffffff',
-        input: '#fefdfa',
-        'border-light': '#e5ded0',
-        'border-mid': '#d4cbb8',
-        brass: '#b8976a',
-        'brass-dark': '#8a6d40',
-        'brass-bright': '#ddc190',
-        rust: '#c04040',
-        'rust-dark': '#7a352c',
-        mold: '#4a8a4a',
-        'ink-blue': '#4a7098',
+        // 🔴 语义 token 全部走 CSS 变量，**为了能一页一页地换皮**。
+        //
+        // 默认值（`:root`，见 styles.css）仍是平台中性色；`.theme-coc` 作用域内
+        // 换成「卷宗」暗色。这样改造 RoomPage 时其余 23 个页面一动不动——
+        // 上一轮教训：直接改 token 字面量等于全站同时变成"暗但没做过"的半成品。
+        //
+        // 三段式 `rgb(... / <alpha-value>)` 是为了 `bg-page/60` 这类透明度写法
+        // 仍然可用；变量里存的是空格分隔的 R G B，不是 hex。
+        page: 'rgb(var(--c-page) / <alpha-value>)',
+        panel: 'rgb(var(--c-panel) / <alpha-value>)',
+        card: 'rgb(var(--c-card) / <alpha-value>)',
+        input: 'rgb(var(--c-input) / <alpha-value>)',
+        'border-light': 'rgb(var(--c-border-light) / <alpha-value>)',
+        'border-mid': 'rgb(var(--c-border-mid) / <alpha-value>)',
+        brass: 'rgb(var(--c-brass) / <alpha-value>)',
+        'brass-dark': 'rgb(var(--c-brass-dark) / <alpha-value>)',
+        'brass-bright': 'rgb(var(--c-brass-bright) / <alpha-value>)',
+        rust: 'rgb(var(--c-rust) / <alpha-value>)',
+        'rust-dark': 'rgb(var(--c-rust-dark) / <alpha-value>)',
+        mold: 'rgb(var(--c-mold) / <alpha-value>)',
+        'ink-blue': 'rgb(var(--c-ink-blue) / <alpha-value>)',
         text: {
-          primary: '#2c2416',
-          body: '#3d3628',
-          muted: '#8a8276',
-          dim: '#b0a898'
+          primary: 'rgb(var(--c-text-primary) / <alpha-value>)',
+          body: 'rgb(var(--c-text-body) / <alpha-value>)',
+          muted: 'rgb(var(--c-text-muted) / <alpha-value>)',
+          dim: 'rgb(var(--c-text-dim) / <alpha-value>)'
         },
-        // "调查员案卷"——COC7 专属主题，只在已确定进入 COC7 世界的页面
-        // （建卡向导/游戏内 RoomPage 等）通过限定作用域的方式启用，
-        // 不作为全局默认色。方案待定，先保留 token 定义。
-        'case-file': '#f1e6cc',
-        'case-file-dim': '#e6d8b8',
-        'ink-on-file': '#241d12',
+
+        // ── 卷宗方向的三种纸。不随主题变，它们**就是**材质本身 ──
+        // 守秘人叙事 = 书页；玩家发言 = 便签；面板 = 档案（牛皮纸）。
+        book: '#e6dcc4',
+        'memo-self': '#d3cdb0', // 自己：暖一档
+        'memo-mate': '#b6b8a8', // 队友：冷一档
+        dossier: '#cbb894',
+        ink: '#241d14', // 落在纸上的墨
+        'ink-soft': '#5a4c39',
+        // 兼容旧名（建卡向导等页面可能引用）
+        'case-file': '#e6dcc4',
+        'case-file-dim': '#cbb894',
+        'ink-on-file': '#241d14',
         'ink-on-file-body': '#3a2f1c'
       },
       borderRadius: {

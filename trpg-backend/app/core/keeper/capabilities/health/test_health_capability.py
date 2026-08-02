@@ -35,6 +35,7 @@ from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.primitives.npcs import resolve_npc_id
+from app.core.keeper.registry import SituationContext
 from app.core.keeper.tools import update_state_impl
 from app.core.keeper.turn_executor import execute_side_effects
 from app.models.room import Character, Player, Room
@@ -99,12 +100,14 @@ def test_missing_hp_degrades_to_cumulative_damage_not_a_fake_hp() -> None:
 
 
 def test_format_renders_nothing_when_no_npc_touched() -> None:
-    assert format_npc_states(_MODULE, {}) == ""
-    assert format_npc_states(_MODULE, {"当前场景": "书房"}) == ""
+    assert format_npc_states(SituationContext(_MODULE, {})) == ""
+    assert format_npc_states(SituationContext(_MODULE, {"当前场景": "书房"})) == ""
 
 
 def test_format_marks_downed_npc() -> None:
-    text = format_npc_states(_MODULE, {NPC_STATE_KEY: {"butler-secret": {"hp": 0}}})
+    text = format_npc_states(
+        SituationContext(_MODULE, {NPC_STATE_KEY: {"butler-secret": {"hp": 0}}})
+    )
     assert "管家" in text and "HP 0" in text and "已倒地" in text
 
 

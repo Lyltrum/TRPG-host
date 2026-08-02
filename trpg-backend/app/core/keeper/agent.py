@@ -117,10 +117,6 @@ from app.core.keeper.turn_policy import (
     SCENE_ADVANCE_CAPABILITIES,
     revoke,
 )
-from app.core.keeper.visibility import (
-    format_visibility_status,
-    load_revealed_visibility,
-)
 from app.core.llm_tape import build_llm_client
 from app.core.narration.contract import (
     CheckResultCallback,
@@ -346,11 +342,7 @@ class KeeperAgent(Narrator):
                 PHASE_KEY: PHASE_OPENING,
             }
 
-        # 密级 / 阶段状态由代码注入——揭开记账不靠模型自觉。
-        revealed = load_revealed_visibility(keeper_state)
-        visibility_status = format_visibility_status(
-            self._module, revealed, observer_id=context.player_id
-        )
+        # 阶段状态由代码注入。
         phase_status = format_phase_status(phase, ending_id)
         # 代码记账的键一律不原样喂给模型，判据与"state_updates 不许写"同源，
         # 见 `visible_keeper_state` 的说明。
@@ -368,7 +360,9 @@ class KeeperAgent(Narrator):
         # 目前是 health 的「NPC 当前状态」。没记过账时该块整块不渲染。
         # 🔴 这个钩子是切 health 时才发现漏掉的——能力不只要能改世界，还得让
         # 模型**看见**自己改成了什么样，否则下一轮只能从上一段散文里猜。
-        capability_status = situation_blocks(self._module, keeper_state)
+        capability_status = situation_blocks(
+            self._module, keeper_state, observer_id=context.player_id
+        )
 
         def build_situation(
             *,
@@ -389,7 +383,6 @@ class KeeperAgent(Narrator):
                 roster,
                 nickname,
                 utterance,
-                visibility_status=visibility_status,
                 phase_status=phase_status,
                 ledger_status=ledger,
                 chapters_status=chapters_status,
@@ -673,7 +666,6 @@ class KeeperAgent(Narrator):
             san_checks=len(decision.san_checks),
             state_updates=[u.key for u in decision.state_updates],
             moves=[f"{m.player}→{m.node_id}" for m in decision.moves],
-            visibility_revealed=decision.visibility_revealed,
             # 已经垂直切出去的能力自带审计字段（exec/27 阶段 2）——否则每加一片
             # 能力都得回来改这行，而漏了不报错、只是那片能力在日志里隐身。
             **audit_fields(decision),

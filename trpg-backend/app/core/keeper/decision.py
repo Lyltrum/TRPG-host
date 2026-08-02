@@ -29,6 +29,7 @@ from typing import Literal
 from pydantic import Field
 
 from app.core.keeper.capabilities.agenda.schema import AgendaDecisionFields
+from app.core.keeper.capabilities.clue_reveal.schema import ClueRevealDecisionFields
 from app.core.keeper.capabilities.health.schema import HealthDecisionFields
 from app.core.keeper.capabilities.progression.schema import ProgressionDecisionFields
 from app.core.keeper.registry import DecisionModel
@@ -144,7 +145,11 @@ class StealthChange(DecisionModel):
 
 
 class KeeperDecision(
-    AgendaDecisionFields, HealthDecisionFields, ProgressionDecisionFields, DecisionModel
+    AgendaDecisionFields,
+    ClueRevealDecisionFields,
+    HealthDecisionFields,
+    ProgressionDecisionFields,
+    DecisionModel,
 ):
     """裁决阶段的完整输出契约。
 
@@ -184,10 +189,6 @@ class KeeperDecision(
     stealth: list[StealthChange] = Field(
         default_factory=list,
         description="潜行状态变化：谁藏起来了 / 谁现身或被发现了（没变化时留空数组）",
-    )
-    # 路线 5：本轮玩家挣得后可揭开的密级配对 id（须存在于 module.visibility_pairs）
-    visibility_revealed: list[str] = Field(
-        default_factory=list, description="本轮揭开的 visibility_pair id"
     )
     narration_guidance: str = Field(
         default="", description="给叙事阶段的指引：可揭示什么/须保密什么/NPC 如何反应"

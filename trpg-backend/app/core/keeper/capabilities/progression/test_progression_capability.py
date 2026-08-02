@@ -1,4 +1,7 @@
-"""路线 5 Visibility + 路线 6 阶段/结局记账（纯代码路径，不打 LLM）。"""
+"""对局阶段推进与结局收束（progression，原路线 6）的验收。
+
+🔴 阶段**值**不归本能力（`keeper/phase.py` 的模块说明写了原因），
+这里验的是「什么时候推进」：两个裁决字段落到 keeper_state 的结果。"""
 
 import tempfile
 from pathlib import Path
@@ -9,35 +12,25 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.capabilities.agenda.state import AGENDA_FIRED_KEY
+from app.core.keeper.capabilities.progression.endings import format_endings_status
 from app.core.keeper.decision import KeeperDecision
+from app.core.keeper.deps import KeeperDeps
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.phase import (
     ENDING_ID_KEY,
     PHASE_FINISHED,
     PHASE_INVESTIGATION,
-    PHASE_KEY,
-    format_phase_status,
     load_phase,
 )
-from app.core.keeper.prompts import format_turn_input
-from app.core.keeper.tools import (
-    KeeperDeps,
-    KeeperToolError,
-    update_state_impl,
-)
+from app.core.keeper.registry import SituationContext
 from app.core.keeper.turn_executor import execute_side_effects
-from app.core.keeper.visibility import (
-    VISIBILITY_REVEALED_KEY,
-    format_visibility_status,
-    is_pair_revealed,
-    load_revealed_visibility,
-)
 from app.models.room import Character, Player, Room
 
-_FIXTURE = Path(__file__).parent / "fixtures" / "keeper_module.json"
+# 模组夹具几片能力共用，仍集中放在 tests/fixtures
+_FIXTURE = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "keeper_module.json"
+_MODULE = load_module(_FIXTURE)
 
-_db_path = Path(tempfile.mkdtemp(prefix="trpg-vis-phase-")) / "t.db"
+_db_path = Path(tempfile.mkdtemp(prefix="trpg-prog-")) / "t.db"
 _engine = create_async_engine(f"sqlite+aiosqlite:///{_db_path}", poolclass=NullPool)
 _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
@@ -55,7 +48,7 @@ async def _fresh_db():
 async def deps() -> KeeperDeps:
     module = load_module(_FIXTURE)
     async with _session_factory() as db:
-        room = Room(room_code="VIS001", room_name="密级房", max_players=4, phase="InGame")
+        room = Room(room_code="PRG001", room_name="密级房", max_players=4, phase="InGame")
         db.add(room)
         await db.flush()
         actor = Player(room_id=room.id, nickname="调查者")
@@ -97,45 +90,6 @@ async def deps() -> KeeperDeps:
     )
 
 
-def test_visibility_format_and_parse() -> None:
-    module = load_module(_FIXTURE)
-    text = format_visibility_status(module, [], observer_id="p1")
-    assert "尚未揭开" in text
-    assert "pair-butler-faces" in text
-
-    revealed = [("pair-butler-faces", "*")]
-    assert is_pair_revealed(revealed, "pair-butler-faces", "p1")
-    text2 = format_visibility_status(module, revealed, observer_id="p1")
-    assert "已揭开" in text2
-    assert "尚未揭开" in text2  # 另一条 pair-hall-mud 仍封
-
-
-@pytest.mark.asyncio
-async def test_visibility_revealed_and_reserved_keys(deps: KeeperDeps) -> None:
-    decision = KeeperDecision(
-        thinking="挣得线索",
-        visibility_revealed=["pair-butler-faces"],
-        narration_guidance="可透露管家公开形象侧",
-    )
-    report, issues = await execute_side_effects(deps, decision)
-    assert not issues
-    assert any("密级揭开" in r for r in report)
-
-    async with deps.session_factory() as db:
-        room = await db.get(Room, deps.room_id)
-        assert room is not None
-        entries = load_revealed_visibility(room.keeper_state)
-        assert is_pair_revealed(entries, "pair-butler-faces")
-
-    with pytest.raises(KeeperToolError, match="系统记账"):
-        await update_state_impl(deps, VISIBILITY_REVEALED_KEY, "hack")
-    with pytest.raises(KeeperToolError, match="系统记账"):
-        await update_state_impl(deps, AGENDA_FIRED_KEY, "hack")
-    with pytest.raises(KeeperToolError, match="系统记账"):
-        await update_state_impl(deps, PHASE_KEY, "opening")
-
-
-@pytest.mark.asyncio
 async def test_ending_reached_sets_finished(deps: KeeperDeps) -> None:
     decision = KeeperDecision(
         thinking="破案",
@@ -171,24 +125,6 @@ async def test_opening_complete_advances_phase(deps: KeeperDeps) -> None:
         assert load_phase(room.keeper_state) == PHASE_INVESTIGATION
 
 
-def test_format_turn_includes_visibility_and_phase() -> None:
-    text = format_turn_input(
-        {"当前场景": "门厅"},
-        ["玩家：你好"],
-        ["调查者"],
-        "调查者",
-        "搜查门厅",
-        capability_blocks=[(50.0, "## 议程状态\n- a · 夜\n\n")],
-        visibility_status="- pair-x：公开 a ↔ 真相 b",
-        phase_status=format_phase_status("investigation"),
-        is_heartbeat=True,
-    )
-    assert "主动推进轮" in text
-    assert "密级配对状态" in text
-    assert "对局阶段" in text
-    assert "议程状态" in text
-
-
 @pytest.mark.asyncio
 async def test_heartbeat_gate_skips_without_keeper() -> None:
     from app.core.keeper import heartbeat as hb
@@ -204,3 +140,26 @@ async def test_heartbeat_gate_skips_without_keeper() -> None:
         max_consecutive=2,
     )
     assert ok is False
+
+
+# ── #47 结局条件进局面块 ────────────────────────────
+
+
+def test_endings_status_lists_every_ending_with_its_trigger() -> None:
+    """结局条件此前只躺在 system prompt 末尾的剧本全文里；议程能被可靠触发，
+    正是因为它每轮都以独立小节出现在局面块中。这里给结局同样的待遇。
+
+    ⚠️ 如实说：这是概率性改进。"这段剧情算不算命中结局"是纯语义判断，
+    没有代码手段能确定性判定。
+    """
+    text = format_endings_status(SituationContext(_MODULE, None))
+    assert text  # fixture 模组有结局
+    for ending in _MODULE.endings:
+        assert ending.id in text
+        assert ending.title in text
+
+
+def test_endings_status_is_empty_for_a_module_without_endings() -> None:
+    """没有结局的模组 → 空串 → 整块不渲染（退化保证）。"""
+    stripped = _MODULE.model_copy(update={"endings": []})
+    assert format_endings_status(SituationContext(stripped, None)) == ""

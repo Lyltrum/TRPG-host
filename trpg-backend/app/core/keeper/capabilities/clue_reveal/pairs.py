@@ -1,4 +1,4 @@
-"""Visibility 运行时骨架（路线第 5 步）。
+"""线索揭示（clue_reveal）的运行时状态（路线第 5 步）。
 
 静态配对表在 `ScenarioModule.visibility_pairs`（4b）。这里负责：
 - 把「哪条配对已对谁揭开」记在 `keeper_state`（代码写，不靠 LLM 自由记账）；
@@ -10,21 +10,32 @@
   叙事纪律仍靠 prompt，私密通道属后续协议）
 
 🔴 叙事仍广播给全房间——真 per-observer 私信要 WS/协议层，本期不做。
+
+## 🔴 改名的边界（exec/27 三处撞名）
+
+`stealth`（技能）/`stealth`（状态）/`visibility`（线索）三个名字互相干扰。这里
+把**代码里的**名字改成 `clue_reveal` / `clues_revealed`，但两样东西**不动**：
+
+- `ScenarioModule.visibility_pairs`：模组数据，改了要迁移五个模组的
+  structured.json，而"配对表"这个词本身不歧义；
+- `CLUES_REVEALED_KEY` 的**字符串值**仍是 `"已揭开配对"`：那是 `keeper_state`
+  里的键，改了会让已经在跑的房间读不到自己的记录。改的只是 Python 标识符。
 """
 
 from __future__ import annotations
 
 from app.core.keeper.module_loader import ScenarioModule
+from app.core.keeper.registry import SituationContext
 
-VISIBILITY_REVEALED_KEY = "已揭开配对"
+CLUES_REVEALED_KEY = "已揭开配对"
 ROOM_WIDE_OBSERVER = "*"
 
 
-def load_revealed_visibility(keeper_state: dict | None) -> list[tuple[str, str]]:
+def load_revealed_clues(keeper_state: dict | None) -> list[tuple[str, str]]:
     """解析 (pair_id, observer) 列表；保序、去空。"""
     if not keeper_state:
         return []
-    raw = keeper_state.get(VISIBILITY_REVEALED_KEY)
+    raw = keeper_state.get(CLUES_REVEALED_KEY)
     if raw is None or raw == "":
         return []
     out: list[tuple[str, str]] = []
@@ -42,7 +53,7 @@ def load_revealed_visibility(keeper_state: dict | None) -> list[tuple[str, str]]
     return out
 
 
-def serialize_revealed_visibility(entries: list[tuple[str, str]]) -> str:
+def serialize_revealed_clues(entries: list[tuple[str, str]]) -> str:
     return ", ".join(f"{pid}@{obs}" for pid, obs in entries)
 
 
@@ -62,7 +73,7 @@ def is_pair_revealed(
     return False
 
 
-def format_visibility_status(
+def format_clue_status(
     module: ScenarioModule,
     revealed: list[tuple[str, str]],
     observer_id: str | None = None,
@@ -90,3 +101,16 @@ def format_visibility_status(
     if open_lines:
         parts.append("### 已揭开（可将对应公开侧信息给玩家）\n" + "\n".join(open_lines))
     return "\n\n".join(parts)
+
+
+def render_clue_status(context: SituationContext) -> str:
+    """注册进局面块的 situation 钩子。
+
+    🔴 **本能力是 `SituationContext` 的成因**：它要按观察者渲染（哪条配对对
+    **这个玩家**揭开了），而钩子第一版签名只有「剧本 + keeper_state」两个参数。
+    """
+    return format_clue_status(
+        context.module,
+        load_revealed_clues(context.keeper_state),
+        observer_id=context.observer_id,
+    )

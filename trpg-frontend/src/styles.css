@@ -149,6 +149,21 @@
   textarea:focus {
     outline: none;
   }
+
+  /* 🔴 按钮此前没被这条 reset 覆盖，于是拿到浏览器默认的**蓝色**聚焦环——
+     真机截图里「背景装备」那个 tab 顶着一圈亮蓝，跟整套配色完全冲突。
+     不能直接 `outline: none`（键盘用户会失去焦点提示），改成黄铜色焦点环，
+     且只在 `:focus-visible` 时出现（鼠标点击不触发）。 */
+  button:focus {
+    outline: none;
+  }
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: 2px solid rgb(var(--c-brass));
+    outline-offset: 2px;
+  }
 }
 
 @layer utilities {

@@ -30,8 +30,6 @@ import random
 from dataclasses import replace
 
 import structlog
-from openai.types.chat import ChatCompletionMessageParam
-from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -47,6 +45,7 @@ from app.core.keeper.chapter import (
     turns_since_last_chapter,
 )
 from app.core.keeper.decision import KeeperDecision
+from app.core.keeper.decision_log import record_decision
 from app.core.keeper.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.fact_ledger import (
     record_revelations,
@@ -60,6 +59,13 @@ from app.core.keeper.history import (
     history_lines_from_events,
 )
 from app.core.keeper.leak_guard import log_leak_hits, scrub_meta_leaks
+from app.core.keeper.llm_calls import (
+    FALLBACK_ADJUDICATE_GUIDANCE,
+    REQUEST_TIMEOUT_SECONDS,
+    adjudicate,
+    narrate_prose,
+    summarize_chapter,
+)
 from app.core.keeper.location_state import (
     group_players,
     load_hidden_players,
@@ -80,11 +86,8 @@ from app.core.keeper.phase import (
 )
 from app.core.keeper.primitives.dice import is_success
 from app.core.keeper.prompts import (
-    CHAPTER_SUMMARY_INSTRUCTIONS,
     build_adjudicator_instructions,
     build_narrator_instructions,
-    format_chapter_input,
-    format_narrator_input,
 )
 from app.core.keeper.prose_discipline import (
     clip_narration,
@@ -109,42 +112,12 @@ from app.core.narration.contract import (
     Narrator,
     PlayerUtterance,
 )
-from app.core.narration.deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from app.core.narration.deepseek import DEEPSEEK_BASE_URL
 from app.dto.game import RulesetRead
 from app.models.event import Event
 from app.models.room import Character, Player, Room
 
 logger = structlog.get_logger()
-
-# 🔴 真人实测 2026-07-28（神秘渡轮）复现：单次请求卡了 4~5 分钟——
-# AsyncOpenAI 客户端此前没传 timeout，落到 SDK 默认值（600 秒）。这段时间
-# 里玩家发的消息在 WS 收发循环里是同步 await 处理的，连别的操作都发不出去，
-# 前端只有一个转圈的"…"，没有任何提示。KeeperAgent 的上下文比
-# narrator.py::DeepSeekNarrator（30 秒）大得多——剧本全文常驻 system
-# prompt + 完整历史重放，给宽松一点；超时后走既有的宽捕获异常路径
-# （ws.py 的 narrator_failed → "守秘人整理思路时卡了一下，请重试"兜底广播），
-# 不再无界等待。
-_REQUEST_TIMEOUT_SECONDS = 60.0
-
-# 裁决 JSON 解析失败时的重试次数（把解析错误喂回去让模型改）。
-# 空响应常见于模型偶发不返回 content；多给一次机会，仍失败则兜底决策。
-_ADJUDICATE_RETRIES = 2
-
-# 🔴 deepseek-v4-pro 默认开启隐藏推理（message.reasoning_content），推理 token
-# 与可见正文共享同一个 max_tokens 预算——实测简单请求推理耗 77~119 token，复杂
-# 真实局面耗更多，曾把正文预算挤到只剩 51 字就被硬砍断（真人实测 2026-07-28
-# 复现）。裁决/叙事两阶段的设计（低温稳定输出 / 固定字数上限）都是在
-# deepseek-chat（无隐藏推理）上定的，v4-pro 的隐藏推理与这套预算模型不兼容，
-# 关掉即可——本项目不需要模型的链式思考，需要判断力的地方已经是独立的裁决
-# 阶段。已用真实请求验证：加此参数后 reasoning_tokens 归零，正文按预算完整生成。
-_DISABLE_THINKING: dict = {"thinking": {"type": "disabled"}}
-
-_FALLBACK_ADJUDICATE_GUIDANCE = (
-    "【系统兜底】裁决模型未返回合法 JSON。"
-    "请用一两句世界内文字回应玩家本轮意图：能推进就写行动结果，"
-    "有障碍就写眼前障碍；不要编造未发生的重大剧情；"
-    "可请玩家用更明确的一句行动再说一次。checks 必须为空。"
-)
 
 
 def _build_check_boundary_hint(pending_checks: list[PendingCheck]) -> str:
@@ -259,7 +232,7 @@ class KeeperAgent(Narrator):
         self._session_factory = session_factory
         self._rng = rng if rng is not None else random.Random()
         self._client = build_llm_client(
-            api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=_REQUEST_TIMEOUT_SECONDS
+            api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=REQUEST_TIMEOUT_SECONDS
         )
         self._background: set[asyncio.Task] = set()
         self._adjudicator_instructions = build_adjudicator_instructions(module, ruleset)
@@ -413,7 +386,7 @@ class KeeperAgent(Narrator):
         classification = classify_turn(
             decision,
             context.utterance,
-            fallback_guidance=_FALLBACK_ADJUDICATE_GUIDANCE,
+            fallback_guidance=FALLBACK_ADJUDICATE_GUIDANCE,
             is_heartbeat=is_heartbeat,
             is_opening_ceremony=is_opening_ceremony,
         )
@@ -453,7 +426,8 @@ class KeeperAgent(Narrator):
         # 这时 decision 是最终形态，而 player_state / thinking 仍是模型的原始
         # 输出（model_copy 只 update 指定字段），一条事件就能回答"叙事为什么
         # 这么写"。
-        await self._record_decision(
+        await record_decision(
+            self._session_factory,
             room_id=room_id,
             player_id=context.player_id,
             decision=decision,
@@ -724,111 +698,14 @@ class KeeperAgent(Narrator):
         outcome = await self.narrate(context)
         return replace(outcome, check_results=[notice, *outcome.check_results])
 
-    async def _record_decision(
-        self,
-        *,
-        room_id: str,
-        player_id: str,
-        decision: KeeperDecision,
-        forced: list[str],
-    ) -> None:
-        """把这一轮的裁决分类与理由写进 events（exec/25 #61）。
-
-        为什么要有：诊断 exec/25 #59 时拿不到那一轮 `player_state` 的实际值——
-        `keeper.state`/`keeper.node`/`narration.push` 都落了表，唯独**裁决本身
-        没有**，而它才是"叙事为什么这么写"的唯一解释。只能靠复现探针推断，而
-        探针复现的是新的一次调用，不是当时那次。
-
-        🔴 **不落 `narration_guidance` 的内容，只落哪几条代码强制命中了。**
-        guidance 里有"须保密什么"，而 `get_replay` 是把 `payload` 原样返回给
-        玩家的。虽然 replay 已经显式排除了本事件类型，但不把敏感内容写进去是
-        更靠前的一道——纵深防御，同「保密靠拿不到，不是请你别说」。
-        `thinking` 同理是审计字段（prompt 里明写玩家看不到），它落表**只**因为
-        replay 那条排除；两道都在。
-
-        任何失败都不能连累这一轮：留痕挂了，游戏照常进行。
-        """
-        try:
-            async with self._session_factory() as db:
-                db.add(
-                    Event(
-                        room_id=room_id,
-                        player_id=player_id,
-                        event_type="keeper.decision",
-                        payload={
-                            "player_state": decision.player_state,
-                            "thinking": decision.thinking,
-                            "forced": forced,
-                            "current_node_id": decision.current_node_id,
-                            # 已切出去的能力自带留痕字段（exec/27 阶段 3 · A 族）。
-                            # 跟 keeper_decision 日志复用同一份——否则每加一片
-                            # 能力，它的裁决在 events 表里就没有痕迹，且不报错。
-                            **audit_fields(decision),
-                        },
-                    )
-                )
-                await db.commit()
-        except Exception as exc:  # noqa: BLE001 — 留痕失败不该让真人的这一轮失败
-            logger.warning("keeper_decision_record_failed", room_id=room_id, error=str(exc))
-
     async def _adjudicate(self, situation: str) -> KeeperDecision:
-        """阶段1：裁决。JSON mode + pydantic 校验，解析失败把错误喂回去重试。
+        """委托给 `llm_calls.adjudicate`。
 
-        温度压低（0.3）：裁决要的是稳定一致的规则判断，不是创造力。
-        全部重试仍失败（含空 content）时返回兜底决策，避免整轮静默失败。
+        🔴 **这层薄壳不是多余的**：整套测试都靠替换 `agent._adjudicate` /
+        `agent._narrate_prose` 注入假模型输出（不打网络）。直接调模块函数就没有
+        这个接缝了——抽 `llm_calls` 时我一度想删掉它们，会当场废掉十几个用例。
         """
-        messages: list[ChatCompletionMessageParam] = [
-            {"role": "system", "content": self._adjudicator_instructions},
-            {"role": "user", "content": situation + "\n\n请输出本轮的裁决 JSON。"},
-        ]
-        last_error: Exception | None = None
-        for attempt in range(1 + _ADJUDICATE_RETRIES):
-            response = await self._client.chat.completions.create(
-                tape_kind="adjudicate",
-                model=DEEPSEEK_MODEL,
-                messages=messages,
-                response_format={"type": "json_object"},
-                temperature=0.3,
-                extra_body=_DISABLE_THINKING,
-            )
-            raw = (response.choices[0].message.content or "").strip()
-            if not raw:
-                last_error = ValueError("empty adjudicate response")
-                logger.warning(
-                    "keeper_adjudicate_empty",
-                    attempt=attempt + 1,
-                    room_hint=situation[:80],
-                )
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "你上一轮返回了空内容。必须输出完整合法的裁决 JSON 对象，"
-                            "至少包含 thinking 与 narration_guidance 字段；"
-                            "checks/san_checks/hp_changes/state_updates 可为 []。"
-                        ),
-                    }
-                )
-                continue
-            try:
-                return KeeperDecision.model_validate_json(raw)
-            except ValidationError as exc:
-                last_error = exc
-                messages.append({"role": "assistant", "content": raw})
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": f"JSON 不符合要求：{exc}。请重新只输出一个合法的裁决 JSON。",
-                    }
-                )
-        logger.warning(
-            "keeper_adjudicate_fallback",
-            error=str(last_error),
-        )
-        return KeeperDecision(
-            thinking=f"裁决解析失败兜底：{last_error}",
-            narration_guidance=_FALLBACK_ADJUDICATE_GUIDANCE,
-        )
+        return await adjudicate(self._client, self._adjudicator_instructions, situation)
 
     async def _narrate_prose(
         self,
@@ -841,51 +718,18 @@ class KeeperAgent(Narrator):
         max_chars: int,
         extra_suffix: str = "",
     ) -> str:
-        """阶段3：叙事。max_tokens 限生成；max_chars 代码硬裁（句末优先）。
-
-        `extra_suffix` 追加在 `length_hint` 之后、整段 user_content 的最
-        末尾——目前唯一的用途是检定边界硬提醒（见 `_build_check_boundary_
-        hint`），放在这个位置是刻意的（近因效应，模型对最后读到的指令
-        服从概率更高，跟 `length_hint` 本身的位置选择同理）。
-        """
-        length_hint = (
-            f"\n\n【长度硬限】本轮正文不得超过 {max_chars} 字（含标点）。"
-            "超长会被系统截断——请一次写完且写短。"
-        )
-        user_content = (
-            format_narrator_input(situation, decision.narration_guidance, report, issues)
-            + length_hint
-            + extra_suffix
-        )
-        response = await self._client.chat.completions.create(
-            tape_kind="narrate",
-            model=DEEPSEEK_MODEL,
-            messages=[
-                {"role": "system", "content": self._narrator_instructions},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.8,
+        """委托给 `llm_calls.narrate_prose`（接缝理由同上）。"""
+        return await narrate_prose(
+            self._client,
+            self._narrator_instructions,
+            situation,
+            decision,
+            report,
+            issues,
             max_tokens=max_tokens,
-            extra_body=_DISABLE_THINKING,
+            max_chars=max_chars,
+            extra_suffix=extra_suffix,
         )
-        raw = response.choices[0].message.content or ""
-        if response.choices[0].finish_reason == "length":
-            # 即便关了隐藏推理，正文本身也可能写超——这里留痕方便以后一眼看出
-            # 是被 max_tokens 硬砍的，而不是 clip_narration 的优雅裁切。
-            logger.warning(
-                "keeper_narration_hit_token_limit",
-                max_tokens=max_tokens,
-                raw_len=len(raw.strip()),
-            )
-        clipped = clip_narration(raw, max_chars)
-        if len(raw.strip()) > max_chars:
-            logger.info(
-                "keeper_narration_clipped",
-                before=len(raw.strip()),
-                after=len(clipped),
-                limit=max_chars,
-            )
-        return clipped
 
     async def _narrate_per_audience(
         self,
@@ -1082,17 +926,7 @@ class KeeperAgent(Narrator):
                 return
             if not history_lines:
                 return
-            response = await self._client.chat.completions.create(
-                tape_kind="chapter",
-                model=DEEPSEEK_MODEL,
-                messages=[
-                    {"role": "system", "content": CHAPTER_SUMMARY_INSTRUCTIONS},
-                    {"role": "user", "content": format_chapter_input(history_lines)},
-                ],
-                temperature=0.2,
-                extra_body=_DISABLE_THINKING,
-            )
-            text = (response.choices[0].message.content or "").strip()
+            text = await summarize_chapter(self._client, history_lines)
             async with self._session_factory() as db:
                 await record_chapter(db, room_id=room_id, text=text)
                 await db.commit()

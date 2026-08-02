@@ -32,10 +32,11 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.agent import _FALLBACK_ADJUDICATE_GUIDANCE, KeeperAgent
+from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.capabilities.movement.schema import PlayerMove
 from app.core.keeper.capabilities.skill_check.schema import CheckRequest
 from app.core.keeper.decision import KeeperDecision
+from app.core.keeper.llm_calls import FALLBACK_ADJUDICATE_GUIDANCE
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
@@ -137,7 +138,7 @@ async def _observe(
         return KeeperDecision(
             thinking="固定裁决",
             narration_guidance=(
-                _FALLBACK_ADJUDICATE_GUIDANCE if adjudicate_failed else "裁决给出的原始指引"
+                FALLBACK_ADJUDICATE_GUIDANCE if adjudicate_failed else "裁决给出的原始指引"
             ),
             player_state=player_state,  # ty: ignore[invalid-argument-type]
             checks=[CheckRequest(skill_id="spot-hidden", reason="环顾")],
@@ -276,7 +277,7 @@ async def test_adjudicate_fallback_drops_the_fallback_text_when_confused() -> No
     got = await _observe(
         "CHF02", player_state="normal", utterance="我该做什么", adjudicate_failed=True
     )
-    assert _FALLBACK_ADJUDICATE_GUIDANCE not in got["guidance"]
+    assert FALLBACK_ADJUDICATE_GUIDANCE not in got["guidance"]
     assert "强制引导" in got["guidance"]
 
 

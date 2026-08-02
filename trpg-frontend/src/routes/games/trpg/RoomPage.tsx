@@ -1104,14 +1104,17 @@ export default function RoomPage() {
           // 守秘人 = 书页：裁齐的边、版心、装订侧阴影、页码
           if (isNarr) {
             return (
-              // 🔴 排版收紧过一轮：15px/1.95 + 大内边距的话，一段开场白就占满整屏，
-              // 多人局里翻记录会很痛苦（真人反馈）。改成 13.5px/1.75、内边距减半。
-              <div key={i} className="leaf paper-grain bg-book text-ink pl-4 pr-3 py-2.5 animate-[msgIn_0.3s_ease]">
-                <div className="typed flex justify-between text-[8.5px] text-ink/45 border-b border-ink/15 pb-1 mb-2">
+              // 🔴 书页是**满幅铺开**的，不是浮在桌面上的一张卡片。
+              // 真机反馈「太条条框框」：四条边都框着 + 页眉一道横线 + 投影，
+              // 读起来是"卡片"不是"书页"。改法是让它**出血到两侧边缘**
+              // （-mx 抵消消息区的内边距）、去掉投影与页眉横线，
+              // 署名/时间缩成右上角一行浅字。框由界面本身提供，纸不自带框。
+              <div key={i} className="leaf-full paper-grain bg-book text-ink -mx-3 px-4 pt-2 pb-3 animate-[msgIn_0.3s_ease]">
+                <div className="typed flex justify-between text-[8px] text-ink/35 mb-1">
                   <span>{msg.sender}</span>
                   <span>{msg.time}</span>
                 </div>
-                <p className="font-display text-[13.5px] leading-[1.75] whitespace-pre-wrap">{msg.content}</p>
+                <p className="font-display text-[13.5px] leading-[1.72] whitespace-pre-wrap">{msg.content}</p>
               </div>
             )
           }
@@ -1315,11 +1318,12 @@ export default function RoomPage() {
                     ? '私密行动，只有你看得到…'
                     : '对守秘人说…'
             }
-            // 🔴 去掉了 `inset` 阴影。真机上那圈内阴影很重，**把输入区上下各吃掉
-            // 一条**，自己打的字挤在中间几乎看不见。想要"刻进去"的质感只保留
-            // 一条上缘暗线就够，不能用大范围内阴影。
-            className={`flex-1 min-w-0 bg-input border border-brass/30 px-3 py-2 font-display text-[15px] text-text-primary outline-none h-[38px] placeholder:text-text-dim focus:border-brass transition-colors ${
-              dmBusy ? 'opacity-60' : ''
+            // 🔴 输入框是**一张纸**，不是深色槽。
+            // 真机上"深槽压深框"两者只差几个色阶，字打上去根本看不见；而且材质
+            // 也不对——你打的这段话下一秒就会变成一张便签，那就该在纸上写。
+            // 浅纸 + 深墨在深色框里天然最显眼，不用靠加边框描亮。
+            className={`memo-input flex-1 min-w-0 bg-memo-self text-ink border-none px-3 py-2 font-display text-[15px] outline-none h-[38px] placeholder:text-ink/40 transition-shadow ${
+              dmBusy ? 'opacity-70' : ''
             }`}
           />
           <button

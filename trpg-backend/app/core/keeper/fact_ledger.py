@@ -113,18 +113,24 @@ async def visible_fact_ids(db: AsyncSession, *, room_id: str, audience: frozense
     当时都在场时才进这一组的上下文。少给一条最多让叙事重新铺陈一次；多给
     一条就是把别人在地下室挣到的东西塞进门厅这段的 prompt——模型想不漏都
     难。没有 `audience` 字段的账目视为公开（老数据 + 未分头时的常态）。
+
+    `audience=frozenset()`（空集）= 没有人，只给公开账目。
     """
     rows = await db.execute(
         select(Event.payload).where(Event.room_id == room_id, Event.event_type == EVENT_TYPE)
     )
     out: set[str] = set()
+    # 🔴 空受众 = 没有人。`frozenset().issubset(x)` 恒为真，不挡的话"谁都不是"
+    # 会拿到**全部**线索（含别人在分头时挣到的）——朝泄密方向失败，跟上面那句
+    # 正相反。与 `history.visible_history` 同一处修（exec/27 阶段 4）。
+    public_only = not audience
     for (payload,) in rows:
         payload = payload or {}
         fact_id = payload.get("fact_id")
         if not fact_id:
             continue
         seen_by = payload.get("audience")
-        if seen_by is not None and not audience.issubset(set(seen_by)):
+        if seen_by is not None and (public_only or not audience.issubset(set(seen_by))):
             continue
         out.add(str(fact_id))
     return out

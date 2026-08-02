@@ -188,12 +188,33 @@
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='90' height='90' filter='url(%23p)' opacity='0.085'/%3E%3C/svg%3E");
   }
 
-  /* ── 书页：守秘人叙事 ── */
+  /* ── 书页：守秘人叙事 ──
+     🔴 **满幅铺开**，不是浮在桌上的卡片。真人反馈「太条条框框」——四条边都
+     框着 + 页眉横线 + 投影，读起来就是卡片。纸不自带框，框由界面提供。
+     只保留上下两道极浅的分界（区分连续两条叙事）+ 装订侧的一点压痕。 */
+  .leaf-full {
+    position: relative;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.45),
+      inset 0 -1px 0 rgba(36, 29, 20, 0.16);
+  }
+  /* 装订侧：左缘一道极浅的压痕，暗示这是一本翻开的书的内侧 */
+  .leaf-full::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 10px;
+    pointer-events: none;
+    background: linear-gradient(to right, rgba(36, 29, 20, 0.13), transparent);
+  }
+
+  /* 保留给"纸做的弹窗"用（退出确认那种真的是一张单页的地方） */
   .leaf {
     position: relative;
     box-shadow: 0 1px 0 rgba(0, 0, 0, 0.34), 0 12px 20px -8px rgba(0, 0, 0, 0.55);
   }
-  /* 装订侧：左缘一道由暗到无，像书脊把纸压向内页 */
   .leaf::before {
     content: '';
     position: absolute;
@@ -203,6 +224,19 @@
     width: 13px;
     pointer-events: none;
     background: linear-gradient(to right, rgba(36, 29, 20, 0.22), rgba(36, 29, 20, 0.04) 55%, transparent);
+  }
+
+  /* ── 输入框那张纸条：上缘一道压痕表示"刻进桌面"，聚焦时纸被点亮 ── */
+  .memo-input {
+    box-shadow:
+      inset 0 2px 0 rgba(36, 29, 20, 0.22),
+      0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+  .memo-input:focus {
+    background-color: #e6dcc4;
+    box-shadow:
+      inset 0 2px 0 rgba(36, 29, 20, 0.22),
+      0 0 0 2px rgb(var(--c-brass) / 0.55);
   }
 
   /* ── 便签：玩家发言。撕齿上缘 + 横格 + 卷边 ── */

@@ -24,6 +24,7 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper import dice
+from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.decision import CheckRequest, KeeperDecision, OpposedTarget
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.tools import KeeperDeps, roll_check_detail
@@ -144,6 +145,7 @@ def _deps(room_id: str, player_id: str, seed: int = 0) -> KeeperDeps:
         session_factory=_session_factory,
         module=_MODULE,
         ruleset=build_coc7_ruleset(),
+        reserved_state_keys=reserved_state_keys(),
         rng=random.Random(seed),
     )
 

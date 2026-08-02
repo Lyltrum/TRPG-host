@@ -46,7 +46,6 @@ from app.core.keeper.registry import Capability, DecisionModel
 DECISION_FIELD_CAPABILITIES: dict[str, Capability] = {
     "checks": Capability.REQUEST_CHECK,
     "san_checks": Capability.REQUEST_SAN_CHECK,
-    "state_updates": Capability.UPDATE_STATE,
     "current_node_id": Capability.SET_SCENE,
     # 分头探索（P5.2）：逐人位置与设置场景是同一件事的不同粒度，共用一条。
     "moves": Capability.SET_SCENE,

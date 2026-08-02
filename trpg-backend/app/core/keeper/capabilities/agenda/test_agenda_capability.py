@@ -18,7 +18,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.capabilities import situation_blocks
+from app.core.keeper.capabilities import reserved_state_keys, situation_blocks
 from app.core.keeper.capabilities.agenda.executor import mark_agenda_fired_impl
 from app.core.keeper.capabilities.agenda.state import (
     AGENDA_FIRED_KEY,
@@ -98,6 +98,7 @@ async def deps() -> KeeperDeps:
         session_factory=_session_factory,
         module=load_module(_FIXTURE_MODULE),
         ruleset=build_coc7_ruleset(),
+        reserved_state_keys=reserved_state_keys(),
         rng=random.Random(42),
     )
 

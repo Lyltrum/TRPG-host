@@ -9,7 +9,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.capabilities import situation_blocks
+from app.core.keeper.capabilities import reserved_state_keys, situation_blocks
 from app.core.keeper.capabilities.agenda.state import AGENDA_FIRED_KEY
 from app.core.keeper.capabilities.clue_reveal.pairs import (
     CLUES_REVEALED_KEY,
@@ -17,6 +17,7 @@ from app.core.keeper.capabilities.clue_reveal.pairs import (
     is_pair_revealed,
     load_revealed_clues,
 )
+from app.core.keeper.capabilities.world_state.executor import update_state_impl
 from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.module_loader import load_module
@@ -26,7 +27,6 @@ from app.core.keeper.phase import (
     format_phase_status,
 )
 from app.core.keeper.prompts import format_turn_input
-from app.core.keeper.tools import update_state_impl
 from app.core.keeper.turn_executor import execute_side_effects
 from app.models.room import Character, Player, Room
 
@@ -90,6 +90,7 @@ async def deps() -> KeeperDeps:
         session_factory=_session_factory,
         module=module,
         ruleset=build_coc7_ruleset(),
+        reserved_state_keys=reserved_state_keys(),
     )
 
 

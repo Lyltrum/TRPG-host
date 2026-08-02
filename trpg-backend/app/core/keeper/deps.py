@@ -36,6 +36,17 @@ class KeeperDeps:
     session_factory: async_sessionmaker[AsyncSession]
     module: ScenarioModule
     ruleset: RulesetRead
+    #: `keeper_state` 里由代码记账、`state_updates` 不许写的键。
+    #:
+    #: 🔴 **为什么由编排层带进来，而不是能力自己去查全局**（exec/27 阶段 3）：
+    #: 它是所有能力声明的并集，只有 `capabilities/__init__` 算得出来。而
+    #: `world_state` 的执行要用它——能力反过来 import 那个汇总模块，
+    #: `capabilities → world_state → 汇总 → capabilities` 当场成环。
+    #: **跨能力的不变量不该由能力自己去查全局，得由编排层带下来。**
+    #:
+    #: 故意不给默认值：默认空 = 静默失去保护，而这是一道真的闸门
+    #: （漏了模型一条 state_updates 就能覆盖代码维护的记账）。
+    reserved_state_keys: frozenset[str]
     # 本轮**一起发言**的全部玩家（收集窗口合并的那一批，见 service/turn_window.py）。
     # 空 = 只有发起者。`set_current_node_impl` 把这些人**以及此刻与他们同处
     # 一地的人**挪到新场景——"跟你站在一起的人跟你一起走"，见该函数 docstring

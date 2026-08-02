@@ -15,10 +15,13 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel
 
+from app.core.keeper import location_state as _location_state
+from app.core.keeper import scene_state as _scene_state
 from app.core.keeper.capabilities.agenda import CAPABILITY as AGENDA
 from app.core.keeper.capabilities.clue_reveal import CAPABILITY as CLUE_REVEAL
 from app.core.keeper.capabilities.health import CAPABILITY as HEALTH
 from app.core.keeper.capabilities.progression import CAPABILITY as PROGRESSION
+from app.core.keeper.capabilities.world_state import CAPABILITY as WORLD_STATE
 from app.core.keeper.module_loader import ScenarioModule
 from app.core.keeper.registry import (
     Capability,
@@ -30,7 +33,13 @@ from app.core.keeper.registry import (
 )
 
 #: 已经垂直切出来的能力。其余的还散在骨架里，逐个切（exec/27 阶段 3）。
-CAPABILITIES: tuple[KeeperCapability, ...] = (HEALTH, AGENDA, PROGRESSION, CLUE_REVEAL)
+CAPABILITIES: tuple[KeeperCapability, ...] = (
+    HEALTH,
+    AGENDA,
+    PROGRESSION,
+    CLUE_REVEAL,
+    WORLD_STATE,
+)
 
 
 def field_capabilities() -> dict[str, Capability]:
@@ -88,8 +97,39 @@ def audit_fields(decision: BaseModel) -> dict[str, object]:
 
 
 def reserved_state_keys() -> frozenset[str]:
-    """各能力占用的 `keeper_state` 键：`state_updates` 不许写、也不原样喂给模型。"""
-    return frozenset(k for c in CAPABILITIES for k in c.reserved_state_keys)
+    """各能力占用的 `keeper_state` 键：`state_updates` 不许写、也不原样喂给模型。
+
+    🔴 **唯一来源。** 编排层把它塞进 `KeeperDeps` 带给执行层——能力自己 import
+    这个汇总模块会成环（`capabilities → 某能力 → 汇总 → capabilities`）。
+    """
+    return frozenset(k for c in CAPABILITIES for k in c.reserved_state_keys) | _SKELETON_KEYS
+
+
+#: 还没切出去的能力占的键（`movement` 那片切走后这里就空了）。
+_SKELETON_KEYS: frozenset[str] = frozenset(
+    {
+        _scene_state.CURRENT_NODE_KEY,
+        _location_state.PLAYER_LOCATION_KEY,
+        _location_state.HIDDEN_PLAYERS_KEY,
+    }
+)
+
+
+def visible_keeper_state(keeper_state: dict | None) -> dict | None:
+    """喂给模型的那份世界状态笔记：滤掉所有代码记账的键。
+
+    🔴 与 `reserved_state_keys()`（`state_updates` 不许写）**共用同一个集合**，
+    不是两张各自维护的清单。此前是两张，实测已经分叉：`NPC状态` 两张都漏了，
+    于是模型既看得见那个 dict 的原始形态，又能用一条 `state_updates` 把它覆盖
+    成字符串、让血量记账静默清零（exec/27 阶段 3 复查复现）。
+
+    这些键要么是机器格式（逐人位置是 `player_id@node_id`、隐匿玩家是 player id），
+    要么已经由 situation 钩子渲染成人话摆在局面块里。空字典/None 原样返回。
+    """
+    if not keeper_state:
+        return keeper_state
+    reserved = reserved_state_keys()
+    return {k: v for k, v in keeper_state.items() if k not in reserved}
 
 
 def registered_schemas() -> Sequence[type[BaseModel]]:

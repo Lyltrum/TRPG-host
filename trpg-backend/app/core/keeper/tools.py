@@ -26,7 +26,6 @@ from sqlalchemy import select
 
 from app.core.coc7_rules import evaluate_skill_base
 from app.core.keeper import dice, module_loader
-from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.deps import (
     KeeperDeps,
     KeeperToolError,
@@ -44,47 +43,11 @@ from app.core.keeper.location_state import (
     serialize_hidden_players,
     serialize_player_locations,
 )
-from app.core.keeper.module_loader import ScenarioModule
-from app.core.keeper.primitives.npcs import resolve_npc_id
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
 from app.core.keeper.skill_names import canonical_skill_name
 from app.models.room import Character, Player, Room
 
 logger = structlog.get_logger()
-
-# keeper_state 里的系统保留 key：由代码写。**唯一来源**——`state_updates` 不许
-# 写它们（下面 update_state_impl），`agent` 也不把它们原样喂给模型（那边直接
-# 引用这个集合，不再自己维护第二张清单：两张手维护的清单实测已经分叉过一次，
-# `NPC状态` 两张都漏了，模型一条 state_updates 就能把血量记账清零）。
-#
-# 已经垂直切出去的能力自己声明（`reserved_state_keys` 钩子，exec/27 阶段 3）；
-# 剩下的还散在各状态编解码模块（scene_state.py/phase.py/visibility.py），
-# 跟着对应能力一起搬走。
-RESERVED_STATE_KEYS = reserved_state_keys() | frozenset(
-    {
-        CURRENT_NODE_KEY,
-        PLAYER_LOCATION_KEY,
-        HIDDEN_PLAYERS_KEY,
-    }
-)
-
-
-def visible_keeper_state(keeper_state: dict | None) -> dict | None:
-    """喂给模型的那份世界状态笔记：滤掉所有代码记账的键。
-
-    🔴 与 `RESERVED_STATE_KEYS`（`state_updates` 不许写）**共用同一个集合**，
-    不是两张各自维护的清单。此前是两张，实测已经分叉：`NPC状态` 两张都漏了，
-    于是模型既看得见那个 dict 的原始形态，又能用一条 `state_updates` 把它覆盖
-    成字符串、让血量记账静默清零（exec/27 阶段 3 复查复现）。
-
-    这些键要么是机器格式（逐人位置是 `player_id@node_id`、隐匿玩家是 player id），
-    要么已经由 situation 钩子渲染成人话摆在局面块里——原样再喂一遍既是噪声也是
-    泄漏。空字典/None 原样返回（"尚无记录"由渲染层表达）。
-    """
-    if not keeper_state:
-        return keeper_state
-    return {k: v for k, v in keeper_state.items() if k not in RESERVED_STATE_KEYS}
-
 
 # ── 内部查询辅助 ──────────────────────────────────────
 
@@ -348,84 +311,6 @@ def read_module_impl(deps: KeeperDeps, section: str) -> str:
 
 
 #: 不挂在任何具体实体上的世界级状态（游戏内时间、天气、委托进度……）。
-WORLD_SUBJECT = "world"
-
-
-def resolve_state_subject(module: ScenarioModule, label: str) -> str | None:
-    """把裁决器写的主体解析成剧本里的 id。解析不出返回 None。
-
-    接受：`world`、NPC id/名字（复用 `resolve_npc_id`，含形态）、节点 id/标题。
-    **全部精确匹配**——同 `resolve_npc_id` 的理由：模糊匹配是同义词打地鼠的
-    开始（exec/17）。
-    """
-    key = (label or "").strip()
-    if not key or key.casefold() == WORLD_SUBJECT:
-        return WORLD_SUBJECT
-    npc_id = resolve_npc_id(module, key)
-    if npc_id is not None:
-        return npc_id
-    folded = key.casefold()
-    for node in module_loader.iter_all_nodes(module.nodes):
-        if node.id.casefold() == folded or node.title.casefold() == folded:
-            return node.id
-    return None
-
-
-def _entity_name_in_key(module: ScenarioModule, key: str) -> str | None:
-    """世界级键里是不是塞进了某个实体的名字（`科比特态度` 这种）。
-
-    🔴 代码判得了触发条件，但**不阻断**——阻断会把守秘人想记的东西整条丢掉，
-    而它可能只是措辞习惯。记成 issue + 日志，让"还有多少条没挂对主体"变成
-    可统计的量，将来要硬化时有据可依（exec/20 的一贯做法）。
-    """
-    for npc in module.npcs:
-        if npc.name and npc.name in key:
-            return npc.id
-    for node in module_loader.iter_all_nodes(module.nodes):
-        if node.title and node.title in key:
-            return node.id
-    return None
-
-
-async def update_state_impl(
-    deps: KeeperDeps, key: str, value: str, subject: str = WORLD_SUBJECT
-) -> tuple[str, str | None]:
-    """写一条世界状态。返回 (执行报告, 问题描述或 None)。
-
-    🔴 键的形状是 `<subject>.<key>`（世界级则只有 `key`）——见 `StateUpdate`
-    的说明：没有主体的状态既不可裁剪也无法回答"谁看得见"（exec/24 §8.2）。
-    """
-    # write_lock：见 KeeperDeps 注释——SDK 并行工具调用下「读-改-写」必须串行。
-    if key in RESERVED_STATE_KEYS:
-        raise KeeperToolError(f"状态键 {key!r} 由系统记账，不能通过 state_updates 写入")
-    resolved = resolve_state_subject(deps.module, subject)
-    if resolved is None:
-        # 未知 id 一律拒绝，与 NPC/节点/议程/密级的处理一致：白名单外的东西
-        # 不进状态，否则又回到"自由文本当标识符"。
-        raise KeeperToolError(
-            f"未知的状态主体 {subject!r}——必须是剧本里的 NPC id / 节点 id，"
-            f"或世界级状态的 {WORLD_SUBJECT!r}"
-        )
-    issue: str | None = None
-    if resolved == WORLD_SUBJECT and (hit := _entity_name_in_key(deps.module, key)) is not None:
-        issue = f"状态键 {key!r} 里带了实体名，应挂在 subject={hit!r} 上"
-        logger.info(
-            "keeper_state_key_should_have_subject",
-            room_id=deps.room_id,
-            key=key,
-            suggested_subject=hit,
-        )
-    stored_key = key if resolved == WORLD_SUBJECT else f"{resolved}.{key}"
-    async with deps.write_lock, deps.session_factory() as db:
-        room = await db.get(Room, deps.room_id)
-        if room is None:
-            raise KeeperToolError("房间不存在")
-        # ⚠️ JSON 列整体重新赋值（同 write_stat 的原因）。
-        room.keeper_state = {**(room.keeper_state or {}), stored_key: value}
-        await record_event(db, deps, "keeper.state", {"key": stored_key, "value": value})
-    return f"已记录：{stored_key} = {value}", issue
-
-
 def _drop_stealth_on_move(state: dict, moved_player_ids: set[str]) -> None:
     """离开原地点 → 解除隐匿（exec/19 #46）。就地改 `state`。
 

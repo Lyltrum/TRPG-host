@@ -19,6 +19,7 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.agent import KeeperAgent
+from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.fact_ledger import revealed_fact_ids
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.pending import (
@@ -473,6 +474,7 @@ async def test_pending_check_carries_reveals_from_the_module() -> None:
         session_factory=_session_factory,
         module=module,
         ruleset=build_coc7_ruleset(),
+        reserved_state_keys=reserved_state_keys(),
     )
     pending, _issues = await create_pending_checks(
         deps, KeeperDecision(checks=[CheckRequest(skill_id=hall.checks[0].skill_ids[0])])

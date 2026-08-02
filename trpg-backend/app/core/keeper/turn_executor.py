@@ -31,7 +31,6 @@ from app.core.keeper.tools import (
     move_player_impl,
     set_current_node_impl,
     set_stealth_impl,
-    update_state_impl,
 )
 
 logger = structlog.get_logger()
@@ -45,7 +44,6 @@ _SCENE_KEY = "当前场景"
 #: 顺序有语义：`moves` 必须排在 `current_node_id` 之后，否则逐人位置会被
 #: "本轮发言者的默认落点"盖回去。切走一片就从这里删一行。
 _SKELETON_STEP_ORDERS = {
-    "state_updates": 20.0,
     "current_node": 30.0,
     "moves": 40.0,
     "stealth": 50.0,
@@ -99,18 +97,6 @@ async def execute_side_effects(
     # ——所以已切出去的能力的钩子跟骨架剩下的步骤是**按 order 归并**的，不是
     # 简单地排在前面或后面。阶段 3 每切走一片，下面就少一个局部协程。
 
-    async def _step_state_updates() -> None:
-        for update in decision.state_updates:
-            try:
-                line, issue = await update_state_impl(
-                    deps, update.key, update.value, update.subject
-                )
-                report.append(line)
-                if issue is not None:
-                    issues.append(issue)
-            except KeeperToolError as exc:
-                issues.append(f"状态更新未执行：{exc}")
-
     async def _step_current_node() -> None:
         # 场景指针结构化（04 遗留项）：node_id 存在性由 set_current_node_impl
         # 校验（module.node_by_id）——非法 id 不写入、记为 issue，不炸整轮。
@@ -156,7 +142,6 @@ async def execute_side_effects(
     steps: list[tuple[float, Callable[[], Awaitable[None]]]] = [
         (_SKELETON_STEP_ORDERS[name], step)
         for name, step in (
-            ("state_updates", _step_state_updates),
             ("current_node", _step_current_node),
             ("moves", _step_moves),
             ("stealth", _step_stealth),

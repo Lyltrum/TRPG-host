@@ -18,17 +18,17 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.capabilities import reserved_state_keys
-from app.core.keeper.fact_ledger import revealed_fact_ids
-from app.core.keeper.module_loader import load_module
-from app.core.keeper.pending import (
+from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.memory.fact_ledger import revealed_fact_ids
+from app.core.keeper.runtime.agent import KeeperAgent
+from app.core.keeper.runtime.pending import (
     PendingCheck,
     PendingCheckManager,
     pending_check_manager,
     to_notice,
 )
-from app.core.keeper.tools import KeeperDeps, KeeperToolError
+from app.core.keeper.runtime.tools import KeeperDeps, KeeperToolError
 from app.core.narration.contract import CheckResultNotice, NarrationContext, NarrationOutcome
 from app.models.room import Character, Player, Room
 
@@ -451,9 +451,9 @@ async def test_pending_check_carries_reveals_from_the_module() -> None:
     绑定时机是"创建待掷记录时"而不是"结算时再查"——待掷期间场景可能已经变了。
     """
     from app.core.keeper.capabilities.skill_check.schema import CheckRequest
-    from app.core.keeper.decision import KeeperDecision
-    from app.core.keeper.module_loader import ModuleFact
-    from app.core.keeper.turn_executor import create_pending_checks
+    from app.core.keeper.contract.decision import KeeperDecision
+    from app.core.keeper.contract.module_loader import ModuleFact
+    from app.core.keeper.runtime.turn_executor import create_pending_checks
 
     room_id, player_id, _nickname = await _seed_room()
     module = load_module(_FIXTURE_MODULE)

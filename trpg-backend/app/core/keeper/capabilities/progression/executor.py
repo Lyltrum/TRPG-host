@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from app.core.keeper.deps import KeeperDeps, KeeperToolError
-from app.core.keeper.phase import PHASE_FINISHED, PHASE_INVESTIGATION, set_phase_impl
-from app.core.keeper.registry import TurnFacts
+from app.core.keeper.contract.registry import TurnFacts
+from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
+from app.core.keeper.runtime.phase import PHASE_FINISHED, PHASE_INVESTIGATION, set_phase_impl
 
 
 async def execute_progression(

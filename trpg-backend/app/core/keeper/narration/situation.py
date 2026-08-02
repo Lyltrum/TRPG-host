@@ -29,12 +29,12 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.keeper.capabilities import situation_blocks, visible_keeper_state
-from app.core.keeper.chapter import load_chapters, render_chapters
-from app.core.keeper.fact_ledger import render_ledger, revealed_fact_ids
-from app.core.keeper.history import HistoryLine, visible_history
-from app.core.keeper.module_loader import ScenarioModule
-from app.core.keeper.phase import format_phase_status
-from app.core.keeper.prompts import format_turn_input
+from app.core.keeper.contract.module_loader import ScenarioModule
+from app.core.keeper.memory.chapter import load_chapters, render_chapters
+from app.core.keeper.memory.fact_ledger import render_ledger, revealed_fact_ids
+from app.core.keeper.memory.history import HistoryLine, visible_history
+from app.core.keeper.narration.prompts import format_turn_input
+from app.core.keeper.runtime.phase import format_phase_status
 
 
 @dataclass(frozen=True)

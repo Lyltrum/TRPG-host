@@ -16,9 +16,9 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.config import Settings
 from app.core.db import Base
-from app.core.keeper.agent import KeeperAgent
-from app.core.keeper.module_loader import load_module
-from app.core.keeper.prompts import format_turn_input
+from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.narration.prompts import format_turn_input
+from app.core.keeper.runtime.agent import KeeperAgent
 from app.core.narration.contract import NarrationContext
 from app.core.narration.deepseek import DeepSeekNarrator
 from app.core.narration.factory import build_narrator
@@ -187,7 +187,7 @@ def test_format_turn_input_empty_state_hints_game_start() -> None:
 
 
 def test_decision_parses_full_json() -> None:
-    from app.core.keeper.decision import KeeperDecision
+    from app.core.keeper.contract.decision import KeeperDecision
 
     d = KeeperDecision.model_validate_json(
         '{"thinking": "命中检定点", "checks": [{"skill_id": "spot-hidden", "player": null, '
@@ -203,7 +203,7 @@ def test_decision_parses_full_json() -> None:
 def test_decision_all_fields_default_empty() -> None:
     """空对象也是合法裁决（= 本轮什么都不做）——防御模型偷懒输出 {}，
     此时执行器零操作、叙事正常进行，不会炸整轮。"""
-    from app.core.keeper.decision import KeeperDecision
+    from app.core.keeper.contract.decision import KeeperDecision
 
     d = KeeperDecision.model_validate_json("{}")
     assert d.checks == [] and d.san_checks == [] and d.state_updates == []

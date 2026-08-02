@@ -15,7 +15,9 @@ from app.core.keeper.capabilities.health.npc_state import (
     initial_hp,
     load_npc_states,
 )
-from app.core.keeper.deps import (
+from app.core.keeper.contract.registry import TurnFacts
+from app.core.keeper.primitives.npcs import npc_display_name, resolve_npc_id
+from app.core.keeper.runtime.deps import (
     KeeperDeps,
     KeeperToolError,
     current_stat,
@@ -23,8 +25,6 @@ from app.core.keeper.deps import (
     resolve_character,
     write_stat,
 )
-from app.core.keeper.primitives.npcs import npc_display_name, resolve_npc_id
-from app.core.keeper.registry import TurnFacts
 from app.core.narration.contract import StatChangeNotice
 from app.models.room import Room
 

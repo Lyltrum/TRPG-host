@@ -16,7 +16,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.keeper.pending import pending_check_manager
+from app.core.keeper.runtime.pending import pending_check_manager
 from app.core.narration.contract import NarrationContext, Narrator
 from app.models.event import Event
 from app.models.room import Player, Room
@@ -177,7 +177,7 @@ async def maybe_fire_room(
     spotlight_seconds: float = _DEFAULT_SPOTLIGHT_SECONDS,
 ) -> bool:
     """对单房间尝试一次心跳。返回是否实际触发。"""
-    from app.core.keeper.agent import KeeperAgent
+    from app.core.keeper.runtime.agent import KeeperAgent
 
     if not isinstance(narrator, KeeperAgent):
         return False

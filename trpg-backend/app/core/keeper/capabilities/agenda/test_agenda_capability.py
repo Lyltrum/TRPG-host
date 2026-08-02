@@ -25,22 +25,25 @@ from app.core.keeper.capabilities.agenda.state import (
     format_agenda_status,
     load_fired_agenda,
 )
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.deps import KeeperDeps
-from app.core.keeper.module_loader import (
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.module_loader import (
     load_module,
     public_story_from_module,
     render_agenda,
     render_full,
 )
-from app.core.keeper.prompts import format_turn_input
-from app.core.keeper.scene_state import CURRENT_NODE_KEY
-from app.core.keeper.turn_executor import execute_side_effects
+from app.core.keeper.narration.prompts import format_turn_input
+from app.core.keeper.runtime.deps import KeeperDeps
+from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
+from app.core.keeper.runtime.turn_executor import execute_side_effects
 from app.models.event import Event
 from app.models.room import Character, Player, Room
 
 # 测试夹具仍集中放在 tests/fixtures（模组 JSON 是几片能力共用的）
-_FIXTURE_MODULE = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "keeper_module.json"
+#: 🔴 用锚点找，不数层数：`exec/27` 阶段 5 挪目录时 `catalog.py` 的
+#: `parents[3]` 当场指错一层，症状只是一条用例**静默 skip**（全套照样绿）。
+_TESTS_DIR = next(p for p in Path(__file__).resolve().parents if p.name == "trpg-backend") / "tests"
+_FIXTURE_MODULE = _TESTS_DIR / "fixtures" / "keeper_module.json"
 
 _db_path = Path(tempfile.mkdtemp(prefix="trpg-keeper-agenda-test-")) / "agenda.db"
 _engine = create_async_engine(f"sqlite+aiosqlite:///{_db_path}", poolclass=NullPool)

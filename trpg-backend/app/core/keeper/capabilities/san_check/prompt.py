@@ -1,6 +1,6 @@
 """san_check 能力贡献给裁决 prompt 的文本块。"""
 
-from app.core.keeper.registry import PromptBlock
+from app.core.keeper.contract.registry import PromptBlock
 
 #: 原规则 3「理智/伤害」拆开后属于本能力的那半句（health 拿走了 3a 伤害）。
 _RULE_SAN = PromptBlock(

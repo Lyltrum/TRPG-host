@@ -8,9 +8,13 @@ from __future__ import annotations
 
 from app.core.keeper.capabilities.health.schema import HpChange
 from app.core.keeper.capabilities.movement.schema import HidingChange, PlayerMove
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.registry import Capability
-from app.core.keeper.turn_policy import CHECK_CAPABILITIES, SCENE_ADVANCE_CAPABILITIES, revoke
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.registry import Capability
+from app.core.keeper.runtime.turn_policy import (
+    CHECK_CAPABILITIES,
+    SCENE_ADVANCE_CAPABILITIES,
+    revoke,
+)
 
 
 def _full_decision() -> KeeperDecision:

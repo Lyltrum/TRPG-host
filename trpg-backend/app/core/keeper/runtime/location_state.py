@@ -37,9 +37,14 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from app.core.keeper.deps import KeeperDeps, KeeperToolError, record_event, resolve_character
-from app.core.keeper.module_loader import ScenarioModule
-from app.core.keeper.scene_state import (
+from app.core.keeper.contract.module_loader import ScenarioModule
+from app.core.keeper.runtime.deps import (
+    KeeperDeps,
+    KeeperToolError,
+    record_event,
+    resolve_character,
+)
+from app.core.keeper.runtime.scene_state import (
     CURRENT_NODE_KEY,
     SCENE_NAME_KEY,
     load_current_node_id,

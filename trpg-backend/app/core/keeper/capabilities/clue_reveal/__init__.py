@@ -21,7 +21,7 @@ from app.core.keeper.capabilities.clue_reveal.schema import (
     ClueRevealDecisionFields,
     audit_fields,
 )
-from app.core.keeper.registry import ExecutorHook, KeeperCapability, SituationBlock
+from app.core.keeper.contract.registry import ExecutorHook, KeeperCapability, SituationBlock
 
 CAPABILITY = KeeperCapability(
     name="clue_reveal",

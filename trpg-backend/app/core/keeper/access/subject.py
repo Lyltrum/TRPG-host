@@ -34,8 +34,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, create_model
 
 from app.core.keeper.capabilities import field_capabilities
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.registry import Capability, DecisionModel
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.registry import Capability, DecisionModel
 
 #: 裁决字段 → 需要的能力。不在这张表里的字段（thinking / narration_guidance /
 #: player_state）不是"动作"，任何主体都可以产出。

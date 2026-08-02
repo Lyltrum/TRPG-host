@@ -23,7 +23,7 @@ from app.core.keeper.capabilities.san_check.schema import (
     SanCheckDecisionFields,
     audit_fields,
 )
-from app.core.keeper.registry import KeeperCapability, PendingHook, SettleHook
+from app.core.keeper.contract.registry import KeeperCapability, PendingHook, SettleHook
 
 CAPABILITY = KeeperCapability(
     name="san_check",

@@ -14,8 +14,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.db import Base
-from app.core.keeper.heartbeat import _pick_player
-from app.core.keeper.prose_discipline import inject_spotlight_guidance
+from app.core.keeper.narration.prose_discipline import inject_spotlight_guidance
+from app.core.keeper.runtime.heartbeat import _pick_player
 from app.models.event import Event
 from app.models.room import Player, Room
 

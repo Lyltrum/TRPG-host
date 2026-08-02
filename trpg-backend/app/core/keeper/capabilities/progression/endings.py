@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.core.keeper.registry import SituationContext
+from app.core.keeper.contract.registry import SituationContext
 
 
 def format_endings_status(context: SituationContext) -> str:

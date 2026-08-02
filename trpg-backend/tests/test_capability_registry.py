@@ -10,11 +10,11 @@ from pathlib import Path
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.keeper import capabilities as registry_pkg
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.module_loader import load_module
-from app.core.keeper.prompts import build_adjudicator_instructions
-from app.core.keeper.registry import SituationContext
-from app.core.keeper.subject import DECISION_FIELD_CAPABILITIES
+from app.core.keeper.access.subject import DECISION_FIELD_CAPABILITIES
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.contract.registry import SituationContext
+from app.core.keeper.narration.prompts import build_adjudicator_instructions
 
 _MODULE = load_module(str(Path(__file__).parent / "fixtures" / "keeper_module.json"))
 _RULESET = build_coc7_ruleset()

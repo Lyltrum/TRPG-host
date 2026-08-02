@@ -9,7 +9,7 @@
 一方**——判错了，下一个人就会去错的目录里找。
 """
 
-from app.core.keeper.registry import PromptBlock
+from app.core.keeper.contract.registry import PromptBlock
 
 _RULE_AGENDA = PromptBlock(
     slot="rules",

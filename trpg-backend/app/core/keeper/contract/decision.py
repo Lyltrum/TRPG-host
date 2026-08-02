@@ -36,7 +36,7 @@ from app.core.keeper.capabilities.progression.schema import ProgressionDecisionF
 from app.core.keeper.capabilities.san_check.schema import SanCheckDecisionFields
 from app.core.keeper.capabilities.skill_check.schema import SkillCheckDecisionFields
 from app.core.keeper.capabilities.world_state.schema import WorldStateDecisionFields
-from app.core.keeper.registry import DecisionModel
+from app.core.keeper.contract.registry import DecisionModel
 
 
 class KeeperDecision(

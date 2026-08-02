@@ -26,16 +26,17 @@ from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.capabilities.skill_check.executor import roll_check_detail
 from app.core.keeper.capabilities.skill_check.schema import CheckRequest, OpposedTarget
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.deps import KeeperDeps
-from app.core.keeper.module_loader import load_module
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.primitives import dice
-from app.core.keeper.turn_executor import create_pending_checks
+from app.core.keeper.runtime.deps import KeeperDeps
+from app.core.keeper.runtime.turn_executor import create_pending_checks
 from app.models.room import Character, Player, Room
 
-_FIXTURE_MODULE = str(
-    Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "keeper_module.json"
-)
+#: 🔴 用锚点找，不数层数：`exec/27` 阶段 5 挪目录时 `catalog.py` 的
+#: `parents[3]` 当场指错一层，症状只是一条用例**静默 skip**（全套照样绿）。
+_TESTS_DIR = next(p for p in Path(__file__).resolve().parents if p.name == "trpg-backend") / "tests"
+_FIXTURE_MODULE = str(_TESTS_DIR / "fixtures" / "keeper_module.json")
 _MODULE = load_module(_FIXTURE_MODULE)
 
 _db_path = Path(tempfile.mkdtemp(prefix="trpg-keeper-opposed-test-")) / "opposed.db"

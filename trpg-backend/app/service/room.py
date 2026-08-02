@@ -545,8 +545,8 @@ def _load_public_story(module_id: str) -> tuple[str | None, str | None, list[str
     from pathlib import Path
 
     from app.core.config import get_settings
-    from app.core.keeper.catalog import default_modules_dir, resolve_structured_path
-    from app.core.keeper.module_loader import load_module, public_story_from_module
+    from app.core.keeper.contract.catalog import default_modules_dir, resolve_structured_path
+    from app.core.keeper.contract.module_loader import load_module, public_story_from_module
 
     settings = get_settings()
     modules_dir = (

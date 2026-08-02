@@ -445,7 +445,7 @@ def test_reconnect_resends_the_pending_check_card(sync_client: TestClient) -> No
     import asyncio
 
     from app.controller import ws as ws_controller
-    from app.core.keeper.pending import PendingCheck, pending_check_manager
+    from app.core.keeper.runtime.pending import PendingCheck, pending_check_manager
 
     # 🔴 **不要** `from tests.conftest import TestSessionLocal`——conftest 顶部
     # 明文警告过：那会把 conftest 当成另一个模块再导入一次、连带新建一个引擎，

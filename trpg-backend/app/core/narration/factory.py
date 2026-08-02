@@ -24,7 +24,7 @@ def build_narrator(settings: Settings) -> Narrator:
 
     `narrator_delay_seconds > 0` 时再包一层 DelayedNarrator（测试钩子）。
     """
-    from app.core.keeper.catalog import default_modules_dir
+    from app.core.keeper.contract.catalog import default_modules_dir
 
     narrator: Narrator
     modules_dir = (
@@ -44,7 +44,7 @@ def build_narrator(settings: Settings) -> Narrator:
         raise FileNotFoundError(f"KEEPER_MODULE_PATH 指向的剧本不存在：{fallback}")
 
     # 启用 keeper：有 key，且至少有一个可加载的 structured（catalog 映射或兜底）
-    from app.core.keeper.catalog import KEEPER_MODULE_SPECS, resolve_structured_path
+    from app.core.keeper.contract.catalog import KEEPER_MODULE_SPECS, resolve_structured_path
 
     any_structured = any(
         resolve_structured_path(modules_dir, s.scenario_id) is not None for s in KEEPER_MODULE_SPECS

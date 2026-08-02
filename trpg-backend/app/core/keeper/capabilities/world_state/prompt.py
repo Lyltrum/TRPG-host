@@ -3,7 +3,7 @@
 🔴 文本是成品原文，不再经过 f-string / format，花括号写单个。
 """
 
-from app.core.keeper.registry import PromptBlock
+from app.core.keeper.contract.registry import PromptBlock
 
 _RULE_STATE = PromptBlock(
     slot="rules",

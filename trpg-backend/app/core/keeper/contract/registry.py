@@ -44,9 +44,9 @@ from pydantic import BaseModel, ConfigDict
 if TYPE_CHECKING:  # pragma: no cover - 仅为类型标注，运行时不产生依赖边
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.keeper.deps import KeeperDeps
-    from app.core.keeper.module_loader import ScenarioModule
-    from app.core.keeper.pending import PendingCheck
+    from app.core.keeper.contract.module_loader import ScenarioModule
+    from app.core.keeper.runtime.deps import KeeperDeps
+    from app.core.keeper.runtime.pending import PendingCheck
     from app.core.narration.contract import CheckResultNotice
 
 

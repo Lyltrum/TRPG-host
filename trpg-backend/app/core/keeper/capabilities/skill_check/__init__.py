@@ -22,7 +22,7 @@ from app.core.keeper.capabilities.skill_check.schema import (
     SkillCheckDecisionFields,
     audit_fields,
 )
-from app.core.keeper.registry import KeeperCapability, PendingHook, SettleHook
+from app.core.keeper.contract.registry import KeeperCapability, PendingHook, SettleHook
 
 CAPABILITY = KeeperCapability(
     name="skill_check",

@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from app.core.keeper.module_loader import (
+from app.core.keeper.contract.module_loader import (
     KeeperTruth,
     ModuleCheck,
     ModuleFact,

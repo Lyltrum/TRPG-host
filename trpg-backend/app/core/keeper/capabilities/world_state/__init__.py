@@ -18,7 +18,7 @@ from app.core.keeper.capabilities.world_state.schema import (
     WorldStateDecisionFields,
     audit_fields,
 )
-from app.core.keeper.registry import ExecutorHook, KeeperCapability
+from app.core.keeper.contract.registry import ExecutorHook, KeeperCapability
 
 CAPABILITY = KeeperCapability(
     name="world_state",

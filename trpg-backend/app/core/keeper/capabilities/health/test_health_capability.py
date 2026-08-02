@@ -33,15 +33,18 @@ from app.core.keeper.capabilities.health.npc_state import (
 )
 from app.core.keeper.capabilities.health.schema import HpChange
 from app.core.keeper.capabilities.world_state.executor import update_state_impl
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.deps import KeeperDeps, KeeperToolError
-from app.core.keeper.module_loader import load_module
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.contract.registry import SituationContext
 from app.core.keeper.primitives.npcs import resolve_npc_id
-from app.core.keeper.registry import SituationContext
-from app.core.keeper.turn_executor import execute_side_effects
+from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
+from app.core.keeper.runtime.turn_executor import execute_side_effects
 from app.models.room import Character, Player, Room
 
-_REPO_TESTS = Path(__file__).resolve().parents[5] / "tests"
+#: 🔴 用锚点找，不数层数：`exec/27` 阶段 5 挪目录时 `catalog.py` 的
+#: `parents[3]` 当场指错一层，症状只是一条用例**静默 skip**（全套照样绿）。
+_TESTS_DIR = next(p for p in Path(__file__).resolve().parents if p.name == "trpg-backend") / "tests"
+_REPO_TESTS = _TESTS_DIR
 _FIXTURE_MODULE = str(_REPO_TESTS / "fixtures" / "keeper_module.json")
 _MODULE = load_module(_FIXTURE_MODULE)
 

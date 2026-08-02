@@ -8,8 +8,8 @@ KEY 常量 + `load_*`（从 `keeper_state` 解析）+ `format_*`（渲染进局�
 
 from __future__ import annotations
 
-from app.core.keeper.module_loader import ScenarioModule
-from app.core.keeper.registry import SituationContext
+from app.core.keeper.contract.module_loader import ScenarioModule
+from app.core.keeper.contract.registry import SituationContext
 
 AGENDA_FIRED_KEY = "已触发议程"
 

@@ -19,13 +19,13 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.capabilities.movement.schema import PlayerMove
 from app.core.keeper.capabilities.skill_check.schema import CheckRequest
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.module_loader import load_module
-from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
-from app.core.keeper.scene_state import CURRENT_NODE_KEY
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.runtime.agent import KeeperAgent
+from app.core.keeper.runtime.phase import PHASE_INVESTIGATION, PHASE_KEY
+from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
 from app.core.narration.contract import NarrationContext
 from app.models.room import Character, Player, Room
 

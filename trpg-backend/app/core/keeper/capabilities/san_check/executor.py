@@ -12,7 +12,9 @@ import uuid
 import structlog
 from pydantic import BaseModel
 
-from app.core.keeper.deps import (
+from app.core.keeper.contract.registry import PendingContext
+from app.core.keeper.primitives import dice
+from app.core.keeper.runtime.deps import (
     KeeperDeps,
     KeeperToolError,
     current_stat,
@@ -20,9 +22,7 @@ from app.core.keeper.deps import (
     resolve_character,
     write_stat,
 )
-from app.core.keeper.pending import PendingCheck
-from app.core.keeper.primitives import dice
-from app.core.keeper.registry import PendingContext
+from app.core.keeper.runtime.pending import PendingCheck
 from app.core.narration.contract import CheckResultNotice
 
 logger = structlog.get_logger()

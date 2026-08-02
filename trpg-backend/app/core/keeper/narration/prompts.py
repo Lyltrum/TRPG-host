@@ -19,8 +19,8 @@ v2 仿照真人 KP 的台前/幕后分离：
 from collections.abc import Sequence
 
 from app.core.keeper.capabilities import prompt_blocks
-from app.core.keeper.module_loader import ScenarioModule, render_full
-from app.core.keeper.phase import PHASE_OPENING
+from app.core.keeper.contract.module_loader import ScenarioModule, render_full
+from app.core.keeper.runtime.phase import PHASE_OPENING
 from app.dto.game import RulesetRead
 
 #: 骨架还持有的裁决规则，order 就是它在 prompt 里的编号（`4b.` → 4.4）。

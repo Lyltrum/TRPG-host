@@ -50,8 +50,8 @@ _LAYERS: list[tuple[int, tuple[str, ...]]] = [
 _LAYER_EXEMPTIONS: set[tuple[str, str]] = {
     # heartbeat 需要行动锁与 WS 广播——领域层反向依赖了 service。
     # 正解是把这两样抽成 core 侧的协议（Port），由 service 注入实现。
-    ("app.core.keeper.heartbeat", "app.service.action_lock"),
-    ("app.core.keeper.heartbeat", "app.service.ws_manager"),
+    ("app.core.keeper.runtime.heartbeat", "app.service.action_lock"),
+    ("app.core.keeper.runtime.heartbeat", "app.service.ws_manager"),
 }
 
 #: 已知的循环依赖边。
@@ -109,7 +109,7 @@ def _imports_of(path: pathlib.Path) -> set[str]:
 
 def _build_graph() -> dict[str, set[str]]:
     """模块 → 它依赖的模块。被依赖方收敛到"有对应文件的模块"，
-    这样 `from app.core.keeper.agent import X` 与 `import app.core.keeper.agent`
+    这样 `from app.core.keeper.runtime.agent import X` 与 `import app.core.keeper.runtime.agent`
     落在同一个节点上。"""
     files = {_module_name(p): p for p in APP.rglob("*.py")}
     graph: dict[str, set[str]] = {}
@@ -194,13 +194,10 @@ def test_layers_do_not_invert() -> None:
 _CAPABILITIES_PKG = "app.core.keeper.capabilities"
 _PRIMITIVES_PKG = "app.core.keeper.primitives"
 
-#: 编排层：决定"何时问谁"，不该被任何一个能力反向依赖。
-#: （阶段 5 它们会搬进 `runtime/`，那时这里换成一个前缀。）
-_ORCHESTRATION = (
-    "app.core.keeper.agent",
-    "app.core.keeper.turn_executor",
-    "app.core.keeper.heartbeat",
-)
+#: 编排与共享运行时状态：不该被任何一个能力反向依赖。
+#: 阶段 5 目录终态之后这里是**一个前缀**，不再是手维护的模块清单——
+#: 新加一个 runtime 模块自动受这条约束保护，不必记得回来登记。
+_RUNTIME_PKG = "app.core.keeper.runtime"
 
 
 def _capability_of(module: str) -> str | None:
@@ -241,14 +238,26 @@ def test_capabilities_do_not_import_each_other() -> None:
     )
 
 
-def test_capabilities_do_not_import_the_orchestrator() -> None:
+def test_capabilities_do_not_import_the_runtime() -> None:
     """能力只被编排层调用，不反过来认识它——否则"加一个能力不改编排层"这条
-    验收标准就没了着力点。"""
+    验收标准就没了着力点。
+
+    ⚠️ 例外：`runtime/deps.py`（一轮的依赖包）与几个共享状态模块是**故意**
+    给能力用的，它们在 `runtime/` 里只是因为"共享的状态与读写归 runtime"。
+    真正不许被反向依赖的是编排本身。
+    """
+    orchestration = {
+        f"{_RUNTIME_PKG}.agent",
+        f"{_RUNTIME_PKG}.turn_executor",
+        f"{_RUNTIME_PKG}.heartbeat",
+        f"{_RUNTIME_PKG}.turn_policy",
+        f"{_RUNTIME_PKG}.decision_log",
+    }
     violations: set[tuple[str, str]] = set()
     for mod, deps in _build_graph().items():
         if _capability_of(mod) is None:
             continue
-        violations.update((mod, dep) for dep in deps if dep in _ORCHESTRATION)
+        violations.update((mod, dep) for dep in deps if dep in orchestration)
     assert not violations, "能力反向依赖了编排层：\n" + "\n".join(
         f"  {a}  →  {b}" for a, b in sorted(violations)
     )
@@ -304,7 +313,7 @@ def test_registry_is_a_leaf_at_runtime() -> None:
     它只要在运行时碰一个 `app.*`，`contract → capabilities → contract` 就有
     成环的余地——阶段 1 刚用 `narration/contract.py` 交过一次学费，这里提前钉死。
     """
-    assert _runtime_imports_of(APP / "core" / "keeper" / "registry.py") == set()
+    assert _runtime_imports_of(APP / "core" / "keeper" / "contract" / "registry.py") == set()
 
 
 def test_exemption_lists_only_shrink() -> None:

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from app.core.keeper.module_loader import (
+from app.core.keeper.contract.module_loader import (
     ScenarioModule,
     load_module,
     render_full,

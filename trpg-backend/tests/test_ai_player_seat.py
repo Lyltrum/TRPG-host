@@ -21,13 +21,13 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.location_state import PLAYER_LOCATION_KEY, load_player_locations
-from app.core.keeper.module_loader import load_module
-from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
-from app.core.keeper.scene_state import CURRENT_NODE_KEY
-from app.core.keeper.tools import KeeperDeps
-from app.core.keeper.turn_executor import execute_side_effects
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.runtime.location_state import PLAYER_LOCATION_KEY, load_player_locations
+from app.core.keeper.runtime.phase import PHASE_INVESTIGATION, PHASE_KEY
+from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
+from app.core.keeper.runtime.tools import KeeperDeps
+from app.core.keeper.runtime.turn_executor import execute_side_effects
 from app.models.room import Character, Player, Room
 
 _FIXTURE_MODULE = str(Path(__file__).parent / "fixtures" / "keeper_module.json")
@@ -109,7 +109,7 @@ async def test_spotlight_ignores_the_ai_player() -> None:
     第一版没造这个前置，两人都没说过话时排序碰巧仍选中真人——**变异体没被
     抓到**，正是"变异检验没抓到 ≠ 没 bug，先怀疑测试没走进被测分支"。
     """
-    from app.core.keeper.heartbeat import _pick_player
+    from app.core.keeper.runtime.heartbeat import _pick_player
     from app.models.event import Event
 
     room_id, human_id, ai_id = await _seed("AIS001")
@@ -139,7 +139,7 @@ async def test_ai_player_appears_in_the_roster_shown_to_the_keeper() -> None:
     这份名单当初就是为了治"单人局幻觉成你们三人"。AI 在场却不在名单里，
     叙事会当它不存在——玩家看到的就是队友凭空消失。
     """
-    from app.core.keeper.agent import KeeperAgent
+    from app.core.keeper.runtime.agent import KeeperAgent
 
     agent = KeeperAgent(
         api_key="fake-key",

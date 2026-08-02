@@ -17,17 +17,17 @@ from app.core.keeper.capabilities.skill_check.guard import (
     filter_checks_against_module,
     find_node_for_scene,
 )
-from app.core.keeper.deps import (
+from app.core.keeper.contract.registry import PendingContext
+from app.core.keeper.primitives import dice
+from app.core.keeper.primitives.skills import canonical_skill_name, resolve_skill_id
+from app.core.keeper.runtime.deps import (
     KeeperDeps,
     KeeperToolError,
     record_event,
     resolve_character,
 )
-from app.core.keeper.location_state import location_of
-from app.core.keeper.pending import PendingCheck
-from app.core.keeper.primitives import dice
-from app.core.keeper.primitives.skills import canonical_skill_name, resolve_skill_id
-from app.core.keeper.registry import PendingContext
+from app.core.keeper.runtime.location_state import location_of
+from app.core.keeper.runtime.pending import PendingCheck
 from app.core.narration.contract import CheckResultNotice
 from app.models.room import Character
 

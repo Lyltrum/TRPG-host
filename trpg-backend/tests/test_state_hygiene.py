@@ -23,12 +23,12 @@ from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.capabilities.movement.schema import HidingChange, PlayerMove
 from app.core.keeper.capabilities.world_state.schema import StateUpdate
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.deps import KeeperDeps
-from app.core.keeper.location_state import HIDDEN_PLAYERS_KEY, load_hidden_players
-from app.core.keeper.module_loader import load_module
-from app.core.keeper.scene_state import CURRENT_NODE_KEY
-from app.core.keeper.turn_executor import execute_side_effects
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.runtime.deps import KeeperDeps
+from app.core.keeper.runtime.location_state import HIDDEN_PLAYERS_KEY, load_hidden_players
+from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
+from app.core.keeper.runtime.turn_executor import execute_side_effects
 from app.models.room import Character, Player, Room
 
 _FIXTURE_MODULE = str(Path(__file__).parent / "fixtures" / "keeper_module.json")
@@ -234,7 +234,7 @@ def test_the_model_never_sees_a_code_maintained_key_verbatim() -> None:
     """
     from app.core.keeper.capabilities import reserved_state_keys as _reserved
     from app.core.keeper.capabilities import visible_keeper_state
-    from app.core.keeper.prompts import format_turn_input
+    from app.core.keeper.narration.prompts import format_turn_input
 
     keeper_state = dict.fromkeys(_reserved(), "机器格式值")
     keeper_state["当前场景"] = "书房"

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.db import Base
-from app.core.keeper.chapter import (
+from app.core.keeper.memory.chapter import (
     CHAPTER_MAX_CHARS,
     MIN_TURNS_BETWEEN_CHAPTERS,
     build_recap,
@@ -188,8 +188,8 @@ class _CountingClient:
 
 def _agent_with(factory, client):
     from app.core.coc7_content import build_coc7_ruleset
-    from app.core.keeper.agent import KeeperAgent
-    from app.core.keeper.module_loader import load_module
+    from app.core.keeper.contract.module_loader import load_module
+    from app.core.keeper.runtime.agent import KeeperAgent
 
     agent = KeeperAgent(
         api_key="fake",

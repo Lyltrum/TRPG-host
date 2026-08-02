@@ -33,8 +33,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.core.keeper.decision import KeeperDecision
-from app.core.keeper.prose_discipline import (
+from app.core.keeper.access.subject import ALL_CAPABILITIES, Subject, sanitize_decision
+from app.core.keeper.contract.decision import KeeperDecision
+from app.core.keeper.contract.registry import Capability
+from app.core.keeper.narration.prose_discipline import (
     inject_action_resolution_guidance,
     inject_confusion_guidance,
     inject_feasibility_question_guidance,
@@ -46,8 +48,6 @@ from app.core.keeper.prose_discipline import (
     is_violence_edge_utterance,
     is_weird_or_meta_utterance,
 )
-from app.core.keeper.registry import Capability
-from app.core.keeper.subject import ALL_CAPABILITIES, Subject, sanitize_decision
 
 #: 发起检定的两条。心跳/开场/迷茫/怪话/提问都会收走它们。
 CHECK_CAPABILITIES = frozenset({Capability.REQUEST_CHECK, Capability.REQUEST_SAN_CHECK})

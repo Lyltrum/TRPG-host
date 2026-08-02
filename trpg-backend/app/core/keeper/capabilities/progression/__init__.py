@@ -20,8 +20,8 @@ from app.core.keeper.capabilities.progression.schema import (
     ProgressionDecisionFields,
     audit_fields,
 )
-from app.core.keeper.phase import ENDING_ID_KEY, PHASE_KEY
-from app.core.keeper.registry import ExecutorHook, KeeperCapability, SituationBlock
+from app.core.keeper.contract.registry import ExecutorHook, KeeperCapability, SituationBlock
+from app.core.keeper.runtime.phase import ENDING_ID_KEY, PHASE_KEY
 
 CAPABILITY = KeeperCapability(
     name="progression",

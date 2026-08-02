@@ -31,7 +31,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.keeper.module_loader import ScenarioModule
+from app.core.keeper.contract.module_loader import ScenarioModule
 from app.models.event import Event
 
 logger = structlog.get_logger()

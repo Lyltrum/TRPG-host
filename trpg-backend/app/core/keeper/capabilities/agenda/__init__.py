@@ -16,7 +16,7 @@ from app.core.keeper.capabilities.agenda.schema import (
     audit_fields,
 )
 from app.core.keeper.capabilities.agenda.state import AGENDA_FIRED_KEY, render_agenda_status
-from app.core.keeper.registry import ExecutorHook, KeeperCapability, SituationBlock
+from app.core.keeper.contract.registry import ExecutorHook, KeeperCapability, SituationBlock
 
 CAPABILITY = KeeperCapability(
     name="agenda",

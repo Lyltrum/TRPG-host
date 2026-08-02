@@ -24,8 +24,8 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.agent import KeeperAgent
-from app.core.keeper.module_loader import load_module
+from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.runtime.agent import KeeperAgent
 from app.core.llm_tape import Tape, replaying
 from app.core.narration.contract import NarrationContext
 from app.models.room import Character, Player, Room

@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from app.core.keeper.pending import PendingCheck
+from app.core.keeper.runtime.pending import PendingCheck
 
 
 def build_check_boundary_hint(pending_checks: list[PendingCheck]) -> str:

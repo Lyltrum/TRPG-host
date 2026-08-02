@@ -12,8 +12,8 @@
 import structlog
 
 from app.core.coc7_rules import evaluate_skill_base
-from app.core.keeper import module_loader
-from app.core.keeper.deps import (
+from app.core.keeper.contract import module_loader
+from app.core.keeper.runtime.deps import (
     KeeperDeps,
     KeeperToolError,
     resolve_character,

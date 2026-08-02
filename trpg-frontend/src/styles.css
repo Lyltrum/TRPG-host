@@ -185,6 +185,25 @@
     background-image: radial-gradient(110% 55% at 50% 22%, rgba(255, 206, 138, 0.22) 0%, transparent 70%);
   }
 
+  /* 🔴 桌上那道刻痕：一枚原创的仪式符环（七角星 {7/3} + 双环 + 刻度 + 中央的眼）。
+     全部自己画，不用任何第三方素材——Chaosium 的美术在版权保护中，一张都不能碰。
+     不透明度压到 0.055：它该像**桌面上早就刻在那里的东西**，不是贴上去的 logo。
+     跟着内容滚动会晕，所以固定在中上部、不随消息流动。 */
+  .theme-coc .desk-sigil::after {
+    content: '';
+    position: absolute;
+    top: 12%;
+    left: 50%;
+    width: 300px;
+    height: 300px;
+    margin-left: -150px;
+    pointer-events: none;
+    opacity: 0.055;
+    background-repeat: no-repeat;
+    background-size: contain;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' fill='none' stroke='%23f0d9a8' stroke-width='1.1'%3E%3Ccircle cx='100' cy='100' r='92'/%3E%3Ccircle cx='100' cy='100' r='78'/%3E%3Ccircle cx='100' cy='100' r='31'/%3E%3Cpath d='M100 22 L133.8 170.3 L39 51.4 L176 117.4 L24 117.4 L161 51.4 L66.2 170.3 Z'/%3E%3Cpath d='M100 8 v14 M192 100 h-14 M100 192 v-14 M8 100 h14 M165 35 l-10 10 M165 165 l-10-10 M35 165 l10-10 M35 35 l10 10'/%3E%3Cpath d='M78 100 q22-19 44 0 q-22 19-44 0z'/%3E%3Ccircle cx='100' cy='100' r='7'/%3E%3C/svg%3E");
+  }
+
   /* 纸面颗粒：任何一张"纸"都该有，压在纸色上 */
   .paper-grain::after {
     content: '';
@@ -232,6 +251,34 @@
     width: 13px;
     pointer-events: none;
     background: linear-gradient(to right, rgba(36, 29, 20, 0.22), rgba(36, 29, 20, 0.04) 55%, transparent);
+  }
+
+  /* 🔴 书页的排版语言。「太单调死板」的根子是它在用**聊天气泡的规则**
+     （发送者+时间在顶、正文平铺）。书有自己的一套：首字下沉、段首缩进、
+     段末装饰、页脚落款。这几条比任何配色都更能把"消息"变成"故事"。 */
+
+  /* 首字下沉：只给长段落用（短句下沉会很滑稽，由 JSX 判断长度决定加不加类） */
+  .drop-cap::first-letter {
+    float: left;
+    font-size: 3.05em;
+    line-height: 0.94;
+    padding: 0.06em 0.1em 0 0;
+    color: rgba(36, 29, 20, 0.88);
+  }
+  /* 段首缩进两字：中文正文的排版惯例，一眼就不是聊天记录 */
+  .prose-indent {
+    text-indent: 2em;
+  }
+  .drop-cap.prose-indent {
+    text-indent: 0; /* 有下沉字时不再缩进，否则首行会被推歪 */
+  }
+  /* 段末花饰：印刷品的段落终止符，同时告诉玩家"这一段说完了" */
+  .fleuron {
+    display: block;
+    text-align: center;
+    letter-spacing: 0.5em;
+    line-height: 1;
+    color: rgba(36, 29, 20, 0.3);
   }
 
   /* ── 输入框那张纸条：上缘一道压痕表示"刻进桌面"，聚焦时纸被点亮 ── */

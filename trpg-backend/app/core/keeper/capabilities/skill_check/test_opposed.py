@@ -33,7 +33,9 @@ from app.core.keeper.primitives import dice
 from app.core.keeper.turn_executor import create_pending_checks
 from app.models.room import Character, Player, Room
 
-_FIXTURE_MODULE = str(Path(__file__).parent / "fixtures" / "keeper_module.json")
+_FIXTURE_MODULE = str(
+    Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "keeper_module.json"
+)
 _MODULE = load_module(_FIXTURE_MODULE)
 
 _db_path = Path(tempfile.mkdtemp(prefix="trpg-keeper-opposed-test-")) / "opposed.db"

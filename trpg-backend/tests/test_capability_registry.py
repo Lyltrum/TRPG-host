@@ -116,3 +116,27 @@ def test_no_rule_or_example_line_is_emitted_twice() -> None:
     keys = re.findall(r'^\s+"(\w+)":', text, flags=re.MULTILINE)
     dup_keys = sorted({k for k in keys if keys.count(k) > 1})
     assert not dup_keys, f"输出格式示例里字段重复：{dup_keys}"
+
+
+def test_the_scene_fact_is_published_before_it_is_consumed() -> None:
+    """🔴 `TurnFacts` 是一条**有方向**的契约：`world_state` 写、`movement` 读。
+
+    它靠 order 保证——写的那片必须先跑。这条断言是那个保证的全部强度：把两片的
+    order 调换，`movement` 就会读到上一轮遗留的 None，`exec/19 #48` 的清空逻辑
+    静默失效（人站在屋外，护栏还拿旧节点卡他），而**没有任何东西会报错**。
+    """
+    order = {c.name: c.executors[0].order for c in registry_pkg.CAPABILITIES if c.executors}
+    assert order["world_state"] < order["movement"], (
+        "world_state 必须先于 movement 执行：前者 publish 「当前场景」，后者据此"
+        "决定要不要清空节点指针"
+    )
+
+
+def test_every_executor_hook_takes_the_turn_facts() -> None:
+    """签名统一：加一片能力时不必猜"要不要收那个参数"。"""
+    import inspect
+
+    for capability in registry_pkg.CAPABILITIES:
+        for hook in capability.executors:
+            params = list(inspect.signature(hook.run).parameters)
+            assert len(params) == 3, f"{capability.name} 的执行钩子签名不是 (deps, decision, facts)"

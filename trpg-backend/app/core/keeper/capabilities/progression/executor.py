@@ -6,9 +6,12 @@ from pydantic import BaseModel
 
 from app.core.keeper.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.phase import PHASE_FINISHED, PHASE_INVESTIGATION, set_phase_impl
+from app.core.keeper.registry import TurnFacts
 
 
-async def execute_progression(deps: KeeperDeps, decision: BaseModel) -> tuple[list[str], list[str]]:
+async def execute_progression(
+    deps: KeeperDeps, decision: BaseModel, _facts: TurnFacts
+) -> tuple[list[str], list[str]]:
     """结局收束优先于开场完成——一轮里两者都写时，收束是更终态的那个。"""
     report: list[str] = []
     issues: list[str] = []

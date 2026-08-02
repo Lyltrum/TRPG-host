@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.core.keeper.capabilities.agenda.state import AGENDA_FIRED_KEY, load_fired_agenda
 from app.core.keeper.deps import KeeperDeps, KeeperToolError, record_event
+from app.core.keeper.registry import TurnFacts
 from app.models.room import Room
 
 
@@ -57,7 +58,7 @@ async def mark_agenda_fired_impl(deps: KeeperDeps, event_ids: list[str]) -> str:
 
 
 async def execute_agenda_fired(
-    deps: KeeperDeps, decision: BaseModel
+    deps: KeeperDeps, decision: BaseModel, _facts: TurnFacts
 ) -> tuple[list[str], list[str]]:
     """注册进执行阶段的钩子：先校验 id 合法性，再交给 `mark_agenda_fired_impl`。
 

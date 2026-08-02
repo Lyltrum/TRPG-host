@@ -17,7 +17,7 @@ from app.core.keeper.capabilities import executors, pendings
 from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.deps import KeeperDeps
 from app.core.keeper.pending import PendingCheck
-from app.core.keeper.registry import PendingContext
+from app.core.keeper.registry import PendingContext, TurnFacts
 from app.core.keeper.subject import KEEPER, Subject, authorize_decision, sanitize_decision
 
 logger = structlog.get_logger()
@@ -56,8 +56,13 @@ async def execute_side_effects(
     # 语义：`moves` 必须排在 `current_node_id` 之后（否则逐人位置会被"本轮发言者
     # 的默认落点"盖回去），而执行报告的行序会原样喂给叙事阶段，顺序变了叙事读到
     # 的"发生了什么"就变了。
+    # 本轮事实黑板：上游能力 publish、下游 consume，顺序由各自的 order 保证。
+    # 这条通道存在的唯一理由是「当前场景」——地名归 world_state 的自由文本记账，
+    # 而"场景变了却没给节点 id 就清空指针"是 movement 的规则（exec/19 #48）。
+    # 切分之初 movement 直接读 world_state 的字段，那是隐式耦合；见 `TurnFacts`。
+    facts = TurnFacts()
     for hook in executors():
-        hook_report, hook_issues = await hook.run(deps, decision)
+        hook_report, hook_issues = await hook.run(deps, decision, facts)
         report.extend(hook_report)
         issues.extend(hook_issues)
 

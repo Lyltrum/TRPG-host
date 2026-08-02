@@ -1,24 +1,12 @@
-"""守秘人的游戏操作层（L3 执行）：掷骰/角色卡/剧本/状态的业务实现（keeper agent v2）。
+"""v1 自由工具的**遗留残余**：读角色卡 / 读剧本两个函数。
 
-这是 keeper_state 唯一允许写入的地方——每个 `*_impl` 对应一个"动词"
-（set_phase_impl/mark_agenda_fired_impl/set_current_node_impl 等），由
-`turn_executor.py`（L4 编排）根据 `KeeperDecision`（L1 契约，见 decision.py）
-里哪个字段非空来调度，不再是 LLM 的自由工具——v1 的 `@function_tool` 薄壳层
-已随架构推翻整体移除（自由工具调用被实测证明不可靠，见 agent.py 模块
-docstring）。`*_impl` 保持普通 async 函数形态，可直接单测。
+⚠️ 如实说明现状（exec/27 阶段 3 之后）：本文件原本是"keeper_state/DB 唯一
+允许写入的地方"，961 行、装着十几个 `*_impl`。八片能力切完之后，写入者全部
+跟着各自的能力或共享状态模块走了，这里只剩下两个**生产代码已经不再调用**的
+函数——它们是 v1 把工具暴露给 LLM 时代的产物，现在只有测试在调。
 
-每类保留状态自己的 KEY 常量 + `load_*`/`format_*` 不在本文件——那些是
-L2 状态编解码，各自有独立模块（phase.py/visibility.py/agenda_state.py/
-scene_state.py），本文件只 import 它们的 KEY 常量用于写入 + 拼进
-`RESERVED_STATE_KEYS`。
-
-服务端权威原则：骰子由 `dice.py` 掷（LLM 只消费结果、改不了点数），
-HP/San 修改真实写 `characters` 表，所有操作都写一行 `events` 表留痕
-（复盘可审计"守秘人掷了什么、改了什么"）。
-
-⚠️ 实验期妥协（非最终形态）：HP/San 的"当前值"直接改写 `derived_stats`
-JSON（首次修改时把上限备份为 `HP_MAX`/`SAN_MAX`）——正经做法是独立的
-「当前状态」存储，等实验验证过玩法再抽。
+按项目约定不删既有死代码，所以留着；`exec/27` 阶段 5 做目录终态时一并处置
+（要么确认无用删掉，要么归到用得上它的地方）。**不要往这里加新东西。**
 """
 
 import structlog

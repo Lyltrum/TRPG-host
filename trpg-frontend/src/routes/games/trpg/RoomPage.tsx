@@ -57,7 +57,15 @@ const DIFFICULTY_COLORS: Record<string, string> = {
 // heightVh：不传就是原来的"按内容自适应、最多 72vh"；传了就固定成这个高度
 // （不再随内容多少变化），配合内部 overflow-y-auto 滚动——用于内容量本身
 // 会因为切页签/切分类而差很多、又不想让面板跟着一起忽高忽低的场景。
-function BottomPanel({ open, onClose, title, children, heightVh }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; heightVh?: number }) {
+/** 🔴 每一份档案要有**自己的身份**，不能五个面板长得一模一样。
+ *
+ * 真人反馈：「每块内容都该有各自的特色，一眼就知道是哪一模块」。
+ * 解法不用另起炉灶——**真实档案柜本来就是靠彩色标签舌分类的**：
+ *   `accent` 决定标签舌与顶边的索引色，`paper` 给每份档案略不同的纸色。
+ * 加上各自已有的结构特征（测绘纸网格 / 横格纸 / 量表刻度 / 档案条），
+ * 打开任意一份，第一眼就知道是哪一份。
+ */
+function BottomPanel({ open, onClose, title, children, heightVh, accent = '#8a6a2e', paper = '#cbb894' }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; heightVh?: number; accent?: string; paper?: string }) {
   useEffect(() => {
     if (open) document.body.style.overflow = 'hidden'
     else document.body.style.overflow = ''
@@ -80,8 +88,12 @@ function BottomPanel({ open, onClose, title, children, heightVh }: { open: boole
         // 🔴 **不要大范围投影**（原来是 `0 -14px 34px rgba(0,0,0,.66)`）：
         // 它在面板下缘糊出一大团黑，真机上看就是"纸的底部烂了"。
         // 纸压在桌上只需要**一条上缘亮线 + 一条紧贴的暗线**，两条 1px 就够。
-        className={`theme-paper paper-grain fixed bottom-0 left-0 right-0 z-50 bg-dossier text-ink shadow-[0_-1px_0_rgba(255,255,255,.22),0_-3px_10px_rgba(0,0,0,.35)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] max-w-[430px] mx-auto overflow-hidden ${open ? 'translate-y-0' : 'translate-y-full'}`}
-        style={heightVh ? { height: `${maxH}vh` } : { maxHeight: `${maxH}vh` }}
+        className={`theme-paper paper-grain fixed bottom-0 left-0 right-0 z-50 text-ink shadow-[0_-1px_0_rgba(255,255,255,.22),0_-3px_10px_rgba(0,0,0,.35)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] max-w-[430px] mx-auto overflow-hidden ${open ? 'translate-y-0' : 'translate-y-full'}`}
+        style={{
+          backgroundColor: paper,
+          borderTop: `3px solid ${accent}`,
+          ...(heightVh ? { height: `${maxH}vh` } : { maxHeight: `${maxH}vh` }),
+        }}
       >
         {/* 🔴 标签舌只在展开时渲染。它是 `-top-[19px]` 探出面板上缘的，面板
             收起时被 translate-y-full 推下去，标签舌正好卡在屏幕底边**一直露着**
@@ -90,7 +102,8 @@ function BottomPanel({ open, onClose, title, children, heightVh }: { open: boole
           <>
             <button
               onClick={onClose}
-              className="tab-flap absolute left-[26px] -top-[19px] z-10 bg-dossier text-ink typed text-[9px] px-3.5 pt-[5px] pb-1"
+              className="tab-flap absolute left-[26px] -top-[19px] z-10 typed text-[9px] px-3.5 pt-[5px] pb-1"
+              style={{ backgroundColor: accent, color: paper }}
             >
               {title}
             </button>
@@ -1365,7 +1378,7 @@ export default function RoomPage() {
 
       {/* Panel: 角色卡（真实建卡数据，不再是写死的示例角色）。分两页——技能已经有
           单独的底部按钮，这里不重复放。 */}
-      <BottomPanel open={openPanel === 'sheet'} onClose={() => setOpenPanel(null)} title={`调查员 · ${character?.info.name || '未建卡'}`}>
+      <BottomPanel accent="#8a6a2e" paper="#cbb894" open={openPanel === 'sheet'} onClose={() => setOpenPanel(null)} title={`调查员 · ${character?.info.name || '未建卡'}`}>
         {character ? (
           <>
             <div className="flex gap-1.5 mb-3.5">
@@ -1476,7 +1489,7 @@ export default function RoomPage() {
 
       {/* Panel: 技能——按职业技能/兴趣技能分两页，各自按数值从高到低排列。
           固定半屏高度，两个页签内容多少不一样也不会让面板忽高忽低。 */}
-      <BottomPanel open={openPanel === 'skills'} onClose={() => setOpenPanel(null)} title="技能" heightVh={50}>
+      <BottomPanel accent="#4e6b3e" paper="#c5c2a4" open={openPanel === 'skills'} onClose={() => setOpenPanel(null)} title="技能" heightVh={50}>
         {character ? (
           <>
             <div className="flex gap-1.5 mb-3.5">
@@ -1522,7 +1535,7 @@ export default function RoomPage() {
       </BottomPanel>
 
       {/* Panel: 地图——结构化地点未接线，不展示假数据 */}
-      <BottomPanel open={openPanel === 'map'} onClose={() => setOpenPanel(null)} title="地图">
+      <BottomPanel accent="#8f3628" paper="#cfc3a2" open={openPanel === 'map'} onClose={() => setOpenPanel(null)} title="地图">
         <div className="survey flex flex-col items-center justify-center py-11 px-6 border border-ink/30 text-center">
           <Map className="w-10 h-10 text-text-dim mb-3 opacity-60" />
           <p className="text-sm text-text-primary font-medium mb-1.5">地点随叙事推进</p>
@@ -1537,7 +1550,7 @@ export default function RoomPage() {
       </BottomPanel>
 
       {/* Panel: 速记 */}
-      <BottomPanel open={openPanel === 'notes'} onClose={() => setOpenPanel(null)} title="速记本">
+      <BottomPanel accent="#3f362a" paper="#d3c49c" open={openPanel === 'notes'} onClose={() => setOpenPanel(null)} title="速记本">
         {playerIntro && (
           <div className="paper-grain relative mb-3 bg-book border-l-[3px] border-brass px-3 py-2.5">
             <p className="text-xs font-bold text-text-primary mb-1.5">📋 案件简报</p>
@@ -1568,7 +1581,7 @@ export default function RoomPage() {
       </BottomPanel>
 
       {/* Panel: 房间成员 */}
-      <BottomPanel open={openPanel === 'members'} onClose={() => setOpenPanel(null)} title="队友角色卡">
+      <BottomPanel accent="#3f5f7d" paper="#c1bfb0" open={openPanel === 'members'} onClose={() => setOpenPanel(null)} title="队友角色卡">
         {roomInfo ? (
           <div className="space-y-1.5">
             <p className="text-xs text-text-muted mb-2">{roomInfo.players.length}/{roomInfo.maxPlayers} 人</p>

@@ -140,3 +140,28 @@ def test_every_executor_hook_takes_the_turn_facts() -> None:
         for hook in capability.executors:
             params = list(inspect.signature(hook.run).parameters)
             assert len(params) == 3, f"{capability.name} 的执行钩子签名不是 (deps, decision, facts)"
+
+
+def test_every_pending_kind_has_exactly_one_settler() -> None:
+    """🔴 发起与结算必须**两头对齐**。
+
+    `pending` 钩子负责发起、`settlers` 负责结算，中间隔着数据库里的待掷队列。
+    只做了一半的话：新检定发得出去、结算时找不到认领者。此前结算是一条写死的
+    if/else 且带 else 兜底——那种情况下新检定会被**静默当成 SAN 检定结算**，
+    掷骰数字照样出现在玩家屏幕上，没有任何东西会红。
+    """
+    kinds = [h.kind for c in registry_pkg.CAPABILITIES for h in c.settlers]
+    assert len(set(kinds)) == len(kinds), f"同一种 kind 被多片能力认领：{kinds}"
+    # 有 pending 钩子的能力必须也有 settler（反之亦然）
+    for capability in registry_pkg.CAPABILITIES:
+        assert bool(capability.pendings) == bool(capability.settlers), (
+            f"{capability.name} 只做了两段式掷骰的一半"
+        )
+
+
+def test_an_unclaimed_kind_raises_instead_of_falling_through() -> None:
+    """没人认领就炸——不要有 else 兜底。"""
+    import pytest
+
+    with pytest.raises(KeyError):
+        registry_pkg.settler_for("no-such-kind")

@@ -47,6 +47,7 @@ if TYPE_CHECKING:  # pragma: no cover - 仅为类型标注，运行时不产生�
     from app.core.keeper.deps import KeeperDeps
     from app.core.keeper.module_loader import ScenarioModule
     from app.core.keeper.pending import PendingCheck
+    from app.core.narration.contract import CheckResultNotice
 
 
 class DecisionModel(BaseModel):
@@ -178,6 +179,25 @@ PendingFn = Callable[
 ]
 
 
+#: 结算钩子：玩家点了掷骰之后，把一条待掷记录变成一次真实的掷骰结果。
+#: **服务端权威**——骰子由代码掷，模型只消费结果，改不了点数。
+SettleFn = Callable[["KeeperDeps", "PendingCheck"], Awaitable["CheckResultNotice"]]
+
+
+@dataclass(frozen=True)
+class SettleHook:
+    """`kind` 是 `PendingCheck.kind`：哪一片能力认领哪一种待掷记录。
+
+    🔴 第八个钩子。此前"发起"已经注册表化（`pending` 钩子），而"结算"还是
+    `agent.resolve_check` 里一条按 kind 写死的 if/else——**同一件事的两头，
+    一头可插拔一头写死**。加一种新检定时前一半能自动接上、后一半会静默走进
+    else 分支（当成 SAN 检定结算）。
+    """
+
+    kind: str
+    run: SettleFn
+
+
 @dataclass(frozen=True)
 class PendingHook:
     order: float
@@ -240,8 +260,10 @@ class KeeperCapability:
     #: 往 `keeper_decision` 日志与 `keeper.decision` 事件贡献的字段
     #:（None = 这个能力没什么好审计的）。
     audit: AuditFn | None = None
-    #: 两段式玩家掷骰：把裁决解析成待掷记录（见 `PendingContext`）。
+    #: 两段式玩家掷骰·发起：把裁决解析成待掷记录（见 `PendingContext`）。
     pendings: Sequence[PendingHook] = ()
+    #: 两段式玩家掷骰·结算：玩家点了之后怎么掷、怎么组装结果。
+    settlers: Sequence[SettleHook] = ()
     #: 这个能力在 `keeper_state` 里占的键。声明出来同时管两件事：
     #: **`state_updates` 不许写**，且**不原样喂给模型**（模型看到的是 situation
     #: 钩子渲染好的那一块）。

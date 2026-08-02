@@ -28,6 +28,7 @@ from app.core.keeper.pending import PendingCheck
 from app.core.keeper.primitives import dice
 from app.core.keeper.primitives.skills import canonical_skill_name, resolve_skill_id
 from app.core.keeper.registry import PendingContext
+from app.core.narration.contract import CheckResultNotice
 from app.models.room import Character
 
 logger = structlog.get_logger()
@@ -274,3 +275,33 @@ async def create_pending_skill_checks(
             )
         )
     return pending, issues
+
+
+async def settle_skill_check(deps: KeeperDeps, pending: PendingCheck) -> CheckResultNotice:
+    """玩家点了掷骰之后：**服务端权威**掷一次，组装成给前端的结果通知。
+
+    骰子由 `primitives/dice` 掷，模型只消费结果、改不了点数——这是两段式玩家
+    掷骰的全部意义。
+    """
+    assert pending.skill is not None
+    _text, detail = await roll_check_detail(
+        deps,
+        pending.skill,
+        pending.player_nickname,
+        opposed_opponent=pending.opposed_opponent,
+        opposed_value=pending.opposed_value,
+    )
+    return CheckResultNotice(
+        check_request_id=pending.check_request_id,
+        kind="skill",
+        player_id=detail["player_id"],
+        skill=detail["skill"],
+        rolled=detail["rolled"],
+        target=detail["target"],
+        level=detail["level"],
+        opposed_opponent=detail.get("opposed_opponent"),
+        opposed_rolled=detail.get("opposed_rolled"),
+        opposed_target=detail.get("opposed_target"),
+        opposed_level=detail.get("opposed_level"),
+        opposed_won=detail.get("opposed_won"),
+    )

@@ -36,9 +36,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.keeper.capabilities import (
     audit_fields,
     reserved_state_keys,
+    settler_for,
 )
-from app.core.keeper.capabilities.san_check.executor import san_check_detail
-from app.core.keeper.capabilities.skill_check.executor import roll_check_detail
 from app.core.keeper.chapter import (
     record_chapter,
     should_summarize,
@@ -111,7 +110,6 @@ from app.core.keeper.turn_policy import CHECK_CAPABILITIES, apply_code_forcing, 
 from app.core.llm_tape import build_llm_client
 from app.core.narration.contract import (
     CheckResultCallback,
-    CheckResultNotice,
     NarrationContext,
     NarrationOutcome,
     NarrationSegment,
@@ -511,44 +509,12 @@ class KeeperAgent(Narrator):
             reserved_state_keys=reserved_state_keys(),
             rng=self._rng,
         )
-        if pending.kind == "skill":
-            assert pending.skill is not None
-            _text, detail = await roll_check_detail(
-                deps,
-                pending.skill,
-                pending.player_nickname,
-                opposed_opponent=pending.opposed_opponent,
-                opposed_value=pending.opposed_value,
-            )
-            notice = CheckResultNotice(
-                check_request_id=pending.check_request_id,
-                kind="skill",
-                player_id=detail["player_id"],
-                skill=detail["skill"],
-                rolled=detail["rolled"],
-                target=detail["target"],
-                level=detail["level"],
-                opposed_opponent=detail.get("opposed_opponent"),
-                opposed_rolled=detail.get("opposed_rolled"),
-                opposed_target=detail.get("opposed_target"),
-                opposed_level=detail.get("opposed_level"),
-                opposed_won=detail.get("opposed_won"),
-            )
-        else:
-            _text, detail = await san_check_detail(
-                deps, pending.loss_on_success, pending.loss_on_failure, pending.player_nickname
-            )
-            notice = CheckResultNotice(
-                check_request_id=pending.check_request_id,
-                kind="san",
-                player_id=detail["player_id"],
-                skill=None,
-                rolled=detail["rolled"],
-                target=detail["target"],
-                level="成功" if detail["succeeded"] else "失败",
-                san_loss=detail["loss"],
-                san_remaining=detail["san"],
-            )
+        # 🔴 结算走注册表（exec/27 阶段 4·第八个钩子）：哪一片能力认领哪一种
+        # 待掷记录由它自己声明。此前这里是一条按 kind 写死的 if/else——而"发起"
+        # 那一半早就注册表化了，**同一件事的两头一头可插拔一头写死**。
+        # `settler_for` 找不到认领者时直接抛，没有 else 兜底：兜底就是静默走错
+        # 分支，掷骰数字照样出现在玩家屏幕上而没有任何东西会红。
+        notice = await settler_for(pending.kind)(deps, pending)
 
         # 事实账本 L1（exec/14 P4）：检定成功 → 把这次揭开的线索**用代码**记进
         # 账本。不靠 LLM 自觉写 keeper_state，也不放进会滑出 200 条窗口的历史里

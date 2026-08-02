@@ -31,6 +31,7 @@ from app.core.keeper.registry import (
     PendingHook,
     PromptBlock,
     PromptSlot,
+    SettleFn,
     SituationContext,
 )
 
@@ -64,6 +65,20 @@ def prompt_blocks(slot: PromptSlot) -> list[PromptBlock]:
 def pendings() -> list[PendingHook]:
     """全部待掷钩子，按 order 升序。"""
     return sorted((h for c in CAPABILITIES for h in c.pendings), key=lambda h: h.order)
+
+
+def settler_for(kind: str) -> SettleFn:
+    """认领这种待掷记录的结算函数。没人认领就炸——**不要有 else 兜底**。
+
+    🔴 兜底就是静默走错分支：加一种新检定时，"发起"会自动接上（`pending` 钩子
+    遍历全部能力），而结算若有 else，那条新检定会被当成别的类型结算掉，掷骰
+    数字照样出现在玩家屏幕上，没有任何东西会红。
+    """
+    for capability in CAPABILITIES:
+        for hook in capability.settlers:
+            if hook.kind == kind:
+                return hook.run
+    raise KeyError(f"没有能力认领 kind={kind!r} 的待掷检定结算")
 
 
 def executors() -> list[ExecutorHook]:

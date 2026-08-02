@@ -13,14 +13,17 @@
 互相 import」会在代码里抓到同一件事（exec/27）。
 """
 
-from app.core.keeper.capabilities.san_check.executor import create_pending_san_checks
+from app.core.keeper.capabilities.san_check.executor import (
+    create_pending_san_checks,
+    settle_san_check,
+)
 from app.core.keeper.capabilities.san_check.prompt import PROMPT_BLOCKS
 from app.core.keeper.capabilities.san_check.schema import (
     FIELD_CAPABILITIES,
     SanCheckDecisionFields,
     audit_fields,
 )
-from app.core.keeper.registry import KeeperCapability, PendingHook
+from app.core.keeper.registry import KeeperCapability, PendingHook, SettleHook
 
 CAPABILITY = KeeperCapability(
     name="san_check",
@@ -30,5 +33,6 @@ CAPABILITY = KeeperCapability(
     # 排在 skill_check 之后：待掷队列的顺序就是玩家看到卡片的顺序，
     # 与切分前 create_pending_checks 里"先 checks 后 san_checks"一致。
     pendings=(PendingHook(order=20, run=create_pending_san_checks),),
+    settlers=(SettleHook(kind="san", run=settle_san_check),),
     audit=audit_fields,
 )

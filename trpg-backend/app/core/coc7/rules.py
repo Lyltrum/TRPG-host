@@ -26,7 +26,7 @@ issue #112：此前本模块直接 import `app/core/coc7_content.py` 的模块�
 import re
 from dataclasses import dataclass, field
 
-from app.core.coc7_age import get_age_modifiers, max_total_adjustment_magnitude
+from app.core.coc7.age import get_age_modifiers, max_total_adjustment_magnitude
 from app.dto.game import OccupationSpec, RulesetRead
 
 SKILL_CAP = 99

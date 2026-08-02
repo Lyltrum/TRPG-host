@@ -17,8 +17,8 @@ issue #112：这个模块的公开入口现在都要求调用方传入 `RulesetR
 COC7 毫无关系的最小 ruleset 证明这一点。
 """
 
-from app.core.coc7_content import build_coc7_ruleset
-from app.core.coc7_rules import (
+from app.core.coc7.content import build_coc7_ruleset
+from app.core.coc7.rules import (
     GENERATION_ROLL_POOL,
     SkillPointsBudget,
     compute_derived_stats,
@@ -652,7 +652,7 @@ def test_age_outside_coc7_range_is_rejected() -> None:
     前端此前把输入框写死成 [10, 100]，两头都不符合规则；现在区间由后端
     ruleset 声明并裁决。
     """
-    from app.core.coc7_rules import validate_age
+    from app.core.coc7.rules import validate_age
 
     assert [i.code for i in validate_age(RULESET, 10)] == ["INVALID_AGE"]
     assert [i.code for i in validate_age(RULESET, 90)] == ["INVALID_AGE"]
@@ -662,7 +662,7 @@ def test_age_outside_coc7_range_is_rejected() -> None:
 
 def test_age_not_filled_is_not_rejected() -> None:
     """年龄是本期才入库的字段，迁移前的卡都没有——不能拿新规则追溯判它们非法。"""
-    from app.core.coc7_rules import validate_age
+    from app.core.coc7.rules import validate_age
 
     assert validate_age(RULESET, None) == []
 
@@ -737,7 +737,7 @@ def test_none_attribute_point_buy_and_age_range_skip_their_validations() -> None
 
     # 年龄给一个 COC7 规则会拒绝的越界值（150），没有 age_range 数据可比，
     # 不应该报 INVALID_AGE。
-    from app.core.coc7_rules import validate_age
+    from app.core.coc7.rules import validate_age
 
     assert validate_age(ruleset_without_budget, 150) == []
 
@@ -753,7 +753,7 @@ def test_coc7_rules_module_does_not_import_coc7_content() -> None:
     import ast
     import pathlib
 
-    import app.core.coc7_rules as coc7_rules_module
+    import app.core.coc7.rules as coc7_rules_module
 
     tree = ast.parse(pathlib.Path(coc7_rules_module.__file__).read_text(encoding="utf-8"))
     imported: list[str] = []
@@ -1008,7 +1008,7 @@ def test_effective_attributes_implausible_deviation_is_rejected() -> None:
 def test_effective_attributes_within_age_adjustment_magnitude_is_not_flagged() -> None:
     """对照：总偏离在 `max_total_adjustment_magnitude()` 以内（模拟真实年龄
     修正量级）不应该触发上面那条伪造检测。"""
-    from app.core.coc7_age import max_total_adjustment_magnitude
+    from app.core.coc7.age import max_total_adjustment_magnitude
 
     # STR/SIZ 各 -20、APP -15、EDU +30：总偏离 85，在上限（145，80-89 档最坏
     # 情形）以内。

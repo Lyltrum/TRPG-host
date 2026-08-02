@@ -30,7 +30,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.core.coc7_content import build_coc7_ruleset
+from app.core.coc7.content import build_coc7_ruleset
 from app.core.keeper.contract.module_loader import ModuleNode, ScenarioModule
 from app.core.keeper.primitives.skills import skill_id_catalog
 from app.dto.game import RulesetRead

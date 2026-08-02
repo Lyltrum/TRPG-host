@@ -30,8 +30,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.background_writer import BackgroundWriter
-from app.core.coc7_content import build_coc7_ruleset
-from app.core.coc7_rules import (
+from app.core.coc7.content import build_coc7_ruleset
+from app.core.coc7.rules import (
     GENERATION_POINT_BUY,
     NON_ALLOCATABLE_SKILL_IDS,
     SKILL_CAP,

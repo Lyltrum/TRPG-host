@@ -12,7 +12,7 @@ import uuid
 import structlog
 from pydantic import BaseModel
 
-from app.core.coc7_rules import evaluate_skill_base
+from app.core.coc7.rules import evaluate_skill_base
 from app.core.keeper.capabilities.skill_check.guard import (
     filter_checks_against_module,
     find_node_for_scene,

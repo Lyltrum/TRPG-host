@@ -7,7 +7,7 @@
 这份用例钉住"卡确实进了 prompt"，以及"卡上没有的东西不会被悄悄补齐"。
 """
 
-from app.core.coc7_content import build_coc7_ruleset
+from app.core.coc7.content import build_coc7_ruleset
 from app.core.keeper.narration.sheet_digest import format_sheet
 from app.models.room import Character
 

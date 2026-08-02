@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.coc7_content import build_coc7_ruleset
+from app.core.coc7.content import build_coc7_ruleset
 from app.core.keeper.capabilities.skill_check.guard import filter_checks_against_module
 from app.core.keeper.contract.module_loader import (
     KeeperTruth,

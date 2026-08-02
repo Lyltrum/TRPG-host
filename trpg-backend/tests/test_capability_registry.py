@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.core.coc7_content import build_coc7_ruleset
+from app.core.coc7.content import build_coc7_ruleset
 from app.core.keeper import capabilities as registry_pkg
 from app.core.keeper.access.subject import DECISION_FIELD_CAPABILITIES
 from app.core.keeper.contract.decision import KeeperDecision

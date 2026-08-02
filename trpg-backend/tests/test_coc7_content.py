@@ -6,8 +6,8 @@
 里靠抽查是抽不出来的（PR #85 记者/间谍公式被误设 EDU*4 就是靠人肉对照才发现）。
 """
 
-from app.core.coc7_content import COC7_OCCUPATIONS, COC7_SKILLS
-from app.core.coc7_rules import evaluate_skill_points_formula
+from app.core.coc7.content import COC7_OCCUPATIONS, COC7_SKILLS
+from app.core.coc7.rules import evaluate_skill_points_formula
 
 _VALID_SKILL_IDS = {skill.id for skill in COC7_SKILLS}
 # 求值只需要一份属性字典，取值无所谓——这里只验「公式能不能算出来」，不验数值。

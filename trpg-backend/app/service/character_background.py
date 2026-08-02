@@ -17,7 +17,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.background_writer import BackgroundWriter, build_prompt, to_detail
-from app.core.coc7_content import build_coc7_ruleset
+from app.core.coc7.content import build_coc7_ruleset
 from app.core.config import get_settings
 from app.models.room import Room
 

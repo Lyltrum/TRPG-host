@@ -77,7 +77,10 @@ function BottomPanel({ open, onClose, title, children, heightVh }: { open: boole
         // 只是"不加 theme-coc"不够——CSS 变量沿 DOM 继承，本面板是 RoomPage
         // 根节点的后代，祖先上的 theme-coc 照样生效。真机症状是牛皮纸上一片
         // 空白（浅奶白的字压浅纸）。判据：**在深色页面里放纸，必须挂 theme-paper。**
-        className={`theme-paper fixed bottom-0 left-0 right-0 z-50 bg-dossier text-ink shadow-[0_-14px_34px_rgba(0,0,0,.66)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] max-w-[430px] mx-auto ${open ? 'translate-y-0' : 'translate-y-full'}`}
+        // 🔴 **不要大范围投影**（原来是 `0 -14px 34px rgba(0,0,0,.66)`）：
+        // 它在面板下缘糊出一大团黑，真机上看就是"纸的底部烂了"。
+        // 纸压在桌上只需要**一条上缘亮线 + 一条紧贴的暗线**，两条 1px 就够。
+        className={`theme-paper paper-grain fixed bottom-0 left-0 right-0 z-50 bg-dossier text-ink shadow-[0_-1px_0_rgba(255,255,255,.22),0_-3px_10px_rgba(0,0,0,.35)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] max-w-[430px] mx-auto overflow-hidden ${open ? 'translate-y-0' : 'translate-y-full'}`}
         style={heightVh ? { height: `${maxH}vh` } : { maxHeight: `${maxH}vh` }}
       >
         {/* 🔴 标签舌只在展开时渲染。它是 `-top-[19px]` 探出面板上缘的，面板
@@ -92,22 +95,28 @@ function BottomPanel({ open, onClose, title, children, heightVh }: { open: boole
               {title}
             </button>
             {/* 装订孔：孔里透出底下桌面的暗。正文左边距要避开它 */}
-            <span className="punch absolute left-[13px] top-[30px] w-[11px] h-[11px] rounded-full" />
-            <span className="punch absolute left-[13px] top-[58px] w-[11px] h-[11px] rounded-full" />
-            <span className="punch absolute left-[13px] top-[86px] w-[11px] h-[11px] rounded-full" />
+            <span className="punch absolute left-[13px] top-[46px] w-[11px] h-[11px] rounded-full" />
+            <span className="punch absolute left-[13px] top-[74px] w-[11px] h-[11px] rounded-full" />
+            <span className="punch absolute left-[13px] top-[102px] w-[11px] h-[11px] rounded-full" />
           </>
         )}
-        <button
-          onClick={onClose}
-          aria-label="收起"
-          className="absolute right-3 top-3 z-10 w-6 h-6 flex items-center justify-center border border-ink/25 active:bg-ink/10"
-        >
-          <X className="w-3.5 h-3.5 text-ink-soft" strokeWidth={2.5} />
-        </button>
         <div
-          className="paper-grain relative overflow-y-auto pl-[34px] pr-4 pt-5 pb-6"
+          className="relative overflow-y-auto pl-[34px] pr-4 pb-6"
           style={{ maxHeight: `calc(${maxH}vh - 8px)` }}
         >
+          {/* 🔴 收起键放在**流里**，不是 absolute 浮在内容上。
+              浮的那版跟每一页的第一行都打架（角色卡的分类标签、队友的人数行…）
+              ——绝对定位的控件没有"内容会长什么样"的信息，必然撞。
+              这里它自己占一行，任何页面都不会被它压住。 */}
+          <div className="flex justify-end pt-2.5 pb-1.5">
+            <button
+              onClick={onClose}
+              className="typed flex items-center gap-1 text-[9px] text-ink/45 active:text-ink px-1 py-0.5"
+            >
+              收起
+              <X className="w-3 h-3" strokeWidth={2.5} />
+            </button>
+          </div>
           {children}
         </div>
       </div>

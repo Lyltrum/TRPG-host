@@ -6,7 +6,7 @@
 "我现在该做什么"（中间插了"现在"）就匹配不上，这是正则做语义分类的
 结构性上限。改法是把分类判断交给已经在读这句话的裁决 LLM，在
 `KeeperDecision` 里加 `player_state` 字段；只有裁决完全失败（走
-`_FALLBACK_ADJUDICATE_GUIDANCE` 兜底）时才退回正则作为安全网。
+`FALLBACK_ADJUDICATE_GUIDANCE` 兜底）时才退回正则作为安全网。
 
 不跑真实 LLM——`_adjudicate`/`_narrate_prose` 用实例属性桩掉，只验证
 `agent.py::narrate()` 里"三个布尔值从哪来"这段路由逻辑。
@@ -21,9 +21,10 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.agent import _FALLBACK_ADJUDICATE_GUIDANCE, KeeperAgent
+from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.capabilities.skill_check.schema import CheckRequest
 from app.core.keeper.decision import KeeperDecision
+from app.core.keeper.llm_calls import FALLBACK_ADJUDICATE_GUIDANCE
 from app.core.keeper.module_loader import load_module
 from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
 from app.core.keeper.prose_discipline import is_player_confused
@@ -136,7 +137,7 @@ async def test_player_state_confused_catches_regex_gap() -> None:
 
 
 async def test_player_state_falls_back_to_regex_when_adjudicate_failed() -> None:
-    """裁决走 `_FALLBACK_ADJUDICATE_GUIDANCE` 兜底时，player_state 只是默认值
+    """裁决走 `FALLBACK_ADJUDICATE_GUIDANCE` 兜底时，player_state 只是默认值
     "normal"（不可信）——这时必须退回正则判断。用一句正则能命中的迷茫发言
     （"我该怎么办"）证明兜底路径确实生效。"""
     utterance = "我该怎么办"
@@ -144,7 +145,7 @@ async def test_player_state_falls_back_to_regex_when_adjudicate_failed() -> None
 
     decision = KeeperDecision(
         thinking="裁决解析失败兜底",
-        narration_guidance=_FALLBACK_ADJUDICATE_GUIDANCE,
+        narration_guidance=FALLBACK_ADJUDICATE_GUIDANCE,
         player_state="normal",  # 兜底 decision 从不会真的填出分类
     )
     agent = _keeper()

@@ -8,7 +8,7 @@ import random
 
 import pytest
 
-from app.core.keeper import dice
+from app.core.keeper.primitives import dice
 
 
 class TestRollDiceExpr:

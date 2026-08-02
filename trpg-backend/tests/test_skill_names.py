@@ -27,7 +27,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.coc7_content import build_coc7_ruleset
-from app.core.keeper.check_guard import filter_checks_against_module
+from app.core.keeper.capabilities.skill_check.guard import filter_checks_against_module
 from app.core.keeper.module_loader import (
     KeeperTruth,
     ModuleCheck,
@@ -35,7 +35,7 @@ from app.core.keeper.module_loader import (
     ModuleNode,
     ScenarioModule,
 )
-from app.core.keeper.skill_names import canonical_skill_name, match_key
+from app.core.keeper.primitives.skills import canonical_skill_name, match_key
 from scripts.module_probe.validate_module import (
     COC6_ATTRIBUTE_CHECKS,
     MULTI_SKILL_CHECKS,

@@ -61,7 +61,7 @@ _LAYER_EXEMPTIONS: set[tuple[str, str]] = {
 #: 原先有两组环：
 #: 1. `narrator.py` 同时是抽象层、工厂和一个实现，抽象反向依赖具体；
 #: 2. `keeper/__init__.py` re-export `KeeperAgent`，而 `tools.py` 走
-#:    `from app.core.keeper import dice`——`from 包 import 子模块` 会先执行包的
+#:    `from app.core.keeper.primitives import dice`——`from 包 import 子模块` 会先执行包的
 #:    `__init__`，于是 `tools → 包 → agent → tools`。
 #:
 #: 两组都靠**函数内 import / 加载顺序凑巧**撑着，不会有任何东西变红。真要往这里

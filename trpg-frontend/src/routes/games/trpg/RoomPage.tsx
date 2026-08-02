@@ -91,6 +91,10 @@ function BottomPanel({ open, onClose, title, children, heightVh, accent = '#8a6a
         className={`theme-paper paper-grain fixed bottom-0 left-0 right-0 z-50 text-ink shadow-[0_-1px_0_rgba(255,255,255,.22),0_-3px_10px_rgba(0,0,0,.35)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] max-w-[430px] mx-auto overflow-hidden ${open ? 'translate-y-0' : 'translate-y-full'}`}
         style={{
           backgroundColor: paper,
+          // 栏目标签要用纸色去"咬断"边框线（真实表单的做法），所以把纸色
+          // 暴露成变量给 <Section> 用。
+          ['--paper' as string]: paper,
+          ['--accent' as string]: accent,
           borderTop: `3px solid ${accent}`,
           ...(heightVh ? { height: `${maxH}vh` } : { maxHeight: `${maxH}vh` }),
         }}
@@ -134,6 +138,57 @@ function BottomPanel({ open, onClose, title, children, heightVh, accent = '#8a6a
         </div>
       </div>
     </>
+  )
+}
+
+/** 档案里的**栏目**。
+ *
+ * 🔴 真人反馈：同一个面板里「装备 / 背景故事 / 备注 / 细节」内容性质完全不同，
+ * 却长得一模一样（小标题 + 一段字，堆成流水线）。**内容不同，皮就该不同。**
+ *
+ * 四种皮，一眼可辨：
+ *   `form`  表单栏 —— 浅内底 + 实线框。数值、地点这类填空
+ *   `prose` 打字报告 —— 左侧一道粗墨条 + 略深的纸。长文本
+ *   `note`  手写便条 —— 横格纸 + 虚线框。备注、批注
+ *   `list`  清单 —— 点线框。装备这类逐条列的东西
+ *
+ * 栏目名做成压在框线上的小标签（真实表单就是这么印的），标签底色用面板的纸色
+ * 把框线"咬断"——所以 BottomPanel 要把 `--paper` 暴露出来。
+ */
+function Section({
+  label,
+  tone = 'form',
+  children,
+}: {
+  label: string
+  tone?: 'form' | 'prose' | 'note' | 'list'
+  children: React.ReactNode
+}) {
+  const skin = {
+    form: 'bg-black/[0.045] border border-ink/25',
+    prose: 'bg-black/[0.075] border-y border-r border-ink/15 border-l-[3px] border-l-ink/55',
+    note: 'notepaper border border-dashed border-ink/40',
+    list: 'border border-dotted border-ink/40',
+  }[tone]
+  return (
+    <div className={`relative mt-[18px] px-3 pt-3.5 pb-3 ${skin}`}>
+      <span
+        className="typed absolute -top-[7px] left-2.5 px-1.5 text-[8.5px] text-ink/75"
+        style={{ backgroundColor: 'var(--paper)' }}
+      >
+        {label}
+      </span>
+      {children}
+    </div>
+  )
+}
+
+/** 空字段：显式画成"这里是空的"，不是一句灰色的话。 */
+function Blank({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="typed text-[10px] text-ink/35 text-center py-1.5 border border-dashed border-ink/25">
+      {children}
+    </p>
   )
 }
 
@@ -1407,18 +1462,22 @@ export default function RoomPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-1.5 mb-4">
-                  <div className="flex items-center justify-between bg-black/5 border border-ink/20 px-3 py-1.5">
-                    <span className="text-[11px] text-text-muted">居住地</span>
-                    <span className="text-sm font-medium text-text-primary">{character.info.residence || '—'}</span>
+                <Section label="籍贯" tone="form">
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                    <div className="flex items-center justify-between border-b border-dotted border-ink/30 pb-1">
+                      <span className="typed text-[9px] text-ink/55">居住地</span>
+                      <span className="font-display text-[13px] text-ink">{character.info.residence || '—'}</span>
+                    </div>
+                    <div className="flex items-center justify-between border-b border-dotted border-ink/30 pb-1">
+                      <span className="typed text-[9px] text-ink/55">出生地</span>
+                      <span className="font-display text-[13px] text-ink">{character.info.birthplace || '—'}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center justify-between bg-black/5 border border-ink/20 px-3 py-1.5">
-                    <span className="text-[11px] text-text-muted">出生地</span>
-                    <span className="text-sm font-medium text-text-primary">{character.info.birthplace || '—'}</span>
-                  </div>
-                </div>
+                </Section>
 
-                <div className="flex gap-2 mb-4">
+                {/* 衍生值是**机制读数**，所以做成仪表盘：等宽数字 + 刻度感的方格，
+                    跟上面的填空栏、下面的属性表都不一样 */}
+                <div className="mt-[18px] flex gap-1.5">
                   {[
                     { label: 'HP', value: `${character.derived.hp}`, color: 'text-mold' },
                     { label: 'SAN', value: `${character.derived.san}`, color: 'text-[#7050a0]' },
@@ -1426,38 +1485,66 @@ export default function RoomPage() {
                     { label: 'DB', value: character.derived.db, color: 'text-text-muted' },
                     { label: 'MOV', value: `${character.derived.move}`, color: 'text-text-muted' },
                   ].map((pill) => (
-                    <div key={pill.label} className="flex-1 border border-ink/20 px-2.5 py-2 text-center">
-                      <div className="text-[10px] text-text-muted font-medium">{pill.label}</div>
-                      <div className={`text-base font-bold font-mono ${pill.color}`}>{pill.value}</div>
+                    <div
+                      key={pill.label}
+                      className="flex-1 border-t-2 border-ink/50 border-x border-b border-x-ink/15 border-b-ink/15 bg-black/[0.06] px-1 py-1.5 text-center"
+                    >
+                      <div className="typed text-[8.5px] text-ink/55">{pill.label}</div>
+                      <div className={`text-[17px] font-bold font-mono tabular-nums ${pill.color}`}>{pill.value}</div>
                     </div>
                   ))}
                 </div>
 
-                <div className="h-px bg-border-light mb-3.5" />
-
-                <h4 className="text-xs font-semibold text-brass-dark mb-2.5">基础属性</h4>
-                <div className="grid grid-cols-2 gap-1.5">
+                <Section label="基础属性" tone="form">
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1">
                   {/* 属性清单由后端 ruleset 驱动，前端不再自己维护一份名单——
                       此前三处各硬编码一份，加幸运时漏改一处就导致角色卡看不到
                       幸运值（issue #96）。 */}
                   {(ruleset?.attributes ?? []).map(attribute => (
-                    <div key={attribute.key} className="flex items-center justify-between bg-black/5 border border-ink/20 px-3 py-1.5">
-                      <span className="font-mono text-[11px] font-bold text-text-muted">{attribute.key}</span>
-                      <span className="font-mono text-sm font-bold text-text-primary">{character.attr[attribute.key]}</span>
+                    <div
+                      key={attribute.key}
+                      className="flex items-baseline justify-between border-b border-dotted border-ink/30 py-1"
+                    >
+                      <span className="typed text-[9px] text-ink/55">{attribute.key}</span>
+                      <span className="font-mono text-[15px] font-bold text-ink tabular-nums">
+                        {character.attr[attribute.key]}
+                      </span>
                     </div>
                   ))}
-                </div>
+                  </div>
+                </Section>
               </>
             )}
 
             {sheetPage === 'background' && (
               <>
-                <h4 className="text-xs font-semibold text-brass-dark mb-2.5">装备</h4>
-                <p className="text-sm text-text-body leading-[1.7] mb-4">{character.equipment || '未填写装备'}</p>
-                <h4 className="text-xs font-semibold text-brass-dark mb-2.5">背景故事</h4>
-                <p className="text-sm text-text-body leading-[1.7] mb-4">{character.background || '未填写背景故事'}</p>
-                <h4 className="text-xs font-semibold text-brass-dark mb-2.5">备注</h4>
-                <p className="text-sm text-text-body leading-[1.7] mb-4">{character.notes || '未填写备注'}</p>
+                {/* 🔴 三段内容性质不同，皮也不同：装备是逐条清单、背景故事是
+                    打字报告、备注是手写便条。空的字段显式画成空框，不是灰句子。 */}
+                <Section label="装备" tone="list">
+                  {character.equipment ? (
+                    <p className="text-[13px] text-ink/85 leading-[1.75] whitespace-pre-wrap">{character.equipment}</p>
+                  ) : (
+                    <Blank>未填写</Blank>
+                  )}
+                </Section>
+
+                <Section label="背景故事" tone="prose">
+                  {character.background ? (
+                    <p className="font-display text-[13.5px] text-ink/90 leading-[1.85] whitespace-pre-wrap">
+                      {character.background}
+                    </p>
+                  ) : (
+                    <Blank>未填写</Blank>
+                  )}
+                </Section>
+
+                <Section label="备注" tone="note">
+                  {character.notes ? (
+                    <p className="font-mono text-[12px] text-ink/85 leading-[22px] whitespace-pre-wrap">{character.notes}</p>
+                  ) : (
+                    <Blank>未填写</Blank>
+                  )}
+                </Section>
 
                 {/* 结构化背景故事（character-build-migration）：建卡向导里填的
                     8 个引导字段，此前只存进了 character-store，没有任何地方
@@ -1467,13 +1554,24 @@ export default function RoomPage() {
                 {character.backgroundDetail &&
                   BACKGROUND_DETAIL_FIELDS.some(({ key }) => character.backgroundDetail?.[key]) && (
                     <>
-                      <div className="h-px bg-border-light mb-3.5" />
-                      <h4 className="text-xs font-semibold text-brass-dark mb-2.5">背景故事细节</h4>
+                      {/* 8 个引导字段做成**逐条的档案分录**：左侧一道细线 +
+                          序号，跟上面三大段拉开层级——它们是"细节"，不是并列的章。 */}
+                      <div className="mt-6 mb-1 flex items-center gap-2">
+                        <span className="typed text-[9px] text-ink/60">背景故事细节</span>
+                        <span className="flex-1 h-px bg-ink/20" />
+                      </div>
                       {BACKGROUND_DETAIL_FIELDS.filter(({ key }) => character.backgroundDetail?.[key]).map(
-                        ({ key, label }) => (
-                          <div key={key} className="mb-3">
-                            <div className="text-[11px] font-medium text-text-muted mb-1">{label}</div>
-                            <p className="text-sm text-text-body leading-[1.7]">{character.backgroundDetail?.[key]}</p>
+                        ({ key, label }, idx) => (
+                          <div key={key} className="flex gap-2.5 pt-2.5">
+                            <span className="typed text-[9px] text-ink/35 pt-0.5 w-4 flex-shrink-0 text-right">
+                              {String(idx + 1).padStart(2, '0')}
+                            </span>
+                            <div className="flex-1 min-w-0 border-l border-ink/20 pl-2.5">
+                              <div className="typed text-[9px] text-ink/55 mb-1">{label}</div>
+                              <p className="font-display text-[13px] text-ink/85 leading-[1.8]">
+                                {character.backgroundDetail?.[key]}
+                              </p>
+                            </div>
                           </div>
                         )
                       )}
@@ -1552,10 +1650,11 @@ export default function RoomPage() {
       {/* Panel: 速记 */}
       <BottomPanel accent="#3f362a" paper="#d3c49c" open={openPanel === 'notes'} onClose={() => setOpenPanel(null)} title="速记本">
         {playerIntro && (
-          <div className="paper-grain relative mb-3 bg-book border-l-[3px] border-brass px-3 py-2.5">
-            <p className="text-xs font-bold text-text-primary mb-1.5">📋 案件简报</p>
-            <p className="text-xs text-text-body leading-relaxed whitespace-pre-wrap">{playerIntro}</p>
-          </div>
+          // 简报是**别人给你的**（打字报告），笔记是**你自己写的**（横格纸），
+          // 两者性质相反，皮也相反
+          <Section label="案件简报" tone="prose">
+            <p className="font-display text-[13px] text-ink/90 leading-[1.85] whitespace-pre-wrap">{playerIntro}</p>
+          </Section>
         )}
         <div className="flex gap-2 mb-3">
           <button onClick={() => setNotes(prev => prev + `\n\n[🔍 新线索 ${new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})}]\n`)}

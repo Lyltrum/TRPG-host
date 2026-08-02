@@ -7,7 +7,7 @@ import random
 
 import pytest
 
-from app.core.coc7_age import (
+from app.core.coc7.age import (
     apply_app_loss,
     distribute_scd_loss,
     get_age_modifiers,

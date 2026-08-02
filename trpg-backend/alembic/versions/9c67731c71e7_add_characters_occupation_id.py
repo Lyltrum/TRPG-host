@@ -37,7 +37,12 @@ def _backfill() -> None:
     只能取第一个匹配——那正是我们要消灭的猜测。至少让它留下痕迹，之后能对着
     日志去核对那几张卡到底该是哪个变体。
     """
-    from app.core.coc7_content import build_coc7_ruleset
+    # ⚠️ 迁移 import 应用代码是个已知隐患：模块一搬家，**已合并的历史迁移
+    # 就会在新库上炸**（exec/27 阶段 5 实测：`coc7_content` 挪进 `coc7/` 之后
+    # 这行当场失效，只有 `ty` 抓到——测试跑的是 create_all，根本不走迁移）。
+    # 这里保持引用是因为回填要用权威职业表；换成快照会引入第二份规则数据，
+    # 那是更糟的病。
+    from app.core.coc7.content import build_coc7_ruleset
 
     bind = op.get_bind()
     rows = list(

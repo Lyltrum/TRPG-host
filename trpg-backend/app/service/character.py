@@ -13,14 +13,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.background_writer import BackgroundWriter
-from app.core.coc7_age import (
+from app.core.coc7.age import (
     apply_app_loss,
     distribute_scd_loss,
     get_age_modifiers,
     roll_edu_improvement,
 )
-from app.core.coc7_content import build_coc7_ruleset
-from app.core.coc7_rules import (
+from app.core.coc7.content import build_coc7_ruleset
+from app.core.coc7.rules import (
     GENERATION_POINT_BUY,
     GENERATION_ROLL,
     GENERATION_ROLL_POOL,

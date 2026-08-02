@@ -16,8 +16,8 @@ import collections
 
 import pytest
 
-from app.core.coc7_content import build_coc7_ruleset
-from app.core.coc7_rules import (
+from app.core.coc7.content import build_coc7_ruleset
+from app.core.coc7.rules import (
     GENERATION_POINT_BUY,
     find_occupation_by_id,
     find_occupation_by_name,

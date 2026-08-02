@@ -9,7 +9,7 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.coc7_content import build_coc7_ruleset
+from app.core.coc7.content import build_coc7_ruleset
 from app.core.keeper.contract.catalog import KEEPER_MODULE_SPECS
 from app.models.content import Game, GameSystem, Scenario
 

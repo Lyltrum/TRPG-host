@@ -34,7 +34,7 @@ class RoomAwareKeeperNarrator(Narrator):
         fallback_path: Path | None,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        from app.core.coc7_content import build_coc7_ruleset
+        from app.core.coc7.content import build_coc7_ruleset
 
         self._api_key = api_key
         self._modules_dir = modules_dir

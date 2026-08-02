@@ -75,7 +75,13 @@ from app.core.keeper.location_state import (
     scene_changed as has_scene_changed,
 )
 from app.core.keeper.module_loader import ScenarioModule
-from app.core.keeper.pending import PendingCheck, pending_check_manager, to_notice
+from app.core.keeper.narration_hints import (
+    NO_PENDING_CHECK_HINT,
+    UNRESOLVED_CONFLICT_HINT,
+    build_bystander_hint,
+    build_check_boundary_hint,
+)
+from app.core.keeper.pending import pending_check_manager, to_notice
 from app.core.keeper.phase import (
     PHASE_FINISHED,
     PHASE_KEY,
@@ -118,104 +124,6 @@ from app.models.event import Event
 from app.models.room import Character, Player, Room
 
 logger = structlog.get_logger()
-
-
-def _build_check_boundary_hint(pending_checks: list[PendingCheck]) -> str:
-    """检定边界硬提醒（真人实测 2026-07-29：恐吓/追踪/潜行三个真实案例）。
-
-    旧版指引只禁止"提前描写检定才能获得的信息"（信息维度），真人实测
-    发现追踪/潜行两个案例抢跑的不是信息，是**检定对应的动作本身**——
-    铺垫文字已经把"沿着痕迹走了十几步""脚步声被夜风吞掉"这类只有检定
-    成功才该出现的执行过程当成既定事实写出来了。这里补齐这第二个维度，
-    用一个技能无关的通用例子锚定理解，不针对具体技能列举——列举会重蹈
-    exec/11 已经记录过的"样本驱动模式匹配，泛化边界不可知"的坑。
-    """
-    check_list = "\n".join(
-        f"- {c.player_nickname} · {'理智' if c.kind == 'san' else c.skill}检定"
-        f"（{c.reason or '无说明'}）"
-        for c in pending_checks
-    )
-    return (
-        "\n\n【检定边界·代码硬提醒】本轮已发起以下检定，正文必须停在"
-        "「结果与动作都还未知」的那一刻：\n"
-        f"{check_list}\n"
-        "① 不得写出这次检定才能揭示的信息（线索/证词/发现），哪怕一个字；\n"
-        "② 不得把这次检定对应的动作本身写成已经在成功进行/已经执行完成——"
-        "比如「沿着痕迹走了很远」「脚步声被夜风吞掉」「三十步后你看见了」"
-        "这类，都已经是在替这次检定预支结果；\n"
-        "③ 正确的停点是「你看见一条隐约的痕迹」「你压低身子准备靠近」"
-        "这种，情境刚具备、行动才要开始、结果完全悬而未决的画面。\n"
-        "超出这个边界会显得逻辑混乱——检定还没掷，故事却已经替玩家决定了结果。"
-    )
-
-
-# 本轮**没有**任何待掷检定时由代码强制追加。跟 `_build_check_boundary_hint`
-# 是同一件事的另一半：那个管"有检定时别抢跑"，这个管"没检定时别凭空要求掷骰"。
-#
-# 真人实测 2026-07-31（exec/19 #38）：裁决输出 `checks=[]`，叙事却写出「凌铭辉，
-# 进行一次体质对抗检定，目标 POT 16」——玩家界面上永远不会出现那张掷骰卡片，
-# 他就一直等下去。根因是**对抗检定在 `KeeperDecision` 里无法表达**（`CheckRequest`
-# 只有 skill/player/reason，没有对抗目标值），裁决器想要就只能写进散文里。
-#
-# ⚠️ 这只是止血，是**概率性**的：真正的修法是让 schema 表达得了对抗检定，
-# 否则模型永远有动机把说不出口的东西塞进正文（与 exec/17 同族）。
-_NO_PENDING_CHECK_HINT = (
-    "\n\n【检定纪律·代码硬提醒】本轮**没有任何待掷检定**。因此正文里"
-    "**不得要求任何调查员掷骰或进行检定**——不要写「请进行 XX 检定」"
-    "「目标值 XX」「掷一次 XX」这类话。玩家界面上不会出现掷骰卡片，"
-    "写了他只会一直等一个永远不来的骰子。"
-    "需要不确定性时，直接把结果写成既定事实，或者把局面停在他下一步可以行动的地方。"
-)
-
-
-# 🔴 上面那条硬提醒有个例外，试玩实测抓到（2026-07-31，exec/19 #44）：
-# 玩家宣告「我抄起手边的东西狠狠砸它」，裁决器没发检定，叙事照着
-# `_NO_PENDING_CHECK_HINT` 的"直接把结果写成既定事实"写了「他侧身一闪，
-# 镇纸砸在书架上」——**攻击的成败被叙事定了**。
-#
-# 搜查、移动、对话那些动作，没检定就直接给结果是对的；但**对他人动手**不行：
-# 攻击的成败是玩家花技能点买来的权利，不该由叙事赠予或剥夺。裁决器没能发出
-# 检定（目标指代不明、局面不清）时，正确处理是**停下来追问**，不是替他裁定。
-#
-# 触发条件是**确定的**：`player_state == "physical_conflict"` 且本轮 pending
-# 为空。分类本身是语义判断（裁决 LLM 做，同 #8 迷茫检测、#40 提问的先例），
-# 但"分类命中 + 没有检定 → 注入这段"这一步是代码强制的。
-_UNRESOLVED_CONFLICT_HINT = (
-    "\n\n【动手未裁定·代码硬提醒】玩家本轮宣告了对他人动手/强行突破，"
-    "而本轮**没有任何检定**。因此：\n"
-    "① **绝对不许写出这次动手的成败**——不许写打中、打空、被闪开、被制住、"
-    "被夺下武器、对方受伤或毫发无伤；\n"
-    "② 正文停在**动作即将发生的那一刻**（他已经抬手/已经扑过去，结果未知），"
-    "然后用一句世界内的话向玩家确认他到底要对谁做什么"
-    "（「你是要动手打他？」「你打算硬闯过去？」）；\n"
-    "③ 不要要求掷骰、不要提检定二字——确认清楚后由守秘人下一轮裁决。\n"
-    "攻击的成败是玩家用技能点换来的权利，不能由叙事赠予或剥夺。"
-)
-
-
-def _build_bystander_hint(nicknames: list[str]) -> str:
-    """本轮没发言的人：点名禁止替他们行动（exec/19 #41）。
-
-    真人实测 2026-07-31：只有凌铭辉提交了行动，叙事却写「张家豪扫了一眼鞋柜旁
-    那双沾泥的雨靴」——张家豪什么都没说。叙事 prompt 里本来就有「不替玩家决定
-    下一步」，但那是**没有名单的泛化纪律**；名册上摆着另一个名字、聚光灯指引又
-    在鼓励照顾镜头，模型自然会给他补一笔。代码明明知道谁发了言、谁没发言，
-    这里把这份名单交出去。
-
-    ⚠️ 名单是代码确定的，**模型服从与否仍是概率性的**（同 `_NO_PENDING_CHECK_HINT`）。
-    ⚠️ 名单必须按**每段的受众**算，不能把别组的人名带进来——否则 per-observer
-    投递做的隔离会被这条 prompt 自己泄回去。
-    """
-    if not nicknames:
-        return ""
-    names = "、".join(nicknames)
-    return (
-        f"\n\n【发言人名单·代码硬提醒】本轮只有已列出的调查员提交了行动。"
-        f"{names}**这一轮什么都没说**——不得替他{'们' if len(nicknames) > 1 else ''}"
-        "写出任何主动动作、主动观察或台词（不要写他去看了什么、注意到了什么、"
-        "说了什么）。只能写他被动在场（站在那里、跟着走），或者让环境/NPC 朝他"
-        "抛一个钩子，把下一步留给他自己决定。"
-    )
 
 
 class KeeperAgent(Narrator):
@@ -497,7 +405,7 @@ class KeeperAgent(Narrator):
             # 近因效应下模型服从概率更高），不再折进 narration_guidance
             # 中段——没法用代码保证模型一定服从（"这段话有没有替检定预支
             # 结果"不是能靠代码判断的），只能尽量提高服从概率。
-            check_boundary_hint = _build_check_boundary_hint(pending_checks)
+            check_boundary_hint = build_check_boundary_hint(pending_checks)
             narration, segments = await self._narrate_per_audience(
                 room_id=room_id,
                 situation=situation,
@@ -540,9 +448,7 @@ class KeeperAgent(Narrator):
         # 阶段3·叙事：只写故事 + 长度硬裁 + 去菜单/软挡。
         # 动手却没裁出检定 → 换成"停在动作发生前并追问"，不许替玩家定成败
         # （exec/19 #44）。两条硬提醒方向相反，只能二选一。
-        no_check_suffix = (
-            _UNRESOLVED_CONFLICT_HINT if unresolved_conflict else _NO_PENDING_CHECK_HINT
-        )
+        no_check_suffix = UNRESOLVED_CONFLICT_HINT if unresolved_conflict else NO_PENDING_CHECK_HINT
         narration, segments = await self._narrate_per_audience(
             room_id=room_id,
             situation=situation,
@@ -791,7 +697,7 @@ class KeeperAgent(Narrator):
 
         def _bystanders(audience: tuple[str, ...]) -> str:
             """这一段的受众里，本轮没发言的人（exec/19 #41）。按受众裁。"""
-            return _build_bystander_hint(
+            return build_bystander_hint(
                 [
                     nicknames[pid]
                     for pid in audience

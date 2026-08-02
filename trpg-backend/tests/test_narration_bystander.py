@@ -5,12 +5,12 @@
 「不替玩家决定下一步」，但它**没有名单**；代码明明知道本轮谁发了言。
 
 这里验证两件事：
-1. `_build_bystander_hint` 的措辞与空名单退化；
+1. `build_bystander_hint` 的措辞与空名单退化；
 2. `_narrate_per_audience` 把名单**按每段的受众**算出来交给叙事阶段——
    分头时别组的人名一个字都不能出现在本段提示里（否则投递做的隔离会被
    这条 prompt 自己泄回去）。
 
-不验证模型会不会听话：那是概率性的，同 `_NO_PENDING_CHECK_HINT`。
+不验证模型会不会听话：那是概率性的，同 `NO_PENDING_CHECK_HINT`。
 """
 
 import tempfile
@@ -22,10 +22,11 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.agent import KeeperAgent, _build_bystander_hint
+from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.location_state import PLAYER_LOCATION_KEY
 from app.core.keeper.module_loader import load_module
+from app.core.keeper.narration_hints import build_bystander_hint
 from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
 from app.core.keeper.scene_state import CURRENT_NODE_KEY
 from app.core.narration.contract import NarrationContext, PlayerUtterance
@@ -51,18 +52,18 @@ async def _fresh_db():
 
 
 def test_no_bystanders_adds_nothing() -> None:
-    assert _build_bystander_hint([]) == ""
+    assert build_bystander_hint([]) == ""
 
 
 def test_single_bystander_is_named() -> None:
-    hint = _build_bystander_hint(["张家豪"])
+    hint = build_bystander_hint(["张家豪"])
     assert "张家豪" in hint
     assert "这一轮什么都没说" in hint
     assert "不得替他写出" in hint
 
 
 def test_multiple_bystanders_are_all_named() -> None:
-    hint = _build_bystander_hint(["张家豪", "阿贵"])
+    hint = build_bystander_hint(["张家豪", "阿贵"])
     assert "张家豪、阿贵" in hint
     assert "不得替他们写出" in hint
 

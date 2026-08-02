@@ -24,10 +24,11 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7_content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.agent import KeeperAgent, _build_check_boundary_hint
+from app.core.keeper.agent import KeeperAgent
 from app.core.keeper.capabilities.skill_check.schema import CheckRequest
 from app.core.keeper.decision import KeeperDecision
 from app.core.keeper.module_loader import load_module
+from app.core.keeper.narration_hints import build_check_boundary_hint
 from app.core.keeper.pending import PendingCheck
 from app.core.keeper.phase import PHASE_INVESTIGATION, PHASE_KEY
 from app.core.narration.contract import NarrationContext
@@ -75,7 +76,7 @@ def test_check_boundary_hint_covers_both_information_and_action_dimensions() -> 
             reason="沿痕迹寻找线索",
         )
     ]
-    hint = _build_check_boundary_hint(pending)
+    hint = build_check_boundary_hint(pending)
 
     assert "检定边界" in hint
     assert "追踪检定" in hint
@@ -101,7 +102,7 @@ def test_check_boundary_hint_lists_san_check_without_skill_name() -> None:
             reason="目击恐怖之物",
         )
     ]
-    hint = _build_check_boundary_hint(pending)
+    hint = build_check_boundary_hint(pending)
     assert "理智检定" in hint
 
 

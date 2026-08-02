@@ -1,10 +1,13 @@
-"""keeper agent 六个工具的业务实现（app/core/keeper/tools.py 的 `*_impl` 层）。
+"""裁决之后的**副作用执行层**：各能力的 `*_impl` + `execute_side_effects`。
 
 测的是普通函数，不跑 LLM/SDK：自建一个独立的临时文件 SQLite（不复用
 conftest 的 TestSessionLocal——conftest 明确警告不要从测试模块 import 它），
 预置房间/玩家/角色卡，固定 seed 的 rng 让掷骰可断言。
 
-module_loader 的加载与查询也在这里一并覆盖（共享同一个 fixture 剧本）。
+module_loader 的加载/渲染/按 id 寻址也在这里一并覆盖（共享同一个 fixture 剧本）。
+
+> 文件名里的 "tools" 是历史遗留：这些实现原先都住在 `keeper/tools.py`，
+> `exec/27` 切能力时各自跟着能力走了，那个文件已在阶段 5 删除。
 """
 
 import random
@@ -25,14 +28,11 @@ from app.core.keeper.capabilities.san_check.schema import SanCheckRequest
 from app.core.keeper.capabilities.skill_check.executor import roll_check_impl
 from app.core.keeper.capabilities.skill_check.schema import CheckRequest
 from app.core.keeper.capabilities.world_state.schema import StateUpdate
+from app.core.keeper.contract import module_loader
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.primitives import dice
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
-from app.core.keeper.runtime.tools import (
-    get_character_sheet_impl,
-    read_module_impl,
-)
 from app.core.keeper.runtime.turn_executor import create_pending_checks, execute_side_effects
 from app.models.event import Event
 from app.models.room import Character, Player, Room
@@ -267,85 +267,47 @@ async def test_roll_check_unknown_player_lists_roster(deps: KeeperDeps) -> None:
         await roll_check_impl(deps, "侦察", player_name="不存在的人")
 
 
-# ── get_character_sheet ─────────────────────────────
+# ── 剧本渲染与按 id 寻址 ─────────────────────────────
 
 
-async def test_character_sheet_contents(deps: KeeperDeps) -> None:
-    text = await get_character_sheet_impl(deps)
-    assert "侦探福" in text and "私家侦探" in text
-    assert "STR 60" in text
-    # 只列真实加过点的技能，未训练的不出现
-    assert "侦察 70" in text and "图书馆使用 60" in text
-    assert "闪避" not in text
+async def test_module_renderers(deps: KeeperDeps) -> None:
+    """渲染函数是 system prompt 里剧本全文的组成部分（`render_full` 逐个调它们）。
 
-    # 按角色名找同一个人
-    assert "侦探福" in await get_character_sheet_impl(deps, player_name="侦探福")
+    这几条断言原先是通过 v1 的 `read_module_impl` 包装间接跑的；`exec/27`
+    阶段 5 删掉那个死包装后改为直接调 `module_loader`，覆盖的东西不变。
+    """
+    module = deps.module
 
+    def node(node_id: str) -> str:
+        found = module.node_by_id(node_id)
+        assert found is not None, f"fixture 剧本里没有 {node_id}"
+        return module_loader.render_node(found)
 
-async def test_character_sheet_includes_filled_background_detail(deps: KeeperDeps) -> None:
-    """结构化背景故事 8 个字段（character-build-migration）此前没有出现在
-    agent 看到的角色卡摘要里——只读了旧的自由文本 `background`。真人实测
-    追书人时用户指出这个缺口，见 docs/keeper-design/exec/12。只展示真正
-    填过的字段，空字段不出现（跟"已训练技能"同样的降噪原则）。"""
-    async with _session_factory() as db:
-        character = (
-            (await db.execute(select(Character).where(Character.room_id == deps.room_id)))
-            .scalars()
-            .one()
-        )
-        character.background_detail = {
-            "personalDescription": "瘦削，总叼着烟斗",
-            "significantPeople": "",  # 空字段不该出现
-            "phobias": "怕黑",
-        }
-        await db.commit()
-
-    text = await get_character_sheet_impl(deps)
-    assert "背景细节：" in text
-    assert "个人描述：瘦削，总叼着烟斗" in text
-    assert "恐惧症：怕黑" in text
-    assert "重要之人" not in text  # 空字段被过滤
-
-
-async def test_character_sheet_omits_background_detail_line_when_all_empty(
-    deps: KeeperDeps,
-) -> None:
-    """建卡时 8 个字段可以全空，此时不该出现"背景细节："这行空壳。"""
-    text = await get_character_sheet_impl(deps)
-    assert "背景细节：" not in text
-
-
-# ── read_module ─────────────────────────────────────
-
-
-async def test_read_module_sections(deps: KeeperDeps) -> None:
-    overview = read_module_impl(deps, "overview")
+    overview = module_loader.render_overview(module)
     assert "真相是管家做的" in overview and "受雇调查庄园失窃案" in overview
 
-    nodes = read_module_impl(deps, "nodes")
-    assert "hall" in nodes and "cellar" in nodes
-
-    hall = read_module_impl(deps, "node:hall")
+    hall = node("hall")
     assert "脚印" in hall and "侦察" in hall
 
-    cellar = read_module_impl(deps, "node:cellar")
+    cellar = node("cellar")
     assert "油灯" in cellar and "手套" in cellar  # 分支及嵌套分支都要可见
 
-    safe = read_module_impl(deps, "node:hidden-safe")  # sub_node 可直接按 id 查
+    safe = node("hidden-safe")  # sub_node 可直接按 id 查
     assert "保险箱" in safe
 
-    npc = read_module_impl(deps, "npc:butler-secret")
+    butler = module.npc_by_id("butler-secret")
+    assert butler is not None
+    npc = module_loader.render_npc(butler)
     assert "厨房" in npc and "STR 50" in npc
 
-    endings = read_module_impl(deps, "endings")
+    endings = module_loader.render_endings(module)
     assert "管家伏法" in endings
 
 
-async def test_read_module_unknown_section(deps: KeeperDeps) -> None:
-    with pytest.raises(KeeperToolError, match="未知的 section"):
-        read_module_impl(deps, "whatever")
-    with pytest.raises(KeeperToolError, match="可用节点"):
-        read_module_impl(deps, "node:nope")
+async def test_module_lookup_misses_return_none(deps: KeeperDeps) -> None:
+    """查不到要返回 None，不能抛——调用方靠 None 分支给出可用 id 列表。"""
+    assert deps.module.node_by_id("nope") is None
+    assert deps.module.npc_by_id("nope") is None
 
 
 # ── san_check ───────────────────────────────────────

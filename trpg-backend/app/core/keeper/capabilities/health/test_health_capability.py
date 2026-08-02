@@ -247,3 +247,115 @@ async def test_state_updates_cannot_clobber_the_npc_ledger() -> None:
         room = await db.get(Room, room_id)
         assert room is not None
         assert load_npc_states(room.keeper_state) == {"butler-public": {"hp": 6}}
+
+
+# ── 5. 归错类由代码改判（exec/20 §2.4）────────────────
+
+
+async def _seed_named(room_code: str, nickname: str) -> tuple[str, str]:
+    """指定昵称的一名玩家 + 一张角色卡（撞名用例要玩家昵称等于 NPC 名）。"""
+    async with _session_factory() as db:
+        room = Room(room_code=room_code, room_name="撞名房", max_players=4, phase="InGame")
+        db.add(room)
+        await db.flush()
+        player = Player(room_id=room.id, nickname=nickname)
+        db.add(player)
+        await db.flush()
+        db.add(
+            Character(
+                room_id=room.id,
+                player_id=player.id,
+                name=nickname,
+                attributes={"STR": 50, "CON": 50},
+                skills={},
+                derived_stats={"HP": 10, "SAN": 55, "MP": 11},
+            )
+        )
+        await db.commit()
+        return room.id, player.id
+
+
+async def test_npc_name_written_into_player_field_is_reclassified() -> None:
+    """🔴 exec/19 #39 的原始症状：裁决器把 NPC 名写进 `player`。
+
+    此前 `resolve_character` 找不到人 → `HP 变更未执行：找不到玩家「管家」`
+    → **整笔血量记账丢失**，NPC 的伤势只活在叙事文字里。现在两边都是白名单，
+    代码自己查表改判。
+    """
+    room_id, player_id = await _seed_with_character("RECL01")
+    deps = _deps(room_id, player_id)
+
+    report, issues = await execute_side_effects(
+        deps, KeeperDecision(hp_changes=[HpChange(delta=-4, player="管家", reason="被铁铲砍中")])
+    )
+
+    assert issues == [], f"改判之后不该还有 issue：{issues}"
+    assert len(report) == 1 and "管家" in report[0]
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        # 真的记在 NPC 账上，而不是把玩家的血扣了
+        assert load_npc_states(room.keeper_state) == {"butler-public": {"hp": 6}}
+        character = await db.get(Character, await _character_id(room_id))
+        assert character is not None and (character.derived_stats or {})["HP"] == 10
+
+
+async def test_player_name_written_into_npc_field_is_reclassified() -> None:
+    """反方向同样要改判——两头对称，不能一头硬一头软。"""
+    room_id, player_id = await _seed_with_character("RECL02")
+    deps = _deps(room_id, player_id)
+
+    report, issues = await execute_side_effects(
+        deps, KeeperDecision(hp_changes=[HpChange(delta=-3, npc="阿福", reason="被抓伤")])
+    )
+
+    assert issues == []
+    assert len(report) == 1 and "10 → 7" in report[0]
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        assert load_npc_states(room.keeper_state) == {}  # 没有凭空建 NPC 条目
+
+
+async def test_name_collision_respects_the_explicit_label() -> None:
+    """🔴 玩家昵称恰好与剧本 NPC 同名时，裁决器的显式标注是**唯一**的消歧信息。
+
+    这正是没有按 `exec/20` §2.4 原方案把两个字段合并成一个 `target` 的原因：
+    合并之后这种情况只能由代码静默挑一个，而挑错了不会有任何东西变红。
+    """
+    room_id, player_id = await _seed_named("RECL03", "管家")
+    deps = _deps(room_id, player_id)
+
+    # 标 player → 扣玩家的血，不碰 NPC 账
+    report, issues = await execute_side_effects(
+        deps, KeeperDecision(hp_changes=[HpChange(delta=-2, player="管家", reason="玩家挨打")])
+    )
+    assert issues == [] and "10 → 8" in report[0]
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None and load_npc_states(room.keeper_state) == {}
+
+    # 标 npc → 记 NPC 账，玩家的血不再变
+    report, issues = await execute_side_effects(
+        deps, KeeperDecision(hp_changes=[HpChange(delta=-4, npc="管家", reason="NPC 挨打")])
+    )
+    assert issues == []
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        assert load_npc_states(room.keeper_state) == {"butler-public": {"hp": 6}}
+        character = await db.get(Character, await _character_id(room_id))
+        assert character is not None and (character.derived_stats or {})["HP"] == 8
+
+
+async def test_unknown_on_both_sides_still_reports_the_original_error() -> None:
+    """两边都查不到时不能把错误吞掉——那条错误列出了登场 NPC，
+    是裁决器下一轮纠正的依据。"""
+    room_id, player_id = await _seed_with_character("RECL04")
+    deps = _deps(room_id, player_id)
+
+    _report, issues = await execute_side_effects(
+        deps, KeeperDecision(hp_changes=[HpChange(delta=-4, npc="查无此人", reason="?")])
+    )
+    assert len(issues) == 1
+    assert "查无此人" in issues[0] and "管家" in issues[0]  # 带上登场 NPC 列表

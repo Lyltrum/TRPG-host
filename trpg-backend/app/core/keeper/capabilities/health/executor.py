@@ -15,12 +15,14 @@ from app.core.keeper.capabilities.health.npc_state import (
     initial_hp,
     load_npc_states,
 )
+from app.core.keeper.capabilities.health.schema import HpChange
 from app.core.keeper.contract.registry import TurnFacts
 from app.core.keeper.primitives.npcs import npc_display_name, resolve_npc_id
 from app.core.keeper.runtime.deps import (
     KeeperDeps,
     KeeperToolError,
     current_stat,
+    is_room_member,
     record_event,
     resolve_character,
     write_stat,
@@ -114,13 +116,55 @@ async def execute_hp_changes(
     for hp in getattr(decision, "hp_changes", ()):
         try:
             reason = hp.reason or "守秘人裁定"
-            # NPC 与调查员走两条记账（exec/19 #39）：NPC 的状态挂在 keeper_state
-            # 的 NPC 状态表上，没有角色卡可写。`npc` 优先——两个字段都填时以
-            # 显式的 NPC 为准，因为 `player` 的默认语义是"本轮发起者"。
-            if hp.npc:
-                report.append(await adjust_npc_hp_impl(deps, hp.delta, reason, hp.npc))
+            if await _target_is_npc(deps, hp):
+                label = hp.npc or hp.player
+                report.append(await adjust_npc_hp_impl(deps, hp.delta, reason, label))
             else:
                 report.append(await adjust_hp_impl(deps, hp.delta, reason, hp.player))
         except KeeperToolError as exc:
             issues.append(f"HP 变更未执行：{exc}")
     return report, issues
+
+
+async def _target_is_npc(deps: KeeperDeps, hp: HpChange) -> bool:
+    """这一笔该走 NPC 记账还是调查员记账——**由代码查表判定**（`exec/20` §2.4）。
+
+    `player` 与 `npc` 两边**都是白名单**（房间花名册 / 剧本 NPC 表），"这个名字
+    属于哪一类"代码自己查得出来，不该靠裁决器判对。`exec/19` #39 的原始症状就是
+    它把 NPC 名写进 `player`，`resolve_character` 找不到人 → 整笔血量记账丢失，
+    NPC 的伤势只活在叙事文字里，下一轮裁决器无从得知它伤到什么程度。
+
+    🔴 **裁决器的显式标注优先，只有它选的那一边查不到时才改判。** 玩家昵称恰好
+    与剧本 NPC 同名时，那个标注就是唯一的消歧信息——这也是没有按 `exec/20` §2.4
+    原方案把两个字段合并成一个 `target` 的原因：合并之后撞名就只能由代码静默
+    挑一个。
+
+    ⚠️ 改判**不进 `issues`**：`issues` 会随 `narrate_prose` 喂给叙事模型当作
+    "这件事没发生"，而改判之后这笔账是**真记上了**的。把它报成失败会让叙事与
+    事件表各说各话（`exec/19` #43 那一族的 bug，只能靠读事件表发现）。改判只进
+    结构化日志。
+    """
+    if hp.npc:
+        if resolve_npc_id(deps.module, hp.npc) is not None:
+            return True
+        # 剧本里没有这个 NPC——它可能其实是个调查员。
+        async with deps.session_factory() as db:
+            if await is_room_member(db, deps, hp.npc):
+                logger.info(
+                    "hp_target_reclassified", wrote="npc", resolved_as="player", label=hp.npc
+                )
+                return False
+        # 两边都不认：照裁决器说的走，让 adjust_npc_hp_impl 抛出带登场 NPC 列表
+        # 的那条错误（那条错误对模型纠正下一轮有用，别在这里吞掉）。
+        return True
+
+    # 没写 `npc`。`player` 为空 = 本轮发起者，没有歧义可言。
+    if not hp.player:
+        return False
+    if resolve_npc_id(deps.module, hp.player) is None:
+        return False
+    async with deps.session_factory() as db:
+        if await is_room_member(db, deps, hp.player):
+            return False  # 撞名：以裁决器的显式标注为准
+    logger.info("hp_target_reclassified", wrote="player", resolved_as="npc", label=hp.player)
+    return True

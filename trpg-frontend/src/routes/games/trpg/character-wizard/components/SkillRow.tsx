@@ -63,7 +63,7 @@ export function SkillRow({
   const step5Class = `${stepBase} w-[23px] h-[21px] typed text-[9.5px] font-semibold`
   const step1Class = `${stepBase} w-[23px] h-[21px]`
   const onCls = 'border-ink/50 bg-white/30 text-ink'
-  const offCls = 'border-ink/20 text-ink-soft/50 cursor-not-allowed active:bg-transparent'
+  const offCls = 'border-ink/25 text-ink-faint cursor-not-allowed active:bg-transparent'
 
   const [inputValue, setInputValue] = useState(String(current))
   useEffect(() => {
@@ -91,7 +91,7 @@ export function SkillRow({
     // 技能行：本职方块 + 名字 + 基础值% + 五个方头键。表单里的一行，不是卡片。
     <div
       className={`flex items-center gap-1.5 py-1 border-b border-dotted border-ink/30 ${
-        disabled ? 'opacity-70' : ''
+        disabled ? 'bg-black/[0.04]' : ''
       }`}
     >
       <div className="flex-1 min-w-0">

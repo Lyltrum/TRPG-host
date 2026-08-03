@@ -207,7 +207,9 @@ export default function CharacterWizardPage() {
                       ? 'bg-dossier font-bold pt-[7px] pb-[5px]'
                       : index < state.step
                         ? 'bg-[#a8926a] pt-[5px] pb-1'
-                        : 'bg-[#7b6a50] pt-[5px] pb-1'
+                        : // 还没走到的那几片纸压得更暗，但**不能压过头**：墨色字
+                          // 压在 #7b6a50 上只有 3.06:1，卡在最弱一档的下限上。
+                          'bg-[#8d7a5c] pt-[5px] pb-1'
                   }`}
                 >
                   {s.short}

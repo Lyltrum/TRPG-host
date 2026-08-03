@@ -92,14 +92,14 @@ export function OccupationPointsStep({
           <button
             onClick={() => handleCreditChange(-5)}
             disabled={creditValue <= selectedOcc.creditMin}
-            className="w-[26px] h-[23px] flex-none border border-ink/50 bg-white/30 text-ink typed text-[10px] font-semibold flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:opacity-30"
+            className="w-[26px] h-[23px] flex-none border border-ink/50 bg-white/30 text-ink typed text-[10px] font-semibold flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:border-ink/20 disabled:text-ink-faint disabled:bg-transparent"
           >
             −5
           </button>
           <button
             onClick={() => handleCreditChange(-1)}
             disabled={creditValue <= selectedOcc.creditMin}
-            className="w-[26px] h-[23px] flex-none border border-ink/50 bg-white/30 text-ink flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:opacity-30"
+            className="w-[26px] h-[23px] flex-none border border-ink/50 bg-white/30 text-ink flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:border-ink/20 disabled:text-ink-faint disabled:bg-transparent"
           >
             <Minus className="w-4 h-4" />
           </button>
@@ -107,14 +107,14 @@ export function OccupationPointsStep({
           <button
             onClick={() => handleCreditChange(1)}
             disabled={creditValue >= selectedOcc.creditMax}
-            className="w-[26px] h-[23px] flex-none border border-ink/50 bg-white/30 text-ink flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:opacity-30"
+            className="w-[26px] h-[23px] flex-none border border-ink/50 bg-white/30 text-ink flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:border-ink/20 disabled:text-ink-faint disabled:bg-transparent"
           >
             <Plus className="w-4 h-4" />
           </button>
           <button
             onClick={() => handleCreditChange(5)}
             disabled={creditValue >= selectedOcc.creditMax}
-            className="w-[26px] h-[23px] flex-none border border-ink/50 bg-white/30 text-ink typed text-[10px] font-semibold flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:opacity-30"
+            className="w-[26px] h-[23px] flex-none border border-ink/50 bg-white/30 text-ink typed text-[10px] font-semibold flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:border-ink/20 disabled:text-ink-faint disabled:bg-transparent"
           >
             +5
           </button>

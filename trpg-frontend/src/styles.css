@@ -409,6 +409,26 @@
     background-position: 0 7px;
   }
 
+  /* ── 钢印牌：房间号。原来是虚线框，看着像个没填的输入框 ──
+     压印感全靠两条内阴影：上缘一道高光、下缘一片暗。 */
+  .plate {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.09),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.5);
+  }
+
+  /* ── 封条：页面的主按钮。一条压出来的铜牌，不是圆角胶囊 ── */
+  .seal {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.16),
+      0 2px 0 rgba(0, 0, 0, 0.45);
+  }
+
+  /* ── 表单填空线：标签在左，值坐在一条实线上。表单最认得出的一件事 ── */
+  .fill-line {
+    border-bottom: 1px solid rgba(36, 29, 20, 0.5);
+  }
+
   /* ── 通用形状：切角。代替圆角，是"不像 iOS"最省事的一处 ── */
   .cut-corner {
     clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);

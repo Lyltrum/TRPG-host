@@ -1,9 +1,10 @@
 import { useNavigate } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, UserPlus, Swords, Eye, RefreshCw } from 'lucide-react'
+import { ArrowLeft, UserPlus, Swords, Eye, RefreshCw, X } from 'lucide-react'
 import { useCharacterStore } from '@/stores/character-store'
 import { fetchCharacter, regenerateBackground } from '@/services/character/character-api'
 import { toCompletedCharacter } from '@/services/character/character-view'
+import { BACKGROUND_DETAIL_FIELDS } from '@/data/character-model'
 import { useRoomStore } from '@/stores/room-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { connectWebSocket, disconnectWebSocket, sdk, waitForWsOpen } from '@/services/api-client'
@@ -11,12 +12,43 @@ import { useRoomPlayers } from '@/hooks/useRoomPlayers'
 import { useRuleset } from '@/hooks/useRuleset'
 
 const SHEET_PAGES = [
-  { key: 'info', label: '基本信息' },
+  { key: 'info', label: '调查员' },
   { key: 'skills', label: '技能' },
-  { key: 'background', label: '背景装备' },
+  { key: 'background', label: '背景' },
 ] as const
 
-function CharacterSheetModal({
+/** 🔴 弹层高度是常量，内容超出在里面滚。
+ *  同 RoomPage 的 `PANEL_HEIGHT_VH`：手机端上高度随内容跳很难受，切 tab
+ *  （调查员 ↔ 技能 ↔ 背景）时尤其明显——三页内容长度差得远。 */
+const SHEET_HEIGHT_VH = 74
+
+/** 一格属性/技能：值 + 各难度档的门槛（COC7 的「值 / 半 / 五分之一」）。
+ *
+ * 🔴 除数**来自后端 ruleset**（`successTiers`），不在前端写 2 和 5——
+ * 服务端判定检定成功等级用的是同一份除数（`keeper/primitives/dice.py`），
+ * 抄第二份必然在改规则时漏掉一处。
+ * 没声明分档的规则系统就不画这一列：那不是兜底，是这套规则本来就没有难度档。
+ */
+function TierValues({
+  value,
+  tiers,
+  className = '',
+}: {
+  value: number
+  tiers: { id: string; label: string; divisor: number }[]
+  className?: string
+}) {
+  if (tiers.length === 0) return null
+  return (
+    <span className={`font-mono text-[10.5px] text-ink-soft ${className}`}>
+      {tiers.map((t) => Math.floor(value / t.divisor)).join(' / ')}
+    </span>
+  )
+}
+
+/** 调查员档案：借的是**表单这个体裁**（打字机标签压在填空线上、分区横线、
+ *  属性三格、本职技能实心方块），不是任何一份出版物的版式。 */
+function InvestigatorSheet({
   character,
   onClose,
   onRegenerate,
@@ -29,171 +61,291 @@ function CharacterSheetModal({
   regenerating: boolean
   regenerateError: string
 }) {
-  const [page, setPage] = useState<typeof SHEET_PAGES[number]['key']>('info')
+  const [page, setPage] = useState<(typeof SHEET_PAGES)[number]['key']>('info')
   // 二次点击确认：走向导手写过背景的人点下去会被覆盖，而移动端弹 confirm
   // 体验差。第一次点变成确认态，再点才真执行。
   const [confirmingRegen, setConfirmingRegen] = useState(false)
   const { ruleset } = useRuleset()
   const occupation = character.info.occupationId
-    ? ruleset?.occupations.find(o => o.id === character.info.occupationId)
+    ? ruleset?.occupations.find((o) => o.id === character.info.occupationId)
     : null
+  const tiers = ruleset?.successTiers ?? []
+  // 本职技能：职业的固定技能表。自选槽占用的那几项后端只在建卡预览里算，
+  // 角色卡读接口没有，所以标不出来——宁可少标也不乱标。
+  const occupationSkillIds = new Set(occupation?.skillIds ?? [])
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [])
+
+  const detail = character.backgroundDetail
+  const filledDetail = BACKGROUND_DETAIL_FIELDS.filter((f) => (detail?.[f.key] ?? '').trim())
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/50 z-30 animate-fade-in" onClick={onClose} />
-      <div className="fixed inset-x-0 bottom-0 z-40 bg-card rounded-t-2xl animate-slide-up min-h-[60vh] max-h-[80vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 pt-4 pb-2">
-          <h3 className="text-base font-bold text-text-primary">调查员 · {character.info.name}</h3>
-          <button onClick={onClose} className="w-7 h-7 rounded-full bg-panel flex items-center justify-center">
-            <svg className="w-4 h-4 text-text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
+      <div className="fixed inset-0 bg-black/60 z-30 animate-fade-in" onClick={onClose} />
+      {/* 🔴 `theme-paper`：CSS 变量沿 DOM 继承，光是"不加 theme-coc"不够——
+          祖先上有就照样生效，症状是牛皮纸上一片空白。 */}
+      <div
+        className="theme-paper paper-grain fixed inset-x-0 bottom-0 z-40 bg-dossier text-ink flex flex-col animate-slide-up max-w-[430px] mx-auto shadow-[0_-1px_0_rgba(255,255,255,.22),0_-3px_10px_rgba(0,0,0,.35)] border-t-[3px] border-brass-dark"
+        style={{ height: `${SHEET_HEIGHT_VH}vh` }}
+      >
+        {/* 标签舌：档案最好认的特征 */}
+        <span className="tab-flap absolute left-[26px] -top-[19px] typed text-[10.5px] px-3.5 pt-[5px] pb-1 bg-brass-dark text-dossier">
+          调查员
+        </span>
+
+        {/* 收起键自己占一行、钉在顶部：绝对定位的控件不知道内容长什么样，必然撞 */}
+        <div className="flex-none flex items-center justify-between px-4 pt-2.5 pb-1.5">
+          <span className="text-[13px] font-bold text-ink">{character.info.name}</span>
+          <button
+            onClick={onClose}
+            className="typed flex items-center gap-1 text-[10.5px] text-ink-soft active:text-ink px-1 py-0.5"
+          >
+            收起
+            <X className="w-3 h-3" strokeWidth={2.5} />
           </button>
         </div>
 
-        {/* Page tabs */}
-        <div className="flex gap-1.5 px-5 pb-3">
-          {SHEET_PAGES.map(p => (
-            <button key={p.key} onClick={() => setPage(p.key)}
-              className={`flex-1 text-center text-[12px] font-semibold py-1.5 rounded-[99px] border transition-all ${
-                page === p.key ? 'bg-brass text-white border-brass' : 'bg-panel text-text-muted border-border-light'
-              }`}>
+        {/* 分页：表单的页签，不是圆角胶囊 */}
+        <div className="flex-none flex px-4 border-b border-ink/25">
+          {SHEET_PAGES.map((p) => (
+            <button
+              key={p.key}
+              onClick={() => setPage(p.key)}
+              className={`text-[12px] px-3 pt-1.5 pb-1 border-b-2 -mb-px transition-colors ${
+                page === p.key
+                  ? 'border-brass-dark text-ink font-bold'
+                  : 'border-transparent text-ink-soft'
+              }`}
+            >
               {p.label}
             </button>
           ))}
         </div>
 
-        <div className="px-5 pb-6 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
           {page === 'info' && (
             <>
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-14 rounded-sm flex items-center justify-center text-2xl"
-                  style={{ background: 'linear-gradient(135deg,#e8e0d0,#d8cfb8)', border: '2px solid #b8976a' }}>
-                  🕵️
+              <SheetBand title="调查员档案" note="COC 7e" />
+              <div className="flex flex-col gap-2 mb-3.5">
+                <div className="flex gap-3">
+                  <FillField label="姓名" value={character.info.name} grow={2} />
+                  <FillField label="年龄" value={character.info.age || '—'} mono />
                 </div>
-                <div>
-                  <div className="font-bold text-text-primary text-[17px]">{character.info.name}</div>
-                  <div className="text-xs text-text-muted">{character.info.age}岁 · {character.info.gender} · {occupation?.name ?? '未选择职业'}</div>
+                <div className="flex gap-3">
+                  <FillField label="职业" value={occupation?.name ?? '未选择'} grow={2} />
+                  <FillField label="性别" value={character.info.gender || '—'} />
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                <div className="flex items-center justify-between bg-input border border-border-light rounded px-3 py-1.5">
-                  <span className="text-[11px] text-text-muted">居住地</span>
-                  <span className="text-sm font-medium text-text-primary">{character.info.residence || '—'}</span>
-                </div>
-                <div className="flex items-center justify-between bg-input border border-border-light rounded px-3 py-1.5">
-                  <span className="text-[11px] text-text-muted">出生地</span>
-                  <span className="text-sm font-medium text-text-primary">{character.info.birthplace || '—'}</span>
+                <div className="flex gap-3">
+                  <FillField label="居住地" value={character.info.residence || '—'} />
+                  <FillField label="出生地" value={character.info.birthplace || '—'} />
                 </div>
               </div>
-              <div className="flex gap-2">
-                {[
-                  { label: 'HP', value: `${character.derived.hp}`, color: 'text-mold' },
-                  { label: 'SAN', value: `${character.derived.san}`, color: 'text-[#7050a0]' },
-                  { label: 'MP', value: `${character.derived.mp}`, color: 'text-[#4a7098]' },
-                  { label: 'DB', value: character.derived.db, color: 'text-text-muted' },
-                  { label: 'MOV', value: `${character.derived.move}`, color: 'text-text-muted' },
-                ].map(pill => (
-                  <div key={pill.label} className="flex-1 bg-panel rounded-md px-2.5 py-2 text-center">
-                    <div className="text-[10px] text-text-muted font-semibold">{pill.label}</div>
-                    <div className={`text-[16px] font-bold font-mono ${pill.color}`}>{pill.value}</div>
+
+              <SheetBand
+                title="属性"
+                note={tiers.length ? `值 · ${tiers.map((t) => t.label).join(' · ')}` : undefined}
+              />
+              <div className="grid grid-cols-3 gap-1.5 mb-3.5">
+                {(ruleset?.attributes ?? []).map((attribute) => (
+                  <div key={attribute.key} className="border border-ink/45 bg-white/15">
+                    <div className="typed text-[10.5px] text-center py-[2px] bg-ink/[0.13] border-b border-ink/30 text-ink">
+                      {attribute.key}
+                    </div>
+                    <div className="flex items-baseline justify-center gap-1.5 py-1">
+                      <span className="font-mono text-[15px] font-bold text-ink">
+                        {character.attr[attribute.key]}
+                      </span>
+                      <TierValues value={character.attr[attribute.key] ?? 0} tiers={tiers} />
+                    </div>
                   </div>
                 ))}
               </div>
-              <div>
-                <h4 className="text-[11px] font-semibold text-brass-dark mb-2">基础属性</h4>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {/* 属性清单由后端 ruleset 驱动，前端不再自己维护一份名单——
-                      此前三处各硬编码一份，加幸运时漏改一处就导致角色卡看不到
-                      幸运值（issue #96）。 */}
-                  {(ruleset?.attributes ?? []).map(attribute => (
-                    <div key={attribute.key} className="flex items-center justify-between bg-input border border-border-light rounded px-3 py-1.5">
-                      <span className="font-mono text-[11px] font-bold text-text-muted">{attribute.key}</span>
-                      <span className="font-mono text-sm font-bold text-text-primary">{character.attr[attribute.key]}</span>
+
+              <SheetBand title="状态" />
+              <div className="flex gap-1.5">
+                {[
+                  { k: 'HP', v: `${character.derived.hp}`, c: 'text-[#3d6b2f]' },
+                  { k: 'SAN', v: `${character.derived.san}`, c: 'text-[#57407e]' },
+                  { k: 'MP', v: `${character.derived.mp}`, c: 'text-[#3a5a7a]' },
+                  { k: 'DB', v: character.derived.db, c: 'text-ink' },
+                  { k: 'MOV', v: `${character.derived.move}`, c: 'text-ink' },
+                ].map((v) => (
+                  <div key={v.k} className="flex-1 border-[1.5px] border-ink/50 bg-white/15">
+                    <div className="typed text-[10.5px] text-center py-[2px] border-b border-ink/30 text-ink-soft">
+                      {v.k}
                     </div>
-                  ))}
-                </div>
+                    <div className={`text-center font-mono text-[17px] font-bold py-0.5 ${v.c}`}>
+                      {v.v}
+                    </div>
+                  </div>
+                ))}
               </div>
             </>
           )}
 
           {page === 'skills' && (
-            <div>
-              <h4 className="text-[11px] font-semibold text-brass-dark mb-2">全部技能（按数值从高到低）</h4>
-              <div className="space-y-1.5">
-                {(ruleset?.skills ?? []).map(skill => ({
-                  skill,
-                  value: character.skillFinalValues?.[skill.id] ?? 0,
-                }))
+            <>
+              <SheetBand title="技能" note={`共 ${ruleset?.skills.length ?? 0} 项`} />
+              <div className="flex items-center gap-1.5 mb-2 text-[10.5px] text-ink-soft">
+                <span className="w-[7px] h-[7px] border border-ink/55 bg-ink inline-block" />
+                本职技能
+                {tiers.length > 0 && (
+                  <span className="ml-auto typed">值 / {tiers.map((t) => t.label).join(' / ')}</span>
+                )}
+              </div>
+              {/* 🔴 两栏密排的清单，不是一条条进度条：62 项技能用进度条会拖成
+                  一条看不完的走廊，而表单本来就是密排的。 */}
+              <div className="grid grid-cols-2 gap-x-3">
+                {(ruleset?.skills ?? [])
+                  .map((skill) => ({ skill, value: character.skillFinalValues?.[skill.id] ?? 0 }))
                   .sort((a, b) => b.value - a.value)
                   .map(({ skill, value }) => (
-                    <div key={skill.id} className="flex items-center gap-3 py-1">
-                      <div className="flex-1 min-w-0 text-[12px] font-medium text-text-primary truncate">{skill.name}</div>
-                      <div className="flex-1 h-1.5 rounded-full bg-border-light overflow-hidden">
-                        <div className="h-full rounded-full bg-brass transition-all" style={{ width: `${value}%` }} />
-                      </div>
-                      <span className="text-[11px] font-bold font-mono text-text-muted min-w-[32px] text-right">{value}%</span>
+                    <div
+                      key={skill.id}
+                      className="flex items-center gap-1.5 py-[3px] border-b border-dotted border-ink/30"
+                    >
+                      <span
+                        className={`w-[7px] h-[7px] flex-none border border-ink/55 ${
+                          occupationSkillIds.has(skill.id) ? 'bg-ink' : ''
+                        }`}
+                      />
+                      <span className="flex-1 min-w-0 truncate text-[11.5px] text-ink">
+                        {skill.name}
+                      </span>
+                      <span className="font-mono text-[11.5px] font-bold text-ink">{value}</span>
+                      <TierValues value={value} tiers={tiers} className="min-w-[26px] text-right" />
                     </div>
                   ))}
               </div>
-            </div>
+            </>
           )}
 
           {page === 'background' && (
             <>
-              <div>
-                <h4 className="text-[11px] font-semibold text-brass-dark mb-2">装备</h4>
-                <p className="text-[13px] text-text-primary whitespace-pre-wrap">{character.equipment || '暂未填写'}</p>
-              </div>
-              <div>
-                <h4 className="text-[11px] font-semibold text-brass-dark mb-2">背景故事</h4>
-                <p className="text-[13px] text-text-primary whitespace-pre-wrap">{character.background || '暂未填写'}</p>
-                {/* exec/20 §1.9 定的方向：内容质量不该由代码判，该给玩家一个
-                    重摇的按钮，让人来判。只换过去，属性/技能一个都不动。 */}
-                <button
-                  onClick={() => {
-                    if (regenerating) return
-                    if (!confirmingRegen) {
-                      setConfirmingRegen(true)
-                      return
-                    }
-                    setConfirmingRegen(false)
-                    onRegenerate()
-                  }}
-                  disabled={regenerating}
-                  className={`mt-2.5 w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded-sm text-[12px] font-semibold transition-all ${
-                    regenerating
-                      ? 'bg-panel border border-border-light text-text-dim cursor-not-allowed'
-                      : confirmingRegen
-                        ? 'bg-brass border border-brass text-white active:scale-[0.97]'
-                        : 'bg-card border border-brass text-brass-dark active:bg-brass active:text-white active:scale-[0.97]'
-                  }`}
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${regenerating ? 'animate-spin' : ''}`} />
-                  {regenerating
-                    ? '正在重写…'
+              {/* 背景故事的八个具名栏：后端一直在存这八个字段，此前这一屏
+                  把它们拍成了一整段。只渲染填了的，空栏不占地方。 */}
+              {filledDetail.length > 0 && (
+                <>
+                  <SheetBand title="背景故事" />
+                  <div className="flex flex-col gap-2 mb-3.5">
+                    {filledDetail.map((f) => (
+                      <div key={f.key}>
+                        <div className="typed text-[10.5px] text-ink-soft mb-0.5">{f.label}</div>
+                        <p className="notepaper border border-ink/28 px-2 text-[12px] text-ink whitespace-pre-wrap">
+                          {detail?.[f.key]}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              <SheetBand title="装备" />
+              <p className="notepaper border border-ink/28 px-2 mb-3.5 text-[12px] text-ink whitespace-pre-wrap">
+                {character.equipment || '暂未填写'}
+              </p>
+
+              <SheetBand title="履历" />
+              <p className="notepaper border border-ink/28 px-2 text-[12px] text-ink whitespace-pre-wrap">
+                {character.background || '暂未填写'}
+              </p>
+              {/* exec/20 §1.9 定的方向：内容质量不该由代码判，该给玩家一个
+                  重摇的按钮，让人来判。只换过去，属性/技能一个都不动。 */}
+              <button
+                onClick={() => {
+                  if (regenerating) return
+                  if (!confirmingRegen) {
+                    setConfirmingRegen(true)
+                    return
+                  }
+                  setConfirmingRegen(false)
+                  onRegenerate()
+                }}
+                disabled={regenerating}
+                className={`cut-corner mt-2 w-full flex items-center justify-center gap-1.5 px-4 py-2 text-[12px] font-semibold transition-all ${
+                  regenerating
+                    ? 'border border-ink/30 text-ink-soft cursor-not-allowed'
                     : confirmingRegen
-                      ? '确定？当前背景会被替换'
-                      : '换一段过去'}
-                </button>
-                {confirmingRegen && !regenerating && (
-                  <p className="text-[11px] text-text-dim text-center mt-1.5">
-                    只换背景故事，属性、技能、职业都不变
-                  </p>
-                )}
-                {regenerateError && (
-                  <p className="text-[11px] text-[#c04040] text-center mt-1.5">{regenerateError}</p>
-                )}
-              </div>
-              <div>
-                <h4 className="text-[11px] font-semibold text-brass-dark mb-2">备注</h4>
-                <p className="text-[13px] text-text-primary whitespace-pre-wrap">{character.notes || '暂未填写'}</p>
-              </div>
+                      ? 'bg-brass-dark border border-brass-dark text-dossier active:scale-[0.97]'
+                      : 'border border-brass-dark text-brass-dark bg-white/20 active:bg-brass-dark active:text-dossier active:scale-[0.97]'
+                }`}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${regenerating ? 'animate-spin' : ''}`} />
+                {regenerating
+                  ? '正在重写…'
+                  : confirmingRegen
+                    ? '确定？当前背景会被替换'
+                    : '换一段过去'}
+              </button>
+              {confirmingRegen && !regenerating && (
+                <p className="text-[11px] text-ink-soft text-center mt-1.5">
+                  只换背景故事，属性、技能、职业都不变
+                </p>
+              )}
+              {regenerateError && (
+                <p className="text-[11px] text-rust-dark text-center mt-1.5">{regenerateError}</p>
+              )}
+
+              <SheetBand title="备注" className="mt-3.5" />
+              <p className="notepaper border border-ink/28 px-2 text-[12px] text-ink whitespace-pre-wrap">
+                {character.notes || '暂未填写'}
+              </p>
             </>
           )}
         </div>
       </div>
     </>
+  )
+}
+
+/** 分区横线：表单靠它断开段落，而不是靠一堆卡片。 */
+function SheetBand({
+  title,
+  note,
+  className = '',
+}: {
+  title: string
+  note?: string
+  className?: string
+}) {
+  return (
+    <div
+      className={`flex items-baseline gap-2 pb-1 mb-2 border-b-[1.5px] border-ink/40 ${className}`}
+    >
+      <span className="text-[12.5px] font-bold tracking-[0.06em] text-ink">{title}</span>
+      {note && <span className="typed ml-auto text-[10.5px] text-ink-soft">{note}</span>}
+    </div>
+  )
+}
+
+/** 填空行：标签在左，值坐在实线上。 */
+function FillField({
+  label,
+  value,
+  grow = 1,
+  mono = false,
+}: {
+  label: string
+  value: string | number
+  grow?: number
+  mono?: boolean
+}) {
+  return (
+    <div className="flex items-end gap-1.5" style={{ flex: grow }}>
+      <span className="typed text-[10.5px] text-ink-soft whitespace-nowrap pb-[3px]">{label}</span>
+      <span
+        className={`fill-line flex-1 min-w-0 truncate px-0.5 pb-[1px] text-[13.5px] font-semibold text-ink ${
+          mono ? 'font-mono' : ''
+        }`}
+      >
+        {value}
+      </span>
+    </div>
   )
 }
 
@@ -263,6 +415,8 @@ export default function CharacterReadyPage() {
   const players = info?.players ?? []
   const allHaveCharacters = players.length > 0 && players.every((p) => p.hasCharacter)
   const advancedRef = useRef(false)
+  // 还没坐满的位置，直接在登记表上画出来——几人局还差几个人一眼看得见
+  const emptySeats = Math.max(0, (info?.maxPlayers ?? 0) - players.length)
 
   // ★ 房主点"开始游戏"之后，后端 _on_game_start 会把房间 phase 改成
   // InGame——其他玩家没有 WS 广播可用，只能靠轮询这个字段发现"游戏真的开始
@@ -315,77 +469,130 @@ export default function CharacterReadyPage() {
   }
 
   return (
-    <div className="animate-screen-in px-5 pt-6">
-      {/* Header */}
+    // 🔴 `theme-coc`：卷宗主题的作用域边界，同 RoomPage。桌面材质（木纹 /
+    // 台灯 / 刻在桌上的符环）都挂在这一层，纸放上去才有"摊在桌上"的关系。
+    <div className="theme-coc desk-grain desk-lamp desk-sigil animate-screen-in min-h-full px-5 pt-6 pb-8 flex flex-col relative">
       <button
         onClick={handleGoBack}
-        className="w-[34px] h-[34px] rounded-full bg-card border border-border-light flex items-center justify-center flex-shrink-0 active:bg-panel active:scale-[0.94] transition-all duration-150 mb-3"
+        className="cut-corner w-[34px] h-[34px] bg-input border border-border-mid flex items-center justify-center flex-shrink-0 active:bg-panel active:scale-[0.94] transition-all duration-150 mb-3 relative z-10"
       >
-        <ArrowLeft className="w-[18px] h-[18px] text-text-muted" strokeWidth={2.5} />
+        <ArrowLeft className="w-[18px] h-[18px] text-text-body" strokeWidth={2.5} />
       </button>
 
-      <div className="flex items-center justify-center gap-2 mb-1">
-        <span className="font-mono text-2xl font-bold text-text-primary tracking-[0.15em] bg-card border border-dashed border-border-mid px-4 py-1.5 rounded-sm">
+      {/* 房间号 = 钢印牌。原来是虚线框，看着像个还没填的输入框 */}
+      <div className="text-center relative z-10">
+        <span className="typed block text-[10.5px] text-text-muted mb-1.5">卷宗编号</span>
+        <span className="plate inline-block px-[18px] pt-[7px] pb-1.5 bg-input border border-brass-dark font-mono text-[25px] font-bold text-brass-bright tracking-[0.28em] indent-[0.28em]">
           {roomCode || '------'}
         </span>
       </div>
-      <p className="text-center text-xs text-text-muted mb-5">
+      <p className="text-center text-[11.5px] text-text-body leading-relaxed mt-2 mb-4 relative z-10">
         人物卡准备 · 等待所有玩家创建角色
-        {info && ` · ${players.length}/${info.maxPlayers} 人已加入`}
+        {info && (
+          <>
+            <br />
+            <span className="text-brass-bright font-mono">{players.length}</span> / {info.maxPlayers}{' '}
+            人已加入
+          </>
+        )}
       </p>
 
-      {/* Player List：自己能看查看/编辑，队友只能看到"建完了没有"——角色卡内容是私密的 */}
-      <div className="flex flex-col gap-2">
+      {/* 🔴 一张登记表：全员在同一张纸上，每人一行。空位直接画出来。
+          `theme-paper` 必须挂——变量沿 DOM 继承，祖先的 theme-coc 会一路生效。 */}
+      <div className="theme-paper paper-grain relative z-10 bg-dossier text-ink shadow-[0_1px_0_rgba(0,0,0,.34),0_10px_16px_-8px_rgba(0,0,0,.6)]">
+        <div className="typed flex items-center px-3 pt-2 pb-1.5 border-b-[1.5px] border-ink/40 text-[10.5px] text-ink-soft">
+          <span className="flex-1">调查员登记表</span>
+          <span className="font-mono">{roomCode || '------'}</span>
+        </div>
+
         {players.length === 0 && (
-          <div className="text-center py-6 text-xs text-text-dim">正在获取房间成员…</div>
+          <div className="text-center py-6 text-[11.5px] text-ink-soft">正在获取房间成员…</div>
         )}
+
         {players.map((p) => {
           const isSelf = p.playerId === playerId
           return (
-            <div key={p.playerId} className="flex items-center gap-3 px-3.5 py-3 bg-card border border-border-light rounded-md">
-              <div className={`w-10 h-10 rounded-full bg-panel border border-border-mid flex items-center justify-center text-lg flex-shrink-0 ${p.hasCharacter ? 'border-brass' : 'border-dashed border-border-light'}`}>
+            <div
+              key={p.playerId}
+              className="flex items-center gap-2.5 px-3 py-2.5 border-b border-ink/20 last:border-b-0"
+            >
+              <div
+                className={`w-[34px] h-[34px] flex-none flex items-center justify-center text-[15px] border bg-ink/[0.08] ${
+                  p.hasCharacter ? 'border-ink/35' : 'border-dashed border-ink/35 text-ink-soft'
+                }`}
+              >
                 {p.hasCharacter ? '🔍' : '○'}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold text-text-primary">{p.nickname}{isSelf && ' (你)'}</div>
-                <div className="text-xs text-text-muted">
-                  {isSelf && hasCharacter ? (
-                    <span className="text-mold">人物卡：{character!.info.name}</span>
-                  ) : p.hasCharacter ? (
-                    <span className="text-mold">已完成建卡</span>
-                  ) : (
-                    <span className="text-text-dim">尚未创建人物卡</span>
-                  )}
+                <div className="text-[13.5px] font-bold text-ink truncate">
+                  {p.nickname}
+                  {isSelf && '（你）'}
+                </div>
+                <div className="text-[11px] text-ink-soft truncate">
+                  {isSelf && hasCharacter
+                    ? `人物卡：${character!.info.name}`
+                    : p.hasCharacter
+                      ? '已完成建卡'
+                      : '尚未创建人物卡'}
                 </div>
               </div>
-              {isSelf && (
+              {isSelf ? (
                 <div className="flex items-center gap-1.5">
                   {hasCharacter ? (
                     <>
-                      <button onClick={() => setShowSelfSheet(true)}
-                        className="text-[11px] font-semibold px-2 py-1 rounded-[99px] bg-brass/10 text-brass-dark flex items-center gap-1 active:scale-[0.95] transition-all border-none font-sans whitespace-nowrap cursor-pointer">
+                      <button
+                        onClick={() => setShowSelfSheet(true)}
+                        className="cut-corner text-[11px] font-semibold px-2 py-1 border border-brass-dark text-brass-dark bg-white/25 flex items-center gap-1 active:scale-[0.95] transition-all whitespace-nowrap"
+                      >
                         <Eye className="w-3 h-3" /> 查看
                       </button>
-                      <button onClick={handleEditCharacter}
-                        className="text-[11px] font-semibold px-2 py-1 rounded-[99px] bg-panel text-text-muted active:scale-[0.95] transition-all border border-border-light font-sans whitespace-nowrap cursor-pointer">
+                      <button
+                        onClick={handleEditCharacter}
+                        className="cut-corner text-[11px] font-semibold px-2 py-1 border border-ink/35 text-ink-soft bg-white/15 active:scale-[0.95] transition-all whitespace-nowrap"
+                      >
                         编辑
                       </button>
                     </>
                   ) : (
-                    <button onClick={handleEditCharacter}
-                      className="text-[11px] font-semibold px-2.5 py-1 rounded-[99px] bg-brass text-white flex items-center gap-1 active:scale-[0.95] transition-all border-none font-sans whitespace-nowrap cursor-pointer">
+                    <button
+                      onClick={handleEditCharacter}
+                      className="cut-corner text-[11px] font-semibold px-2.5 py-1 bg-brass-dark text-dossier flex items-center gap-1 active:scale-[0.95] transition-all whitespace-nowrap"
+                    >
                       <UserPlus className="w-3 h-3" /> 创建人物卡
                     </button>
                   )}
                 </div>
+              ) : (
+                // 队友只看得到"建完了没有"——角色卡内容是私密的。
+                // 状态用盖章表达，不是又一行小字。
+                <span
+                  className={`stamped typed text-[10px] font-bold px-1.5 py-0.5 ${
+                    p.hasCharacter ? 'text-[#3d6b2f]' : 'text-[#8a6a2e] border-dashed'
+                  }`}
+                >
+                  {p.hasCharacter ? '已备案' : '待填'}
+                </span>
               )}
             </div>
           )
         })}
+
+        {Array.from({ length: emptySeats }).map((_, i) => (
+          <div
+            key={`empty-${i}`}
+            className="flex items-center gap-2.5 px-3 py-2.5 border-b border-ink/20 last:border-b-0"
+          >
+            <div className="w-[34px] h-[34px] flex-none flex items-center justify-center border border-dashed border-ink/25 text-ink-soft/70 text-[15px]">
+              ○
+            </div>
+            <span className="text-[11.5px] text-ink-soft">—— 空位 ——</span>
+          </div>
+        ))}
       </div>
 
-      {/* Waiting message */}
-      <p className="text-center text-xs text-text-muted mt-6 mb-4">
+      <div className="flex-1" />
+
+      <p className="text-center text-[11.5px] text-text-body leading-relaxed mt-6 mb-3 relative z-10">
         {isHost
           ? '将房间号分享给好友，让他们加入游戏并创建角色'
           : allHaveCharacters
@@ -398,20 +605,23 @@ export default function CharacterReadyPage() {
         <button
           onClick={handleStartGame}
           disabled={!allHaveCharacters || starting}
-          className="w-full mt-2 px-6 py-3.5 rounded-sm bg-brass text-white text-sm font-semibold active:bg-brass-dark transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+          className={`relative z-10 w-full py-3.5 text-[14.5px] font-bold tracking-[0.22em] indent-[0.22em] flex items-center justify-center gap-2 transition-all ${
+            !allHaveCharacters || starting
+              ? 'bg-panel border border-border-mid text-text-dim'
+              : 'seal bg-brass-dark border border-brass text-text-primary active:translate-y-[1px]'
+          }`}
         >
           <Swords className="w-4 h-4" />
           {starting ? '进入中…' : '开始游戏'}
         </button>
       ) : (
-        <div className="w-full mt-2 px-6 py-3.5 rounded-sm bg-panel text-text-dim text-sm font-semibold text-center">
+        <div className="relative z-10 w-full py-3.5 bg-panel border border-border-mid text-text-dim text-[14.5px] font-bold tracking-[0.22em] indent-[0.22em] text-center">
           等待房主开始游戏…
         </div>
       )}
 
-      {/* Character Sheet Modal */}
       {showSelfSheet && character && (
-        <CharacterSheetModal
+        <InvestigatorSheet
           character={character}
           onClose={() => setShowSelfSheet(false)}
           onRegenerate={handleRegenerateBackground}

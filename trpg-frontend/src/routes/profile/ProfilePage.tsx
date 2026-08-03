@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, LogOut } from 'lucide-react'
+import { LogOut } from 'lucide-react'
+import ShellPage from '@/shared/components/ShellPage'
 import { useAuthStore } from '@/stores/auth-store'
 import { useRoomStore } from '@/stores/room-store'
 import { useCharacterStore } from '@/stores/character-store'
@@ -54,54 +55,47 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="animate-screen-in min-h-screen bg-page pb-10">
-      <div className="flex items-center gap-2.5 px-5 pt-3 pb-2">
-        <button onClick={() => navigate('/home')} className="w-[34px] h-[34px] rounded-full bg-card border border-border-light flex items-center justify-center active:bg-panel active:scale-[0.94] transition-all">
-          <ArrowLeft className="w-[18px] h-[18px] text-text-muted" strokeWidth={2.5} />
-        </button>
-        <h2 className="text-lg font-bold text-text-primary">个人信息</h2>
-      </div>
-
-      <div className="px-5 flex flex-col items-center pt-6 pb-8">
-        <div className="w-16 h-16 rounded-full bg-brass/15 text-brass-dark text-2xl font-bold flex items-center justify-center">
+    <ShellPage title="个人信息" onBack={() => navigate('/home')} contentClassName="pb-10">
+      <div className="px-5 flex flex-col items-center pt-5 pb-7">
+        <div className="press-soft w-16 h-16 bg-text-primary text-page text-2xl font-extrabold flex items-center justify-center">
           {(draft || nickname)?.charAt(0) || '?'}
         </div>
       </div>
 
-      <div className="px-5 space-y-3.5">
-        <div className="bg-card border border-border-light rounded-md p-[18px]">
-          <label className="text-[11px] font-medium text-text-muted mb-1 block">昵称</label>
+      <div className="px-5 flex flex-col gap-3">
+        <div className="press-soft bg-card p-3.5">
+          <label className="text-[10.5px] font-bold text-text-muted mb-1.5 block tracking-[0.1em]">昵称</label>
           <input
             value={draft}
             onChange={(e) => { setDraft(e.target.value); setSaved(false) }}
             placeholder="输入昵称"
-            className="w-full px-3.5 py-2.5 rounded-[6px] bg-input border border-border-light text-text-primary text-[15px] outline-none focus:border-brass"
+            className="shell-field w-full px-3 py-2 text-[14px]"
           />
         </div>
 
-        <div className="bg-card border border-border-light rounded-md p-[18px]">
-          <label className="text-[11px] font-medium text-text-muted mb-1 block">账号</label>
-          <p className="text-[15px] text-text-dim">{account}</p>
+        <div className="press-soft bg-card p-3.5">
+          <label className="text-[10.5px] font-bold text-text-muted mb-1.5 block tracking-[0.1em]">账号</label>
+          <p className="text-[14px] text-text-body">{account}</p>
         </div>
 
-        {error && <p className="text-[11px] text-[#c04040] text-center">{error}</p>}
-        {saved && <p className="text-[11px] text-brass-dark text-center">已保存</p>}
+        {error && <p className="text-[11.5px] text-rust-dark text-center">{error}</p>}
+        {saved && <p className="text-[11.5px] text-text-primary text-center font-bold">已保存</p>}
 
         <button
           onClick={handleSave}
           disabled={saving || !draft.trim() || draft === nickname}
-          className="w-full py-3.5 rounded-sm text-sm font-semibold transition-all bg-brass text-white active:bg-brass-dark active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed"
+          className="press w-full py-3 text-[14px] font-extrabold tracking-[0.16em] indent-[0.16em] bg-rust text-[#fff5ea] disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {saving ? '保存中…' : '保存'}
+          {saving ? '保存中…' : '保　存'}
         </button>
 
         <button
           onClick={handleLogout}
-          className="w-full py-3.5 rounded-sm text-sm font-semibold border border-[#c04040]/40 text-[#c04040] flex items-center justify-center gap-2 active:bg-[#c04040]/5 transition-all"
+          className="w-full py-3 text-[13.5px] font-bold border-2 border-rust-dark text-rust-dark flex items-center justify-center gap-2 active:bg-rust-dark active:text-page transition-all"
         >
           <LogOut className="w-[16px] h-[16px]" /> 退出登录
         </button>
       </div>
-    </div>
+    </ShellPage>
   )
 }

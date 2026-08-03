@@ -1,9 +1,10 @@
 import { useNavigate } from 'react-router-dom'
 import { ScrollText, Clock, Ghost, Theater, Shield, Swords } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { GAME_REGISTRY, SYSTEM_COLORS } from '@/config/games'
+import { GAME_REGISTRY } from '@/config/games'
 import Badge from '@/shared/components/Badge'
 import { useGameStore } from '@/stores/game-store'
+import ShellPage from '@/shared/components/ShellPage'
 
 const iconMap: Record<string, LucideIcon> = {
   'scroll-text': ScrollText,
@@ -38,6 +39,16 @@ function getStatusBadge(status: string) {
  * 没有 `systems` 的游戏（血染钟楼 / 狼人杀 / 剧本杀）本来就没有这一层，
  * 原样一张卡。`systemId` 为空 = 还不能玩，点了不跳转。
  */
+/** 每款游戏 / 规则系统的索引色。纸板上靠**实色**区分，不靠浅底色块——
+ *  浅底压在纸板上几乎看不出来（这是换 theme-shell 时踩到的同一条）。 */
+const ACCENT: Record<string, string> = {
+  coc: '#2f6d8c',
+  dnd: '#c9822f',
+  'blood-clock': '#8a4070',
+  werewolf: '#c9452f',
+  'script-murder': '#6a6050',
+}
+
 const ENTRIES = GAME_REGISTRY.flatMap((game) =>
   game.systems
     ? game.systems.map((sys) => ({
@@ -47,9 +58,7 @@ const ENTRIES = GAME_REGISTRY.flatMap((game) =>
         name: sys.name,
         description: sys.description,
         icon: SYSTEM_ICONS[sys.id] ?? game.icon,
-        iconBg: SYSTEM_COLORS[sys.id]?.iconBg ?? game.iconBg,
-        iconColor: SYSTEM_COLORS[sys.id]?.iconColor ?? game.iconColor,
-        borderColor: SYSTEM_COLORS[sys.id]?.border ?? game.borderColor,
+        accent: ACCENT[sys.id] ?? '#5c5347',
         status: sys.status === 'ready' ? 'recommended' : 'wip',
       }))
     : [
@@ -60,9 +69,7 @@ const ENTRIES = GAME_REGISTRY.flatMap((game) =>
           name: game.name,
           description: game.description,
           icon: game.icon,
-          iconBg: game.iconBg,
-          iconColor: game.iconColor,
-          borderColor: game.borderColor,
+          accent: ACCENT[game.id] ?? '#5c5347',
           status: game.status,
         },
       ]
@@ -78,25 +85,14 @@ export default function GameSelectionPage() {
   const canProceed = useGameStore((s) => s.returnFromGameSelect)
 
   return (
-    <div className="animate-screen-in">
-      <div className="flex items-center gap-2.5 px-5 pb-3 pt-1">
-        <button
-          onClick={() => navigate('/home')}
-          className="w-[34px] h-[34px] rounded-full bg-card border border-border-light flex items-center justify-center flex-shrink-0 active:bg-panel active:scale-[0.94] transition-all duration-150"
-        >
-          <svg className="w-[18px] h-[18px] text-text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
-          </svg>
-        </button>
-        <h2 className="text-lg font-bold text-text-primary">选择游戏</h2>
-      </div>
-
+    <ShellPage title="选择游戏" onBack={() => navigate('/home')}>
       {!canProceed && (
-        <div className="mx-5 mb-4 px-3.5 py-2.5 bg-[#fdf3e0] border border-[#e0c088] rounded-[6px] text-[12px] text-[#8a6a2a]">
+        <div className="mx-5 mb-4 px-3 py-2 border-2 border-text-primary bg-card text-[11.5px] text-text-body leading-relaxed">
           浏览模式：创建或加入房间后才能继续选择模组、创建角色
         </div>
       )}
 
+      {/* 每款游戏一张卡：顶边一道自己的色（配置里就带着），像盒子上的色标 */}
       <div className="px-5 grid grid-cols-2 gap-3">
         {ENTRIES.map((entry) => {
           const IconComp = iconMap[entry.icon] || ScrollText
@@ -108,21 +104,24 @@ export default function GameSelectionPage() {
                 if (playable) navigate(`/home/create/games/${entry.gameId}/scenarios/${entry.systemId}`)
               }}
               className={`
-                bg-card border border-border-light rounded-md p-[22px] text-center
-                transition-all duration-200 relative border-b-[3px] ${entry.borderColor}
-                ${playable ? 'cursor-pointer active:scale-[0.96]' : 'opacity-60'}
+                press-soft bg-card p-4 pt-3 text-center transition-all duration-100
+                ${playable ? 'cursor-pointer active:translate-x-[3px] active:translate-y-[3px] active:shadow-none' : 'opacity-65'}
               `}
+              style={{ borderTopWidth: 6, borderTopColor: entry.accent }}
             >
-              <div className={`w-[52px] h-[52px] rounded-[14px] mx-auto mb-2.5 flex items-center justify-center ${entry.iconBg}`}>
-                <IconComp className={`w-[26px] h-[26px] ${entry.iconColor}`} />
+              <div
+                className="w-[46px] h-[46px] mx-auto mb-2 flex items-center justify-center border-2 border-text-primary"
+                style={{ backgroundColor: entry.accent, color: '#fff5ea' }}
+              >
+                <IconComp className="w-[24px] h-[24px]" strokeWidth={2} />
               </div>
-              <div className="text-sm font-semibold text-text-primary mb-0.5">{entry.name}</div>
-              <div className="text-[11px] text-text-muted leading-[1.4] whitespace-pre-line">{entry.description}</div>
+              <div className="text-[13.5px] font-extrabold text-text-primary mb-0.5">{entry.name}</div>
+              <div className="text-[10.5px] text-text-muted leading-[1.5] whitespace-pre-line">{entry.description}</div>
               <div className="mt-2">{getStatusBadge(entry.status)}</div>
             </div>
           )
         })}
       </div>
-    </div>
+    </ShellPage>
   )
 }

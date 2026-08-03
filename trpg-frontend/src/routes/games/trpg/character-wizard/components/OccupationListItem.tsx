@@ -12,14 +12,15 @@ export function OccupationListItem({
   onSelect: () => void
 }) {
   return (
+    // 索引卡行：选中的那张加粗黄铜边（表单里"划勾"的那一行）
     <button
       onClick={onSelect}
-      className={`w-full text-left px-3 py-2 rounded-[6px] border transition-all ${
-        selected ? 'border-brass bg-[#fdfaf4] shadow-[0_0_0_2px_rgba(184,151,106,0.15)]' : 'border-border-light bg-input active:bg-panel'
+      className={`w-full text-left px-2.5 py-1.5 border transition-all ${
+        selected ? 'border-[1.5px] border-brass-dark bg-white/30' : 'border-ink/28 bg-white/12 active:bg-white/25'
       }`}
     >
-      <div className="text-[13px] font-semibold text-text-primary">{occ.name}</div>
-      <div className="text-[10px] text-text-dim font-mono mt-0.5">
+      <div className="text-[12px] font-semibold text-ink">{occ.name}</div>
+      <div className="text-[10.5px] text-ink-soft font-mono mt-0.5">
         {occ.skillPointsFormula} · 信用 {occ.creditMin}–{occ.creditMax}
       </div>
     </button>

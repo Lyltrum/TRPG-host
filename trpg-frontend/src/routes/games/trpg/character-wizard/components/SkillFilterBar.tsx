@@ -49,7 +49,7 @@ export function SkillFilterBar({
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="搜索技能…"
-          className="w-full pl-8 pr-3 py-2 text-[12px] rounded-[6px] bg-input border border-border-light outline-none focus:border-brass text-text-primary"
+          className="wz-field w-full pl-8 pr-3 py-2 text-[12px]"
         />
       </div>
       <div className="flex gap-1.5 overflow-x-auto pb-0.5">
@@ -57,8 +57,8 @@ export function SkillFilterBar({
           <button
             key={opt.key}
             onClick={() => onFilterChange(opt.key)}
-            className={`flex-shrink-0 px-2.5 py-1.5 text-[11px] font-semibold rounded-[6px] transition-all ${
-              filter === opt.key ? 'bg-brass text-white' : 'bg-card border border-border-light text-text-muted'
+            className={`flex-shrink-0 px-2.5 py-1 text-[10.5px] font-semibold transition-all ${
+              filter === opt.key ? 'bg-brass-dark text-dossier border border-brass-dark' : 'border border-ink/30 bg-white/20 text-ink-soft'
             }`}
           >
             {opt.label}
@@ -68,7 +68,7 @@ export function SkillFilterBar({
       <select
         value={category ?? ''}
         onChange={(e) => onCategoryChange(e.target.value || null)}
-        className="w-full px-3 py-2 text-[12px] rounded-[6px] bg-input border border-border-light outline-none focus:border-brass text-text-primary"
+        className="wz-field w-full px-3 py-2 text-[12px]"
       >
         <option value="">全部分类</option>
         {categories.map((c) => (

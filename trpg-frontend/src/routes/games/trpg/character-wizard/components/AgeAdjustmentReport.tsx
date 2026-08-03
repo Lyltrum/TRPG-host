@@ -3,7 +3,7 @@ import type { AgeAdjustmentResult } from 'trpg-sdk'
 /** EDU 检定明细 / 减值 / 前后对照（重制设计 v2 §6-步骤2 第 4 条）。 */
 export function AgeAdjustmentReport({ result }: { result: AgeAdjustmentResult }) {
   return (
-    <div className="bg-card border border-border-light rounded-md p-[18px] space-y-3">
+    <div className="border border-ink/35 p-3 space-y-2.5">
       <h4 className="text-[12px] font-semibold text-brass-dark uppercase tracking-[0.08em]">
         调整结果 · {result.ageLabel} 岁段
       </h4>
@@ -16,7 +16,7 @@ export function AgeAdjustmentReport({ result }: { result: AgeAdjustmentResult })
               <div
                 key={i}
                 className={`text-[11px] font-mono px-2.5 py-1.5 rounded ${
-                  c.success ? 'bg-[#eef6ea] text-[#3a7a3a]' : 'bg-panel text-text-dim'
+                  c.success ? 'border border-[#3d6b2f] text-[#3d6b2f]' : 'border border-ink/25 text-ink-soft'
                 }`}
               >
                 第{i + 1}次：d100={c.roll}
@@ -48,7 +48,7 @@ export function AgeAdjustmentReport({ result }: { result: AgeAdjustmentResult })
               <div
                 key={key}
                 className={`flex items-center justify-between px-2.5 py-1.5 rounded text-[11px] font-mono ${
-                  changed ? 'bg-[#fdf3e0]' : 'bg-panel'
+                  changed ? 'border border-brass-dark bg-white/25' : 'border border-ink/20 bg-white/10'
                 }`}
               >
                 <span className="text-text-muted">{key}</span>

@@ -26,25 +26,26 @@ export function PoolBar({
   const pct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0
   const isOver = remaining < 0 || (exactMatchRequired && remaining !== 0)
   return (
-    <div className="bg-panel rounded-md px-3.5 py-2 flex items-center gap-3">
-      <div className="flex-1">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-[11px] font-medium text-text-muted">{label}</span>
-          <span className={`text-[12px] font-bold font-mono ${isOver ? 'text-[#c04040]' : 'text-text-primary'}`}>
-            {spent}
-            <span className="text-text-dim font-normal">/{budget || '—'}</span>
-          </span>
-        </div>
-        <div className="h-1.5 rounded-full bg-border-light overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all duration-300 ${isOver ? 'bg-[#c04040]' : 'bg-brass'}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
+    // 方头刻度量表，不是圆角进度条（同角色卡上的技能条）。超支时整条变锈红。
+    <div>
+      <div className="flex items-baseline gap-1.5 mb-1 text-[10.5px] text-ink-soft">
+        <span>{label}</span>
+        <span className={`font-mono font-bold ${isOver ? 'text-rust-dark' : 'text-ink'}`}>
+          {spent}
+          <span className="text-ink-soft font-normal">/{budget || '—'}</span>
+        </span>
+        <span className={`ml-auto ${remaining < 0 ? 'text-rust-dark font-bold' : ''}`}>
+          {remaining < 0 ? `多花了 ${-remaining} 点` : `还剩 ${remaining} 点`}
+        </span>
       </div>
-      <span className={`text-[10px] whitespace-nowrap ${remaining < 0 ? 'text-[#c04040] font-semibold' : 'text-text-dim'}`}>
-        {remaining < 0 ? `多花了 ${-remaining} 点` : `还剩 ${remaining} 点`}
-      </span>
+      <div className="gauge h-[10px]">
+        <div
+          className={`absolute inset-y-0 left-0 transition-all duration-300 ${
+            isOver ? 'bg-rust-dark' : 'bg-brass-dark'
+          }`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
     </div>
   )
 }

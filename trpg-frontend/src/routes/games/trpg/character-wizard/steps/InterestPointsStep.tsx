@@ -81,10 +81,10 @@ export function InterestPointsStep({
   const attrNotValidated = !preview || preview.skillView.length === 0
 
   return (
-    <StepShell title="兴趣技能" lead="你有 INT×2 点可以随便加，也可以继续加在职业技能上。">
-      {previewError && <p className="text-[11px] text-[#c04040] mb-2">{previewError}</p>}
+    <StepShell lead="你有 INT×2 点可以随便加，也可以继续加在职业技能上。">
+      {previewError && <p className="text-[10.5px] text-rust-dark mb-2">{previewError}</p>}
       {!previewError && attrNotValidated && (
-        <p className="text-[11px] text-[#8a6a2a] mb-2">属性还没通过校验，预算暂时无法计算。</p>
+        <p className="text-[10.5px] text-brass-dark mb-2">属性还没通过校验，预算暂时无法计算。</p>
       )}
       <PoolBar
         label="兴趣点数 (INT×2)"

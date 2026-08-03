@@ -22,27 +22,27 @@ export function ConceptStep({
   const { info } = state
   const canQuickBuild = info.name.trim().length > 0 && !quickBuilding
   return (
-    <StepShell title="基本信息" lead="先给你的调查员起个名字，其余信息随时可以回来改。">
+    <StepShell lead="先给你的调查员起个名字，其余信息随时可以回来改。">
       <StepSection title="调查员信息">
         <div className="space-y-3">
           <input
             value={info.name}
             onChange={(e) => dispatch({ type: 'SET_INFO', patch: { name: e.target.value } })}
             placeholder="角色姓名"
-            className="w-full px-3.5 py-2.5 rounded-[6px] bg-input border border-border-light text-text-primary text-[15px] outline-none focus:border-brass"
+            className="wz-field w-full px-3 py-2 text-[14px]"
           />
           <input
             value={info.playerName}
             onChange={(e) => dispatch({ type: 'SET_INFO', patch: { playerName: e.target.value } })}
             placeholder="玩家名（可选，默认同角色姓名）"
-            className="w-full px-3.5 py-2.5 rounded-[6px] bg-input border border-border-light text-text-primary text-[15px] outline-none focus:border-brass"
+            className="wz-field w-full px-3 py-2 text-[14px]"
           />
           <div>
             <label className="text-[11px] font-medium text-text-muted mb-1 block">性别</label>
             <select
               value={info.gender}
               onChange={(e) => dispatch({ type: 'SET_INFO', patch: { gender: e.target.value } })}
-              className="w-full px-3.5 py-2.5 rounded-[6px] bg-input border border-border-light text-text-primary text-[15px] outline-none focus:border-brass"
+              className="wz-field w-full px-3 py-2 text-[14px]"
             >
               <option value="" disabled>
                 请选择性别
@@ -58,7 +58,7 @@ export function ConceptStep({
               <input
                 value={info.residence}
                 onChange={(e) => dispatch({ type: 'SET_INFO', patch: { residence: e.target.value } })}
-                className="w-full px-3.5 py-2.5 rounded-[6px] bg-input border border-border-light text-text-primary text-[15px] outline-none focus:border-brass"
+                className="wz-field w-full px-3 py-2 text-[14px]"
               />
             </div>
             <div>
@@ -66,7 +66,7 @@ export function ConceptStep({
               <input
                 value={info.birthplace}
                 onChange={(e) => dispatch({ type: 'SET_INFO', patch: { birthplace: e.target.value } })}
-                className="w-full px-3.5 py-2.5 rounded-[6px] bg-input border border-border-light text-text-primary text-[15px] outline-none focus:border-brass"
+                className="wz-field w-full px-3 py-2 text-[14px]"
               />
             </div>
           </div>
@@ -76,7 +76,7 @@ export function ConceptStep({
       {/* 零基础玩家的第二条路（真人实测反馈：八步向导对新人不友好）。
           放在第一步、名字输入框正下方——这是新人唯一确定会看到的一屏。 */}
       <StepSection title="不想一步步来？">
-        <p className="text-[12px] text-text-muted mb-2.5">
+        <p className="text-[11.5px] text-ink-soft mb-2.5">
           填好上面的角色姓名，点这里由系统随机生成一张完整合法的调查员卡
           <span className="text-brass-dark">（含一段属于他的过去）</span>，直接开局。
           想自己捏就继续走下面的「下一步」。
@@ -84,10 +84,10 @@ export function ConceptStep({
         <button
           onClick={onQuickBuild}
           disabled={!canQuickBuild}
-          className={`w-full flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-sm text-[13px] font-semibold transition-all ${
+          className={`cut-corner w-full flex items-center justify-center gap-1.5 px-5 py-2.5 text-[13px] font-semibold transition-all ${
             canQuickBuild
-              ? 'bg-card border border-brass text-brass-dark active:bg-brass active:text-white active:scale-[0.97]'
-              : 'bg-panel border border-border-light text-text-dim cursor-not-allowed'
+              ? 'border border-brass-dark text-brass-dark bg-white/25 active:bg-brass-dark active:text-dossier active:scale-[0.97]'
+              : 'border border-ink/25 text-ink-soft cursor-not-allowed'
           }`}
         >
           <Wand2 className="w-4 h-4" />
@@ -97,17 +97,17 @@ export function ConceptStep({
             只有"生成中…"三个字——新人会以为卡住了。说清在等什么，顺带让他知道
             这条路的产出里有背景故事（exec/25 P1 #4）。 */}
         {quickBuilding && (
-          <p className="text-[11px] text-text-muted text-center mt-2 leading-[1.6]">
+          <p className="text-[10.5px] text-ink-soft text-center mt-2 leading-[1.6]">
             正在掷属性、分配技能，
             <br />
             并为你的调查员写一段过去，大约十秒。
           </p>
         )}
         {!info.name.trim() && !quickBuilding && (
-          <p className="text-[11px] text-text-dim text-center mt-2">请先填写角色姓名</p>
+          <p className="text-[10.5px] text-ink-soft text-center mt-2">请先填写角色姓名</p>
         )}
         {quickBuildError && (
-          <p className="text-[11px] text-[#c04040] text-center mt-2">{quickBuildError}</p>
+          <p className="text-[10.5px] text-rust-dark text-center mt-2">{quickBuildError}</p>
         )}
       </StepSection>
     </StepShell>

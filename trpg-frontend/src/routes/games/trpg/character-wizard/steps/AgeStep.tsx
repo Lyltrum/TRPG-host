@@ -108,10 +108,10 @@ export function AgeStep({
   })()
 
   return (
-    <StepShell title="年龄" lead="COC7 不同年龄段会对属性产生对应修正，改了年龄会立即重新套用。">
+    <StepShell lead="COC7 不同年龄段会对属性产生对应修正，改了年龄会立即重新套用。">
       {!attributesReady ? (
         <StepSection title="请先完成属性分配">
-          <p className="text-[12px] text-text-muted">请先回到上一步完成属性分配，再进行年龄调整。</p>
+          <p className="text-[11.5px] text-ink-soft">请先回到上一步完成属性分配，再进行年龄调整。</p>
         </StepSection>
       ) : (
         <>
@@ -128,22 +128,28 @@ export function AgeStep({
                   e.currentTarget.blur()
                 }
               }}
-              className="w-full px-3.5 py-2.5 rounded-[6px] bg-input border border-border-light text-text-primary text-[15px] outline-none focus:border-brass"
+              className="wz-field w-full px-3 py-2 text-[14px]"
             />
-            <p className="text-[11px] text-text-muted mt-2">{describeAgeBand(previewAge)}</p>
+            <p className="text-[10.5px] text-ink-soft mt-2">{describeAgeBand(previewAge)}</p>
             {state.ageApplied && state.ageAppliedFor === state.age && (
-              <p className="text-[11px] text-[#4a8a4a] font-semibold mt-1">✓ 已套用</p>
+              <p className="text-[11px] text-[#3d6b2f] font-bold mt-1">✓ 已套用</p>
             )}
           </StepSection>
 
-          <div className="bg-card border border-border-light rounded-md p-[18px]">
+          <div className="relative border border-ink/35 px-2.5 pt-3.5 pb-2.5">
+            <span
+              className="typed absolute -top-[7px] left-2 px-1.5 text-[10.5px] text-ink-soft"
+              style={{ backgroundColor: 'var(--paper)' }}
+            >
+              年龄档对照表
+            </span>
             <button
               type="button"
               onClick={() => setTableExpanded((v) => !v)}
-              className="w-full flex items-center justify-between"
+              className="w-full flex items-center justify-between text-[11.5px] text-ink-soft"
             >
-              <h4 className="text-[12px] font-semibold text-brass-dark uppercase tracking-[0.08em]">年龄档对照表</h4>
-              <ChevronDown className={`w-4 h-4 text-text-dim transition-transform ${tableExpanded ? 'rotate-180' : ''}`} />
+              <span>{tableExpanded ? '点击收起' : '展开查看全部年龄档'}</span>
+              <ChevronDown className={`w-4 h-4 transition-transform ${tableExpanded ? 'rotate-180' : ''}`} />
             </button>
             {tableExpanded && (
               <div className="mt-2.5">
@@ -152,9 +158,9 @@ export function AgeStep({
             )}
           </div>
 
-          {error && <p className="text-[11px] text-[#c04040]">{error}</p>}
+          {error && <p className="text-[10.5px] text-rust-dark">{error}</p>}
 
-          {!state.ageApplied && applying && <p className="text-[12px] text-text-muted text-center">套用中…</p>}
+          {!state.ageApplied && applying && <p className="text-[11.5px] text-ink-soft text-center">套用中…</p>}
 
           {state.ageResult && <AgeAdjustmentReport result={state.ageResult} />}
         </>

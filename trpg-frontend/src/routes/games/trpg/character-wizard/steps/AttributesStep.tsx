@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { CharacterComputeResult, Ruleset } from 'trpg-sdk'
-import { BookOpen, Brain, ChevronDown, ChevronUp, Eye, Heart, Lightbulb, Maximize2, Shield, Zap } from 'lucide-react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import { useRoomStore } from '@/stores/room-store'
 import { rollAttributePool, rollLuck } from '@/services/character/character-api'
 import { friendlyErrorMessage } from '@/services/api-client'
@@ -18,28 +18,6 @@ import {
   pointBuyAttributes,
 } from '../wizard-selectors'
 import type { WizardAction, WizardState } from '../wizard-state'
-
-const ATTR_ICONS: Record<string, typeof Heart> = {
-  STR: Shield,
-  CON: Heart,
-  POW: Brain,
-  DEX: Zap,
-  APP: Eye,
-  SIZ: Maximize2,
-  INT: Lightbulb,
-  EDU: BookOpen,
-}
-
-const ATTR_COLORS: Record<string, string> = {
-  STR: '#c04040',
-  CON: '#c08050',
-  POW: '#7050a0',
-  DEX: '#4a8a4a',
-  APP: '#8a4070',
-  SIZ: '#b8976a',
-  INT: '#4a7098',
-  EDU: '#6a6050',
-}
 
 const ATTR_MEANINGS: Record<string, string> = {
   STR: '影响近战伤害与负重',
@@ -182,9 +160,9 @@ export function AttributesStep({
   const showAllocationUI = !(state.generationMethod === 'roll_pool' && state.attributePoolTotal == null)
 
   return (
-    <StepShell title="属性与幸运" lead="掷骰生成属性点，再分配到八项属性上，最后单独掷一次幸运。">
+    <StepShell lead="掷骰生成属性点，再分配到八项属性上，最后单独掷一次幸运。">
       {ageStale && (
-        <div className="px-3.5 py-2.5 bg-[#fdf3e0] border border-[#e0c088] rounded-[6px] text-[12px] text-[#8a6a2a]">
+        <div className="px-2.5 py-2 border border-brass-dark bg-white/25 text-[11.5px] text-brass-dark leading-relaxed">
           改属性会取消已套用的年龄调整，之后要回第 3 步重新套用。
         </div>
       )}
@@ -205,17 +183,17 @@ export function AttributesStep({
           <button
             onClick={() => void doRollPool()}
             disabled={generationBusy || !roomId}
-            className="w-full py-2.5 text-[13px] font-semibold rounded-[6px] bg-brass text-white active:bg-brass-dark transition-all disabled:opacity-50"
+            className="cut-corner w-full py-2.5 text-[13px] font-semibold bg-brass-dark text-dossier active:translate-y-[1px] transition-all disabled:opacity-50"
           >
             {generationBusy ? '掷骰中…' : '🎲 掷骰生成属性点'}
           </button>
         )}
-        {generationError && <p className="text-[11px] text-[#c04040] mt-2">{generationError}</p>}
+        {generationError && <p className="text-[10.5px] text-rust-dark mt-2">{generationError}</p>}
         {state.generationMethod === 'roll_pool' && state.poolRolls.length > 0 && (
           <div className="mt-2.5">
             <button
               onClick={() => setRollDetailOpen((v) => !v)}
-              className="w-full flex items-center justify-between text-[11px] text-text-dim px-2 py-1"
+              className="w-full flex items-center justify-between text-[10.5px] text-ink-soft px-2 py-1"
             >
               <span>🎲 掷骰明细（{rollDetailOpen ? '点击收起' : '点击展开'}）</span>
               {rollDetailOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -223,7 +201,7 @@ export function AttributesStep({
             {rollDetailOpen && (
               <div className="mt-1.5 grid grid-cols-2 gap-1.5">
                 {state.poolRolls.map((r, i) => (
-                  <div key={i} className="text-[10px] text-text-dim font-mono bg-panel rounded px-2 py-1">
+                  <div key={i} className="text-[10.5px] text-ink-soft font-mono border border-ink/25 bg-white/15 px-2 py-1">
                     {r.kind} [{r.dice.join(',')}] = {r.value}
                   </div>
                 ))}
@@ -234,7 +212,9 @@ export function AttributesStep({
       </StepSection>
 
       {showAllocationUI && state.generationMethod !== 'roll' && (
-        <div className="sticky top-[54px] z-10">
+        // sticky 相对的是表单纸内部那个滚动容器，所以是 top-0（页面级的
+        // sticky 顶部偏移已经不存在了：顶栏与分隔页在滚动区之外）。
+        <div className="sticky top-0 z-10 bg-dossier py-1">
           <PoolBar
             label="属性总点数"
             spent={total}
@@ -247,7 +227,7 @@ export function AttributesStep({
       {showAllocationUI && (
         <StepSection title="分配" tip="可以先「平均分配」，再用 +/− 按角色想法微调。">
           {state.attrAfterAge != null && (
-            <p className="text-[11px] text-text-muted mb-2">
+            <p className="text-[10.5px] text-ink-soft mb-2">
               这里是你分配的原始点数；年龄修正后的最终值见「年龄」步骤和完成页。
             </p>
           )}
@@ -255,19 +235,19 @@ export function AttributesStep({
             <div className="grid grid-cols-2 gap-2 mb-3">
               <button
                 onClick={handleEvenDistribute}
-                className="py-2 text-[12px] font-semibold rounded-[6px] border border-border-mid bg-card text-text-body active:bg-panel transition-all"
+                className="cut-corner py-2 text-[12px] font-semibold border border-ink/40 bg-white/25 text-ink active:bg-brass-dark active:text-dossier transition-all"
               >
                 平均分配
               </button>
               <button
                 onClick={handleClear}
-                className="py-2 text-[12px] font-semibold rounded-[6px] border border-border-mid bg-card text-text-body active:bg-panel transition-all"
+                className="cut-corner py-2 text-[12px] font-semibold border border-ink/40 bg-white/25 text-ink active:bg-brass-dark active:text-dossier transition-all"
               >
                 清空
               </button>
             </div>
           )}
-          <div className="space-y-2">
+          <div>
             {attrs.map((attribute) => {
               const key = attribute.key
               const value = state.attr[key] ?? 0
@@ -276,8 +256,7 @@ export function AttributesStep({
                   key={key}
                   attrKey={key}
                   label={attribute.label}
-                  icon={ATTR_ICONS[key] ?? Shield}
-                  color={ATTR_COLORS[key] ?? '#b8976a'}
+                  tiers={ruleset.successTiers ?? []}
                   value={value}
                   inputValue={state.attrInputs[key] ?? String(value)}
                   min={attrMin}
@@ -310,7 +289,7 @@ export function AttributesStep({
       </StepSection>
 
       <StepSection title="衍生属性">
-        {previewError && <p className="text-[11px] text-[#c04040] mb-2">{previewError}</p>}
+        {previewError && <p className="text-[10.5px] text-rust-dark mb-2">{previewError}</p>}
         <div className="flex gap-2">
           {[
             { label: 'HP', value: `${derived.hp}`, color: '#4a8a4a' },
@@ -319,8 +298,8 @@ export function AttributesStep({
             { label: 'DB', value: derived.db, color: '#b8976a' },
             { label: 'MOV', value: `${derived.move}`, color: '#c08050' },
           ].map((pill) => (
-            <div key={pill.label} className="flex-1 bg-panel rounded-md px-2.5 py-2 text-center">
-              <div className="text-[10px] text-text-muted font-semibold">{pill.label}</div>
+            <div key={pill.label} className="flex-1 border border-ink/28 bg-white/15 px-2 py-1 text-center">
+              <div className="text-[10.5px] text-ink-soft font-semibold">{pill.label}</div>
               <div className="text-[16px] font-bold font-mono" style={{ color: pill.color }}>
                 {pill.value}
               </div>

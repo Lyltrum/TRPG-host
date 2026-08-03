@@ -429,6 +429,22 @@
     border-bottom: 1px solid rgba(36, 29, 20, 0.5);
   }
 
+  /* ── 纸上的可填字段：方角、实线框、聚焦时纸被点亮 ──
+     只在 `.theme-paper` 的纸面上用（建卡向导的输入/下拉/多行）。 */
+  .wz-field {
+    background-color: rgba(255, 255, 255, 0.22);
+    border: 1px solid rgba(36, 29, 20, 0.42);
+    color: #241d14;
+  }
+  .wz-field::placeholder {
+    color: #8a7a60;
+  }
+  .wz-field:focus {
+    outline: none;
+    background-color: rgba(255, 255, 255, 0.42);
+    border-color: #8a6a2e;
+  }
+
   /* ── 通用形状：切角。代替圆角，是"不像 iOS"最省事的一处 ── */
   .cut-corner {
     clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);

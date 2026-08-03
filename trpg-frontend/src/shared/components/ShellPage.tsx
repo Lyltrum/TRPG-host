@@ -45,7 +45,15 @@ export default function ShellPage({
         </div>
       )}
 
-      <div className={`relative z-10 flex-1 flex flex-col ${contentClassName}`}>{children}</div>
+      {/* 🔴 内容**默认在剩余空间里居中**，空白平均分到上下两端。
+          外壳这些页大多比屏幕短，顶对齐会把空白全堆在底部（创建房间那页为此
+          改了三轮：贴底 → 贴内容 → 才发现问题不是按钮放哪，是空白没分匀）。
+          放在这里而不是每页各自加，是因为**下一个新页面不会记得加**。
+          内容长过屏幕时 min-h-full 让容器跟着内容长，居中自动失效，不会把
+          顶部顶出滚动区。个别页要顶对齐，传 `contentClassName="justify-start"`。 */}
+      <div className={`relative z-10 flex-1 flex flex-col justify-center py-4 ${contentClassName}`}>
+        {children}
+      </div>
     </div>
   )
 }

@@ -30,7 +30,7 @@ export default function ReviewPage() {
   }, [])
 
   return (
-    <ShellPage title="复盘" onBack={() => navigate('/home/my-rooms')} contentClassName="pb-10">
+    <ShellPage title="复盘" onBack={() => navigate('/home/my-rooms')}>
       <div className="px-5 flex flex-col gap-3.5">
         {error && <p className="text-[11.5px] text-rust-dark text-center">{error}</p>}
 

@@ -11,7 +11,6 @@ const HomePage = lazy(() => import('@/routes/home/HomePage'));
 const JoinRoomPage = lazy(() => import('@/routes/join/JoinRoomPage'));
 const CreateRoomPage = lazy(() => import('@/routes/create/CreateRoomPage'));
 const GameSelectionPage = lazy(() => import('@/routes/games/GameSelectionPage'));
-const SystemSelectionPage = lazy(() => import('@/routes/games/trpg/SystemSelectionPage'));
 const ScenarioSelectionPage = lazy(() => import('@/routes/games/trpg/ScenarioSelectionPage'));
 const StoryPage = lazy(() => import('@/routes/games/trpg/StoryPage'));
 const CharacterPage = lazy(() => import('@/routes/games/trpg/CharacterPage'));
@@ -70,7 +69,6 @@ function App() {
           <Route path="/home/join" element={<JoinRoomPage />} />
           <Route path="/home/create" element={<CreateRoomPage />} />
           <Route path="/home/create/games" element={<GameSelectionPage />} />
-          <Route path="/home/create/games/:gameId" element={<SystemSelectionPage />} />
           <Route
             path="/home/create/games/:gameId/scenarios/:systemId"
             element={<ScenarioSelectionPage />}

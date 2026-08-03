@@ -39,7 +39,7 @@ export default function ScenarioSelectionPage() {
     <div className="animate-screen-in">
       <div className="flex items-center gap-2.5 px-5 pb-3 pt-1">
         <button
-          onClick={() => navigate(`/home/create/games/${gameId}`)}
+          onClick={() => navigate('/home/create/games')}
           className="w-[34px] h-[34px] rounded-full bg-card border border-border-light flex items-center justify-center flex-shrink-0 active:bg-panel active:scale-[0.94] transition-all duration-150"
         >
           <svg className="w-[18px] h-[18px] text-text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">

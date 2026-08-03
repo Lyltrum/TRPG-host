@@ -5,7 +5,6 @@ export const ROUTES = {
   JOIN: '/home/join',
   CREATE: '/home/create',
   GAMES: '/home/create/games',
-  SYSTEM: (gameId: string) => `/home/create/games/${gameId}`,
   SCENARIOS: (gameId: string, systemId: string) => `/home/create/games/${gameId}/scenarios/${systemId}`,
   MY_ROOMS: '/home/my-rooms',
   REVIEW: (roomCode: string) => `/home/my-rooms/review/${roomCode}`,

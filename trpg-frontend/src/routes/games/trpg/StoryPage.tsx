@@ -125,58 +125,75 @@ export default function StoryPage() {
   }
 
   return (
-    <div className="theme-coc desk-grain desk-lamp desk-sigil bg-card min-h-full flex flex-col px-4 pt-16 pb-8 relative">
+    <div className="theme-coc desk-grain desk-lamp desk-sigil bg-card min-h-full flex flex-col pt-14 pb-4 relative">
       {exitConfirm}
       {exitButton}
 
       {/* 🔴 这一屏跟前后两屏**不同族**：它是唯一一屏真的要"读"的东西。
-          所以用摊开的书页（扉页 + 正文），而不是登记表那张牛皮纸档案。
-          守秘人叙事当初做成整页书被判"很怪"，是因为他是个在场的人、说话
-          不该长得像出版物；模组前情本来就是一段读物，扉页体裁在这里成立。 */}
-      <div className="theme-paper leaf-full paper-grain relative z-10 flex-1 flex flex-col bg-book text-ink px-6 py-7">
-        <div className="typed text-[10.5px] text-ink-soft mb-4">{storyLabel}</div>
-        <h1 className="text-[27px] font-bold text-ink leading-[1.25] mb-1.5 text-balance">
-          {title || '…'}
-        </h1>
-        {titleEn && (
-          <p className="font-mono text-[11.5px] text-ink-soft tracking-[0.05em]">{titleEn}</p>
-        )}
+          所以做成一卷摊在桌上的卷轴——两根木轴夹住纸，纸的上下缘卷进轴里，
+          进屏时展开。守秘人叙事当初做成整页书被判"很怪"，是因为他是个在场
+          的人、说话不该长得像出版物；模组前情本来就是一段读物。
 
-        {/* 卷首饰线：一道细线 + 一枚菱形。书才有的东西，登记表不会有 */}
-        <div className="flex items-center gap-2 my-6">
-          <span className="h-px w-10 bg-ink/45" />
-          <span className="w-[5px] h-[5px] rotate-45 bg-ink/45" />
-          <span className="h-px flex-1 bg-ink/20" />
+          轴比纸宽（轴头要露在纸外面），所以两者的横向留白不一样。 */}
+      <div className="relative z-10 flex-1 min-h-0 flex flex-col mx-[30px]">
+        <div className="scroll-rod -mx-2" />
+
+        <div className="theme-paper paper-grain animate-unroll relative flex-1 min-h-0 flex flex-col bg-book text-ink shadow-[0_10px_26px_rgba(0,0,0,0.34)]">
+          <div className="scroll-curl scroll-curl-top" />
+          <div className="scroll-curl scroll-curl-bottom" />
+
+          {/* 正文长了在纸内部滚，两根轴不动 */}
+          <div className="relative z-[1] flex-1 min-h-0 overflow-y-auto flex flex-col px-6 pt-8 pb-7">
+            <div className="typed text-[10.5px] text-ink-soft mb-4">{storyLabel}</div>
+            <h1 className="text-[27px] font-bold text-ink leading-[1.25] mb-1.5 text-balance">
+              {title || '…'}
+            </h1>
+            {titleEn && (
+              <p className="font-mono text-[11.5px] text-ink-soft tracking-[0.05em]">{titleEn}</p>
+            )}
+
+            {/* 卷首饰线：一道细线 + 一枚菱形。书才有的东西，登记表不会有 */}
+            <div className="flex items-center gap-2 my-6">
+              <span className="h-px w-10 bg-ink/45" />
+              <span className="w-[5px] h-[5px] rotate-45 bg-ink/45" />
+              <span className="h-px flex-1 bg-ink/20" />
+            </div>
+
+            <div className="text-[14px] leading-[1.95] text-ink">
+              {loading && <p className="text-ink-soft">正在加载前情…</p>}
+              {!loading && loadError && <p className="text-rust-dark">{loadError}</p>}
+              {!loading && !loadError && storyPages.length === 0 && (
+                <p className="text-ink-soft">暂无玩家可见的开场介绍（structured 未就绪）。</p>
+              )}
+              {/* 首行缩进两字：中文书籍的排版惯例。这里是真读物，所以成立 */}
+              {!loading &&
+                storyPages.map((page, idx) => (
+                  <p
+                    key={idx}
+                    className={`indent-[2em] ${idx < storyPages.length - 1 ? 'mb-3' : ''}`}
+                  >
+                    {page}
+                  </p>
+                ))}
+            </div>
+
+            <div className="flex-1 min-h-[18px]" />
+
+            <button
+              onClick={() => navigate('/room/character')}
+              disabled={loading}
+              className={`mt-7 self-start px-7 py-3 text-[13.5px] font-bold tracking-[0.18em] indent-[0.18em] transition-all ${
+                loading
+                  ? 'border border-ink/25 text-ink-soft cursor-not-allowed'
+                  : 'cut-corner bg-brass-dark text-book active:translate-y-[1px]'
+              }`}
+            >
+              继续 →
+            </button>
+          </div>
         </div>
 
-        <div className="text-[14px] leading-[1.95] text-ink">
-          {loading && <p className="text-ink-soft">正在加载前情…</p>}
-          {!loading && loadError && <p className="text-rust-dark">{loadError}</p>}
-          {!loading && !loadError && storyPages.length === 0 && (
-            <p className="text-ink-soft">暂无玩家可见的开场介绍（structured 未就绪）。</p>
-          )}
-          {/* 首行缩进两字：中文书籍的排版惯例。这里是真读物，所以成立 */}
-          {!loading &&
-            storyPages.map((page, idx) => (
-              <p key={idx} className={`indent-[2em] ${idx < storyPages.length - 1 ? 'mb-3' : ''}`}>
-                {page}
-              </p>
-            ))}
-        </div>
-
-        <div className="flex-1" />
-
-        <button
-          onClick={() => navigate('/room/character')}
-          disabled={loading}
-          className={`mt-8 self-start px-7 py-3 text-[13.5px] font-bold tracking-[0.18em] indent-[0.18em] transition-all ${
-            loading
-              ? 'border border-ink/25 text-ink-soft cursor-not-allowed'
-              : 'cut-corner bg-brass-dark text-book active:translate-y-[1px]'
-          }`}
-        >
-          继续 →
-        </button>
+        <div className="scroll-rod -mx-2" />
       </div>
     </div>
   )

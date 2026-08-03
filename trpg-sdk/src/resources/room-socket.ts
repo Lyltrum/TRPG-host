@@ -29,6 +29,8 @@ const PAYLOAD_VALIDATORS: {
 } = {
   'session.bound': (p) => typeof p.roomId === 'string' && typeof p.playerId === 'string',
   'narration.push': (p) => typeof p.text === 'string',
+  'narration.delta': (p) =>
+    typeof p.eventId === 'string' && typeof p.seq === 'number' && typeof p.text === 'string',
   // issue #107：讨论区消息 + 玩家原话广播
   'chat.message': (p) =>
     typeof p.messageId === 'string' &&

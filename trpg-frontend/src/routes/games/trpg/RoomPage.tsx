@@ -25,6 +25,11 @@ interface Message {
   // 只给你一个人的私密结果（exec/18 ⑥/②）。**线下同桌时旁人看得见你的屏幕**，
   // 私密的物理前提本来就不成立——折叠成"点按查看"是那种场合唯一的补救。
   private?: boolean
+  // 这条叙事对应的 `events` 行 id（exec/28）。流式的碎片靠它认亲，拼到同一条
+  // 气泡上而不是每段新增一条。非流式路径不带它，行为与以前逐字一致。
+  eventId?: string
+  // 还在流式接收中：最后那条 narration.push 到达时置回 false。
+  streaming?: boolean
 }
 
 // 两段式玩家掷骰（feat/keeper-agent）：守秘人裁决"需要检定"后不直接掷骰，
@@ -571,6 +576,11 @@ export default function RoomPage() {
   // 开场旁白常在 RoomPage 订阅 onWsMessage 之前就推完（房主点开始后立刻
   // navigate）；用 event id 去重，把 GET /replay 与实时 WS 合成一条时间线。
   const seenEventKeysRef = useRef<Set<string>>(new Set())
+  // 正在流式接收的叙事（exec/28）。收到那条权威的 narration.push 时据此判断
+  // 是「校正已有气泡」还是「新增一条」。放 ref 不放 state：它只在事件回调里
+  // 读写，进 state 会让这个订阅 effect 多一个变化源——而**重订阅窗口就是丢
+  // 消息窗口**（exec/19 #34）。
+  const streamingEventIdsRef = useRef<Set<string>>(new Set())
   // 去重闸门：见过返回 false（丢弃），没见过登记并返回 true（渲染）。
   // 🔴 `id` 缺失时**直接放行**（exec/19 #42）——身份不明就不该假装认识它，
   // 重复显示只是难看，静默丢弃是永久丢消息。
@@ -796,11 +806,53 @@ export default function RoomPage() {
         }])
       } else if (envelope.type === 'narration.push') {
         setTyping(false)
-        if (!dedupe(`narr:${envelope.payload.eventId}`, envelope.payload.eventId)) return
+        const pushedId = envelope.payload.eventId
+        // 🔴 流式已经把同样的内容一段段推过来了（exec/28）：这条完整文本用来
+        // **校正**那条气泡，不是新增一条。两者靠 eventId 认亲。
+        //
+        // 为什么还要校正一遍：delta 是逐段拼的，而这条是服务端落库的那份权威
+        // 全文。正常情况下两者一致，不一致就说明中间漏了一段（丢包/重连），
+        // 这时以落库那份为准——玩家看到的内容与复盘看到的必须是同一份。
+        // 🔴 「这条 eventId 有没有正在流的气泡」必须从 **ref** 读，不能靠
+        // setMessages 的 updater 里写一个标志位再读——updater 是纯函数、
+        // StrictMode 下会被调用两次，拿它当副作用出口会时灵时不灵。
+        if (pushedId && streamingEventIdsRef.current.has(pushedId)) {
+          streamingEventIdsRef.current.delete(pushedId)
+          setMessages(prev => {
+            const idx = prev.findIndex(m => m.type === 'narr' && m.eventId === pushedId)
+            if (idx < 0) return prev
+            const next = [...prev]
+            next[idx] = { ...next[idx], content: envelope.payload.text, streaming: false }
+            return next
+          })
+          return
+        }
+        if (!dedupe(`narr:${pushedId}`, pushedId)) return
         setMessages(prev => [...prev, {
           type: 'narr', sender: '守秘人', content: envelope.payload.text, time: now,
           private: envelope.payload.private === true,
+          eventId: pushedId ?? undefined,
         }])
+      } else if (envelope.type === 'narration.delta') {
+        // 守秘人开始说话了——第一段一到就撤掉"正在思考"，不等整段写完。
+        setTyping(false)
+        const { eventId, seq, text } = envelope.payload
+        // 去重键是 (eventId, seq)：重连补发或重复投递时，同一段不能追加两次。
+        if (!dedupe(`narrdelta:${eventId}:${seq}`, eventId)) return
+        streamingEventIdsRef.current.add(eventId)
+        setMessages(prev => {
+          const idx = prev.findIndex(m => m.type === 'narr' && m.eventId === eventId)
+          if (idx < 0) {
+            return [...prev, {
+              type: 'narr', sender: '守秘人', content: text, time: now,
+              private: envelope.payload.private === true,
+              eventId, streaming: true,
+            }]
+          }
+          const next = [...prev]
+          next[idx] = { ...next[idx], content: next[idx].content + text }
+          return next
+        })
       } else if (envelope.type === 'chat.message') {
         setChatMessages(prev =>
           // 按 messageId 去重：断线重连后重发（相同 clientMessageId）会拿到

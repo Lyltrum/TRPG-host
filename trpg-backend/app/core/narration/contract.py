@@ -29,10 +29,22 @@ class PlayerUtterance:
     text: str
 
 
+#: 叙事流式到达的一段（`exec/28`）。参数是 `(seq, text)`。
+#:
+#: 🔴 传进来的每一段**都已经过完纪律层与泄密守门**——推出去的字收不回来，
+#: 所以守门在推之前。实现方不要再对它做任何裁剪。
+#:
+#: 不传就是不流式：`Narrator` 的实现可以完全忽略它（非 keeper 的 Fallback /
+#: DeepSeekNarrator 就没有"边写边推"这个概念）。
+NarrationDeltaSink = Callable[[int, str], Awaitable[None]]
+
+
 @dataclass(frozen=True, slots=True)
 class NarrationContext:
     """生成一段叙事所需的全部上下文。调用方（WS 层）负责准备好这些字段——
-    本模块不查库，也不知道房间/玩家在数据库里长什么样。"""
+    本模块不查库，也不知道房间/玩家在数据库里长什么样。
+
+    （`NarrationDeltaSink` 定义在本类之前，因为下面的字段注解要用它。）"""
 
     utterance: str
     player_nickname: str
@@ -60,6 +72,10 @@ class NarrationContext:
     # 聚光灯（exec/14 P5.2）：这一轮要把镜头转向谁。由导演层按「谁最久没被
     # 点到」算出来，非空时 keeper 强制注入引导。None = 普通心跳。
     spotlight_nickname: str | None = None
+    # 叙事流式（exec/28）：传了就边写边推，不传就照旧攒完整段再发。
+    # 🔴 它**不改变返回值**——`NarrationOutcome.text` 仍然是完整的一段话，
+    # 落库、replay、历史全部照原样走。delta 只是提前把同样的内容送到玩家眼前。
+    on_delta: NarrationDeltaSink | None = None
 
 
 @dataclass(frozen=True, slots=True)

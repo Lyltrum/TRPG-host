@@ -118,6 +118,8 @@ _MODELS: list[type[BaseModel]] = [
     chat.ChatMessageRead,
     # HP 结构化广播（feat/keeper-agent，真人实测 09-#4 修复）
     ws.CharacterStatChangedPayload,
+    # 叙事流式（feat/keeper-agent，exec/28）
+    ws.NarrationDeltaPayload,
 ]
 
 _DEFAULT_OUT_PATH = Path(__file__).resolve().parent.parent / ".schema-export" / "models.schema.json"

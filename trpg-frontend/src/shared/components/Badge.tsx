@@ -7,16 +7,21 @@ interface BadgeProps {
   children: ReactNode
 }
 
+/** 🔴 实色描边，不是浅色透明底：12% 的底压在纸板上几乎看不出来
+ *  （这一轮已经因为同一条改过难度徽标和游戏索引色，这里是漏网的第三处）。
+ *  同理方角不是圆角胶囊，字号也从 10px 抬到 10.5px 的中文小字下限。 */
 const variantStyles: Record<BadgeVariant, string> = {
-  success: 'bg-[rgba(74,138,74,0.12)] text-mold',
-  info: 'bg-[rgba(74,112,152,0.12)] text-ink-blue',
-  default: 'bg-[rgba(138,130,118,0.12)] text-text-muted',
-  warning: 'bg-[rgba(184,151,106,0.12)] text-brass-dark',
+  success: 'border-mold text-mold',
+  info: 'border-ink-blue text-ink-blue',
+  default: 'border-text-muted text-text-muted',
+  warning: 'border-brass-bright text-brass-dark',
 }
 
 export default function Badge({ variant = 'default', children }: BadgeProps) {
   return (
-    <span className={`inline-block px-[10px] py-[2px] rounded-[99px] text-[10px] font-semibold ${variantStyles[variant]}`}>
+    <span
+      className={`inline-block px-2 py-[1px] border-2 text-[10.5px] font-bold ${variantStyles[variant]}`}
+    >
       {children}
     </span>
   )

@@ -29,6 +29,7 @@ clip_narration`，横跨两片能力（`narration` 与 `access`）。流式版�
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from time import perf_counter
 
 import structlog
 
@@ -67,6 +68,11 @@ class NarrationStream:
         self._pieces: list[str] = []
         self._hits: list[LeakHit] = []
         self._truncated = False
+        # 耗时埋点（纯观测）。🔴 量的是**第一段可推给玩家的文本**，不是第一个
+        # token——玩家看见字的那一刻才算数，token 到了但整句还没闭合、或者那句
+        # 被纪律层砍掉了，屏幕上仍然什么都没有。
+        self._first_delta_ms: float | None = None
+        self._total_ms: float | None = None
 
     @property
     def text(self) -> str:
@@ -80,10 +86,22 @@ class NarrationStream:
     def truncated(self) -> bool:
         return self._truncated
 
+    @property
+    def first_delta_ms(self) -> float | None:
+        """从开流到**玩家看见第一个字**的毫秒数。一段都没推出去时为 None。"""
+        return self._first_delta_ms
+
+    @property
+    def total_ms(self) -> float | None:
+        return self._total_ms
+
     async def __aiter__(self) -> AsyncIterator[str]:
+        started = perf_counter()
         async for delta in self._call:
             piece = self._admit(self._streamer.feed(delta))
             if piece:
+                if self._first_delta_ms is None:
+                    self._first_delta_ms = (perf_counter() - started) * 1000
                 yield piece
             if self._truncated:
                 # 到量了就不再往下读——超出部分的解码时间与费用直接省掉
@@ -91,7 +109,10 @@ class NarrationStream:
         if not self._truncated:
             tail = self._admit(self._streamer.finish())
             if tail:
+                if self._first_delta_ms is None:
+                    self._first_delta_ms = (perf_counter() - started) * 1000
                 yield tail
+        self._total_ms = (perf_counter() - started) * 1000
         log_leak_hits(self._hits, room_id=self._room_id)
 
     def _admit(self, piece: str) -> str:

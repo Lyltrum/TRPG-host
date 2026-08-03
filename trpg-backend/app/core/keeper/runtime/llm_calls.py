@@ -19,6 +19,8 @@ v1 把两件事塞进一次调用，实测被写作本能碾压（该掷不掷/�
 
 from __future__ import annotations
 
+from time import perf_counter
+
 import structlog
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import ValidationError
@@ -63,6 +65,13 @@ async def adjudicate(client: TapedClient, instructions: str, situation: str) -> 
         {"role": "user", "content": situation + "\n\n请输出本轮的裁决 JSON。"},
     ]
     last_error: Exception | None = None
+    # 🔴 耗时埋点（`exec/28`）。**纯观测，不改任何行为。**
+    #
+    # 为什么必须有它：玩家反馈"首字要等 5-6 秒"时，我拿叙事那一拍实测的 1.2s
+    # 去对，对不上——因为裁决这一拍全程干等（JSON mode 要完整 JSON 才能解析，
+    # 没法流式），它才是大头。项目判据「慢要先定位是哪一拍慢」在这里又应验了
+    # 一次，而当时**没有任何数据能分解这两拍**。
+    started = perf_counter()
     for attempt in range(1 + ADJUDICATE_RETRIES):
         response = await client.chat.completions.create(
             tape_kind="adjudicate",
@@ -92,7 +101,14 @@ async def adjudicate(client: TapedClient, instructions: str, situation: str) -> 
             )
             continue
         try:
-            return KeeperDecision.model_validate_json(raw)
+            decision = KeeperDecision.model_validate_json(raw)
+            logger.info(
+                "keeper_adjudicate_timing",
+                elapsed_ms=round((perf_counter() - started) * 1000),
+                attempts=attempt + 1,
+                raw_len=len(raw),
+            )
+            return decision
         except ValidationError as exc:
             last_error = exc
             messages.append({"role": "assistant", "content": raw})
@@ -105,6 +121,7 @@ async def adjudicate(client: TapedClient, instructions: str, situation: str) -> 
     logger.warning(
         "keeper_adjudicate_fallback",
         error=str(last_error),
+        elapsed_ms=round((perf_counter() - started) * 1000),
     )
     return KeeperDecision(
         thinking=f"裁决解析失败兜底：{last_error}",

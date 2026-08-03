@@ -666,6 +666,10 @@ class KeeperAgent(Narrator):
             raw_len=len(stream.raw),
             emitted_len=len(stream.text),
             truncated=stream.truncated,
+            # 这两个数配合 `keeper_adjudicate_timing` 才能回答"5 秒花在哪一拍"。
+            # 单看任何一个都会得出错的结论——我就这么错过一次。
+            first_delta_ms=round(stream.first_delta_ms) if stream.first_delta_ms else None,
+            total_ms=round(stream.total_ms) if stream.total_ms else None,
         )
         return stream.text
 

@@ -95,6 +95,12 @@ export default function CreateRoomPage() {
     <ShellPage
       title="创建房间"
       onBack={() => { store.reset(); setCreateForm({ roomName: '', maxPlayers: DEFAULT_MAX_PLAYERS }); navigate('/home') }}
+      // 🔴 整组内容在剩余空间里**居中**，空白平均分到上下两端。
+      // 这页比屏幕短，按钮无论贴内容还是贴底，空白都会全堆在一头（两种都试过
+      // 也都被判"空隙太大"）。问题不是按钮放哪，是**空白没有被分匀**。
+      // 内容一旦长过屏幕，min-h-full 让容器跟着内容长，justify-center 自动失效，
+      // 不会把顶部顶出滚动区。
+      contentClassName="justify-center py-4"
     >
       <div className="px-5 flex flex-col gap-3">
         {/* ── Room Settings ── */}
@@ -209,7 +215,7 @@ export default function CreateRoomPage() {
             `mt-auto`               → 按钮被顶到屏幕最底，概览与它之间空一大块。
           这页是**从上往下填的表单**，最后一步就该接在最后一栏后面。页面底部
           剩下的空白是纸板本身，不需要被内容填满。 */}
-      <div className="px-5 pt-3 pb-8">
+      <div className="px-5 pt-3">
         {createError && <p className="text-[11.5px] text-rust-dark text-center mb-2">{createError}</p>}
         <button onClick={handleCreate} disabled={!canCreate}
           className={`w-full py-3 text-[14px] font-extrabold tracking-[0.16em] indent-[0.16em] transition-all flex items-center justify-center gap-2 ${

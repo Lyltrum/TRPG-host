@@ -83,7 +83,7 @@ export default function JoinRoomPage() {
           className={`w-full max-w-[280px] py-3 text-[14px] font-extrabold tracking-[0.16em] indent-[0.16em] transition-all ${
             roomCode.length >= 4 && !joining
               ? 'press bg-rust text-[#fff5ea]'
-              : 'border-2 border-text-dim/50 text-text-dim cursor-not-allowed'
+              : 'border-2 border-dashed border-text-primary/35 text-text-muted cursor-not-allowed'
           }`}>
           {joining ? '加入中…' : '加入房间'}
         </button>

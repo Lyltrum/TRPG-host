@@ -31,6 +31,21 @@ from app.dto.game import OccupationSpec, RulesetRead
 
 SKILL_CAP = 99
 
+# COC7 的成功等级门槛：困难 = 技能值的一半，极难 = 五分之一（都向下取整）。
+#
+# 🔴 **判定与展示必须共用这一份除数。** 判定在
+# `keeper/primitives/dice.py::evaluate_check`，展示在角色卡上的「值 / 半 /
+# 五分之一」三格——前端要自己除 2、除 5 的话，这个规则常量就有了第二份拷贝，
+# 改规则时必漏一处。所以这里定义一次，`dice.py` import 它、`content.py` 把它
+# 声明进 ruleset 发给前端，前端只做除法。
+#
+# 每项：(id, 给人看的名字, 除数)。
+SUCCESS_TIERS: tuple[tuple[str, str, int], ...] = (
+    ("hard", "困难", 2),
+    ("extreme", "极难", 5),
+)
+SUCCESS_TIER_DIVISORS = {tier_id: divisor for tier_id, _, divisor in SUCCESS_TIERS}
+
 # 建卡时不允许分配点数的技能（issue #114）。
 #
 # 规则依据（`COC7空白卡CY23Final.xlsx` 两处，第二处即本项目用作信用评级分账

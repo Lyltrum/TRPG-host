@@ -16,6 +16,7 @@
   `icon` 字段是纯 UI 展示用的 emoji，不属于规则数据，未移植。
 """
 
+from app.core.coc7.rules import SUCCESS_TIERS
 from app.dto.game import (
     AgeRangeSpec,
     AttributePointBuyRules,
@@ -24,6 +25,7 @@ from app.dto.game import (
     RulesetRead,
     SkillChoiceSlot,
     SkillSpec,
+    SuccessTierSpec,
 )
 
 COC7_ATTRIBUTES: list[AttributeSpec] = [
@@ -7793,4 +7795,9 @@ def build_coc7_ruleset() -> RulesetRead:
         age_range=COC7_AGE_RANGE,
         skills=COC7_SKILLS,
         occupations=COC7_OCCUPATIONS,
+        # 除数不在这里写字面量：跟服务端判定共用 `rules.SUCCESS_TIERS`。
+        success_tiers=[
+            SuccessTierSpec(id=tier_id, label=label, divisor=divisor)
+            for tier_id, label, divisor in SUCCESS_TIERS
+        ],
     )

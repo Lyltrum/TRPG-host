@@ -9,6 +9,8 @@ import random
 import re
 from dataclasses import dataclass
 
+from app.core.coc7.rules import SUCCESS_TIER_DIVISORS
+
 # COC7 成功等级（由高到低）。大成功/大失败按 7 版规则：
 # 01 恒为大成功；技能<50 时 96-100 大失败，技能>=50 时仅 100 大失败。
 LEVEL_CRITICAL = "大成功"
@@ -61,14 +63,17 @@ def evaluate_check(rolled: int, target: int) -> CheckOutcome:
 
     `target` 是技能/属性的完整值；困难=一半、极难=五分之一由这里换算——
     工具层报告完整等级，"这次检定要求什么难度"由 agent 对照模组要求解释。
+
+    🔴 除数来自 `coc7.rules.SUCCESS_TIERS`，跟角色卡上那三格展示的是**同一份**
+    ——两处各写一遍的话，改规则时必漏一处。
     """
     if rolled == 1:
         level = LEVEL_CRITICAL
     elif (target < 50 and rolled >= 96) or rolled == 100:
         level = LEVEL_FUMBLE
-    elif rolled <= target // 5:
+    elif rolled <= target // SUCCESS_TIER_DIVISORS["extreme"]:
         level = LEVEL_EXTREME
-    elif rolled <= target // 2:
+    elif rolled <= target // SUCCESS_TIER_DIVISORS["hard"]:
         level = LEVEL_HARD
     elif rolled <= target:
         level = LEVEL_REGULAR

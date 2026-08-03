@@ -28,6 +28,12 @@ from app.core.coc7.rules import (
     resolve_max_hp,
     validate_character,
 )
+from app.core.keeper.primitives.dice import (
+    LEVEL_EXTREME,
+    LEVEL_HARD,
+    LEVEL_REGULAR,
+    evaluate_check,
+)
 from app.dto.game import (
     AttributeSpec,
     OccupationSpec,
@@ -1047,3 +1053,25 @@ def test_max_hp_falls_back_to_the_formula_not_to_the_current_value() -> None:
 def test_max_hp_is_unknown_for_a_draft_with_no_attributes() -> None:
     """草稿卡还没有属性可算——返回 None，不返回 0（0 会被当成一个真实上限）。"""
     assert resolve_max_hp({}, {}) is None
+
+
+# ── 难度分档：判定与展示必须同源 ────────────────────────────────────
+
+
+def test_ruleset_declares_the_same_divisors_the_dice_judge_with() -> None:
+    """🔴 ruleset 发给前端的除数，必须就是 `evaluate_check` 判定时用的那两个。
+
+    这条断言守的是「同一份知识不写两处」：角色卡上的「值 / 半 / 五分之一」
+    三格是展示，掷骰判定是裁决，两者用同一个除数才不会各说各话。做法是让
+    `dice.py` 与 ruleset 都从 `SUCCESS_TIERS` 取，这里再从**行为**上验一遍
+    ——直接比常量的话，两边一起改错也发现不了。
+    """
+    tiers = {tier.id: tier.divisor for tier in RULESET.success_tiers}
+    assert tiers == {"hard": 2, "extreme": 5}
+
+    target = 70
+    # 恰好压在门槛上要算进这一档，门槛 +1 就掉出去（向下取整的边界）
+    assert evaluate_check(target // tiers["extreme"], target).level == LEVEL_EXTREME
+    assert evaluate_check(target // tiers["extreme"] + 1, target).level == LEVEL_HARD
+    assert evaluate_check(target // tiers["hard"], target).level == LEVEL_HARD
+    assert evaluate_check(target // tiers["hard"] + 1, target).level == LEVEL_REGULAR

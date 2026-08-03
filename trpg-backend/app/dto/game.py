@@ -135,6 +135,22 @@ class AgeRangeSpec(CamelModel):
     max_value: int
 
 
+class SuccessTierSpec(CamelModel):
+    """一档比"成功"更严的成功等级：门槛 = 技能值 ÷ `divisor`（向下取整）。
+
+    COC7 里是困难（÷2）和极难（÷5）。声明成数据而不是让客户端写死除数，是因为
+    **同一份除数还要用于服务端判定**（`keeper/primitives/dice.py`）——角色卡上
+    那三格展示与真正的裁决必须同源，否则改规则时必漏一处。
+
+    没声明这一项的规则系统（非 COC7 的自定义系统）就是没有这个概念，客户端
+    什么都不该画——那不是兜底，是如实反映"这套规则里没有难度分档"。
+    """
+
+    id: str
+    label: str
+    divisor: int
+
+
 class RulesetRead(CamelModel):
     """建卡所需的规则数据：属性/技能/职业目录（`GET /systems/{systemId}/ruleset`）。"""
 
@@ -146,3 +162,5 @@ class RulesetRead(CamelModel):
     age_range: AgeRangeSpec | None = None
     skills: list[SkillSpec]
     occupations: list[OccupationSpec]
+    # 难度分档（困难/极难）。空列表 = 这套规则没有分档概念，见 SuccessTierSpec。
+    success_tiers: list[SuccessTierSpec] = []

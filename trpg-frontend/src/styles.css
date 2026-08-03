@@ -94,6 +94,34 @@
     --c-text-dim: 103 88 66; /* ≈ 4.3:1 */
   }
 
+  /* 🔴 外壳主题：**桌游盒**（登录 / 主页 / 选游戏 / 我的游戏 …）。
+     跟 `.theme-coc` 是并列的两个作用域，互不影响：
+       `.theme-shell` = 房间**之外**的平台（要装下四款游戏，不能是克苏鲁味）
+       `.theme-coc`   = 进了房间之后的卷宗（胡桃木 / 牛皮纸）
+     两者共用同一组语义 token，所以同一批组件在哪边都能用。
+
+     材质是**印刷品**：厚纸板 + 硬描边 + 实心偏移投影。故意不用渐变与发光
+     ——那是另一档（霓虹）的语言，混进来这一档就散了。 */
+  .theme-shell {
+    --c-page: 231 225 212; /* 厚纸板 */
+    --c-panel: 222 214 198;
+    --c-card: 244 240 230; /* 压在纸板上的浅色纸片（输入框 / 卡片） */
+    --c-input: 244 240 230;
+    --c-border-light: 36 31 25; /* 🔴 描边就是墨色本身，不是浅灰——硬描边是这一档的骨架 */
+    --c-border-mid: 36 31 25;
+    --c-brass: 201 69 47; /* 主色：朱红油墨 */
+    --c-brass-dark: 47 109 140; /* 次色：蓝版油墨（套印的另一版） */
+    --c-brass-bright: 232 163 61;
+    --c-rust: 201 69 47;
+    --c-rust-dark: 154 44 28;
+    --c-mold: 74 138 92;
+    --c-ink-blue: 47 109 140;
+    --c-text-primary: 36 31 25;
+    --c-text-body: 60 52 41;
+    --c-text-muted: 92 83 71; /* ≈ 5.6:1 打在纸板上 */
+    --c-text-dim: 122 113 100; /* ≈ 3.6:1，最弱一档 */
+  }
+
   * {
     margin: 0;
     padding: 0;
@@ -443,6 +471,66 @@
     outline: none;
     background-color: rgba(255, 255, 255, 0.42);
     border-color: #8a6a2e;
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     外壳（`.theme-shell`）的材质词汇：印刷品。
+     ══════════════════════════════════════════════════════════════ */
+
+  /* 纸板颗粒。跟 `.paper-grain` 同源，只是浓一点——纸板比纸粗。 */
+  .board-grain::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    mix-blend-mode: multiply;
+    opacity: 0.9;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='c'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='80' height='80' filter='url(%23c)' opacity='0.11'/%3E%3C/svg%3E");
+  }
+
+  /* 满铺游戏暗纹：骰子 / 卡牌 / 计分板 / 罗盘。
+     它不只是花纹——**它说了一件真话**：这是个多游戏平台。以后加游戏可以往
+     这张图里加图形。全部原创线描。 */
+  .board-motif::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.13;
+    background-repeat: repeat;
+    background-size: 120px 120px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' fill='none' stroke='%23241f19' stroke-width='3'%3E%3Crect x='14' y='14' width='34' height='34'/%3E%3Ccircle cx='24' cy='24' r='3.4' fill='%23241f19' stroke='none'/%3E%3Ccircle cx='38' cy='38' r='3.4' fill='%23241f19' stroke='none'/%3E%3Cpath d='M74 22 l16 12 v20 l-16 12 -16-12 v-20z'/%3E%3Cpath d='M22 74 h30 v30 h-30z'/%3E%3Cpath d='M30 82 h14 M30 90 h14 M30 98 h8'/%3E%3Ccircle cx='90' cy='90' r='17'/%3E%3Cpath d='M90 73 v34 M73 90 h34'/%3E%3C/svg%3E");
+  }
+
+  /* 纸板上的可填字段：硬描边方框，聚焦时描边换成朱红（不是发光） */
+  .shell-field {
+    background-color: rgb(var(--c-card));
+    border: 2px solid rgb(var(--c-border-light));
+    color: rgb(var(--c-text-primary));
+  }
+  .shell-field::placeholder {
+    color: rgb(var(--c-text-dim));
+  }
+  .shell-field:focus {
+    outline: none;
+    border-color: rgb(var(--c-rust));
+  }
+
+  /* 🔴 实体按键：硬描边 + **实心偏移投影**（不是模糊阴影）。
+     按下去时投影收掉、整块下沉，模拟一个真的会陷进去的按键。 */
+  .press {
+    border: 2px solid rgb(var(--c-border-light));
+    box-shadow: 3px 3px 0 rgb(var(--c-border-light));
+    transition: transform 0.08s, box-shadow 0.08s;
+  }
+  .press:active:not(:disabled) {
+    transform: translate(3px, 3px);
+    box-shadow: 0 0 0 rgb(var(--c-border-light));
+  }
+  /* 浅一档：卡片、次要控件用，投影不是纯黑 */
+  .press-soft {
+    border: 2px solid rgb(var(--c-border-light));
+    box-shadow: 3px 3px 0 rgb(var(--c-border-light) / 0.32);
   }
 
   /* ── 通用形状：切角。代替圆角，是"不像 iOS"最省事的一处 ── */

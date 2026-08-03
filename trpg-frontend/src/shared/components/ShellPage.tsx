@@ -1,0 +1,48 @@
+import type { ReactNode } from 'react'
+import { ArrowLeft } from 'lucide-react'
+import ShellBand from './ShellBand'
+
+/** 外壳页面的统一骨架：纸板底 + 颗粒 + 满铺暗纹 + 顶部套印色带。
+ *
+ * 十一屏共用一个，所以「背景怎么铺」「色带多宽」「返回键长什么样」都只有一个
+ * 答案，改一次全站生效。这也是上一轮换 `theme-coc` 时学到的：同一件事散在
+ * 十一个页面里，改动必漏。
+ *
+ * `title` 传了就渲染内页顶栏（返回键 + 反白标题压在窄色带上）；不传就是落地屏
+ * （登录 / 主页），色带是宽的、内容自己排。
+ */
+export default function ShellPage({
+  title,
+  onBack,
+  children,
+  contentClassName = '',
+}: {
+  title?: string
+  onBack?: () => void
+  children: ReactNode
+  contentClassName?: string
+}) {
+  const slim = title != null
+  return (
+    <div className="theme-shell board-grain board-motif animate-screen-in relative min-h-full flex flex-col bg-page text-text-primary overflow-hidden">
+      <ShellBand slim={slim} />
+
+      {slim && (
+        <div className="relative z-10 flex items-center gap-2.5 px-4 pt-3.5 pb-3">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="press w-8 h-8 bg-card text-text-primary flex items-center justify-center flex-shrink-0"
+            >
+              <ArrowLeft className="w-[18px] h-[18px]" strokeWidth={2.5} />
+            </button>
+          )}
+          {/* 反白压在色带上：色带是这一行的底衬，不是它上面的装饰 */}
+          <h2 className="text-[17px] font-extrabold tracking-[0.06em] text-[#fff5ea]">{title}</h2>
+        </div>
+      )}
+
+      <div className={`relative z-10 flex-1 flex flex-col ${contentClassName}`}>{children}</div>
+    </div>
+  )
+}

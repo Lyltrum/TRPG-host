@@ -1,24 +1,27 @@
+import BrandMark from '@/shared/components/BrandMark'
+
 // /login 和 /login/register 共用的品牌区块——拆成两个独立路由后，这部分
 // 视觉是唯一还有必要共享的，不用两边各写一遍。
 export default function AuthHeader() {
   return (
-    <div className="flex flex-col items-center pt-[72px] px-5 pb-10">
-      <img
-        src="/logo.png"
-        alt="AI桌游主持人"
-        className="w-20 h-20 mb-4 object-contain"
-      />
-      <h1 className="text-[26px] font-bold text-text-primary tracking-[0.08em] px-2 text-center">
+    <div className="flex flex-col items-center pt-8 px-5 pb-7 text-center">
+      {/* 标志是一枚**压在纸板上的印章**：浅纸片 + 硬描边 + 实心投影，
+          跟按钮同一种做法——标志与界面是一套东西，不是贴上去的一张图。 */}
+      <div className="press-soft w-[62px] h-[62px] mb-3 bg-card text-text-primary flex items-center justify-center">
+        <BrandMark className="w-[60%] h-[60%]" />
+      </div>
+      {/* 标题反白压在色带上（色带由 ShellPage 铺，这里只管压上去） */}
+      <h1 className="text-[22px] font-extrabold text-[#fff5ea] tracking-[0.1em] px-2">
         AI桌游主持人
       </h1>
-      <p className="text-xs text-text-muted tracking-[0.06em] mt-0.5">
+      <p className="text-[11.5px] text-[#fff5ea]/85 tracking-[0.06em] mt-1">
         AI 智能主持 · 多游戏聚会平台
       </p>
-      <div className="mt-7 text-center max-w-[280px]">
-        <span className="inline-block font-mono text-[11px] text-brass-dark bg-[rgba(184,151,106,0.1)] px-3 py-[2px] rounded-[99px] mb-2">
+      <div className="mt-4 max-w-[280px]">
+        <span className="inline-block text-[11px] px-2.5 py-[3px] mb-2.5 border-2 border-text-primary bg-page text-text-primary tracking-[0.05em]">
           狼人杀 · 跑团 · 血染钟楼 等
         </span>
-        <span className="block text-xs text-text-muted leading-[1.7]">
+        <span className="block text-[11.5px] text-text-muted leading-[1.8]">
           扫码即玩，AI 担任主持人
           <br />
           与朋友们畅玩各类桌游与聚会游戏

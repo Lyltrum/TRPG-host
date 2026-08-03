@@ -4,6 +4,7 @@ import { login, fetchMe } from '@/services/auth'
 import { useAuthStore } from '@/stores/auth-store'
 import { friendlyErrorMessage } from '@/services/api-client'
 import AuthHeader from './AuthHeader'
+import ShellPage from '@/shared/components/ShellPage'
 
 // 纯登录页——注册是另一个路由（/login/register），不再用本地 state 切 tab。
 // 登录成功后跳到 /home，那里才是"创建房间/加入房间/浏览已有游戏"这些入口
@@ -46,17 +47,18 @@ export default function LoginPage() {
   if (isLoggedIn) return null
 
   return (
-    <div className="animate-screen-in">
+    <ShellPage>
       <AuthHeader />
 
       <div className="px-5 flex flex-col gap-2.5">
-        <div className="flex gap-2 mb-1">
-          <button className="flex-1 py-2 text-sm font-semibold rounded-sm transition-all bg-brass text-white">
+        {/* 登录/注册是一个**双联开关**（一整块被墨线切成两半），不是两颗按钮 */}
+        <div className="flex border-2 border-text-primary bg-card mb-1">
+          <span className="flex-1 py-2 text-center text-[12.5px] font-bold bg-text-primary text-page">
             登录
-          </button>
+          </span>
           <button
             onClick={() => navigate('/auth/register')}
-            className="flex-1 py-2 text-sm font-semibold rounded-sm transition-all bg-card border border-border-mid text-text-muted"
+            className="flex-1 py-2 text-center text-[12.5px] font-bold text-text-primary"
           >
             注册
           </button>
@@ -66,30 +68,30 @@ export default function LoginPage() {
           value={account}
           onChange={(e) => setAccount(e.target.value)}
           placeholder="账号"
-          className="w-full px-3.5 py-2.5 rounded-sm bg-input border border-border-light text-text-primary text-[15px] outline-none focus:border-brass"
+          className="shell-field w-full px-3 py-2.5 text-[14px]"
         />
         <input
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           type="password"
           placeholder="密码"
-          className="w-full px-3.5 py-2.5 rounded-sm bg-input border border-border-light text-text-primary text-[15px] outline-none focus:border-brass"
+          className="shell-field w-full px-3 py-2.5 text-[14px]"
         />
 
-        {error && <p className="text-xs text-[#c04040] px-1">{error}</p>}
+        {error && <p className="text-[11.5px] text-rust-dark px-1">{error}</p>}
 
         <button
           onClick={submit}
           disabled={loading}
-          className="flex items-center justify-center gap-2 px-6 py-3.5 w-full rounded-sm text-sm font-semibold cursor-pointer transition-all duration-150 border-none font-sans active:scale-[0.97] bg-brass text-white active:bg-brass-dark disabled:opacity-60"
+          className="press w-full py-3 text-[14px] font-extrabold tracking-[0.18em] indent-[0.18em] bg-rust text-[#fff5ea] disabled:opacity-60"
         >
-          {loading ? '登录中…' : '登录'}
+          {loading ? '登录中…' : '登　录'}
         </button>
       </div>
 
-      <p className="text-center pt-6 text-text-dim text-[11px]">
+      <p className="text-center pt-6 pb-4 text-text-dim text-[11px]">
         AI桌游主持人 © 2026
       </p>
-    </div>
+    </ShellPage>
   )
 }

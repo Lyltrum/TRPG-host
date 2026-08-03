@@ -42,7 +42,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -285,6 +285,129 @@ class _TapedCompletions:
             )
             session.flush()
         return response
+
+    def stream(self, *, tape_kind: str, **kwargs: Any) -> StreamCall:
+        """流式版 `create`。返回 `StreamCall`，见它的 docstring。
+
+        🔴 `stream=True` **不进 params**，所以 `request_digest` 与非流式一致，
+        已有磁带可以直接回放、不用重录。磁带记的是"给了什么上下文、模型答了
+        什么"，投递方式不属于那份记录（`exec/28` 第 6 节）。
+        """
+        session = active_session()
+        model = kwargs.get("model", "")
+        messages = list(kwargs.get("messages", []))
+        params = {k: v for k, v in kwargs.items() if k not in ("model", "messages")}
+
+        if session is not None and session.mode == "replay":
+            entry = session.next_entry(
+                kind=tape_kind, model=model, messages=messages, params=params
+            )
+            return _ReplayStreamCall(entry.response_text, entry.finish_reason)
+
+        return _LiveStreamCall(
+            self._inner,
+            kwargs,
+            session=session,
+            tape_kind=tape_kind,
+            model=model,
+            messages=messages,
+            params=params,
+        )
+
+
+class StreamCall:
+    """一次流式补全。
+
+    用法：
+        call = client.chat.completions.stream(tape_kind="narrate", ...)
+        async for delta in call:
+            ...
+        call.text            # 完整原文（落库/记账用它，不是拼 delta）
+        call.finish_reason   # 迭代结束后才可读
+
+    🔴 **回放时按块切完整文本模拟流式，不重录磁带**（`exec/28` 第 6 节）。
+    磁带存的一直是完整响应，流式只是投递方式的变化。
+    """
+
+    #: 回放时模拟的块大小。刻意切得比真实 chunk 碎，让分段器的各条路径都被走到。
+    REPLAY_CHUNK = 8
+
+    def __init__(self) -> None:
+        self._text = ""
+        self._finish_reason: str | None = None
+        self._done = False
+
+    @property
+    def text(self) -> str:
+        return self._text
+
+    @property
+    def finish_reason(self) -> str | None:
+        return self._finish_reason
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        raise NotImplementedError
+
+
+class _ReplayStreamCall(StreamCall):
+    def __init__(self, full_text: str, finish_reason: str | None) -> None:
+        super().__init__()
+        self._full = full_text
+        self._pending_reason = finish_reason
+
+    async def __aiter__(self) -> AsyncIterator[str]:
+        for i in range(0, len(self._full), self.REPLAY_CHUNK):
+            piece = self._full[i : i + self.REPLAY_CHUNK]
+            self._text += piece
+            yield piece
+        self._finish_reason = self._pending_reason
+        self._done = True
+
+
+class _LiveStreamCall(StreamCall):
+    def __init__(
+        self,
+        inner: Any,
+        kwargs: dict[str, Any],
+        *,
+        session: TapeSession | None,
+        tape_kind: str,
+        model: str,
+        messages: list[Any],
+        params: dict[str, Any],
+    ) -> None:
+        super().__init__()
+        self._inner = inner
+        self._kwargs = kwargs
+        self._session = session
+        self._tape_kind = tape_kind
+        self._model = model
+        self._messages = messages
+        self._params = params
+
+    async def __aiter__(self) -> AsyncIterator[str]:
+        stream = await self._inner.create(**self._kwargs, stream=True)
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            delta = getattr(choice.delta, "content", None)
+            if delta:
+                self._text += delta
+                yield delta
+            if choice.finish_reason:
+                self._finish_reason = choice.finish_reason
+        self._done = True
+        if self._session is not None and self._session.mode == "record":
+            self._session.record(
+                kind=self._tape_kind,
+                model=self._model,
+                messages=self._messages,
+                params=self._params,
+                response_text=self._text,
+                finish_reason=self._finish_reason,
+            )
+            self._session.flush()
 
 
 class _TapedChat:

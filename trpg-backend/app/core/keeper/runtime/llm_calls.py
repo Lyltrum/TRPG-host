@@ -30,7 +30,7 @@ from app.core.keeper.narration.prompts import (
     format_narrator_input,
 )
 from app.core.keeper.narration.prose_discipline import clip_narration
-from app.core.llm_tape import TapedClient
+from app.core.llm_tape import StreamCall, TapedClient
 from app.core.narration.deepseek import DEEPSEEK_MODEL
 
 logger = structlog.get_logger()
@@ -112,6 +112,70 @@ async def adjudicate(client: TapedClient, instructions: str, situation: str) -> 
     )
 
 
+def build_narration_input(
+    situation: str,
+    decision: KeeperDecision,
+    report: list[str],
+    issues: list[str],
+    *,
+    max_chars: int,
+    extra_suffix: str = "",
+) -> str:
+    """叙事那一拍的 user 消息。流式与非流式共用一份，防止两条路径的 prompt 漂开。"""
+    length_hint = (
+        f"\n\n【长度硬限】本轮正文不得超过 {max_chars} 字（含标点）。"
+        "超长会被系统截断——请一次写完且写短。"
+    )
+    return (
+        format_narrator_input(situation, decision.narration_guidance, report, issues)
+        + length_hint
+        + extra_suffix
+    )
+
+
+def narrate_prose_stream(
+    client: TapedClient,
+    instructions: str,
+    situation: str,
+    decision: KeeperDecision,
+    report: list[str],
+    issues: list[str],
+    *,
+    max_tokens: int,
+    max_chars: int,
+    extra_suffix: str = "",
+) -> StreamCall:
+    """阶段3的流式版（`exec/28`）。**不做任何裁剪**——纪律层由调用方按段施加。
+
+    刻意跟 `narrate_prose` 分开而不是加个 `stream=` 开关：那个函数的返回值是
+    "已经处理干净的一段话"，而这个返回的是"一条还没过纪律层的原始流"，两者
+    的契约不同，合并只会让调用方分不清手上拿的是哪种。
+
+    prompt 与非流式**共用 `build_narration_input`**，所以两条路径不会漂开。
+    """
+    return client.chat.completions.stream(
+        tape_kind="narrate",
+        model=DEEPSEEK_MODEL,
+        messages=[
+            {"role": "system", "content": instructions},
+            {
+                "role": "user",
+                "content": build_narration_input(
+                    situation,
+                    decision,
+                    report,
+                    issues,
+                    max_chars=max_chars,
+                    extra_suffix=extra_suffix,
+                ),
+            },
+        ],
+        temperature=0.8,
+        max_tokens=max_tokens,
+        extra_body=DISABLE_THINKING,
+    )
+
+
 async def narrate_prose(
     client: TapedClient,
     instructions: str,
@@ -131,14 +195,8 @@ async def narrate_prose(
     hint`），放在这个位置是刻意的（近因效应，模型对最后读到的指令
     服从概率更高，跟 `length_hint` 本身的位置选择同理）。
     """
-    length_hint = (
-        f"\n\n【长度硬限】本轮正文不得超过 {max_chars} 字（含标点）。"
-        "超长会被系统截断——请一次写完且写短。"
-    )
-    user_content = (
-        format_narrator_input(situation, decision.narration_guidance, report, issues)
-        + length_hint
-        + extra_suffix
+    user_content = build_narration_input(
+        situation, decision, report, issues, max_chars=max_chars, extra_suffix=extra_suffix
     )
     response = await client.chat.completions.create(
         tape_kind="narrate",

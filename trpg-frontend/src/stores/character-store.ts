@@ -15,6 +15,9 @@ export interface CompletedCharacter {
   background: string
   notes: string
   derived: { hp: number; san: number; mp: number; db: string; move: number }
+  // HP 上限（血条的分母，exec/26 #67），由后端权威给出。可选——建卡向导
+  // 自己拼出来的卡、以及这份本地缓存里的老数据都没有它。
+  hpMax?: number | null
   // 结构化背景故事（character-build-migration），可选——旧缓存/没填过的
   // 角色卡没有这个字段，读取处要能容忍 undefined。
   backgroundDetail?: BackgroundDetail

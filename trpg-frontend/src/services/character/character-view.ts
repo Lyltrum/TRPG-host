@@ -57,6 +57,9 @@ export function toCompletedCharacter(
       db: derived.DB == null ? '0' : String(derived.DB),
       move: num(derived.MOV),
     },
+    // 🔴 血条的分母走这个字段，**不要**拿 derived.HP 当上限：守秘人扣过血
+    // 之后那一格是当前值（exec/26 #67）。
+    hpMax: saved.hpMax ?? null,
     // 后端把这 8 个引导字段当**不透明字典**存取（不做逐键校验，键的含义是
     // 前端表单的事）。渲染侧统一走 BACKGROUND_DETAIL_FIELDS 逐键取值，缺键
     // 就是 undefined、自然被过滤掉，所以这个断言不会造成运行时问题。

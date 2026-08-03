@@ -182,6 +182,64 @@ async def test_get_character_reads_back_saved_card(client: AsyncClient) -> None:
     assert data["generationMethod"] == "pointbuy"
 
 
+async def test_wounded_character_reads_back_its_hp_ceiling(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """带伤的卡读回来时 `hpMax` 是**上限**，不是当前值（`exec/26` #67）。
+
+    守秘人改 HP 时把原值备份进 `derived_stats["HP_MAX"]`，`HP` 那一格从此是
+    当前值。此前读接口只给 `derivedStats`，客户端拿 `HP` 当血条分母 → 一个
+    12 血扣到 4 的调查员重进房间会显示满血（本局还没被扣过血，前端的"本局
+    见过的最高 HP"估计不出来）。
+    """
+    room = await create_room(client)
+    draft = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
+    )
+    character_id = draft.json()["data"]["characterId"]
+    await client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+        json=BUILT_CHARACTER,
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    # 模拟守秘人扣血后的落库形状（write_stat：备份上限 + 写当前值）
+    character = await db_session.get(Character, character_id)
+    assert character is not None
+    character.derived_stats = {**(character.derived_stats or {}), "HP": 4, "HP_MAX": 12}
+    await db_session.commit()
+
+    own = await client.get(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert own.status_code == 200, own.text
+    assert own.json()["data"]["hpMax"] == 12
+
+
+async def test_never_wounded_character_reads_back_hp_ceiling_from_the_rules(
+    client: AsyncClient,
+) -> None:
+    """从没被改过 HP 的卡没有 `HP_MAX` 备份，上限按规则公式重算。"""
+    room = await create_room(client)
+    draft = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
+    )
+    character_id = draft.json()["data"]["characterId"]
+    await client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+        json=BUILT_CHARACTER,
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    response = await client.get(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    # (CON 60 + SIZ 60) // 10
+    assert response.json()["data"]["hpMax"] == 12
+
+
 async def test_list_party_characters_shows_teammates(client: AsyncClient) -> None:
     """队友卡（exec/14 P5.3）：方向与 P5.2 相反的一条——**放开**。
 

@@ -603,15 +603,11 @@ export default function RoomPage() {
   const [showDice, setShowDice] = useState(false)
   const [pendingCheck, setPendingCheck] = useState<PendingCheck | null>(null)
   // 首次待掷检定教学（session 内一次）
-  // 🔴 血条的分母。三个来源，按可靠度排：
-  //   ① 服务端随 character.stat_changed 下发的 hpMax（首次扣血后就有，最准）
-  //   ② 本局见过的最高 HP（进房时没受伤的话就等于满值）
-  //   ③ 当前 HP（第一帧，此时必然满格）
-  // ⚠️ 只有 ② 是估计值：玩家**带伤进房**且本局还没被扣过血时，分母会偏小。
-  //    要根治得把 HP_MAX 加进角色卡的读接口 DTO，那是后端 + SDK 的活。
-  const [hpMax, setHpMax] = useState<number | null>(null)
-  // 血条分母：永远 ≥ 当前值，否则宽度会溢出成 >100%
-  const hpCeiling = Math.max(hpMax ?? 0, character?.derived.hp ?? 1, 1)
+  // 🔴 血条的分母由**后端权威给出**（`CharacterRead.hpMax`，exec/26 #67）：
+  // `derived.hp` 在被守秘人扣过血之后是当前值，拿它当分母会让带伤进房的
+  // 调查员显示成满血。本地缓存的老卡没有这个字段，那一帧退回当前 HP。
+  // `Math.max`：分母永远 ≥ 当前值，否则宽度会溢出成 >100%。
+  const hpCeiling = Math.max(character?.hpMax ?? 0, character?.derived.hp ?? 1, 1)
   const [showDiceTip, setShowDiceTip] = useState(() => {
     try {
       return sessionStorage.getItem('aidm-dice-tip-seen') !== '1'
@@ -885,13 +881,12 @@ export default function RoomPage() {
         // 现在渲染成独立的系统提示（跟 check.request 的"守秘人请求你进行
         // XX检定"同一类气泡），只更新**自己**的角色卡，但提示对全房间可见——
         // HP 变化在 COC 里本来就是桌面上大家都看得见的公开信息。
-        const { playerId: targetId, hp, hpMax: hpMaxFromServer, reason } = envelope.payload
+        const { playerId: targetId, hp, reason } = envelope.payload
         const isSelf = targetId === playerId
         const prevHp = isSelf ? characterRef.current?.derived.hp : undefined
         if (isSelf) {
-          // 🔴 服务端在首次扣血时把上限备份进 derived_stats.HP_MAX 并随事件下发，
-          // 这里必须接住——否则血条没有分母，只能一直画满（那正是此前的 bug）。
-          if (typeof hpMaxFromServer === 'number') setHpMax(hpMaxFromServer)
+          // 重拉角色卡：新的 HP 与上限（hpMax）都从这一次读接口来，两个数字
+          // 同源同帧，不会出现分子已更新、分母还是旧的那种半拍。
           reloadCharacterRef.current()
         }
         const label = prevHp !== undefined && prevHp !== hp

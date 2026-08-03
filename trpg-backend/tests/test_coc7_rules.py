@@ -25,6 +25,7 @@ from app.core.coc7.rules import (
     compute_preview,
     evaluate_skill_base,
     evaluate_skill_points_formula,
+    resolve_max_hp,
     validate_character,
 )
 from app.dto.game import (
@@ -1027,3 +1028,22 @@ def test_effective_attributes_within_age_adjustment_magnitude_is_not_flagged() -
     )
 
     assert result.validation == []
+
+
+# ── HP 上限（血条的分母，exec/26 #67）──────────────────────────────────
+
+
+def test_max_hp_prefers_the_backup_written_when_hp_was_first_changed() -> None:
+    """有 `HP_MAX` 备份就用它——那是这张卡被改动前的真实上限。"""
+    assert resolve_max_hp({"HP": 4, "HP_MAX": 12}, {"CON": 60, "SIZ": 60}) == 12
+
+
+def test_max_hp_falls_back_to_the_formula_not_to_the_current_value() -> None:
+    """没备份 = 这张卡的 HP 从没被改过，按公式重算；**不读 `HP` 那一格**
+    （被改过的卡上它是当前值，读它会让带伤的角色分母偏小）。"""
+    assert resolve_max_hp({"HP": 4}, {"CON": 60, "SIZ": 60}) == 12
+
+
+def test_max_hp_is_unknown_for_a_draft_with_no_attributes() -> None:
+    """草稿卡还没有属性可算——返回 None，不返回 0（0 会被当成一个真实上限）。"""
+    assert resolve_max_hp({}, {}) is None

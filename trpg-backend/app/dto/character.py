@@ -91,6 +91,10 @@ class CharacterRead(CamelModel):
     # 的 `attributes` 去猜。本列之前建的卡没有这份数据，恒为 `None`。
     allocated_attributes: dict[str, int] | None = None
     derived_stats: dict[str, int | str] = Field(default_factory=dict)
+    # HP 上限（血条的分母，`exec/26` #67）。`derived_stats["HP"]` 在被守秘人
+    # 改过之后是**当前值**，客户端拿它当分母会让带伤的角色显示成满血；上限
+    # 由后端按 `resolve_max_hp` 权威给出。还没有属性的草稿卡为 `None`。
+    hp_max: int | None = None
     skills: dict[str, int] = Field(default_factory=dict)
     equipment: list[str] = Field(default_factory=list)
     occupation_id: int | None = None

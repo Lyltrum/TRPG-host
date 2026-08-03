@@ -3,12 +3,14 @@ import { BookOpen, Clock, Users, ChevronRight, Upload } from 'lucide-react'
 import { getGameById, getScenariosBySystem, SYSTEM_COLORS } from '@/config/games'
 import { useGameStore } from '@/stores/game-store'
 import Badge from '@/shared/components/Badge'
+import ShellPage from '@/shared/components/ShellPage'
 import type { Scenario } from '@/types/game'
 
+// 难度三档：实色描边而不是浅色底——纸板上浅底色块几乎看不出来
 const difficultyStyles: Record<string, string> = {
-  '入门': 'bg-[rgba(74,138,74,0.12)] text-[#4a8a4a]',
-  '进阶': 'bg-[rgba(184,151,106,0.12)] text-[#b8976a]',
-  '挑战': 'bg-[rgba(192,64,64,0.12)] text-[#c04040]',
+  '入门': 'border-[#4a8a5c] text-[#3a6b46]',
+  '进阶': 'border-[#c9822f] text-[#8a5a1e]',
+  '挑战': 'border-[#c9452f] text-[#9a2c1c]',
 }
 
 export default function ScenarioSelectionPage() {
@@ -36,23 +38,12 @@ export default function ScenarioSelectionPage() {
   }
 
   return (
-    <div className="animate-screen-in">
-      <div className="flex items-center gap-2.5 px-5 pb-3 pt-1">
-        <button
-          onClick={() => navigate('/home/create/games')}
-          className="w-[34px] h-[34px] rounded-full bg-card border border-border-light flex items-center justify-center flex-shrink-0 active:bg-panel active:scale-[0.94] transition-all duration-150"
-        >
-          <svg className="w-[18px] h-[18px] text-text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
-          </svg>
-        </button>
-        <h2 className="text-lg font-bold text-text-primary">选择模组</h2>
-      </div>
-      <p className="text-xs text-text-muted px-5 pb-4">
+    <ShellPage title="选择模组" onBack={() => navigate('/home/create/games')}>
+      <p className="text-[11.5px] text-text-muted px-5 pb-3.5">
         {game?.name || '跑团'} · {systemName}
       </p>
 
-      <div className="px-5 flex flex-col gap-3.5">
+      <div className="px-5 flex flex-col gap-3">
         {scenarios.length === 0 && (
           <div className="text-center py-10 text-text-muted text-sm">
             暂无预置模组，您可以自行导入
@@ -66,31 +57,31 @@ export default function ScenarioSelectionPage() {
             <div
               key={scenario.id}
               onClick={() => handleSelect(scenario)}
-              className="bg-card border border-border-light rounded-md p-5 cursor-pointer active:scale-[0.98] transition-all duration-200"
+              className="press-soft bg-card p-3.5 cursor-pointer active:translate-x-[3px] active:translate-y-[3px] active:shadow-none transition-all duration-100"
             >
-              <div className="flex items-start gap-3 mb-3">
-                <div className={`w-12 h-12 rounded-[12px] flex-shrink-0 flex items-center justify-center ${colors.iconBg}`}>
-                  <BookOpen className={`w-6 h-6 ${colors.iconColor}`} />
+              <div className="flex items-start gap-3 mb-2.5">
+                <div className="w-11 h-11 flex-shrink-0 flex items-center justify-center border-2 border-text-primary bg-page text-text-primary">
+                  <BookOpen className="w-[22px] h-[22px]" strokeWidth={2} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-[17px] font-bold text-text-primary">{scenario.name}</h3>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${diffStyle}`}>
+                    <h3 className="text-[16px] font-extrabold text-text-primary">{scenario.name}</h3>
+                    <span className={`px-1.5 py-[1px] text-[10.5px] font-bold border-2 ${diffStyle}`}>
                       {scenario.difficulty}
                     </span>
                   </div>
-                  <p className="text-xs text-text-muted mt-0.5 font-mono tracking-[0.03em]">
+                  <p className="text-[11px] text-text-muted mt-0.5 font-mono tracking-[0.03em]">
                     {scenario.nameEn}
                   </p>
                 </div>
-                <div className="text-text-dim flex-shrink-0 mt-1">
+                <div className="text-text-muted flex-shrink-0 mt-1">
                   <ChevronRight className="w-[18px] h-[18px]" />
                 </div>
               </div>
-              <p className="text-xs text-text-muted leading-[1.7] line-clamp-2 mb-3">
+              <p className="text-[11.5px] text-text-muted leading-[1.7] line-clamp-2 mb-2.5">
                 {scenario.description}
               </p>
-              <div className="flex items-center gap-4 text-[11px] text-text-dim">
+              <div className="flex items-center gap-3.5 text-[10.5px] text-text-muted">
                 <span className="flex items-center gap-1">
                   <Users className="w-3.5 h-3.5" />
                   {scenario.playerCount}
@@ -109,20 +100,20 @@ export default function ScenarioSelectionPage() {
       </div>
 
       {/* 自行导入模组 */}
-      <div className="px-5 mt-5">
+      <div className="px-5 mt-4">
         <button
           onClick={() => {
             /* TODO: 导入模组的弹窗或页面 */
           }}
-          className="w-full flex items-center justify-center gap-2 py-3.5 rounded-sm border border-dashed border-border-mid bg-transparent text-text-muted text-sm active:bg-panel transition-all duration-150"
+          className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-text-primary/45 text-text-muted text-[13px] font-semibold active:bg-card transition-all"
         >
           <Upload className="w-[18px] h-[18px]" />
           自行导入模组
         </button>
-        <p className="text-[11px] text-text-dim text-center mt-2 mb-6">
+        <p className="text-[10.5px] text-text-dim text-center mt-2 mb-6">
           支持 JSON / YAML 格式的模组文件
         </p>
       </div>
-    </div>
+    </ShellPage>
   )
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Play, ScrollText, Hash, Plus } from 'lucide-react'
+import { Play, ScrollText, Hash, Plus } from 'lucide-react'
+import ShellPage from '@/shared/components/ShellPage'
 import { listMyRooms, joinRoomByCode, getRoomInfo, type MyRoomSummary } from '@/services/room'
 import { friendlyErrorMessage } from '@/services/api-client'
 import { useAuthStore } from '@/stores/auth-store'
@@ -79,53 +80,49 @@ export default function MyRoomsPage() {
   }
 
   return (
-    <div className="animate-screen-in min-h-screen bg-page pb-10">
-      <div className="flex items-center gap-2.5 px-5 pt-3 pb-2">
-        <button onClick={() => navigate('/home')} className="w-[34px] h-[34px] rounded-full bg-card border border-border-light flex items-center justify-center active:bg-panel active:scale-[0.94] transition-all">
-          <ArrowLeft className="w-[18px] h-[18px] text-text-muted" strokeWidth={2.5} />
-        </button>
-        <h2 className="text-lg font-bold text-text-primary">我的游戏</h2>
-      </div>
-
-      <div className="px-5 space-y-5">
-        {error && <p className="text-[11px] text-[#c04040] text-center">{error}</p>}
+    <ShellPage title="我的游戏" onBack={() => navigate('/home')} contentClassName="pb-10">
+      <div className="px-5 flex flex-col gap-5">
+        {error && <p className="text-[11.5px] text-rust-dark text-center">{error}</p>}
 
         {rooms === null && !error && (
-          <p className="text-center text-sm text-text-dim py-10">加载中…</p>
+          <p className="text-center text-[13px] text-text-dim py-10">加载中…</p>
         )}
 
         {rooms !== null && rooms.length === 0 && (
-          <div className="text-center py-16 space-y-4">
-            <p className="text-sm text-text-dim">还没有加入过任何房间</p>
+          <div className="text-center py-14 flex flex-col gap-4">
+            <p className="text-[13px] text-text-muted">还没有加入过任何房间</p>
             <div className="flex flex-col gap-2.5 px-6">
               <button onClick={() => navigate('/home/create')}
-                className="flex items-center justify-center gap-2 px-6 py-3 w-full rounded-sm text-sm font-semibold bg-brass text-white active:bg-brass-dark active:scale-[0.97] transition-all">
+                className="press w-full py-3 flex items-center justify-center gap-2 text-[13.5px] font-extrabold tracking-[0.12em] bg-ink-blue text-[#fff5ea]">
                 <Plus className="w-[16px] h-[16px]" /> 创建房间
               </button>
               <button onClick={() => navigate('/home/join')}
-                className="flex items-center justify-center gap-2 px-6 py-3 w-full rounded-sm text-sm font-semibold bg-card text-text-body border border-border-mid active:bg-panel active:scale-[0.97] transition-all">
+                className="press w-full py-3 flex items-center justify-center gap-2 text-[13.5px] font-extrabold tracking-[0.12em] bg-card text-text-primary">
                 <Hash className="w-[16px] h-[16px]" /> 加入房间
               </button>
             </div>
           </div>
         )}
 
+        {/* 分组标题做成**贴在纸板上的标签**：实心墨块反白，跟卡片拉开层级 */}
         {inProgress.length > 0 && (
           <div>
-            <h4 className="text-[12px] font-semibold text-brass-dark uppercase tracking-[0.08em] mb-2.5">进行中</h4>
-            <div className="space-y-2.5">
+            <span className="inline-block text-[10.5px] font-bold tracking-[0.16em] bg-text-primary text-page px-2 py-[3px] mb-2.5">
+              进行中
+            </span>
+            <div className="flex flex-col gap-2.5">
               {inProgress.map((room) => (
-                <div key={room.roomCode} className="bg-card border border-border-light rounded-md p-[14px] flex items-center gap-3">
+                <div key={room.roomCode} className="press-soft bg-card p-3 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-text-primary truncate">{room.roomName}</div>
-                    <div className="text-[11px] text-text-muted mt-0.5">
+                    <div className="text-[13.5px] font-bold text-text-primary truncate">{room.roomName}</div>
+                    <div className="text-[10.5px] text-text-muted mt-0.5">
                       {room.moduleTitle || '尚未选择模组'} · {PHASE_LABEL[room.phase] || room.phase} · {formatTime(room.updatedAt)}
                     </div>
                   </div>
                   <button
                     onClick={() => handleResume(room)}
                     disabled={resumingCode === room.roomCode}
-                    className="flex items-center gap-1 px-3.5 py-2 rounded-sm text-xs font-semibold bg-brass text-white active:bg-brass-dark active:scale-[0.96] transition-all disabled:opacity-60"
+                    className="press flex items-center gap-1 px-3 py-1.5 text-[11.5px] font-bold bg-rust text-[#fff5ea] disabled:opacity-60 whitespace-nowrap"
                   >
                     <Play className="w-[14px] h-[14px]" />
                     {resumingCode === room.roomCode ? '进入中…' : '继续'}
@@ -138,19 +135,21 @@ export default function MyRoomsPage() {
 
         {completed.length > 0 && (
           <div>
-            <h4 className="text-[12px] font-semibold text-brass-dark uppercase tracking-[0.08em] mb-2.5">已完成</h4>
-            <div className="space-y-2.5">
+            <span className="inline-block text-[10.5px] font-bold tracking-[0.16em] bg-text-primary text-page px-2 py-[3px] mb-2.5">
+              已完成
+            </span>
+            <div className="flex flex-col gap-2.5">
               {completed.map((room) => (
-                <div key={room.roomCode} className="bg-card border border-border-light rounded-md p-[14px] flex items-center gap-3">
+                <div key={room.roomCode} className="press-soft bg-card p-3 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-text-primary truncate">{room.roomName}</div>
-                    <div className="text-[11px] text-text-muted mt-0.5">
+                    <div className="text-[13.5px] font-bold text-text-primary truncate">{room.roomName}</div>
+                    <div className="text-[10.5px] text-text-muted mt-0.5">
                       {room.moduleTitle || '未知模组'} · {formatTime(room.updatedAt)}
                     </div>
                   </div>
                   <button
                     onClick={() => navigate(`/home/my-rooms/review/${room.roomCode}`)}
-                    className="flex items-center gap-1 px-3.5 py-2 rounded-sm text-xs font-semibold bg-transparent text-brass-dark border border-brass active:bg-panel active:scale-[0.96] transition-all"
+                    className="press flex items-center gap-1 px-3 py-1.5 text-[11.5px] font-bold bg-card text-text-primary whitespace-nowrap"
                   >
                     <ScrollText className="w-[14px] h-[14px]" />
                     查看复盘
@@ -161,6 +160,6 @@ export default function MyRoomsPage() {
           </div>
         )}
       </div>
-    </div>
+    </ShellPage>
   )
 }

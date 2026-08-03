@@ -47,7 +47,7 @@ export default function RegisterPage() {
   if (isLoggedIn) return null
 
   return (
-    <ShellPage>
+    <ShellPage band="auth">
       <AuthHeader />
 
       <div className="px-5 flex flex-col gap-2.5">
@@ -94,7 +94,7 @@ export default function RegisterPage() {
         </button>
       </div>
 
-      <p className="text-center pt-6 pb-4 text-text-dim text-[11px]">
+      <p className="text-center mt-auto pt-6 pb-5 text-text-dim text-[11px]">
         AI桌游主持人 © 2026
       </p>
     </ShellPage>

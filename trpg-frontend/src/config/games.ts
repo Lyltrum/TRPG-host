@@ -12,9 +12,23 @@ export const GAME_REGISTRY: GameManifest[] = [
     iconBg: 'bg-[#eef3f8]',
     iconColor: 'text-ink-blue',
     status: 'recommended',
+    // 摊平「选择世界」那一层之后（见 GameSelectionPage），这两条介绍从那个
+    // 页面里的局部常量搬到了配置里——它们是数据，不是某一屏的排版。
     systems: [
-      { id: 'coc', name: '克苏鲁的呼唤 7th', status: 'ready' },
-      { id: 'dnd', name: '龙与地下城 5e', status: 'wip' },
+      {
+        id: 'coc',
+        name: '克苏鲁的呼唤',
+        nameEn: 'Call of Cthulhu 7th',
+        description: '1920 年代调查员\n对抗宇宙恐怖的经典规则',
+        status: 'ready',
+      },
+      {
+        id: 'dnd',
+        name: '龙与地下城',
+        nameEn: 'Dungeons & Dragons 5e',
+        description: '剑与魔法的奇幻冒险\n史诗级英雄传说',
+        status: 'wip',
+      },
     ],
   },
   {

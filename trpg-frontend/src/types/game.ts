@@ -5,6 +5,10 @@ export type SystemStatus = 'ready' | 'wip'
 export interface GameSystem {
   id: string
   name: string
+  /** 原文名，列表里当副标题（「Call of Cthulhu 7th」）。 */
+  nameEn: string
+  /** 两行白话介绍，`\n` 分行。 */
+  description: string
   status: SystemStatus
 }
 

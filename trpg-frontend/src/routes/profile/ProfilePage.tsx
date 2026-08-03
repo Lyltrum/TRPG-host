@@ -55,7 +55,7 @@ export default function ProfilePage() {
   }
 
   return (
-    <ShellPage title="个人信息" onBack={() => navigate('/home')} contentClassName="justify-center py-4">
+    <ShellPage title="个人信息" onBack={() => navigate('/home')}>
       <div className="px-5 flex flex-col items-center pt-5 pb-7">
         <div className="press-soft w-16 h-16 bg-text-primary text-page text-2xl font-extrabold flex items-center justify-center">
           {(draft || nickname)?.charAt(0) || '?'}

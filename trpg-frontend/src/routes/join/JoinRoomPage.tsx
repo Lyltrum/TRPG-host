@@ -53,7 +53,7 @@ export default function JoinRoomPage() {
 
   return (
     <ShellPage title="加入房间" onBack={() => navigate('/home')}>
-      <div className="flex-1 flex flex-col items-center justify-center px-5 py-6">
+      <div className="flex flex-col items-center px-5">
         <div className="press-soft w-14 h-14 mb-4 bg-card text-text-primary flex items-center justify-center">
           <DoorOpen className="w-7 h-7" strokeWidth={2} />
         </div>

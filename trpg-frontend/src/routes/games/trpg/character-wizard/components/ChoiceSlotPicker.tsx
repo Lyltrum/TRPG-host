@@ -48,7 +48,7 @@ function SkillCombobox({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-3 py-2 text-[13px] rounded-[6px] bg-input border border-border-light outline-none focus:border-brass text-text-primary"
+        className="wz-field w-full px-3 py-2 text-[13px]"
       >
         <option value="">{placeholder}</option>
         {options.map((o) => (
@@ -68,7 +68,7 @@ function SkillCombobox({
         ref={buttonRef}
         type="button"
         onClick={handleToggle}
-        className="w-full flex items-center justify-between px-3 py-2 text-[13px] rounded-[6px] bg-input border border-border-light text-left text-text-primary"
+        className="wz-field w-full flex items-center justify-between px-3 py-2 text-[13px] text-left"
       >
         <span className={selected ? '' : 'text-text-dim'}>{selected?.label ?? placeholder}</span>
         <ChevronDown className="w-3.5 h-3.5 text-text-dim flex-shrink-0" />
@@ -134,7 +134,7 @@ export function ChoiceSlotPicker({
   const searchable = slot.candidateSkillIds == null
 
   return (
-    <div className="bg-input border border-border-light rounded-[6px] p-3">
+    <div className="border border-ink/30 bg-white/12 p-3">
       <div className="text-[12px] font-medium text-text-primary mb-2">{slot.label}</div>
       <div className="space-y-1.5">
         {picks.map((pick, pickIndex) => {

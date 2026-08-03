@@ -35,7 +35,7 @@ export function describeAgeBand(age: number): string {
 export function AgeBandTable({ age }: { age: number }) {
   return (
     <div>
-      <p className="text-[10px] text-text-dim mb-1.5">
+      <p className="text-[10.5px] text-ink-soft mb-1.5">
         以下是后端 coc7_age.py::AGE_TABLE 的展示副本，仅供参考——真正生效的规则由套用按钮调用后端计算。
       </p>
       <div className="overflow-x-auto -mx-1">

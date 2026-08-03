@@ -58,8 +58,12 @@ export function SkillRow({
     const next = Math.max(minPoints, Math.min(maxAlloc, allocation + delta))
     if (next !== allocation) onSetAllocation(next)
   }
-  const step5Class =
-    'w-7 h-6 rounded-full flex items-center justify-center text-[10px] font-mono font-semibold transition-all'
+  const stepBase =
+    'flex-none border flex items-center justify-center transition-all active:bg-brass-dark active:text-dossier'
+  const step5Class = `${stepBase} w-[23px] h-[21px] typed text-[9.5px] font-semibold`
+  const step1Class = `${stepBase} w-[23px] h-[21px]`
+  const onCls = 'border-ink/50 bg-white/30 text-ink'
+  const offCls = 'border-ink/20 text-ink-soft/50 cursor-not-allowed active:bg-transparent'
 
   const [inputValue, setInputValue] = useState(String(current))
   useEffect(() => {
@@ -84,39 +88,36 @@ export function SkillRow({
   }
 
   return (
+    // 技能行：本职方块 + 名字 + 基础值% + 五个方头键。表单里的一行，不是卡片。
     <div
-      className={`flex items-center gap-2.5 px-3 py-2 bg-input border border-border-light rounded-[6px] ${
-        disabled ? 'opacity-60' : ''
+      className={`flex items-center gap-1.5 py-1 border-b border-dotted border-ink/30 ${
+        disabled ? 'opacity-70' : ''
       }`}
     >
       <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-medium text-text-primary flex items-center gap-1.5">
+        <div className="text-[11.5px] text-ink flex items-center gap-1">
           <span className="truncate">{skill.name}</span>
           {slotted && (
-            <span className="flex-shrink-0 px-1 py-0 text-[9px] font-semibold rounded bg-brass/15 text-brass-dark">
-              槽
+            <span className="typed flex-none px-1 text-[9.5px] border border-brass-dark text-brass-dark">
+              占槽
             </span>
           )}
         </div>
-        <div className="text-[10px] text-text-dim font-mono">{disabled ? disabledReason ?? '建卡阶段不可加点' : skill.nameEn}</div>
+        {disabled && (
+          <div className="text-[10.5px] text-ink-soft">{disabledReason ?? '建卡阶段不可加点'}</div>
+        )}
       </div>
-      <div className="text-[10px] text-text-muted font-mono min-w-[32px] text-center">{base}%</div>
+      <div className="text-[10.5px] text-ink-soft font-mono w-[26px] text-right">{base}%</div>
       <button
         onClick={() => adjustBy5(-5)}
-        className={`${step5Class} ${
-          canSub
-            ? 'bg-card border border-border-light text-text-muted active:bg-panel active:scale-90'
-            : 'bg-transparent text-border-light cursor-not-allowed'
-        }`}
+        className={`${step5Class} ${canSub ? onCls : offCls}`}
         disabled={!canSub}
       >
         −5
       </button>
       <button
         onClick={() => onChange(-1)}
-        className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${
-          canSub ? 'bg-card border border-border-light text-text-muted active:bg-panel active:scale-90' : 'bg-transparent text-border-light cursor-not-allowed'
-        }`}
+        className={`${step1Class} ${canSub ? onCls : offCls}`}
         disabled={!canSub}
       >
         <Minus className="w-3 h-3" />
@@ -128,24 +129,18 @@ export function SkillRow({
         readOnly={disabled}
         onChange={(e) => setInputValue(e.target.value)}
         onBlur={commitInput}
-        className="text-[15px] font-bold font-mono text-text-primary min-w-[28px] w-[34px] text-center bg-transparent outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        className="text-[13.5px] font-bold font-mono text-ink min-w-[26px] w-[30px] text-center bg-transparent outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
       />
       <button
         onClick={() => onChange(1)}
-        className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${
-          canAdd ? 'bg-card border border-border-light text-text-muted active:bg-panel active:scale-90' : 'bg-transparent text-border-light cursor-not-allowed'
-        }`}
+        className={`${step1Class} ${canAdd ? onCls : offCls}`}
         disabled={!canAdd}
       >
         <Plus className="w-3 h-3" />
       </button>
       <button
         onClick={() => adjustBy5(5)}
-        className={`${step5Class} ${
-          canAdd
-            ? 'bg-card border border-border-light text-text-muted active:bg-panel active:scale-90'
-            : 'bg-transparent text-border-light cursor-not-allowed'
-        }`}
+        className={`${step5Class} ${canAdd ? onCls : offCls}`}
         disabled={!canAdd}
       >
         +5

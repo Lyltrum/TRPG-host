@@ -112,7 +112,6 @@ export function OccupationStep({
 
   return (
     <StepShell
-      title="选职业"
       lead="搜索并选择一个职业；自选槽可以先留空，后续在技能加点步骤里直接给对应技能加点即可自动占槽。"
     >
       <StepSection title="搜索职业">
@@ -125,14 +124,14 @@ export function OccupationStep({
               dispatch({ type: 'SET_UI', patch: { occSearch: e.target.value } })
             }}
             placeholder="搜索职业名称…"
-            className="w-full pl-8 pr-3 py-2 text-[12px] rounded-[6px] bg-input border border-border-light outline-none focus:border-brass text-text-primary"
+            className="wz-field w-full pl-8 pr-3 py-2 text-[12px]"
           />
         </div>
         <div className="flex gap-1.5 overflow-x-auto pb-1.5 mb-1">
           <button
             onClick={() => setCategory(null)}
-            className={`flex-shrink-0 px-2.5 py-1.5 text-[11px] font-semibold rounded-[6px] transition-all ${
-              category === null ? 'bg-brass text-white' : 'bg-card border border-border-light text-text-muted'
+            className={`flex-shrink-0 px-2.5 py-1 text-[10.5px] font-semibold transition-all ${
+              category === null ? 'bg-brass-dark text-dossier border border-brass-dark' : 'border border-ink/30 bg-white/20 text-ink-soft'
             }`}
           >
             全部
@@ -141,8 +140,8 @@ export function OccupationStep({
             <button
               key={c}
               onClick={() => setCategory(c)}
-              className={`flex-shrink-0 px-2.5 py-1.5 text-[11px] font-semibold rounded-[6px] transition-all ${
-                category === c ? 'bg-brass text-white' : 'bg-card border border-border-light text-text-muted'
+              className={`flex-shrink-0 px-2.5 py-1 text-[10.5px] font-semibold transition-all ${
+                category === c ? 'bg-brass-dark text-dossier border border-brass-dark' : 'border border-ink/30 bg-white/20 text-ink-soft'
               }`}
             >
               {c}
@@ -155,7 +154,7 @@ export function OccupationStep({
           ))}
         </div>
         {showAllHint && (
-          <p className="text-[10px] text-text-dim text-center mt-1.5">
+          <p className="text-[10.5px] text-ink-soft text-center mt-1.5">
             已显示全部 {filtered.length} 项，试试按分类或搜索缩小范围
           </p>
         )}
@@ -167,13 +166,13 @@ export function OccupationStep({
             信用评级 {selectedOcc.creditMin}–{selectedOcc.creditMax}
             {budget != null && <> · 下一步大约有 {budget} 点职业技能可加</>}
           </p>
-          <p className="text-[11px] text-text-muted font-mono mb-1">技能点公式 {selectedOcc.skillPointsFormula}</p>
-          {maxNote && <p className="text-[11px] text-text-dim mb-2">{maxNote}</p>}
+          <p className="text-[10.5px] text-ink-soft font-mono mb-1">技能点公式 {selectedOcc.skillPointsFormula}</p>
+          {maxNote && <p className="text-[10.5px] text-ink-soft mb-2">{maxNote}</p>}
           <div className="flex flex-wrap gap-1.5 mt-2">
             {selectedOcc.skillIds.map((id) => {
               const skill = ruleset.skills.find((s) => s.id === id)
               return (
-                <span key={id} className="px-2 py-1 text-[10px] rounded-full bg-card border border-border-light text-text-body">
+                <span key={id} className="px-2 py-0.5 text-[10.5px] border border-ink/30 bg-white/20 text-ink">
                   {skill?.name ?? id}
                 </span>
               )

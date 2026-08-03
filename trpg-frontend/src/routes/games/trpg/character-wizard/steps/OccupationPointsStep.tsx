@@ -61,19 +61,19 @@ export function OccupationPointsStep({
 
   if (!selectedOcc) {
     return (
-      <StepShell title="职业技能" lead="请先在上一步选择职业。">
+      <StepShell lead="请先在上一步选择职业。">
         <StepSection title="尚未选择职业">
-          <p className="text-[12px] text-text-muted">请先返回上一步选择职业。</p>
+          <p className="text-[11.5px] text-ink-soft">请先返回上一步选择职业。</p>
         </StepSection>
       </StepShell>
     )
   }
 
   return (
-    <StepShell title="职业技能" lead={`${selectedOcc.name} 的职业技能点数（${selectedOcc.skillPointsFormula}）加点。`}>
-      {previewError && <p className="text-[11px] text-[#c04040] mb-2">{previewError}</p>}
+    <StepShell lead={`${selectedOcc.name} 的职业技能点数（${selectedOcc.skillPointsFormula}）加点。`}>
+      {previewError && <p className="text-[10.5px] text-rust-dark mb-2">{previewError}</p>}
       {!previewError && attrNotValidated && (
-        <p className="text-[11px] text-[#8a6a2a] mb-2">属性还没通过校验，预算暂时无法计算。</p>
+        <p className="text-[10.5px] text-brass-dark mb-2">属性还没通过校验，预算暂时无法计算。</p>
       )}
       <PoolBar
         label={`职业技能点 (${selectedOcc.skillPointsFormula})`}
@@ -84,7 +84,7 @@ export function OccupationPointsStep({
 
       <StepSection title="信用评级 (Credit Rating) · 必填" accent tip="下限那部分算职业点，超出下限的部分算兴趣点（Chaosium 官方裁定）。">
         <div className="flex items-center justify-between mb-1">
-          <span className="text-[11px] text-text-muted font-mono">
+          <span className="text-[10.5px] text-ink-soft font-mono">
             范围 {selectedOcc.creditMin}–{selectedOcc.creditMax}
           </span>
         </div>
@@ -92,29 +92,29 @@ export function OccupationPointsStep({
           <button
             onClick={() => handleCreditChange(-5)}
             disabled={creditValue <= selectedOcc.creditMin}
-            className="w-8 h-8 rounded-full bg-card border border-border-light text-text-muted text-[11px] font-mono font-semibold flex items-center justify-center active:bg-panel active:scale-90 transition-all disabled:opacity-40 disabled:active:scale-100"
+            className="w-[26px] h-[23px] flex-none border border-ink/50 bg-white/30 text-ink typed text-[10px] font-semibold flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:opacity-30"
           >
             −5
           </button>
           <button
             onClick={() => handleCreditChange(-1)}
             disabled={creditValue <= selectedOcc.creditMin}
-            className="w-8 h-8 rounded-full bg-card border border-border-light text-text-muted flex items-center justify-center active:bg-panel active:scale-90 transition-all disabled:opacity-40 disabled:active:scale-100"
+            className="w-[26px] h-[23px] flex-none border border-ink/50 bg-white/30 text-ink flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:opacity-30"
           >
             <Minus className="w-4 h-4" />
           </button>
-          <div className="flex-1 text-center text-[20px] font-bold font-mono text-text-primary">{creditValue}</div>
+          <div className="flex-1 text-center text-[20px] font-bold font-mono text-ink">{creditValue}</div>
           <button
             onClick={() => handleCreditChange(1)}
             disabled={creditValue >= selectedOcc.creditMax}
-            className="w-8 h-8 rounded-full bg-card border border-border-light text-text-muted flex items-center justify-center active:bg-panel active:scale-90 transition-all disabled:opacity-40 disabled:active:scale-100"
+            className="w-[26px] h-[23px] flex-none border border-ink/50 bg-white/30 text-ink flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:opacity-30"
           >
             <Plus className="w-4 h-4" />
           </button>
           <button
             onClick={() => handleCreditChange(5)}
             disabled={creditValue >= selectedOcc.creditMax}
-            className="w-8 h-8 rounded-full bg-card border border-border-light text-text-muted text-[11px] font-mono font-semibold flex items-center justify-center active:bg-panel active:scale-90 transition-all disabled:opacity-40 disabled:active:scale-100"
+            className="w-[26px] h-[23px] flex-none border border-ink/50 bg-white/30 text-ink typed text-[10px] font-semibold flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:opacity-30"
           >
             +5
           </button>
@@ -145,7 +145,7 @@ export function OccupationPointsStep({
         })}
       </div>
 
-      <p className="text-[11px] text-text-dim px-1">职业点花完后，继续加点会自动占用兴趣点数（COC7 允许）。</p>
+      <p className="text-[10.5px] text-ink-soft px-1">职业点花完后，继续加点会自动占用兴趣点数（COC7 允许）。</p>
     </StepShell>
   )
 }

@@ -104,20 +104,23 @@ export default function CharacterWizardPage() {
     }
   }
 
+  // 🔴 `bg-card` 是桌面木色，不能少：木纹是 multiply 混合，底下没颜色等于没铺。
+  const deskClass = 'theme-coc desk-grain desk-lamp desk-sigil bg-card'
+
   if (rulesetLoading) {
     return (
-      <div className="animate-screen-in min-h-screen bg-page flex flex-col items-center justify-center px-5 text-center">
-        <p className="text-sm text-text-muted">正在加载规则数据…</p>
+      <div className={`${deskClass} animate-screen-in min-h-full flex flex-col items-center justify-center px-5 text-center`}>
+        <p className="relative z-10 text-[13px] text-text-body">正在加载规则数据…</p>
       </div>
     )
   }
   if (rulesetError || !ruleset) {
     return (
-      <div className="animate-screen-in min-h-screen bg-page flex flex-col items-center justify-center px-5 text-center gap-3">
-        <p className="text-sm text-[#c04040]">{rulesetError || '规则数据加载失败'}</p>
+      <div className={`${deskClass} animate-screen-in min-h-full flex flex-col items-center justify-center px-5 text-center gap-3`}>
+        <p className="relative z-10 text-[13px] text-rust">{rulesetError || '规则数据加载失败'}</p>
         <button
           onClick={() => navigate(-1)}
-          className="px-5 py-2.5 rounded-sm bg-card border border-border-light text-text-body text-sm font-semibold"
+          className="cut-corner relative z-10 px-5 py-2.5 bg-input border border-border-mid text-text-body text-[13px] font-semibold"
         >
           返回
         </button>
@@ -175,33 +178,66 @@ export default function CharacterWizardPage() {
           : '下一步'
 
   return (
-    <div className="animate-screen-in min-h-screen bg-page">
-      <div className="sticky top-0 z-10 bg-page pt-1 pb-0">
-        <div className="flex items-center gap-2.5 px-5 pt-0.5">
-          <button
-            onClick={goPrev}
-            className="w-[34px] h-[34px] rounded-full bg-card border border-border-light flex items-center justify-center flex-shrink-0 active:bg-panel active:scale-[0.94] transition-all"
-          >
-            <ArrowLeft className="w-[18px] h-[18px] text-text-muted" strokeWidth={2.5} />
-          </button>
-          <h2 className="text-lg font-bold text-text-primary">创建角色</h2>
-        </div>
-        <div className="flex gap-1.5 px-5 py-3">
-          {WIZARD_STEPS.map((s, i) => (
-            <div
-              key={s.id}
-              className={`flex-1 h-[3px] rounded-[99px] transition-all duration-300 ${
-                i < state.step ? 'bg-brass-dark' : i === state.step ? 'bg-brass' : 'bg-border-light'
-              }`}
-            />
-          ))}
-        </div>
-        {!roomId && (
-          <div className="mx-5 mb-3 px-3.5 py-2.5 bg-[#fdf3e0] border border-[#e0c088] rounded-[6px] text-[12px] text-[#8a6a2a]">
-            当前未加入房间，创建的角色不会被保存。请先返回创建或加入一个房间。
-          </div>
-        )}
+    <div className={`${deskClass} animate-screen-in h-full flex flex-col relative overflow-hidden`}>
+      <div className="relative z-10 flex items-center gap-2.5 px-4 pt-3.5">
+        <button
+          onClick={goPrev}
+          className="cut-corner w-8 h-8 bg-input border border-border-mid flex items-center justify-center flex-shrink-0 active:bg-panel active:scale-[0.94] transition-all"
+        >
+          <ArrowLeft className="w-[18px] h-[18px] text-text-body" strokeWidth={2.5} />
+        </button>
+        <h2 className="text-[16px] font-bold text-text-primary tracking-[0.04em]">创建角色</h2>
       </div>
+
+      {/* 🔴 进度 = 档案夹里的**分隔页**，双层错落（4 + 4）。
+          单层平铺八个标签时每个只有 43px 宽、字要压到 9px——低于中文小字
+          10.5px 下限（那条判据是被"太阳底下看不清"逼出来的），不为排版破例。
+          错落也是真实档案夹的做法：不错开标签会互相遮挡。 */}
+      <div className="relative z-10 px-3 pt-2.5">
+        {[WIZARD_STEPS.slice(0, 4), WIZARD_STEPS.slice(4)].map((group, groupIndex) => (
+          <div key={groupIndex} className="flex gap-[3px] mt-[2px] first:mt-0">
+            {group.map((s) => {
+              const index = WIZARD_STEPS.indexOf(s)
+              const isCurrent = index === state.step
+              return (
+                <div
+                  key={s.id}
+                  className={`tab-flap flex-1 text-center text-[10.5px] text-ink transition-all ${
+                    isCurrent
+                      ? 'bg-dossier font-bold pt-[7px] pb-[5px]'
+                      : index < state.step
+                        ? 'bg-[#a8926a] pt-[5px] pb-1'
+                        : 'bg-[#7b6a50] pt-[5px] pb-1'
+                  }`}
+                >
+                  {s.short}
+                </div>
+              )
+            })}
+          </div>
+        ))}
+      </div>
+
+      {!roomId && (
+        <div className="relative z-10 mx-3 mt-2 px-2.5 py-1.5 bg-input border border-brass-dark text-[10.5px] text-brass-bright leading-relaxed">
+          当前未加入房间，创建的角色不会被保存。请先返回创建或加入一个房间。
+        </div>
+      )}
+
+      {/* 表单纸：向导正文。`theme-paper` 把语义 token 显式改回浅色——CSS 变量
+          沿 DOM 继承，只是"不加 theme-coc"不够，祖先上有就照样生效。
+          `--paper` 给 <StepSection> 的标签用来咬断框线。 */}
+      <div
+        className="theme-paper paper-grain relative z-10 mx-3 mt-2 flex-1 min-h-0 flex flex-col bg-dossier text-ink shadow-[0_1px_0_rgba(0,0,0,.34),0_10px_16px_-8px_rgba(0,0,0,.6)]"
+        style={{ ['--paper' as string]: '#cbb894' }}
+      >
+        <div className="flex-none flex items-baseline gap-2 px-3.5 pt-3 pb-1 mb-2 mx-0 border-b-[1.5px] border-ink/40">
+          <span className="text-[14.5px] font-bold tracking-[0.04em] text-ink">{stepMeta.title}</span>
+          <span className="typed ml-auto text-[10.5px] text-ink-soft">
+            {state.step + 1} / {WIZARD_STEPS.length}
+          </span>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto px-3.5 pb-4">
 
       {stepMeta.id === 'concept' && (
         <ConceptStep
@@ -240,34 +276,44 @@ export default function CharacterWizardPage() {
       )}
       {stepMeta.id === 'background' && <BackgroundStep state={state} dispatch={dispatch} />}
       {stepMeta.id === 'finish' && <FinishStep state={state} ruleset={ruleset} preview={preview} />}
+        </div>
+      </div>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-page border-t border-border-light px-5 py-3 max-w-[430px] mx-auto z-20">
-        {submitError && <p className="text-[11px] text-[#c04040] text-center mb-2">{submitError}</p>}
+      <div className="relative z-10 flex-none px-3 pt-2 pb-3 mt-2 bg-page border-t border-border-mid">
+        {submitError && <p className="text-[10.5px] text-rust text-center mb-1.5">{submitError}</p>}
         {stepMeta.id !== 'finish' && (preview?.validation.length ?? 0) > 0 && (
-          <div className="mb-2 space-y-1">
+          <div className="mb-1.5 space-y-0.5">
             {preview!.validation.map((issue, i) => (
-              <p key={i} className="text-[11px] text-[#c04040] text-center">
+              <p key={i} className="text-[10.5px] text-rust text-center leading-relaxed">
                 ⚠️ {issue.message}
               </p>
             ))}
           </div>
         )}
         {blockers.length > 0 && !isSoftGateStep && (
-          <p className="text-[11px] text-[#8a6a2a] text-center mb-2">{blockers[0]}</p>
+          <p className="text-[10.5px] text-brass-bright text-center mb-1.5">{blockers[0]}</p>
         )}
         <div className="flex gap-2.5">
           <button
             onClick={goPrev}
-            className="flex-1 flex items-center justify-center gap-1.5 px-5 py-3 rounded-sm text-sm font-semibold transition-all border border-border-mid bg-card text-text-body active:bg-panel active:scale-[0.97]"
+            className="flex-1 py-3 text-[13.5px] font-bold tracking-[0.08em] transition-all border border-border-mid bg-input text-text-body active:bg-panel"
           >
             上一步
           </button>
+          {/* 🔴 「下一步」有五种文案（下一步 / 完成创建 / 提交中… / 请先解决上方
+              的超支问题 / 还剩 N 点，确定继续？）。后三种明显长，字号跟着缩一档，
+              否则会被挤成两行把按钮撑高。 */}
           <button
             onClick={goNext}
             disabled={nextDisabled}
-            className="flex-1 flex items-center justify-center gap-1.5 px-5 py-3 rounded-sm text-sm font-semibold transition-all bg-brass text-white active:bg-brass-dark active:scale-[0.97] disabled:opacity-60"
+            className={`flex-1 py-3 font-bold transition-all ${
+              nextDisabled
+                ? 'bg-panel border border-border-mid text-text-dim text-[11.5px]'
+                : 'seal bg-brass-dark border border-brass text-text-primary text-[13.5px] tracking-[0.08em] active:translate-y-[1px]'
+            }`}
           >
-            {nextLabel} →
+            {nextLabel}
+            {!nextDisabled && ' →'}
           </button>
         </div>
       </div>

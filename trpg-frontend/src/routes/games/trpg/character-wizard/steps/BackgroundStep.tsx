@@ -6,10 +6,10 @@ import type { WizardAction, WizardState } from '../wizard-state'
  * 全部可空。 */
 export function BackgroundStep({ state, dispatch }: { state: WizardState; dispatch: (action: WizardAction) => void }) {
   const textareaClass =
-    'w-full px-3.5 py-2.5 rounded-[6px] bg-input border border-border-light text-text-primary text-[14px] outline-none focus:border-brass resize-none'
+    'wz-field notepaper w-full px-2.5 py-1.5 text-[13px] resize-none'
 
   return (
-    <StepShell title="角色故事" lead="不会写可以先空着，随时可以回来补。">
+    <StepShell lead="不会写可以先空着，随时可以回来补。">
       <StepSection title="装备与物品">
         <textarea
           value={state.equipment}

@@ -31,34 +31,32 @@ export function FinishStep({
   }, [preview, ruleset])
 
   return (
-    <StepShell title="完成" lead="确认一下角色摘要，看看有没有校验提示，点击下方「完成创建」即可保存。">
+    <StepShell lead="确认一下角色摘要，看看有没有校验提示，点击下方「完成创建」即可保存。">
       <StepSection title="摘要">
-        <div className="text-[13px] text-text-body space-y-1">
-          <div>
-            {state.info.name || '未命名调查员'} · {state.info.playerName || state.info.name || '—'}
-          </div>
-          <div className="text-text-muted text-[12px]">
-            {state.age} 岁 · {selectedOcc?.name ?? '未选择职业'}
-          </div>
+        <div className="text-[13.5px] font-bold text-ink">
+          {state.info.name || '未命名调查员'} · {state.info.playerName || state.info.name || '—'}
         </div>
-        <div className="grid grid-cols-3 gap-1.5 mt-3">
+        <div className="text-[11.5px] text-ink-soft mb-2">
+          {state.age} 岁 · {selectedOcc?.name ?? '未选择职业'}
+        </div>
+        <div className="grid grid-cols-3 gap-1">
           {ruleset.attributes.map((a) => (
-            <div key={a.key} className="bg-panel rounded px-2 py-1.5 text-center">
-              <div className="text-[9px] text-text-dim">{a.key}</div>
-              <div className="text-[13px] font-bold font-mono text-text-primary">{attrs[a.key] ?? '—'}</div>
+            <div key={a.key} className="border border-ink/28 bg-white/15 px-2 py-1 text-center">
+              <div className="typed text-[10.5px] text-ink-soft">{a.key}</div>
+              <div className="text-[13px] font-bold font-mono text-ink">{attrs[a.key] ?? '—'}</div>
             </div>
           ))}
         </div>
-        <div className="flex gap-2 mt-3">
+        <div className="flex gap-1 mt-2">
           {[
-            { label: 'HP', value: derived.hp, color: '#4a8a4a' },
-            { label: 'SAN', value: derived.san, color: '#7050a0' },
-            { label: 'MP', value: derived.mp, color: '#4a7098' },
-            { label: 'DB', value: derived.db, color: '#b8976a' },
-            { label: 'MOV', value: derived.move, color: '#c08050' },
+            { label: 'HP', value: derived.hp, color: '#3d6b2f' },
+            { label: 'SAN', value: derived.san, color: '#57407e' },
+            { label: 'MP', value: derived.mp, color: '#3a5a7a' },
+            { label: 'DB', value: derived.db, color: '#5c461e' },
+            { label: 'MOV', value: derived.move, color: '#7a4a28' },
           ].map((pill) => (
-            <div key={pill.label} className="flex-1 bg-panel rounded-md px-2 py-1.5 text-center">
-              <div className="text-[9px] text-text-muted font-semibold">{pill.label}</div>
+            <div key={pill.label} className="flex-1 border border-ink/28 bg-white/15 px-1 py-1 text-center">
+              <div className="typed text-[10.5px] text-ink-soft">{pill.label}</div>
               <div className="text-[14px] font-bold font-mono" style={{ color: pill.color }}>
                 {pill.value}
               </div>
@@ -68,12 +66,21 @@ export function FinishStep({
       </StepSection>
 
       <StepSection title="校验">
+        {/* 通过 = 一枚盖上去的绿章；失败 = 逐条锈红。两种状态形状不同，
+            不只是颜色不同——一眼就能分出"过了"还是"没过"。 */}
         {!preview || preview.validation.length === 0 ? (
-          <div className="px-3 py-2 bg-[#eef6ea] text-[#3a7a3a] text-[12px] rounded-[6px]">看起来没问题</div>
+          <div className="text-center py-1">
+            <span className="stamped typed inline-block text-[11px] font-bold px-2.5 py-1 text-[#3d6b2f]">
+              看起来没问题
+            </span>
+          </div>
         ) : (
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             {preview.validation.map((issue, i) => (
-              <div key={i} className="px-3 py-2 bg-[#fdecec] text-[#c04040] text-[12px] rounded-[6px]">
+              <div
+                key={i}
+                className="px-2.5 py-1.5 border-l-[3px] border-l-rust-dark border border-ink/25 bg-white/20 text-rust-dark text-[11.5px] leading-relaxed"
+              >
                 {issue.message}
               </div>
             ))}
@@ -83,9 +90,12 @@ export function FinishStep({
 
       {mainSkills.length > 0 && (
         <StepSection title="主要技能">
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1">
             {mainSkills.map((s) => (
-              <span key={s.id} className="px-2.5 py-1 text-[11px] rounded-full bg-panel border border-border-light text-text-body">
+              <span
+                key={s.id}
+                className="px-2 py-0.5 text-[10.5px] border border-ink/30 bg-white/20 text-ink"
+              >
                 {s.name} {s.value}
               </span>
             ))}

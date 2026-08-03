@@ -65,6 +65,7 @@ export default function LobbyPage() {
   const allReady = players.length > 0 && nonHostPlayers.every((p) => p.ready)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState('')
+  const emptySeats = Math.max(0, (info?.maxPlayers ?? 0) - players.length)
 
   // ★ 全员就绪只是"可以开始"的前提，不代表自动开始——房主必须主动点"开始
   // 游戏"才真正推进（见反馈：不应该默认自动跳转）。访客端没有这个按钮，
@@ -131,61 +132,94 @@ export default function LobbyPage() {
   }
 
   return (
-    <div className="animate-screen-in px-5 pt-6">
+    // 🔴 `bg-card` 是桌面本身的木色，不能少：木纹是 multiply 混合上去的，
+    // 底下没有颜色等于没铺（准备页漏过一次，症状是纸浮在白底上）。
+    <div className="theme-coc desk-grain desk-lamp desk-sigil bg-card animate-screen-in min-h-full px-5 pt-6 pb-8 flex flex-col relative">
       <button
         onClick={handleLeave}
-        className="w-[34px] h-[34px] rounded-full bg-card border border-border-light flex items-center justify-center flex-shrink-0 active:bg-panel active:scale-[0.94] transition-all duration-150 mb-3"
+        className="cut-corner w-[34px] h-[34px] bg-input border border-border-mid flex items-center justify-center flex-shrink-0 active:bg-panel active:scale-[0.94] transition-all duration-150 mb-3 relative z-10"
       >
-        <ArrowLeft className="w-[18px] h-[18px] text-text-muted" strokeWidth={2.5} />
+        <ArrowLeft className="w-[18px] h-[18px] text-text-body" strokeWidth={2.5} />
       </button>
 
       {confirmLeave && (
-        <div className="bg-card border border-[#c04040]/30 rounded-md p-3.5 mb-3.5">
-          <p className="text-xs text-text-body text-center mb-2.5">
+        // 退出确认是**一张单页的纸**（`leaf`），不是页面里的一块卡片——
+        // 它是压在桌上的一张便条，跟登记表不是同一件东西。
+        <div className="theme-paper leaf paper-grain relative z-10 bg-book text-ink p-3.5 mb-3.5 border-l-[3px] border-l-rust">
+          <p className="text-[12px] text-ink text-center mb-2.5 pl-2">
             {isHost ? '确定要解散房间吗？所有成员将被移出。' : '确定要离开房间吗？'}
           </p>
-          <div className="flex gap-2">
+          <div className="flex gap-2 pl-2">
             <button onClick={() => setConfirmLeave(false)}
-              className="flex-1 py-2 rounded-sm bg-panel border border-border-light text-text-muted text-xs font-medium active:bg-border-light">
+              className="cut-corner flex-1 py-2 border border-ink/35 text-ink-soft text-[12px] font-semibold bg-white/25 active:scale-[0.97]">
               取消
             </button>
             <button onClick={handleLeave}
-              className="flex-1 py-2 rounded-sm bg-[#c04040] text-white text-xs font-medium active:bg-[#a03030]">
+              className="cut-corner flex-1 py-2 bg-rust-dark text-book text-[12px] font-semibold active:scale-[0.97]">
               {isHost ? '确认解散' : '确认离开'}
             </button>
           </div>
         </div>
       )}
-      <div className="flex items-center justify-center gap-2 mb-1">
-        <span className="font-mono text-2xl font-bold text-text-primary tracking-[0.15em] bg-card border border-dashed border-border-mid px-4 py-1.5 rounded-sm">
+
+      {/* 房间号 = 钢印牌。跟准备页同一枚，两屏之间不该换语言 */}
+      <div className="text-center relative z-10">
+        <span className="typed block text-[10.5px] text-text-muted mb-1.5">卷宗编号</span>
+        <span className="plate inline-block px-[18px] pt-[7px] pb-1.5 bg-input border border-brass-dark font-mono text-[25px] font-bold text-brass-bright tracking-[0.28em] indent-[0.28em]">
           {roomCode || '------'}
         </span>
       </div>
-      <p className="text-center text-xs text-text-muted mb-5">
+      <p className="text-center text-[11.5px] text-text-body leading-relaxed mt-2 mb-4 relative z-10">
         {joined ? '等待大厅 · 已连接' : '等待大厅 · 连接中…'}
-        {info && ` · ${players.length}/${info.maxPlayers} 人已加入`}
-      </p>
-      {error && <p className="text-center text-xs text-[#c04040] mb-3">{error}</p>}
-
-      <div className="flex flex-col gap-2">
-        {players.length === 0 && (
-          <div className="text-center py-6 text-xs text-text-dim">正在获取房间成员…</div>
+        {info && (
+          <>
+            <br />
+            <span className="text-brass-bright font-mono">{players.length}</span> / {info.maxPlayers}{' '}
+            人已加入
+          </>
         )}
+      </p>
+      {error && <p className="relative z-10 text-center text-[11.5px] text-rust mb-3">{error}</p>}
+
+      {/* 到场登记表：跟准备页的登记表同一张纸，只是登记的是"到没到、就没就绪" */}
+      <div className="theme-paper paper-grain relative z-10 bg-dossier text-ink shadow-[0_1px_0_rgba(0,0,0,.34),0_10px_16px_-8px_rgba(0,0,0,.6)]">
+        <div className="typed flex items-center px-3 pt-2 pb-1.5 border-b-[1.5px] border-ink/40 text-[10.5px] text-ink-soft">
+          <span className="flex-1">到场登记表</span>
+          <span className="font-mono">{roomCode || '------'}</span>
+        </div>
+
+        {players.length === 0 && (
+          <div className="text-center py-6 text-[11.5px] text-ink-soft">正在获取房间成员…</div>
+        )}
+
         {players.map((p) => {
           const isSelf = p.playerId === playerId
           return (
-            <div key={p.playerId} className="flex items-center gap-3 px-3.5 py-3 bg-card border border-border-light rounded-md">
-              <div className={`w-10 h-10 rounded-full bg-panel border border-border-mid flex items-center justify-center text-lg flex-shrink-0 ${p.ready ? 'border-brass' : ''}`}>
-                {p.isAi ? <Bot className="w-5 h-5 text-brass" strokeWidth={2} /> : p.ready ? '🔍' : '○'}
+            <div
+              key={p.playerId}
+              className="flex items-center gap-2.5 px-3 py-2.5 border-b border-ink/20 last:border-b-0"
+            >
+              <div
+                className={`w-[34px] h-[34px] flex-none flex items-center justify-center text-[15px] bg-ink/[0.08] border ${
+                  p.ready ? 'border-ink/35' : 'border-dashed border-ink/35 text-ink-soft'
+                }`}
+              >
+                {p.isAi ? <Bot className="w-[18px] h-[18px] text-ink-soft" strokeWidth={2} /> : p.ready ? '🔍' : '○'}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold text-text-primary">{p.nickname}{isSelf && ' (你)'}</div>
+                <div className="text-[13.5px] font-bold text-ink truncate">
+                  {p.nickname}
+                  {isSelf && '（你）'}
+                </div>
                 {/* 玩家有权知道桌上哪个是补位的 AI，这不是该藏起来的信息 */}
-                <div className="text-xs text-text-muted">{p.isAi ? 'AI 队友' : p.isHost ? '房主' : '玩家'}</div>
+                <div className="typed text-[10.5px] text-ink-soft">
+                  {p.isAi ? 'AI 队友' : p.isHost ? '房主' : '玩家'}
+                </div>
               </div>
+              {/* 状态用盖章，跟准备页的「已备案 / 待填」同一种表达 */}
               <span
-                className={`text-[11px] font-semibold px-2.5 py-[3px] rounded-[99px] ${
-                  p.ready ? 'bg-[rgba(74,138,74,0.12)] text-mold' : 'bg-panel text-text-muted'
+                className={`stamped typed text-[10px] font-bold px-1.5 py-0.5 ${
+                  p.ready ? 'text-[#3d6b2f]' : 'text-[#8a6a2e] border-dashed'
                 }`}
               >
                 {p.ready ? '已就绪' : '未就绪'}
@@ -193,21 +227,25 @@ export default function LobbyPage() {
             </div>
           )
         })}
-        {info && Array.from({ length: Math.max(0, info.maxPlayers - players.length) }).map((_, i) => (
-          <div key={`empty-${i}`} className="flex items-center gap-3 px-3.5 py-3 bg-transparent border border-dashed border-border-mid rounded-md">
-            <div className="w-10 h-10 rounded-full border border-dashed border-border-mid flex items-center justify-center text-lg flex-shrink-0 text-text-dim">
+
+        {Array.from({ length: emptySeats }).map((_, i) => (
+          <div
+            key={`empty-${i}`}
+            className="flex items-center gap-2.5 px-3 py-2.5 border-b border-ink/20 last:border-b-0"
+          >
+            <div className="w-[34px] h-[34px] flex-none flex items-center justify-center border border-dashed border-ink/25 text-ink-soft/70 text-[15px]">
               ?
             </div>
-            <div className="flex-1 min-w-0 text-xs text-text-dim">等待玩家加入…</div>
+            <span className="flex-1 text-[11.5px] text-ink-soft">等待玩家加入…</span>
             {/* 空位本身就是"人不齐"的位置，补位入口放在这里最好找 */}
             {isHost && (
               <button
                 onClick={handleAddAiPlayer}
                 disabled={addingAi}
-                className={`flex items-center gap-1 text-[11px] font-semibold px-2.5 py-[5px] rounded-sm border transition-all ${
+                className={`cut-corner flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 border transition-all ${
                   addingAi
-                    ? 'border-border-light text-text-dim cursor-not-allowed'
-                    : 'border-brass text-brass active:bg-brass active:text-white active:scale-[0.96]'
+                    ? 'border-ink/25 text-ink-soft cursor-not-allowed'
+                    : 'border-brass-dark text-brass-dark bg-white/25 active:bg-brass-dark active:text-dossier active:scale-[0.96]'
                 }`}
               >
                 <Plus className="w-3 h-3" strokeWidth={3} />
@@ -218,14 +256,22 @@ export default function LobbyPage() {
         ))}
       </div>
 
+      <div className="flex-1" />
+
+      <p className="text-center text-[11.5px] text-text-body leading-relaxed mt-6 mb-3 relative z-10">
+        {isHost
+          ? (allReady ? '全员已就绪，点击开始游戏' : '等待所有玩家标记为已就绪')
+          : (info?.storyStarted ? '房主已开始，即将进入…' : '等待房主开始游戏')}
+      </p>
+
       {isHost ? (
         <button
           onClick={handleStartStory}
           disabled={!allReady || starting}
-          className={`w-full mt-3 px-6 py-3 rounded-sm text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+          className={`relative z-10 w-full py-3.5 text-[14.5px] font-bold tracking-[0.22em] indent-[0.22em] flex items-center justify-center gap-2 transition-all ${
             allReady && !starting
-              ? 'bg-brass text-white active:bg-brass-dark active:scale-[0.97]'
-              : 'bg-border-light text-text-dim cursor-not-allowed'
+              ? 'seal bg-brass-dark border border-brass text-text-primary active:translate-y-[1px]'
+              : 'bg-panel border border-border-mid text-text-dim cursor-not-allowed'
           }`}
         >
           {starting ? '开始中…' : '开始游戏'}
@@ -233,21 +279,15 @@ export default function LobbyPage() {
       ) : (
         <button
           onClick={toggleReady}
-          className="w-full mt-3 px-6 py-3 rounded-sm border border-border-mid bg-card text-text-body text-sm font-semibold active:bg-panel transition-all flex items-center justify-center gap-2"
+          className="cut-corner relative z-10 w-full py-3.5 border border-brass-dark bg-input text-brass-bright text-[14.5px] font-bold tracking-[0.14em] indent-[0.14em] active:bg-panel transition-all flex items-center justify-center gap-2"
         >
           <UserPlus className="w-4 h-4" />
           {ready ? '取消就绪' : '标记为已就绪'}
         </button>
       )}
       {startError && (
-        <p className="text-center text-xs text-[#c04040] mt-2">{startError}</p>
+        <p className="relative z-10 text-center text-[11.5px] text-rust mt-2">{startError}</p>
       )}
-
-      <p className="text-center text-xs text-text-muted mt-4">
-        {isHost
-          ? (allReady ? '全员已就绪，点击开始游戏' : '等待所有玩家标记为已就绪')
-          : (info?.storyStarted ? '房主已开始，即将进入…' : '等待房主开始游戏')}
-      </p>
     </div>
   )
 }

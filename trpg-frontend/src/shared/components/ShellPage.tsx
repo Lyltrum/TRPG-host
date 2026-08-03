@@ -50,7 +50,13 @@ export default function ShellPage({
           改了三轮：贴底 → 贴内容 → 才发现问题不是按钮放哪，是空白没分匀）。
           放在这里而不是每页各自加，是因为**下一个新页面不会记得加**。
           内容长过屏幕时 min-h-full 让容器跟着内容长，居中自动失效，不会把
-          顶部顶出滚动区。个别页要顶对齐，传 `contentClassName="justify-start"`。 */}
+          顶部顶出滚动区。
+
+          🔴 例外是**列表页**（我的游戏、选模组）：条目数量不定、会一直往下长，
+          从上往下读才对，两条记录居中飘在屏幕中间很怪。它们传
+          `contentClassName="justify-start"`。判据是「这一屏是一份**会增长的
+          列表**，还是一组**固定的内容**」——选游戏那五张卡是后者（平台的菜单，
+          不会变），所以照样居中。 */}
       <div className={`relative z-10 flex-1 flex flex-col justify-center py-4 ${contentClassName}`}>
         {children}
       </div>

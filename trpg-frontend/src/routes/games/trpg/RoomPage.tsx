@@ -14,6 +14,7 @@ import { toCompletedCharacter } from '@/services/character/character-view'
 import { useRoomPlayers } from '@/hooks/useRoomPlayers'
 import { useRuleset } from '@/hooks/useRuleset'
 import { useSpeechInput } from '@/hooks/useSpeechInput'
+import TypedNarration from './TypedNarration'
 
 // ─── Types ───────────────────────────────────────────
 interface Message {
@@ -30,6 +31,9 @@ interface Message {
   eventId?: string
   // 还在流式接收中：最后那条 narration.push 到达时置回 false。
   streaming?: boolean
+  // 这条要逐字浮现（exec/28）。🔴 只有**本次会话中实时到达**的叙事才置位——
+  // 历史消息、replay 补的内容一律 false，否则刷新页面会把整局重打一遍字。
+  animate?: boolean
 }
 
 // 两段式玩家掷骰（feat/keeper-agent）：守秘人裁决"需要检定"后不直接掷骰，
@@ -637,6 +641,14 @@ export default function RoomPage() {
   // （真人实测问题清单 #1）。在这里缓存一份，供「速记本」面板常驻展示。
   const [playerIntro, setPlayerIntro] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  // 打字机每吐一批字就跟着滚一下，不然长段落会打到视野外面去。
+  // useCallback 是必需的：它进了 TypedNarration 的 effect 依赖，每次渲染换个
+  // 新函数会让那个 effect 反复重启，打字节奏被打乱。
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'nearest' })
+  }, [])
+  // 点一下消息区 = 跳过当前正在打的字（`exec/26 #62` 第三条：必须可跳过）。
+  const [skipSignal, setSkipSignal] = useState(0)
 
   useEffect(() => {
     // ★ block: 'nearest' 很关键——默认的 scrollIntoView 会尝试把目标"居中"，
@@ -846,7 +858,7 @@ export default function RoomPage() {
             return [...prev, {
               type: 'narr', sender: '守秘人', content: text, time: now,
               private: envelope.payload.private === true,
-              eventId, streaming: true,
+              eventId, streaming: true, animate: true,
             }]
           }
           const next = [...prev]
@@ -1181,7 +1193,15 @@ export default function RoomPage() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-3" id="chatScroll">
+      {/* 点一下就把正在打的字全显（`exec/26 #62`：打字机必须可跳过）。挂在
+          滚动容器上而不是每条气泡上——玩家想跳过的时候不会去瞄准某一条。
+          🔴 不用 <button>：这一层要能正常滚动、能选中文字，语义上它也不是个
+          控件；跳过是"点哪都行"的手势，不是一个可聚焦的操作。 */}
+      <div
+        className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-3"
+        id="chatScroll"
+        onClick={() => setSkipSignal((n) => n + 1)}
+      >
         {channel === 'chat' ? (
           chatMessages.length === 0 ? (
             <div className="text-center py-8 text-text-muted text-sm">
@@ -1307,7 +1327,16 @@ export default function RoomPage() {
                   </button>
                 ) : (
                   <p className={`font-display text-[13.5px] leading-[21px] whitespace-pre-wrap ${onRight ? 'text-right' : 'text-left'}`}>
-                    {msg.content}
+                    {msg.type === 'narr' && msg.animate ? (
+                      <TypedNarration
+                        text={msg.content}
+                        animate
+                        skipSignal={skipSignal}
+                        onReveal={scrollToBottom}
+                      />
+                    ) : (
+                      msg.content
+                    )}
                   </p>
                 )}
               </div>
@@ -1322,7 +1351,12 @@ export default function RoomPage() {
             <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-sm bg-[#faf5eb] border border-brass">
               📜
             </div>
-            <div className="bg-panel inline-flex gap-1 items-center px-4 py-3 rounded-md">
+            {/* 🔴 **带字**（exec/26 #62）。三个点是聊天软件的通用符号，撑不住
+                这段等待——玩家分不清"它在想"还是"卡死了"。这个产品在"无文字
+                的符号"上已经翻过一次车：队友角色卡代码完整，入口是顶栏一个没
+                文字的小图标，真人实测直接反馈"没有实现"。 */}
+            <div className="bg-panel inline-flex gap-2 items-center px-3.5 py-2.5 rounded-md">
+              <span className="text-[12px] text-text-body">守秘人正在思考</span>
               {[0, 1, 2].map((i) => (
                 <span key={i} className="w-1.5 h-1.5 bg-brass rounded-full animate-bounce"
                   style={{ animationDelay: `${i * 0.2}s`, animationDuration: '1.4s' }} />

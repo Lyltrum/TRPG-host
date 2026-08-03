@@ -46,6 +46,26 @@ def test_verbatim_meta_sentence_is_dropped() -> None:
     assert [h.fact_id for h in hits] == ["fact-truth"]
 
 
+def test_every_leaking_sentence_is_dropped_not_just_the_longest_one() -> None:
+    """🔴 同一条元层事实泄漏在**多句**里时，每一句都得删（`exec/28` 4.5）。
+
+    此前 `scan_meta_leaks` 是全文扫一次、每条 fact 只取**最长**的那个命中，
+    而删除是按句做的（`bad in sentence`）。于是较短的那句被 argmax 挤掉、
+    原样发给玩家——元层不可见是硬不变量，这是真漏，不是体验问题。
+
+    判据本身没放宽：两句都满足「≥ `_MIN_VERBATIM_RUN` 字逐字重合」。
+    """
+    short_run = TRUTH[:14]
+    text = f"他压低声音说{short_run}。屋里安静下来。他又说{TRUTH}。"
+
+    cleaned, hits = scrub_meta_leaks(text, _module())
+
+    assert short_run not in cleaned, "较短的那句泄漏被放过了"
+    assert TRUTH not in cleaned
+    assert "屋里安静下来" in cleaned
+    assert [h.fact_id for h in hits] == ["fact-truth", "fact-truth"]
+
+
 def test_clean_narration_is_returned_unchanged() -> None:
     text = "管家站在门厅，双手交握。他说昨夜下过雨。"
     cleaned, hits = scrub_meta_leaks(text, _module())

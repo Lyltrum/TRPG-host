@@ -77,22 +77,53 @@ def _meta_facts(module: ScenarioModule) -> list[tuple[str, str]]:
     return [(f.id, f.text.strip()) for f in module.facts if f.tier == "meta" and f.text.strip()]
 
 
+def _longest_run_in(fact_text: str, text: str) -> str:
+    """`fact_text` 里最长的、原样出现在 `text` 中的连续片段（不足阈值则空）。"""
+    longest = ""
+    for start in range(len(fact_text) - _MIN_VERBATIM_RUN + 1):
+        for end in range(len(fact_text), start + _MIN_VERBATIM_RUN - 1, -1):
+            run = fact_text[start:end]
+            if len(run) > len(longest) and run in text:
+                longest = run
+                break
+    return longest
+
+
 def scan_meta_leaks(text: str, module: ScenarioModule) -> list[LeakHit]:
-    """扫描正文里逐字复述的元层断言。每条元层事实最多报一次（取最长命中）。"""
+    """扫描正文里逐字复述的元层断言。**每条元层事实在每一句里各报一次**。
+
+    🔴 粒度是**逐句**，不是全文一次（`exec/28` 4.5）。此前是全文扫一次、每条
+    fact 只留最长的那个命中，而丢弃是按句做的（见 `scrub_meta_leaks`）——于是
+    同一条真相泄漏在多句里时，较短的那句会被 argmax 挤掉、**原样发给玩家**。
+    元层不可见是硬不变量（`exec/14 P3`），那是真漏。
+
+    判据本身没有放宽：仍然是「连续 ≥ `_MIN_VERBATIM_RUN` 字逐字重合」，所以
+    误伤面不变。**改小那个阈值会同时在两个方向放大误伤，动它之前先看 exec/28
+    4.5 的风险表。**
+
+    同一个 `fact_id` 因此可能出现多条命中（一句一条）。要统计"泄了几条事实"
+    的话记得按 `fact_id` 去重——这里给的是"泄了几次"。
+    """
     if not text:
         return []
+    facts = _meta_facts(module)
+    if not facts:
+        return []
+    # 先全文快扫一次：没有任何命中就不必逐句再扫（常见情况，避免 ×句数的开销）
+    if not any(_longest_run_in(fact_text, text) for _, fact_text in facts):
+        return []
+
     hits: list[LeakHit] = []
-    for fact_id, fact_text in _meta_facts(module):
-        longest = ""
-        for start in range(len(fact_text) - _MIN_VERBATIM_RUN + 1):
-            for end in range(len(fact_text), start + _MIN_VERBATIM_RUN - 1, -1):
-                run = fact_text[start:end]
-                if len(run) > len(longest) and run in text:
-                    longest = run
-                    break
-        if longest:
-            hits.append(LeakHit(fact_id=fact_id, matched=longest))
+    for sentence in _split_sentences(text):
+        for fact_id, fact_text in facts:
+            longest = _longest_run_in(fact_text, sentence)
+            if longest:
+                hits.append(LeakHit(fact_id=fact_id, matched=longest))
     return hits
+
+
+def _split_sentences(text: str) -> list[str]:
+    return [s for s in _SENTENCE_SPLIT.split(text) if s]
 
 
 def scrub_meta_leaks(text: str, module: ScenarioModule) -> tuple[str, list[LeakHit]]:
@@ -109,7 +140,7 @@ def scrub_meta_leaks(text: str, module: ScenarioModule) -> tuple[str, list[LeakH
     bad_runs = [h.matched for h in hits]
     kept = [
         sentence
-        for sentence in _SENTENCE_SPLIT.split(text)
+        for sentence in _split_sentences(text)
         if not any(bad in sentence for bad in bad_runs)
     ]
     cleaned = "".join(kept).strip()

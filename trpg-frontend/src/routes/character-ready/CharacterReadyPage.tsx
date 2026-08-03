@@ -471,7 +471,11 @@ export default function CharacterReadyPage() {
   return (
     // 🔴 `theme-coc`：卷宗主题的作用域边界，同 RoomPage。桌面材质（木纹 /
     // 台灯 / 刻在桌上的符环）都挂在这一层，纸放上去才有"摊在桌上"的关系。
-    <div className="theme-coc desk-grain desk-lamp desk-sigil animate-screen-in min-h-full px-5 pt-6 pb-8 flex flex-col relative">
+    //
+    // 🔴 `bg-card` 不能少：木纹是 `multiply` 混合上去的，**底下没有颜色就
+    // 等于没有**。漏掉它的真机症状是整页停在外层的浅底上，牛皮纸浮在白纸上，
+    // 色差突兀——材质类名齐全也救不回来，因为它们没有可乘的底色。
+    <div className="theme-coc desk-grain desk-lamp desk-sigil bg-card animate-screen-in min-h-full px-5 pt-6 pb-8 flex flex-col relative">
       <button
         onClick={handleGoBack}
         className="cut-corner w-[34px] h-[34px] bg-input border border-border-mid flex items-center justify-center flex-shrink-0 active:bg-panel active:scale-[0.94] transition-all duration-150 mb-3 relative z-10"

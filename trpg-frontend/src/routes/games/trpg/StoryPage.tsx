@@ -57,22 +57,37 @@ export default function StoryPage() {
     navigate('/home')
   }
 
+  // 退出确认 = 压在桌上的一张便条（同等待大厅），不是深色对话框
   const exitConfirm = confirmExit && (
     <div className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center px-8" onClick={() => setConfirmExit(false)}>
-      <div className="bg-[#1a1620] border border-[rgba(255,255,255,0.12)] rounded-md p-5 w-full max-w-[300px]" onClick={(e) => e.stopPropagation()}>
-        <p className="text-sm text-[#d4cfc8] text-center mb-4">确定要退出游戏吗？房间会保留，之后可以从「我的游戏」继续。</p>
+      <div
+        className="theme-paper leaf paper-grain bg-book text-ink p-4 pl-5 w-full max-w-[300px] border-l-[3px] border-l-rust"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p className="text-[12.5px] text-ink text-center leading-relaxed mb-3.5">
+          确定要退出游戏吗？房间会保留，之后可以从「我的游戏」继续。
+        </p>
         <div className="flex gap-2">
           <button onClick={() => setConfirmExit(false)}
-            className="flex-1 py-2 rounded-sm bg-[rgba(255,255,255,0.08)] border border-[rgba(255,255,255,0.12)] text-[#a09888] text-xs font-medium">
+            className="cut-corner flex-1 py-2 border border-ink/35 bg-white/25 text-ink-soft text-[12px] font-semibold active:scale-[0.97]">
             取消
           </button>
           <button onClick={handleExit}
-            className="flex-1 py-2 rounded-sm bg-[#c04040] text-white text-xs font-medium active:bg-[#a03030]">
+            className="cut-corner flex-1 py-2 bg-rust-dark text-book text-[12px] font-semibold active:scale-[0.97]">
             确认退出
           </button>
         </div>
       </div>
     </div>
+  )
+
+  const exitButton = (
+    <button
+      onClick={() => setConfirmExit(true)}
+      className="cut-corner absolute top-4 left-4 w-[34px] h-[34px] bg-input border border-border-mid flex items-center justify-center text-text-body z-10 active:bg-panel active:scale-[0.94] transition-all"
+    >
+      <ArrowLeft className="w-[18px] h-[18px]" strokeWidth={2.5} />
+    </button>
   )
 
   const title = detail?.title || localScenario?.name
@@ -91,21 +106,16 @@ export default function StoryPage() {
 
   if (!moduleId) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-[#1a1620] to-[#0d0b10] flex flex-col justify-center px-7 py-10 relative">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_30%,rgba(112,80,160,0.08),transparent_70%)] pointer-events-none" />
+      // 🔴 `bg-card` = 桌面木色。木纹是 multiply 混合，底下没颜色等于没铺。
+      <div className="theme-coc desk-grain desk-lamp desk-sigil bg-card min-h-full flex flex-col justify-center px-7 py-10 relative">
         {exitConfirm}
-        <button
-          onClick={() => setConfirmExit(true)}
-          className="absolute top-4 left-4 w-[34px] h-[34px] rounded-full bg-[rgba(255,255,255,0.08)] border border-[rgba(255,255,255,0.12)] flex items-center justify-center text-[#a09888] z-10"
-        >
-          <ArrowLeft className="w-[18px] h-[18px]" />
-        </button>
-        <div className="text-center text-[#9088a0]">
-          <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50" />
-          <p className="text-sm">未选择模组</p>
+        {exitButton}
+        <div className="relative z-10 text-center text-text-muted">
+          <BookOpen className="w-12 h-12 mx-auto mb-4 text-brass-dark" />
+          <p className="text-[13px] text-text-body">未选择模组</p>
           <button
             onClick={() => navigate('/home/create/games')}
-            className="mt-6 px-5 py-2.5 rounded-sm bg-brass text-white text-xs font-semibold"
+            className="cut-corner mt-6 px-5 py-2.5 bg-brass-dark border border-brass text-text-primary text-[12.5px] font-semibold active:translate-y-[1px]"
           >
             返回选择游戏
           </button>
@@ -115,55 +125,59 @@ export default function StoryPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#1a1620] to-[#0d0b10] flex flex-col justify-center px-7 py-10 relative">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_30%,rgba(112,80,160,0.08),transparent_70%)] pointer-events-none" />
+    <div className="theme-coc desk-grain desk-lamp desk-sigil bg-card min-h-full flex flex-col px-4 pt-16 pb-8 relative">
       {exitConfirm}
-      <button
-        onClick={() => setConfirmExit(true)}
-        className="absolute top-4 left-4 w-[34px] h-[34px] rounded-full bg-[rgba(255,255,255,0.08)] border border-[rgba(255,255,255,0.12)] flex items-center justify-center text-[#a09888] z-10"
-      >
-        <ArrowLeft className="w-[18px] h-[18px]" />
-      </button>
+      {exitButton}
 
-      <div className="font-mono text-[11px] tracking-[0.15em] text-[#706090] mb-5">
-        {storyLabel}
-      </div>
-      <h1 className="text-[28px] font-bold text-[#eeead8] leading-[1.25] mb-2">
-        {title || '…'}
-      </h1>
-      {titleEn ? (
-        <p className="font-mono text-xs text-[#9088a0] mb-8 tracking-[0.05em]">
-          {titleEn}
-        </p>
-      ) : (
-        <div className="mb-8" />
-      )}
-      <div className="w-10 h-px bg-[#504860] mb-7" />
-      <div className="text-sm leading-[1.9] text-[#c8c0b8]">
-        {loading && <p className="text-[#9088a0]">正在加载前情…</p>}
-        {!loading && loadError && (
-          <p className="text-[#c08080]">{loadError}</p>
+      {/* 🔴 这一屏跟前后两屏**不同族**：它是唯一一屏真的要"读"的东西。
+          所以用摊开的书页（扉页 + 正文），而不是登记表那张牛皮纸档案。
+          守秘人叙事当初做成整页书被判"很怪"，是因为他是个在场的人、说话
+          不该长得像出版物；模组前情本来就是一段读物，扉页体裁在这里成立。 */}
+      <div className="theme-paper leaf-full paper-grain relative z-10 flex-1 flex flex-col bg-book text-ink px-6 py-7">
+        <div className="typed text-[10.5px] text-ink-soft mb-4">{storyLabel}</div>
+        <h1 className="text-[27px] font-bold text-ink leading-[1.25] mb-1.5 text-balance">
+          {title || '…'}
+        </h1>
+        {titleEn && (
+          <p className="font-mono text-[11.5px] text-ink-soft tracking-[0.05em]">{titleEn}</p>
         )}
-        {!loading && !loadError && storyPages.length === 0 && (
-          <p className="text-[#9088a0]">暂无玩家可见的开场介绍（structured 未就绪）。</p>
-        )}
-        {!loading &&
-          storyPages.map((page, idx) => (
-            <p
-              key={idx}
-              className={idx < storyPages.length - 1 ? 'mb-4' : ''}
-            >
-              {page}
-            </p>
-          ))}
+
+        {/* 卷首饰线：一道细线 + 一枚菱形。书才有的东西，登记表不会有 */}
+        <div className="flex items-center gap-2 my-6">
+          <span className="h-px w-10 bg-ink/45" />
+          <span className="w-[5px] h-[5px] rotate-45 bg-ink/45" />
+          <span className="h-px flex-1 bg-ink/20" />
+        </div>
+
+        <div className="text-[14px] leading-[1.95] text-ink">
+          {loading && <p className="text-ink-soft">正在加载前情…</p>}
+          {!loading && loadError && <p className="text-rust-dark">{loadError}</p>}
+          {!loading && !loadError && storyPages.length === 0 && (
+            <p className="text-ink-soft">暂无玩家可见的开场介绍（structured 未就绪）。</p>
+          )}
+          {/* 首行缩进两字：中文书籍的排版惯例。这里是真读物，所以成立 */}
+          {!loading &&
+            storyPages.map((page, idx) => (
+              <p key={idx} className={`indent-[2em] ${idx < storyPages.length - 1 ? 'mb-3' : ''}`}>
+                {page}
+              </p>
+            ))}
+        </div>
+
+        <div className="flex-1" />
+
+        <button
+          onClick={() => navigate('/room/character')}
+          disabled={loading}
+          className={`mt-8 self-start px-7 py-3 text-[13.5px] font-bold tracking-[0.18em] indent-[0.18em] transition-all ${
+            loading
+              ? 'border border-ink/25 text-ink-soft cursor-not-allowed'
+              : 'cut-corner bg-brass-dark text-book active:translate-y-[1px]'
+          }`}
+        >
+          继续 →
+        </button>
       </div>
-      <button
-        onClick={() => navigate('/room/character')}
-        disabled={loading}
-        className="mt-10 self-start px-6 py-3.5 rounded-sm bg-brass text-white text-sm font-semibold active:bg-brass-dark transition-all disabled:opacity-50"
-      >
-        继续 →
-      </button>
     </div>
   )
 }

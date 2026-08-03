@@ -35,10 +35,6 @@ export interface GameManifest {
   name: string
   icon: string
   description: string
-  color: string
-  borderColor: string
-  iconBg: string
-  iconColor: string
   status: GameStatus
   systems?: GameSystem[]
 }

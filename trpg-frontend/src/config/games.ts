@@ -7,10 +7,6 @@ export const GAME_REGISTRY: GameManifest[] = [
     name: '跑团',
     icon: 'scroll-text',
     description: '经典 TRPG 体验\n支持多规则系统',
-    color: 'ink-blue',
-    borderColor: 'border-ink-blue',
-    iconBg: 'bg-[#eef3f8]',
-    iconColor: 'text-ink-blue',
     status: 'recommended',
     // 摊平「选择世界」那一层之后（见 GameSelectionPage），这两条介绍从那个
     // 页面里的局部常量搬到了配置里——它们是数据，不是某一屏的排版。
@@ -36,10 +32,6 @@ export const GAME_REGISTRY: GameManifest[] = [
     name: '血染钟楼',
     icon: 'clock',
     description: '社交推理\n找出恶魔与爪牙',
-    color: 'rose',
-    borderColor: 'border-[#8a4070]',
-    iconBg: 'bg-[#f5eef4]',
-    iconColor: 'text-[#8a4070]',
     status: 'coming-soon',
   },
   {
@@ -47,10 +39,6 @@ export const GAME_REGISTRY: GameManifest[] = [
     name: '狼人杀',
     icon: 'wolf',
     description: '经典发言推理\n谁是潜伏的狼人',
-    color: 'rust',
-    borderColor: 'border-[#c04040]',
-    iconBg: 'bg-[#f8eeee]',
-    iconColor: 'text-[#c04040]',
     status: 'coming-soon',
   },
   {
@@ -58,24 +46,18 @@ export const GAME_REGISTRY: GameManifest[] = [
     name: '剧本杀',
     icon: 'theater',
     description: '沉浸式剧情推演\n扮演你的角色',
-    color: 'brown',
-    borderColor: 'border-[#6a6050]',
-    iconBg: 'bg-[#f2f0ec]',
-    iconColor: 'text-[#6a6050]',
     status: 'coming-soon',
   },
 ]
 
-export const GAME_COLORS: Record<string, { border: string; iconBg: string; iconColor: string }> = {
-  'trpg': { border: 'border-ink-blue', iconBg: 'bg-[#eef3f8]', iconColor: 'text-ink-blue' },
-  'blood-clock': { border: 'border-[#8a4070]', iconBg: 'bg-[#f5eef4]', iconColor: 'text-[#8a4070]' },
-  'werewolf': { border: 'border-[#c04040]', iconBg: 'bg-[#f8eeee]', iconColor: 'text-[#c04040]' },
-  'script-murder': { border: 'border-[#6a6050]', iconBg: 'bg-[#f2f0ec]', iconColor: 'text-[#6a6050]' },
-}
-
-export const SYSTEM_COLORS: Record<string, { border: string; iconBg: string; iconColor: string; name: string }> = {
-  'coc': { border: 'border-[#7050a0]', iconBg: 'bg-[#f3eef8]', iconColor: 'text-[#7050a0]', name: '克苏鲁的呼唤 7th' },
-  'dnd': { border: 'border-[#c08050]', iconBg: 'bg-[#f8f2ec]', iconColor: 'text-[#c08050]', name: '龙与地下城 5e' },
+/** 规则系统的**完整名**（带版本号），用在"游戏 · 规则"这种一行说明里。
+ *
+ * 原来这里叫 `SYSTEM_COLORS`，还带着 border/iconBg/iconColor 三个配色字段——
+ * 换成桌游盒外壳之后配色由 `theme-shell` 与各页自己的索引色决定，那三个字段
+ * 再没人读过，只剩下名字有用。留着一个叫"颜色"却只提供名字的常量会误导人。 */
+export const SYSTEM_NAMES: Record<string, string> = {
+  coc: '克苏鲁的呼唤 7th',
+  dnd: '龙与地下城 5e',
 }
 
 export function getGameById(id: string): GameManifest | undefined {

@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { Plus, Minus } from 'lucide-react'
 import ShellPage from '@/shared/components/ShellPage'
-import { GAME_REGISTRY, SYSTEM_COLORS, getScenarioById } from '@/config/games'
+import { GAME_REGISTRY, SYSTEM_NAMES, getScenarioById } from '@/config/games'
 import { useGameStore } from '@/stores/game-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { DEFAULT_MAX_PLAYERS, useRoomStore } from '@/stores/room-store'
@@ -37,7 +37,7 @@ export default function CreateRoomPage() {
   const [createError, setCreateError] = useState('')
 
   const selectedGame = store.gameId ? GAME_REGISTRY.find(g => g.id === store.gameId) : null
-  const sysColors = store.systemId ? SYSTEM_COLORS[store.systemId] : null
+  const systemName = store.systemId ? SYSTEM_NAMES[store.systemId] : null
   const selectedScenario = store.sceneId ? getScenarioById(store.sceneId) : null
   const hasSelection = !!(store.gameId && store.systemId && store.sceneId)
 
@@ -165,7 +165,7 @@ export default function CreateRoomPage() {
                 {selectedScenario?.nameEn?.charAt(0) || '🎮'}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-bold text-text-primary">{selectedGame?.name} · {sysColors?.name}</div>
+                <div className="text-[13px] font-bold text-text-primary">{selectedGame?.name} · {systemName}</div>
                 <div className="text-[11px] text-text-muted mt-0.5">模组：{selectedScenario?.name}</div>
               </div>
               <button onClick={handleChangeGame}
@@ -190,7 +190,7 @@ export default function CreateRoomPage() {
             {[
               { k: '房间名', v: roomName || '未设置', strong: true },
               { k: '游戏', v: selectedGame?.name || (store.gameId || '未选择') },
-              { k: '规则', v: sysColors?.name || (store.systemId || '未选择') },
+              { k: '规则', v: systemName || (store.systemId || '未选择') },
               { k: '模组', v: selectedScenario?.name || '未选择' },
               { k: '人数上限', v: `${maxPlayers} 人` },
             ].map((row) => (

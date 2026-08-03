@@ -17,11 +17,14 @@ export default function ShellPage({
   children,
   contentClassName = '',
   band = 'landing',
+  align = 'center',
 }: {
   title?: string
   onBack?: () => void
   children: ReactNode
   contentClassName?: string
+  /** 垂直排布。列表页传 `top`，见下方注释。 */
+  align?: 'center' | 'top'
   /** 色带高度档位。内页（传了 `title`）恒为 slim；落地屏按反白内容多少选。 */
   band?: ShellBandVariant
 }) {
@@ -54,10 +57,17 @@ export default function ShellPage({
 
           🔴 例外是**列表页**（我的游戏、选模组）：条目数量不定、会一直往下长，
           从上往下读才对，两条记录居中飘在屏幕中间很怪。它们传
-          `contentClassName="justify-start"`。判据是「这一屏是一份**会增长的
-          列表**，还是一组**固定的内容**」——选游戏那五张卡是后者（平台的菜单，
-          不会变），所以照样居中。 */}
-      <div className={`relative z-10 flex-1 flex flex-col justify-center py-4 ${contentClassName}`}>
+          `align="top"`。判据是「这一屏是一份**会增长的列表**，还是一组**固定
+          的内容**」——选游戏那五张卡是后者（平台的菜单，不会变），所以照样居中。
+
+          🔴 这里必须是**互斥的两选一**，不能靠调用方往 `contentClassName` 里塞
+          `justify-start` 去盖：两个 justify 类同时挂在元素上时，赢的是**样式表里
+          靠后**的那个（`justify-center`），跟 class 属性写的顺序无关。 */}
+      <div
+        className={`relative z-10 flex-1 flex flex-col py-4 ${
+          align === 'top' ? 'justify-start' : 'justify-center'
+        } ${contentClassName}`}
+      >
         {children}
       </div>
     </div>

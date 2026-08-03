@@ -203,12 +203,13 @@ export default function CreateRoomPage() {
         </div>
       </div>
 
-      {/* 🔴 按钮回到文档流、用 `mt-auto` 顶到底部，不再 `fixed`。
-          原来是固定条 + 内容区 `pb-24` 给它让位——两者叠起来在这页（只有三张
-          卡）下方留出一大段死空间。这页内容不会长到需要"按钮始终可见"，
-          固定定位是在解决一个不存在的问题；顺带也不必再为跳出容器的固定元素
-          单独挂一次 `theme-shell`（CSS 变量继承最容易漏的地方）。 */}
-      <div className="mt-auto px-5 pt-4 pb-4">
+      {/* 🔴 按钮**紧跟着最后一张卡**，既不 `fixed` 也不 `mt-auto` 贴底。
+          三种做法各错一次，值得留着：
+            `fixed` + 内容区 `pb-24` → 两段留白叠起来，底部空约 166px；
+            `mt-auto`               → 按钮被顶到屏幕最底，概览与它之间空一大块。
+          这页是**从上往下填的表单**，最后一步就该接在最后一栏后面。页面底部
+          剩下的空白是纸板本身，不需要被内容填满。 */}
+      <div className="px-5 pt-3 pb-8">
         {createError && <p className="text-[11.5px] text-rust-dark text-center mb-2">{createError}</p>}
         <button onClick={handleCreate} disabled={!canCreate}
           className={`w-full py-3 text-[14px] font-extrabold tracking-[0.16em] indent-[0.16em] transition-all flex items-center justify-center gap-2 ${

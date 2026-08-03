@@ -31,7 +31,8 @@ export default function HomePage() {
         <span className="text-[11px] font-semibold text-text-primary max-w-[80px] truncate">{nickname}</span>
       </button>
 
-      <div className="flex flex-col items-center pt-9 px-5 pb-8 text-center">
+      {/* 品牌区整块落在色带里（`band="landing"` 的高度就是按它定的） */}
+      <div className="flex flex-col items-center pt-10 px-5 pb-6 text-center">
         <div className="press-soft w-[62px] h-[62px] mb-3 bg-card text-text-primary flex items-center justify-center">
           <BrandMark className="w-[60%] h-[60%]" />
         </div>
@@ -43,8 +44,10 @@ export default function HomePage() {
         </p>
       </div>
 
-      {/* 三个入口 = 三枚实体按键，各自一色（主色朱红 / 次色蓝版 / 纸板本色） */}
-      <div className="px-5 flex flex-col gap-3">
+      {/* 🔴 三个入口占据**剩余空间的中间**，不是贴着品牌区往下堆。
+          这一屏只有三颗按钮，靠自然流排会把内容全挤在上半屏、下面空一大片
+          （真机反馈）。`flex-1 + justify-center` 让空白平均分到上下两侧。 */}
+      <div className="flex-1 flex flex-col justify-center px-5 gap-3 py-6">
         <button
           className="press w-full py-3 flex items-center justify-center gap-2 text-[14px] font-extrabold tracking-[0.16em] indent-[0.16em] bg-rust text-[#fff5ea]"
           onClick={() => navigate('/home/join')}
@@ -68,7 +71,7 @@ export default function HomePage() {
         </button>
       </div>
 
-      <p className="text-center pt-6 pb-4 text-text-dim text-[11px]">
+      <p className="text-center pb-5 text-text-dim text-[11px]">
         AI桌游主持人 © 2026
       </p>
     </ShellPage>

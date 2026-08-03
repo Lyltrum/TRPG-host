@@ -11,12 +11,30 @@
  * 标题那一行，标题反白压在色带上。这样从登录到内页是同一条带子在变窄，而不是
  * 每页贴一块花纹——后者会跟每屏的顶栏反复打架（这正是选这一档时的最大风险）。
  */
-export default function ShellBand({ slim = false }: { slim?: boolean }) {
+/** 🔴 色带有三档高度，因为**反白文字必须整块落在色带里**。
+ *
+ * 斜切边是这个材质的灵魂，但它也意味着色带下缘在屏幕两侧差着约 48px——
+ * 任何跨过那条斜边的文字都会一半压红底、一半压纸板，两边都读不出来
+ * （真机上「AI 智能主持 · 多游戏聚会平台」就是这么消失的）。
+ *
+ * 所以规矩是：**要么整块在色带里反白，要么整块在纸板上用墨色**，不许骑边。
+ * 每一档的高度就是按"这一档要装下多少反白内容"定的：
+ *   slim    内页顶栏：返回键 + 一行标题
+ *   landing 主页：标志 + 标题 + 副标题
+ *   auth    登录/注册：再多一枚标签与两行介绍
+ */
+const HEIGHTS = {
+  slim: '-top-[34px] h-[104px]',
+  landing: '-top-10 h-[250px]',
+  auth: '-top-10 h-[330px]',
+} as const
+
+export type ShellBandVariant = keyof typeof HEIGHTS
+
+export default function ShellBand({ variant = 'landing' }: { variant?: ShellBandVariant }) {
   return (
     <div
-      className={`pointer-events-none absolute -left-10 -right-10 overflow-hidden ${
-        slim ? '-top-[34px] h-[104px]' : '-top-10 h-[190px]'
-      }`}
+      className={`pointer-events-none absolute -left-10 -right-10 overflow-hidden ${HEIGHTS[variant]}`}
       aria-hidden="true"
     >
       <div className="absolute inset-0 bg-rust rotate-[-7deg]" />

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { ArrowLeft } from 'lucide-react'
-import ShellBand from './ShellBand'
+import ShellBand, { type ShellBandVariant } from './ShellBand'
 
 /** 外壳页面的统一骨架：纸板底 + 颗粒 + 满铺暗纹 + 顶部套印色带。
  *
@@ -16,16 +16,19 @@ export default function ShellPage({
   onBack,
   children,
   contentClassName = '',
+  band = 'landing',
 }: {
   title?: string
   onBack?: () => void
   children: ReactNode
   contentClassName?: string
+  /** 色带高度档位。内页（传了 `title`）恒为 slim；落地屏按反白内容多少选。 */
+  band?: ShellBandVariant
 }) {
   const slim = title != null
   return (
     <div className="theme-shell board-grain board-motif animate-screen-in relative min-h-full flex flex-col bg-page text-text-primary overflow-hidden">
-      <ShellBand slim={slim} />
+      <ShellBand variant={slim ? 'slim' : band} />
 
       {slim && (
         <div className="relative z-10 flex items-center gap-2.5 px-4 pt-3.5 pb-3">

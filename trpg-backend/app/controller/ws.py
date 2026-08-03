@@ -45,6 +45,7 @@ from app.core.db import async_session_factory
 from app.core.narration.contract import (
     CheckRequestNotice,
     CheckResultNotice,
+    NarrationDeltaSink,
     NarrationSegment,
     PlayerUtterance,
     StatChangeNotice,
@@ -61,6 +62,7 @@ from app.dto.ws import (
     ClientEnvelope,
     ErrorPayload,
     GameStartPayload,
+    NarrationDeltaPayload,
     NarrationPushPayload,
     PlayerReadyPayload,
     RoomJoinPayload,
@@ -94,7 +96,12 @@ async def _send_error(websocket: WebSocket, code: str, message: str) -> None:
 
 
 async def _broadcast_narration(
-    db: AsyncSession, room_id: str, player_id: str | None, text: str
+    db: AsyncSession,
+    room_id: str,
+    player_id: str | None,
+    text: str,
+    *,
+    event_id: str | None = None,
 ) -> None:
     """广播一条 narration.push，并同步写一行 `events` 表——`GET
     /rooms/{roomId}/replay` 读的就是这里写入的数据（issue #77 才打通的
@@ -102,12 +109,35 @@ async def _broadcast_narration(
     """
     # 🔴 先落库再广播：广播 payload 要带上事件 id，前端按它去重（exec/19 #42）。
     # 顺序反过来就拿不到 id，只能退回"按正文文本去重"——那正是 #42 的病根。
+    #
+    # 流式路径是例外，且**不是对上面那条的违反**：它在开流之前就自己生成了
+    # id（`exec/28`），此时把同一个 id 传回来落库。身份仍然先于广播存在，
+    # 只是生成它的地方从数据库挪到了调用方。
     event_id = await room_service.record_event(
-        db, room_id, player_id, "narration.push", {"text": text}
+        db, room_id, player_id, "narration.push", {"text": text}, event_id=event_id
     )
     narration = NarrationPushPayload(text=text, event_id=event_id)
     envelope = ServerEnvelope(type="narration.push", payload=narration.model_dump(by_alias=True))
     await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
+
+
+def _narration_delta_sink(room_id: str, event_id: str) -> NarrationDeltaSink:
+    """给 keeper 用的 delta 投递口（`exec/28`）。
+
+    🔴 **delta 不落库。** `events` 表仍然只在整段写完时落一行完整叙事，
+    `GET /rooms/{roomId}/replay` 一行不用改。重连的人拿到的是那一行完整文本，
+    **不重放流式**——刷新页面后把整局叙事重新打一遍字，玩家会疯
+    （`exec/26 #62` 的第一条要求）。
+
+    delta 是加速通道，不是事实来源；两者靠同一个 `eventId` 认亲。
+    """
+
+    async def _sink(seq: int, text: str) -> None:
+        payload = NarrationDeltaPayload(event_id=event_id, seq=seq, text=text)
+        envelope = ServerEnvelope(type="narration.delta", payload=payload.model_dump(by_alias=True))
+        await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
+
+    return _sink
 
 
 async def _deliver_narration_segments(
@@ -732,6 +762,10 @@ async def _run_turn(
     # 事件不在这里记：每条提交在 `_handle_action_submit` 里广播之前就已按**人**
     # 落库了（广播 payload 需要那一行的 id 做去重身份，exec/19 #42）。
     narrator = websocket.app.state.narrator
+    # 🔴 先分配 id 再开流：第一条 delta 就得带着它，前端才知道后续碎片拼到
+    # 哪条消息上。整段写完后用**同一个** id 落库 + 广播 narration.push。
+    narration_event_id = str(uuid4())
+    context = replace(context, on_delta=_narration_delta_sink(room_id, narration_event_id))
     try:
         outcome = await narrator.narrate(context)
     except Exception as exc:  # 外部服务的失败面（网络/超时/API 错）就是宽的，故意宽捕获
@@ -758,7 +792,9 @@ async def _run_turn(
     for notice in outcome.stat_changes:
         await _broadcast_stat_change(room_id, notice)
     if outcome.text:
-        await _broadcast_narration(db, room_id, initiator_id, outcome.text)
+        await _broadcast_narration(
+            db, room_id, initiator_id, outcome.text, event_id=narration_event_id
+        )
     await _deliver_narration_segments(db, room_id, outcome.segments)
     for notice in outcome.check_requests:
         await _broadcast_check_request(room_id, notice)

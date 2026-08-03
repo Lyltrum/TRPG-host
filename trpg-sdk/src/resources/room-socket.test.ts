@@ -14,6 +14,25 @@ test('isValidServerEvent：接受已知类型的合法事件', () => {
   assert.equal(isValidServerEvent({ type: 'narration.push', payload: { text: 'hi' } }), true);
 });
 
+test('isValidServerEvent：narration.delta 三个字段都必填', () => {
+  const ok = { type: 'narration.delta', payload: { eventId: 'e1', seq: 0, text: '他推开门。' } };
+  assert.equal(isValidServerEvent(ok), true);
+  // eventId 是拼接的身份，seq 是去重键——缺任何一个都不能放行，
+  // 否则碎片会拼到错的消息上，或者重放时被当成新片段追加两次。
+  assert.equal(
+    isValidServerEvent({ type: 'narration.delta', payload: { seq: 0, text: 'x' } }),
+    false
+  );
+  assert.equal(
+    isValidServerEvent({ type: 'narration.delta', payload: { eventId: 'e1', text: 'x' } }),
+    false
+  );
+  assert.equal(
+    isValidServerEvent({ type: 'narration.delta', payload: { eventId: 'e1', seq: '0', text: 'x' } }),
+    false
+  );
+});
+
 test('isValidServerEvent：拒绝未知 type', () => {
   assert.equal(isValidServerEvent({ type: 'not.a.real.event', payload: {} }), false);
 });

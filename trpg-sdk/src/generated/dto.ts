@@ -644,6 +644,24 @@ export interface MyRoomSummary {
 }
 
 /**
+ * narration.delta 推送 payload（`exec/28`）——叙事流式到达的一段。
+ *
+ * 🔴 **它不是新的事实来源。** `events` 表仍然只落一行完整叙事，
+ * `GET /rooms/{roomId}/replay` 一行不用改；delta 纯粹是实时通道的加速。
+ * 重连的人拿 replay 的完整文本，**不重放流式**——刷新页面后把整局叙事重打
+ * 一遍，玩家会疯（`exec/26 #62` 第一条要求）。
+ *
+ * 每段都已经过完纪律层与泄密守门才发出（`runtime/narration_stream`）：
+ * **推出去的字不可撤回**，所以守门必须在推之前，不能在之后。
+ */
+export interface NarrationDeltaPayload {
+  eventId: string;
+  seq: number;
+  text: string;
+  private?: boolean;
+}
+
+/**
  * narration.push 推送 payload。
  */
 export interface NarrationPushPayload {

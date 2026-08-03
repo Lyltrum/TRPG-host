@@ -586,14 +586,26 @@ async def get_module_detail(db: AsyncSession, module_id: str) -> ModuleDetailRea
 
 
 async def record_event(
-    db: AsyncSession, room_id: str, player_id: str | None, event_type: str, payload: dict
+    db: AsyncSession,
+    room_id: str,
+    player_id: str | None,
+    event_type: str,
+    payload: dict,
+    *,
+    event_id: str | None = None,
 ) -> str:
     """写入一条房间事件（issue #77 才真正打通的闭环——原来"不记 EventLog"是
     已知缺口，本期由 ws.py 在 narration.push / action.submit 时调用这个函数）。
 
     返回事件 id：广播 payload 要带上它，前端才能拿事件身份去重（exec/19 #42）。
+
+    `event_id`：**流式叙事要先有 id 再开始推**（`exec/28`）——第一条
+    `narration.delta` 就得带上它，前端才知道后续碎片该拼到哪条消息上。所以
+    那条路径先自己生成 id，写库时再把同一个 id 传回来。不传就照旧自动生成。
     """
     event = Event(room_id=room_id, player_id=player_id, event_type=event_type, payload=payload)
+    if event_id is not None:
+        event.id = event_id
     db.add(event)
     await db.commit()
     return event.id

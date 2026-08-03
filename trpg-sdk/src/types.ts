@@ -74,6 +74,7 @@ export type {
   ActionSubmitPayload,
   GameStartPayload,
   SessionBoundPayload,
+  NarrationDeltaPayload,
   NarrationPushPayload,
   // WebSocket 新增 14 个事件（issue #77）
   CheckRollPayload,
@@ -134,6 +135,7 @@ import type {
   ClueGrantedPayload,
   ErrorPayload,
   GameEndedPayload,
+  NarrationDeltaPayload,
   NarrationPushPayload,
   PlayerJoinedPayload,
   RoomStatePayload,
@@ -163,6 +165,9 @@ import type {
 export type ServerToClientEvent =
   | { type: 'session.bound'; payload: SessionBoundPayload }
   | { type: 'narration.push'; payload: NarrationPushPayload }
+  // exec/28：叙事流式到达的一段。跟随后那条 narration.push 共用 eventId，
+  // 前端据此把碎片拼到同一条消息上。**不落库、重连不重放。**
+  | { type: 'narration.delta'; payload: NarrationDeltaPayload }
   // issue #107：讨论区消息广播 + 玩家对 AI 说的原话广播（后端真实发出）
   | { type: 'chat.message'; payload: ChatMessagePayload }
   | { type: 'action.broadcast'; payload: ActionBroadcastPayload }

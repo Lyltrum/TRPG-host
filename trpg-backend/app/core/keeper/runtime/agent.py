@@ -86,6 +86,7 @@ from app.core.keeper.runtime.llm_calls import (
     REQUEST_TIMEOUT_SECONDS,
     adjudicate,
     narrate_prose,
+    narrate_prose_stream,
     summarize_chapter,
 )
 from app.core.keeper.runtime.location_state import (
@@ -96,6 +97,7 @@ from app.core.keeper.runtime.location_state import (
 from app.core.keeper.runtime.location_state import (
     scene_changed as has_scene_changed,
 )
+from app.core.keeper.runtime.narration_stream import NarrationStream
 from app.core.keeper.runtime.pending import pending_check_manager, to_notice
 from app.core.keeper.runtime.phase import (
     PHASE_FINISHED,
@@ -115,6 +117,7 @@ from app.core.llm_tape import build_llm_client
 from app.core.narration.contract import (
     CheckResultCallback,
     NarrationContext,
+    NarrationDeltaSink,
     NarrationOutcome,
     NarrationSegment,
     Narrator,
@@ -427,6 +430,7 @@ class KeeperAgent(Narrator):
                 players=players,
                 turn_player_ids=turn_player_ids,
                 private_player_ids=frozenset(context.private_player_ids),
+                on_delta=context.on_delta,
             )
             # 可观测性，不做自动拦截：能不能判断"这段话有没有替检定预支结果"
             # 没有可靠的代码手段（跟其它 scrub 规则不同，这是语义/因果判断，
@@ -470,6 +474,7 @@ class KeeperAgent(Narrator):
             players=players,
             turn_player_ids=turn_player_ids,
             private_player_ids=frozenset(context.private_player_ids),
+            on_delta=context.on_delta,
         )
 
         # HP 变化的可见性不再靠拼进叙事正文保证——那样等于让守秘人的嘴说了句
@@ -607,6 +612,63 @@ class KeeperAgent(Narrator):
             extra_suffix=extra_suffix,
         )
 
+    async def _narrate_prose_streamed(
+        self,
+        situation: str,
+        decision: KeeperDecision,
+        report: list[str],
+        issues: list[str],
+        *,
+        token_limit: int,
+        char_limit: int,
+        extra_suffix: str,
+        action_intent: bool,
+        confused: bool,
+        room_id: str | None,
+        on_delta: NarrationDeltaSink,
+    ) -> str:
+        """流式叙事：边写边推，返回玩家实际收到的全文（`exec/28`）。
+
+        🔴 返回值仍然是**完整的一段话**，调用方后面的落库、记账、历史都不用
+        改——delta 只是提前把同样的内容送到了玩家眼前，不是新的事实来源。
+
+        🔴 这里**不再调 `_finalize_prose`**：那三步（scrub / 泄密守门 / 长度）
+        已经由 `NarrationStream` 按段施加过了，再跑一遍等于对已经推出去的文本
+        做第二次裁剪，而推出去的字收不回来——两边结果一旦不同，玩家看到的和
+        落库的就对不上。
+        """
+        stream = NarrationStream(
+            narrate_prose_stream(
+                self._client,
+                self._narrator_instructions,
+                situation,
+                decision,
+                report,
+                issues,
+                max_tokens=token_limit,
+                max_chars=char_limit,
+                extra_suffix=extra_suffix,
+            ),
+            module=self._module,
+            action_intent=action_intent,
+            confused=confused,
+            max_chars=char_limit,
+            room_id=room_id,
+        )
+        seq = 0
+        async for piece in stream:
+            await on_delta(seq, piece)
+            seq += 1
+        logger.info(
+            "keeper_narration_streamed",
+            room_id=room_id,
+            segments=seq,
+            raw_len=len(stream.raw),
+            emitted_len=len(stream.text),
+            truncated=stream.truncated,
+        )
+        return stream.text
+
     async def _narrate_per_audience(
         self,
         *,
@@ -628,6 +690,7 @@ class KeeperAgent(Narrator):
         players: list[tuple[str, str]],
         turn_player_ids: tuple[str, ...],
         private_player_ids: frozenset[str],
+        on_delta: NarrationDeltaSink | None = None,
     ) -> tuple[str, list[NarrationSegment]]:
         """叙事阶段的投递分组（exec/14 P5.2，定稿：**一次裁决全局、只叙事分开**）。
 
@@ -676,6 +739,27 @@ class KeeperAgent(Narrator):
             )
 
         if len(groups) <= 1 and not covert_speakers:
+            suffix = extra_suffix + _bystanders(tuple(all_ids))
+            # 🔴 流式只走这条**全房间**路径（`exec/28` 第 3 步）。分头那条暂时
+            # 保持非流式：它的延迟大头是**多段串行生成**（第 N 组要等前面 N-1 段
+            # 全部写完），流式压不掉那部分——见 exec/28 的 3.4。
+            if on_delta is not None:
+                return (
+                    await self._narrate_prose_streamed(
+                        situation,
+                        decision,
+                        report,
+                        issues,
+                        token_limit=token_limit,
+                        char_limit=char_limit,
+                        extra_suffix=suffix,
+                        action_intent=action_intent,
+                        confused=confused,
+                        room_id=room_id,
+                        on_delta=on_delta,
+                    ),
+                    [],
+                )
             narration = await self._narrate_prose(
                 situation,
                 decision,
@@ -683,7 +767,7 @@ class KeeperAgent(Narrator):
                 issues,
                 max_tokens=token_limit,
                 max_chars=char_limit,
-                extra_suffix=extra_suffix + _bystanders(tuple(all_ids)),
+                extra_suffix=suffix,
             )
             return (
                 self._finalize_prose(

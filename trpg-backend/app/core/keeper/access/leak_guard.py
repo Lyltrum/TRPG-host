@@ -126,12 +126,12 @@ def _split_sentences(text: str) -> list[str]:
     return [s for s in _SENTENCE_SPLIT.split(text) if s]
 
 
-def scrub_meta_leaks(text: str, module: ScenarioModule) -> tuple[str, list[LeakHit]]:
-    """丢掉逐字复述元层断言的那些句子。
+def drop_leaking_sentences(text: str, module: ScenarioModule) -> tuple[str, list[LeakHit]]:
+    """丢掉逐字复述元层断言的那些句子。**删光就返回空串，不做占位兜底。**
 
-    返回 (处理后的正文, 全部命中)。整句丢弃与 `prose_discipline` 里
-    `_SENTENCE_DROP` / `_FAKE_STAT_LOG_LEAK` 的处理方式一致——不整段丢，
-    否则玩家看到的是空气。
+    流式路径按段调用它（`exec/28` 第 3 步）：占位文案是**整段**级的决定
+    （"这一轮守秘人什么都没说成"），一个片段被删光不等于整轮被删光，在这里
+    塞占位会让玩家在一段话中间读到"守秘人顿了顿"。
     """
     hits = scan_meta_leaks(text, module)
     if not hits:
@@ -143,7 +143,18 @@ def scrub_meta_leaks(text: str, module: ScenarioModule) -> tuple[str, list[LeakH
         for sentence in _split_sentences(text)
         if not any(bad in sentence for bad in bad_runs)
     ]
-    cleaned = "".join(kept).strip()
+    return "".join(kept).strip(), hits
+
+
+def scrub_meta_leaks(text: str, module: ScenarioModule) -> tuple[str, list[LeakHit]]:
+    """整段版：在 `drop_leaking_sentences` 之上补一层「删光了怎么办」。
+
+    整句丢弃与 `prose_discipline` 里 `_SENTENCE_DROP` / `_FAKE_STAT_LOG_LEAK`
+    的处理方式一致——不整段丢，否则玩家看到的是空气。
+    """
+    cleaned, hits = drop_leaking_sentences(text, module)
+    if not hits:
+        return cleaned, hits
     return (cleaned or _EMPTIED_PLACEHOLDER), hits
 
 

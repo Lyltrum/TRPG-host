@@ -399,22 +399,37 @@ def _strip_mechanic_announce(sentence: str) -> str:
     return sentence
 
 
-def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = False) -> str:
-    """叙事后处理：去菜单尾巴；行动轮去掉「你可以/如果你」虚拟挡（全模组通用）。
+# 收尾残留的标点/空白。作用于**整段的结尾**，所以流式下只能在最后做一次。
+_TRAILING_JUNK = re.compile(r"[，,、；;\s]+$")
 
-    confused=True（玩家问「能做什么」）时只打硬菜单：方括号块、编号列表、
-    「你可以：」冒号菜单、「你自己选」。保留融进正文的方向句（如
-    「你可以去找邻居打听」），否则引导会被 scrub 砍光，体验像答非所问。
+
+def scrub_bracket_blocks(body: str) -> str:
+    """方括号/书名号菜单块。作用域 = 一个括号块（最长 120 字，可跨句）。"""
+    return _BRACKET_MENU.sub("", body)
+
+
+def scrub_sentence_scoped(
+    body: str,
+    *,
+    action_intent: bool,
+    confused: bool,
+    trim_head: bool = True,
+    trim_tail: bool = True,
+) -> str:
+    """只跑**作用域不超过一句 / 一个括号块 / 一行**的规则。
+
+    🔴 这里刻意**不含**三样东西，它们都必须看到全文：`_MENU_TAIL`（锚在 `$`）、
+    收尾标点修剪（作用于整段结尾）、全滤空退化（要知道"全都没了"）。
+    调用方 `scrub_kp_anti_patterns` 在前后补上它们。
+
+    `trim_head` / `trim_tail`：全量调用时两端都修（整段的首尾）；**流式分段器
+    调用中间片段时两端都不修**——那两端在完整文本里是句子之间，全量路径不会
+    去动它们，修了就不等价（`exec/28` 第 4 节那条等价性测试守的正是这个）。
     """
-    body = (text or "").strip()
-    if not body:
-        return body
-
-    # 方括号/书名号菜单块一律去掉
-    body = _BRACKET_MENU.sub("", body)
-    body = _MENU_TAIL.sub("", body).rstrip()
     # 括号里的机制播报（试玩实测 2026-07-31，exec/19 #45）
-    body = _PARENTHESIZED_MECHANIC.sub("", body).rstrip()
+    body = _PARENTHESIZED_MECHANIC.sub("", body)
+    if trim_tail:
+        body = body.rstrip()
 
     # 迷茫轮：只清硬菜单，不按句砍「你可以…」方向句
     if confused and not action_intent:
@@ -438,12 +453,10 @@ def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = F
             if not stripped:
                 continue
             kept_soft.append(sent if stripped == s else stripped)
-        body = "".join(kept_soft).strip()
-        body = re.sub(r"[，,、；;\s]+$", "", body)
-        return body or (text or "").strip()
+        return _trim("".join(kept_soft), trim_head, trim_tail)
 
     if action_intent:
-        body = _VIRTUAL_SOFT.sub("", body).strip()
+        body = _trim(_VIRTUAL_SOFT.sub("", body), trim_head, trim_tail)
 
     # 按句过滤：虚拟挡/菜单句直接丢；行动轮凡含「你可以」的整句也丢
     kept: list[str] = []
@@ -467,7 +480,7 @@ def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = F
             continue
         kept.append(sent if stripped == s else stripped)
 
-    body = "".join(kept).strip()
+    body = _trim("".join(kept), trim_head, trim_tail)
     # 残留行首菜单
     lines = []
     for line in body.split("\n"):
@@ -475,24 +488,61 @@ def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = F
         if re.match(r"^你可以(?:以|试着|选择|：|:)", s):
             continue
         lines.append(line)
-    body = "\n".join(lines).strip()
+    return _trim("\n".join(lines), trim_head, trim_tail)
+
+
+def _trim(body: str, head: bool, tail: bool) -> str:
+    if head:
+        body = body.lstrip()
+    if tail:
+        body = body.rstrip()
+    return body
+
+
+def degrade_when_scrubbed_empty(original: str) -> str:
+    """整段被滤空时的退化：删虚拟短语而不是回空串。
+
+    抽成函数是因为流式分段器也要在"一个字都没推出去"时走同一条路——同一份
+    知识写两处迟早不一致。
+    """
+    body = (original or "").strip()
+    body = _BRACKET_MENU.sub("", body)
+    body = re.sub(
+        r"(?:也许|或许)?你(?:可以|也可以)(?:选择|试着|以)?[^。！？\n]*[。！？]?",
+        "",
+        body,
+    )
+    body = re.sub(r"你自己选[^。！？\n]*[。！？]?", "", body)
+    body = re.sub(r"[：:]\s*[一二三\d][，,、．.].*$", "。", body)
+    body = re.sub(r"\n{2,}", "\n", body).strip()
+    body = re.sub(r"[，,、；;\s：:]+$", "", body)
+    if body and not body.endswith(("。", "！", "？", "…")):
+        body = body.rstrip("：:") + "。"
+    return body
+
+
+def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = False) -> str:
+    """叙事后处理：去菜单尾巴；行动轮去掉「你可以/如果你」虚拟挡（全模组通用）。
+
+    confused=True（玩家问「能做什么」）时只打硬菜单：方括号块、编号列表、
+    「你可以：」冒号菜单、「你自己选」。保留融进正文的方向句（如
+    「你可以去找邻居打听」），否则引导会被 scrub 砍光，体验像答非所问。
+    """
+    body = (text or "").strip()
+    if not body:
+        return body
+
+    body = scrub_bracket_blocks(body)
+    body = _MENU_TAIL.sub("", body).rstrip()
+    body = scrub_sentence_scoped(body, action_intent=action_intent, confused=confused)
     # 收尾空白标点
-    body = re.sub(r"[，,、；;\s]+$", "", body)
+    body = _TRAILING_JUNK.sub("", body)
+
+    if confused and not action_intent:
+        return body or (text or "").strip()
     # 整段被滤空时：退化为删虚拟短语，避免变空回复
     if not body and (text or "").strip():
-        body = (text or "").strip()
-        body = _BRACKET_MENU.sub("", body)
-        body = re.sub(
-            r"(?:也许|或许)?你(?:可以|也可以)(?:选择|试着|以)?[^。！？\n]*[。！？]?",
-            "",
-            body,
-        )
-        body = re.sub(r"你自己选[^。！？\n]*[。！？]?", "", body)
-        body = re.sub(r"[：:]\s*[一二三\d][，,、．.].*$", "。", body)
-        body = re.sub(r"\n{2,}", "\n", body).strip()
-        body = re.sub(r"[，,、；;\s：:]+$", "", body)
-        if body and not body.endswith(("。", "！", "？", "…")):
-            body = body.rstrip("：:") + "。"
+        return degrade_when_scrubbed_empty(text)
     return body
 
 

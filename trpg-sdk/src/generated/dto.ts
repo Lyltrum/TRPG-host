@@ -232,6 +232,7 @@ export interface CharacterRead {
   derivedStats?: {
     [k: string]: number | string;
   };
+  hpMax?: number | null;
   skills?: {
     [k: string]: number;
   };

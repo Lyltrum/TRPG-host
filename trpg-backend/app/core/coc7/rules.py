@@ -171,6 +171,28 @@ def compute_derived_stats(
     }
 
 
+def resolve_max_hp(derived_stats: dict[str, int | str], attributes: dict[str, int]) -> int | None:
+    """这张卡的 HP **上限**（血条的分母），`None` = 这张卡还没有属性可算。
+
+    两个来源，都权威：
+    - `derived_stats["HP_MAX"]`：keeper 第一次改 HP 时把原值备份进去的
+      （见 `keeper/runtime/deps.write_stat`），此后 `HP` 是当前值；
+    - 没有备份就说明这张卡的 HP 从没被改过，按规则公式重算一遍——**不读
+      `derived_stats["HP"]`**：那一格在被改过的卡上是当前值，读它会让带伤的
+      角色分母偏小（`exec/26` #67 的原始症状）。
+
+    公式不在这里重写一遍，直接过 `compute_derived_stats`（同一份知识写两处
+    迟早不一致）。HP 不受年龄惩罚，所以不需要 `age`。
+    """
+    backup = derived_stats.get("HP_MAX")
+    if isinstance(backup, int):
+        return backup
+    if not isinstance(attributes.get("CON"), int) or not isinstance(attributes.get("SIZ"), int):
+        return None
+    hp = compute_derived_stats(attributes)["HP"]
+    return hp if isinstance(hp, int) else None
+
+
 def evaluate_skill_base(base: int | str, attributes: dict[str, int]) -> int:
     """技能基础值：`int` 原样返回；公式串按 `ATTR` 或 `ATTR/N` 求值
     （跟前端 `calculateBaseValue` 一致，比如 `DEX/2`、`EDU`）。"""

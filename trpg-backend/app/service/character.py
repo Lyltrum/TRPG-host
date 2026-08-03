@@ -29,6 +29,7 @@ from app.core.coc7.rules import (
     compute_preview,
     find_occupation_by_id,
     find_occupation_by_name,
+    resolve_max_hp,
     validate_age,
     validate_character_with_occupation,
 )
@@ -355,6 +356,7 @@ async def get_character(
         attributes=character.attributes or {},
         allocated_attributes=character.allocated_attributes,
         derived_stats=character.derived_stats or {},
+        hp_max=resolve_max_hp(character.derived_stats or {}, character.attributes or {}),
         skills=character.skills or {},
         equipment=list(character.equipment or []),
         occupation_id=character.occupation_id,

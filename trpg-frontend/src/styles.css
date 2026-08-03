@@ -565,6 +565,81 @@
     letter-spacing: 0.16em;
   }
 
+  /* ── 卷轴：模组前情 ──
+     这一屏是唯一一段"读物"，所以它不是桌上的一张纸，是一卷摊在桌上的东西。
+     两根木轴把纸夹住，纸的上下缘暗下去（卷进轴里），进屏时展开。
+     🔴 展开动画只做**纸的高度**，不做整体缩放——缩放会连字一起糊。 */
+  .scroll-rod {
+    position: relative;
+    height: 22px;
+    flex-shrink: 0;
+    border-radius: 11px;
+    background: linear-gradient(180deg, #8a6a44 0%, #6b4f31 38%, #4b3620 74%, #6a4e30 100%);
+    box-shadow:
+      0 3px 10px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 rgba(255, 220, 170, 0.35);
+  }
+  /* 两端的轴头。比轴粗、比轴高，所以纸的宽度要比轴窄一截才压得住 */
+  .scroll-rod::before,
+  .scroll-rod::after {
+    content: '';
+    position: absolute;
+    top: -5px;
+    width: 18px;
+    height: 32px;
+    border-radius: 6px;
+    background: linear-gradient(180deg, #a07c4e, #5c4227 62%, #3d2b18);
+    box-shadow:
+      0 3px 8px rgba(0, 0, 0, 0.55),
+      inset 0 1px 0 rgba(255, 225, 180, 0.4);
+  }
+  .scroll-rod::before {
+    left: -9px;
+  }
+  .scroll-rod::after {
+    right: -9px;
+  }
+
+  /* 纸的上下缘：不是被切断，是弯进轴里，所以要一段渐暗而不是一条硬边。
+     🔴 这里**故意用真 div 而不是伪元素**：同一张纸上还挂着 `.paper-grain`
+     （它占了 `::after`），两个 utility 抢同一个伪元素会互相顶掉。 */
+  .scroll-curl {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 26px;
+    z-index: 2;
+    pointer-events: none;
+  }
+  .scroll-curl-top {
+    top: 0;
+    background: linear-gradient(180deg, rgba(58, 42, 26, 0.42), rgba(58, 42, 26, 0.1) 55%, transparent);
+  }
+  .scroll-curl-bottom {
+    bottom: 0;
+    background: linear-gradient(0deg, rgba(58, 42, 26, 0.42), rgba(58, 42, 26, 0.1) 55%, transparent);
+  }
+
+  .animate-unroll {
+    animation: unroll 0.9s cubic-bezier(0.22, 0.85, 0.3, 1) both;
+  }
+  @keyframes unroll {
+    from {
+      max-height: 0;
+      opacity: 0.2;
+    }
+    to {
+      /* 100vh 只是个够大的上界：真实高度由 flex 决定，max-height 只负责放行 */
+      max-height: 100vh;
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-unroll {
+      animation: none;
+    }
+  }
+
   .animate-screen-in {
     animation: screenIn 0.3s ease;
   }

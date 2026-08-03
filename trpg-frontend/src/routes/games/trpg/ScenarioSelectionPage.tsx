@@ -38,7 +38,7 @@ export default function ScenarioSelectionPage() {
   }
 
   return (
-    <ShellPage title="选择模组" onBack={() => navigate('/home/create/games')}>
+    <ShellPage title="选择模组" onBack={() => navigate('/home/create/games')} contentClassName="justify-start">
       <p className="text-[11.5px] text-text-muted px-5 pb-3.5">
         {game?.name || '跑团'} · {systemName}
       </p>

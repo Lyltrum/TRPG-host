@@ -233,7 +233,7 @@ export default function LobbyPage() {
             key={`empty-${i}`}
             className="flex items-center gap-2.5 px-3 py-2.5 border-b border-ink/20 last:border-b-0"
           >
-            <div className="w-[34px] h-[34px] flex-none flex items-center justify-center border border-dashed border-ink/25 text-ink-soft/70 text-[15px]">
+            <div className="w-[34px] h-[34px] flex-none flex items-center justify-center border border-dashed border-ink/25 text-ink-faint text-[15px]">
               ?
             </div>
             <span className="flex-1 text-[11.5px] text-ink-soft">等待玩家加入…</span>

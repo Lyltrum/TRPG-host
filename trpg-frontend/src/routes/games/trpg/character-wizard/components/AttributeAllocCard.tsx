@@ -46,7 +46,7 @@ export function AttributeAllocCard({
   onInputCommit,
 }: AttributeAllocCardProps) {
   const btnClass =
-    'w-[23px] h-[21px] flex-none border border-ink/50 bg-white/30 text-ink flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:opacity-30'
+    'w-[23px] h-[21px] flex-none border border-ink/50 bg-white/30 text-ink flex items-center justify-center active:bg-brass-dark active:text-dossier transition-all disabled:border-ink/20 disabled:text-ink-faint disabled:bg-transparent'
 
   return (
     <div className="border-b border-dotted border-ink/30 pb-1 mb-1 last:border-b-0">
@@ -83,33 +83,39 @@ export function AttributeAllocCard({
             +5
           </button>
         )}
+      </div>
+
+      {/* 🔴 预设值、含义、半值/五分之一**共用一行**。
+          它们全是"参考信息"，各占一行会让一项属性长到三行、八项属性滑不完；
+          半值那组此前挤在上一行右侧只有 42px，真机上被折成了两行。 */}
+      <div className="flex items-center gap-2 pb-0.5">
+        {editable && presets.length > 0 && (
+          <div className="flex gap-1 flex-none">
+            {presets.map((p) => (
+              <button
+                key={p}
+                onClick={() => onSetValue(p)}
+                disabled={presetDisabled(p)}
+                className={`w-[30px] py-[1px] typed text-[10.5px] font-semibold border transition-all disabled:border-ink/20 disabled:text-ink-faint disabled:bg-transparent ${
+                  value === p
+                    ? 'bg-brass-dark text-dossier border-brass-dark'
+                    : 'border-ink/30 bg-white/20 text-ink-soft'
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
+        {meaning && (
+          <div className="flex-1 min-w-0 truncate text-[10.5px] text-ink-soft">{meaning}</div>
+        )}
         {tiers.length > 0 && (
-          <span className="font-mono text-[10.5px] text-ink-soft w-[42px] text-right">
+          <span className="font-mono text-[10.5px] text-ink-soft whitespace-nowrap flex-none">
             {tiers.map((t) => Math.floor(value / t.divisor)).join(' / ')}
           </span>
         )}
       </div>
-
-      {editable && presets.length > 0 && (
-        <div className="flex gap-1">
-          {presets.map((p) => (
-            <button
-              key={p}
-              onClick={() => onSetValue(p)}
-              disabled={presetDisabled(p)}
-              className={`flex-1 py-0.5 typed text-[10.5px] font-semibold border transition-all disabled:opacity-30 ${
-                value === p
-                  ? 'bg-brass-dark text-dossier border-brass-dark'
-                  : 'border-ink/30 bg-white/20 text-ink-soft'
-              }`}
-            >
-              {p}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {meaning && <div className="text-[10.5px] text-ink-soft mt-1">{meaning}</div>}
     </div>
   )
 }

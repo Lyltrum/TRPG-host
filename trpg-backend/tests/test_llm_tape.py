@@ -181,6 +181,120 @@ async def test_no_tape_active_is_pure_passthrough() -> None:
     assert "tape_kind" not in _inner_calls(client)[0]
 
 
+# ── 流式（exec/28）───────────────────────────────────────────
+
+
+class _FakeDelta:
+    def __init__(self, content: str | None) -> None:
+        self.content = content
+
+
+class _FakeStreamChunk:
+    def __init__(self, content: str | None, finish_reason: str | None = None) -> None:
+        self.choices = [_FakeStreamChoice(content, finish_reason)]
+
+
+class _FakeStreamChoice:
+    def __init__(self, content: str | None, finish_reason: str | None) -> None:
+        self.delta = _FakeDelta(content)
+        self.finish_reason = finish_reason
+
+
+class _FakeStream:
+    def __init__(self, pieces: list[str]) -> None:
+        self._pieces = pieces
+
+    def __aiter__(self):  # noqa: ANN204
+        async def gen():  # noqa: ANN202
+            for p in self._pieces:
+                yield _FakeStreamChunk(p)
+            yield _FakeStreamChunk(None, finish_reason="stop")
+
+        return gen()
+
+
+class _FakeStreamingCompletions(_FakeCompletions):
+    """`create(stream=True)` 时返回一个假的流，否则退回普通响应。"""
+
+    async def create(self, **kwargs):  # noqa: ANN003, ANN201
+        self.calls.append(kwargs)
+        text = self._script.pop(0)
+        if kwargs.get("stream"):
+            return _FakeStream([text[i : i + 3] for i in range(0, len(text), 3)])
+        return _FakeResponse(
+            choices=[_FakeChoice(message=_FakeMessage(text), finish_reason="stop")]
+        )
+
+
+def _streaming_client(script: list[str]) -> TapedClient:
+    inner = _FakeInner([])
+    inner.chat.completions = _FakeStreamingCompletions(script)
+    return TapedClient(inner)
+
+
+@pytest.mark.asyncio
+async def test_live_stream_yields_pieces_and_keeps_full_text() -> None:
+    client = _streaming_client(["书桌抽屉里空空如也。"])
+    call = client.chat.completions.stream(tape_kind="narrate", model="m", messages=[])
+
+    pieces = [d async for d in call]
+
+    assert len(pieces) > 1, "应该是分多次到达的，不是一次给完"
+    assert "".join(pieces) == "书桌抽屉里空空如也。"
+    assert call.text == "书桌抽屉里空空如也。"
+    assert call.finish_reason == "stop"
+    assert "tape_kind" not in _inner_calls(client)[0]
+
+
+@pytest.mark.asyncio
+async def test_stream_records_full_text_and_replays_without_network(tmp_path: Path) -> None:
+    """🔴 磁带存的一直是完整响应，流式只是投递方式——**已有磁带不用重录**。"""
+    path = tmp_path / "tape.json"
+    client = _streaming_client(["灯还亮着，值班日志摊在桌上。"])
+
+    with recording(path, scenario="tests/fixtures/keeper_module.json"):
+        call = client.chat.completions.stream(tape_kind="narrate", model="m", messages=[])
+        recorded = "".join([d async for d in call])
+
+    # 回放客户端脚本给空的：一旦真去调底层就会 IndexError，证明没打网络
+    replay_client = _streaming_client([])
+    with replaying(path):
+        replay_call = replay_client.chat.completions.stream(
+            tape_kind="narrate", model="m", messages=[]
+        )
+        replayed = [d async for d in replay_call]
+
+    assert "".join(replayed) == recorded
+    assert replay_call.finish_reason == "stop"
+    assert len(replayed) > 1, "回放也要分块，才能走到分段器的各条路径"
+    assert _inner_calls(replay_client) == []
+
+
+@pytest.mark.asyncio
+async def test_stream_flag_does_not_change_request_digest(tmp_path: Path) -> None:
+    """🔴 `stream=True` 不进 digest：非流式录的磁带，流式回放时不该报漂移。
+
+    磁带记的是"给了什么上下文、模型答了什么"，投递方式不属于那份记录。
+    这条一旦破了，改用流式就要把所有磁带重录一遍。
+    """
+    path = tmp_path / "tape.json"
+    client = _streaming_client(["门厅里没有人。"])
+
+    with recording(path, scenario="tests/fixtures/keeper_module.json"):
+        await client.chat.completions.create(
+            tape_kind="narrate", model="m", messages=[{"role": "user", "content": "写一段"}]
+        )
+
+    replay_client = _streaming_client([])
+    with replaying(path) as session:
+        call = replay_client.chat.completions.stream(
+            tape_kind="narrate", model="m", messages=[{"role": "user", "content": "写一段"}]
+        )
+        assert "".join([d async for d in call]) == "门厅里没有人。"
+
+    assert session.drifts == []
+
+
 def test_committed_tapes_only_use_original_scenarios() -> None:
     """🔴 版权红线：进 git 的磁带只允许录原创迷你剧本。
 

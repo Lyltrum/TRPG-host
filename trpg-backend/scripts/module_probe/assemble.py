@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from openai import OpenAI
+from app.core.llm_tape import TapedSyncClient, build_sync_llm_client
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
@@ -196,7 +196,7 @@ class CallStats:
 
 
 def _chat_json(
-    client: OpenAI,
+    client: TapedSyncClient,
     *,
     system: str,
     user: str,
@@ -209,6 +209,7 @@ def _chat_json(
         try:
             t0 = time.perf_counter()
             response = client.chat.completions.create(
+                tape_kind="module_assemble",
                 model=DEEPSEEK_MODEL,
                 temperature=temperature,
                 response_format={"type": "json_object"},
@@ -430,7 +431,7 @@ D. **利用 audience 辅助归组**：
 
 
 def stage1_group(
-    client: OpenAI,
+    client: TapedSyncClient,
     items: list[dict[str, Any]],
     rels: list[dict[str, Any]],
     stats: CallStats,
@@ -639,7 +640,7 @@ def _bundle_entity_materials(
 
 
 def stage2_form_kind(
-    client: OpenAI,
+    client: TapedSyncClient,
     *,
     kind: str,
     entities: list[dict[str, Any]],
@@ -741,7 +742,7 @@ STAGE3_SYSTEM = """\
 
 
 def stage3_toplevel(
-    client: OpenAI,
+    client: TapedSyncClient,
     *,
     items: list[dict[str, Any]],
     items_by_id: dict[str, dict[str, Any]],
@@ -1084,7 +1085,7 @@ def _heuristic_visibility_pairs(
 
 
 def stage3b_visibility_pairs(
-    client: OpenAI | None,
+    client: TapedSyncClient | None,
     *,
     nodes: list[dict[str, Any]],
     npcs: list[dict[str, Any]],
@@ -1259,7 +1260,7 @@ def find_entity(module: dict[str, Any], entity_id: str) -> tuple[list[Any], int]
 
 
 def repair_entity(
-    client: OpenAI,
+    client: TapedSyncClient,
     *,
     entity: dict[str, Any],
     errors: list[str],
@@ -1298,7 +1299,7 @@ def repair_entity(
 
 
 def repair_module(
-    client: OpenAI,
+    client: TapedSyncClient,
     *,
     module: dict[str, Any],
     report: ValidationReport,
@@ -1378,7 +1379,7 @@ def _print_stage1_summary(stage1: dict[str, Any]) -> None:
 
 
 def _run_stage2_and_3(
-    client: OpenAI,
+    client: TapedSyncClient,
     *,
     stage1: dict[str, Any],
     items: list[dict[str, Any]],
@@ -1540,7 +1541,7 @@ def run_pipeline(
     title_hint = extract_path.name.split(".")[0]
 
     api_key = load_api_key()
-    client = OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=180.0)
+    client = build_sync_llm_client(api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=180.0)
     stats = CallStats()
     t_all = time.perf_counter()
 

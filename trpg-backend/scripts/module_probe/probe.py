@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from openai import OpenAI
+from app.core.llm_tape import TapedSyncClient, build_sync_llm_client
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-chat"
@@ -289,7 +289,7 @@ def _parse_items_payload(raw: str) -> list[dict[str, Any]]:
 
 
 def extract_chunk(
-    client: OpenAI,
+    client: TapedSyncClient,
     chunk: Chunk,
     lines: list[str],
     stats: ExtractStats,
@@ -300,6 +300,7 @@ def extract_chunk(
         try:
             t0 = time.perf_counter()
             response = client.chat.completions.create(
+                tape_kind="module_probe",
                 model=DEEPSEEK_MODEL,
                 temperature=TEMPERATURE,
                 response_format={"type": "json_object"},
@@ -545,7 +546,7 @@ def run(input_path: Path, json_out: Path, md_out: Path) -> int:
         )
 
     api_key = load_api_key()
-    client = OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=120.0)
+    client = build_sync_llm_client(api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=120.0)
     stats = ExtractStats()
     all_items: list[dict[str, Any]] = []
 

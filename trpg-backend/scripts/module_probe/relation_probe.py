@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from openai import OpenAI
+from app.core.llm_tape import TapedSyncClient, build_sync_llm_client
 
 # 与 probe.py 同目录：保证 `python scripts/module_probe/relation_probe.py` 可 import
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -114,7 +114,7 @@ class CallStats:
 
 
 def _chat_json(
-    client: OpenAI,
+    client: TapedSyncClient,
     *,
     system: str,
     user: str,
@@ -127,6 +127,7 @@ def _chat_json(
         try:
             t0 = time.perf_counter()
             response = client.chat.completions.create(
+                tape_kind="module_relations",
                 model=DEEPSEEK_MODEL,
                 temperature=temperature,
                 response_format={"type": "json_object"},
@@ -186,7 +187,7 @@ def _item_body(lines: list[str], item: dict[str, Any]) -> str:
 
 
 def backfill_missing_kinds(
-    client: OpenAI,
+    client: TapedSyncClient,
     payload: dict[str, Any],
     lines: list[str],
     stats: CallStats,
@@ -347,7 +348,7 @@ def merge_batch_relations(
 
 
 def discover_relations(
-    client: OpenAI,
+    client: TapedSyncClient,
     items: list[dict[str, Any]],
     stats: CallStats,
     *,
@@ -380,7 +381,7 @@ def discover_relations(
 
 
 def discover_relations_batched(
-    client: OpenAI,
+    client: TapedSyncClient,
     items: list[dict[str, Any]],
     stats: CallStats,
     *,
@@ -807,7 +808,7 @@ def run(
 
     pass1_path, pass2_path, md_path = default_paths(extract_path, output_suffix=output_suffix)
     api_key = load_api_key()
-    client = OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=180.0)
+    client = build_sync_llm_client(api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=180.0)
     stats = CallStats()
     backfilled: list[dict[str, Any]] = []
     t0 = time.perf_counter()

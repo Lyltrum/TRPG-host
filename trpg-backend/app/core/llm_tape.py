@@ -243,9 +243,67 @@ class _ReplayChoice:
 @dataclass
 class _ReplayResponse:
     """只实现调用方真正读到的字段（`.choices[0].message.content` /
-    `.finish_reason`），不复刻整个 openai 响应类型。"""
+    `.finish_reason`），不复刻整个 openai 响应类型。
+
+    🔴 `usage` 恒为 `None`：磁带**没有录 token 数**。回放时统计出来的调用成本
+    因此会是 0——这是如实的"不知道"，不是 0 次调用。导入管线那三个脚本本来就
+    写着 `if usage is not None`，照旧走得通。
+    """
 
     choices: list[_ReplayChoice]
+    usage: Any = None
+
+
+def _split_call(kwargs: dict[str, Any]) -> tuple[str, list[Any], dict[str, Any]]:
+    model = kwargs.get("model", "")
+    messages = list(kwargs.get("messages", []))
+    params = {k: v for k, v in kwargs.items() if k not in ("model", "messages")}
+    return model, messages, params
+
+
+def _replay_or_none(
+    session: TapeSession | None,
+    *,
+    tape_kind: str,
+    model: str,
+    messages: list[Any],
+    params: dict[str, Any],
+) -> _ReplayResponse | None:
+    """在放磁带就返回录好的那一条，否则返回 None（调用方去真打网络）。"""
+    if session is None or session.mode != "replay":
+        return None
+    entry = session.next_entry(kind=tape_kind, model=model, messages=messages, params=params)
+    return _ReplayResponse(
+        choices=[
+            _ReplayChoice(
+                message=_ReplayMessage(content=entry.response_text),
+                finish_reason=entry.finish_reason,
+            )
+        ]
+    )
+
+
+def _record_if_needed(
+    session: TapeSession | None,
+    response: Any,
+    *,
+    tape_kind: str,
+    model: str,
+    messages: list[Any],
+    params: dict[str, Any],
+) -> None:
+    if session is None or session.mode != "record":
+        return
+    choice = response.choices[0]
+    session.record(
+        kind=tape_kind,
+        model=model,
+        messages=messages,
+        params=params,
+        response_text=choice.message.content or "",
+        finish_reason=choice.finish_reason,
+    )
+    session.flush()
 
 
 class _TapedCompletions:
@@ -254,36 +312,18 @@ class _TapedCompletions:
 
     async def create(self, *, tape_kind: str, **kwargs: Any) -> Any:
         session = active_session()
-        model = kwargs.get("model", "")
-        messages = list(kwargs.get("messages", []))
-        params = {k: v for k, v in kwargs.items() if k not in ("model", "messages")}
+        model, messages, params = _split_call(kwargs)
 
-        if session is not None and session.mode == "replay":
-            entry = session.next_entry(
-                kind=tape_kind, model=model, messages=messages, params=params
-            )
-            return _ReplayResponse(
-                choices=[
-                    _ReplayChoice(
-                        message=_ReplayMessage(content=entry.response_text),
-                        finish_reason=entry.finish_reason,
-                    )
-                ]
-            )
+        replayed = _replay_or_none(
+            session, tape_kind=tape_kind, model=model, messages=messages, params=params
+        )
+        if replayed is not None:
+            return replayed
 
         response = await self._inner.create(**kwargs)
-
-        if session is not None and session.mode == "record":
-            choice = response.choices[0]
-            session.record(
-                kind=tape_kind,
-                model=model,
-                messages=messages,
-                params=params,
-                response_text=choice.message.content or "",
-                finish_reason=choice.finish_reason,
-            )
-            session.flush()
+        _record_if_needed(
+            session, response, tape_kind=tape_kind, model=model, messages=messages, params=params
+        )
         return response
 
     def stream(self, *, tape_kind: str, **kwargs: Any) -> StreamCall:
@@ -431,6 +471,66 @@ def build_llm_client(*, api_key: str, base_url: str, timeout: float) -> TapedCli
     from openai import AsyncOpenAI
 
     return TapedClient(AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout))
+
+
+# ── 同步那一半：模组导入管线（`exec/29`）────────────────────────────
+
+
+class _TapedSyncCompletions:
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def create(self, *, tape_kind: str, **kwargs: Any) -> Any:
+        session = active_session()
+        model, messages, params = _split_call(kwargs)
+
+        replayed = _replay_or_none(
+            session, tape_kind=tape_kind, model=model, messages=messages, params=params
+        )
+        if replayed is not None:
+            return replayed
+
+        response = self._inner.create(**kwargs)
+        _record_if_needed(
+            session, response, tape_kind=tape_kind, model=model, messages=messages, params=params
+        )
+        return response
+
+
+class _TapedSyncChat:
+    def __init__(self, inner: Any) -> None:
+        self.completions = _TapedSyncCompletions(inner.chat.completions)
+
+
+class TapedSyncClient:
+    """`TapedClient` 的同步兄弟。
+
+    ## 🔴 为什么需要它
+
+    模组导入的转换链（`scripts/module_probe/`）是**同步**的，而且由
+    `asyncio.to_thread` 在工作线程里跑（管线要 5–26 分钟，在事件循环里 await
+    它等于整个后端冻住）。异步版的 `create` 在那里用不了，而"把三个脚本改成
+    async"波及它们的 CLI 入口，代价远大于在这里加一条同步路径。
+
+    录制/回放的记账逻辑与异步版**共用**（`_replay_or_none` / `_record_if_needed`），
+    只有"怎么调 inner"不同——两份各写一遍迟早会漂。
+
+    ## 🔴 `_active` 是模块级全局，不是 contextvar
+
+    所以工作线程看得见主线程开的磁带，这条路才通。代价是**同一进程里并发录制
+    会把顺序录乱**——录制是开发者显式动作（`LLM_TAPE_MODE=record`），录的时候
+    只跑一条导入即可，跟"录真实对局要只开一局、关心跳"是同一条纪律。
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.chat = _TapedSyncChat(inner)
+
+
+def build_sync_llm_client(*, api_key: str, base_url: str, timeout: float) -> TapedSyncClient:
+    from openai import OpenAI
+
+    return TapedSyncClient(OpenAI(api_key=api_key, base_url=base_url, timeout=timeout))
 
 
 def activate_from_env() -> TapeSession | None:

@@ -262,7 +262,7 @@ async def _run_opening_ceremony(
         text = script
         used_llm = False
     else:
-        text = room_service.opening_narration_for_scenario(None)
+        text = await room_service.opening_narration_for_scenario(db, None)
         used_llm = False
 
     try:

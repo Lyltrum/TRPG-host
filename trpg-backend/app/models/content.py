@@ -85,6 +85,12 @@ class Scenario(Base):
     game_system_id: Mapped[str] = mapped_column(
         Uuid(as_uuid=False), ForeignKey("game_systems.id"), nullable=False
     )
+    # 导入的模组归导入者所有；内置模组无主（`None`）。
+    # 🔴 它只决定「谁能拿这个模组**开新局**」，不决定「谁能玩」——续玩看的是
+    # `rooms.scenario_id`，同房间其他玩家不需要拥有这个模组（`exec/29 §③`）。
+    owner_user_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("users.id"), nullable=True
+    )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     version: Mapped[str] = mapped_column(String(50), nullable=False, default="1.0.0")
     authors: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
@@ -100,6 +106,38 @@ class Scenario(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class ImportedModule(Base):
+    """导入模组的 structured 正文（`exec/29` 第 1 步）。
+
+    🔴 名字**不叫** `ScenarioModule`：那个名字已经被 keeper 契约的 pydantic 模型
+    占了（`keeper/contract/module_loader.py`），两个同名类会让"这是存储还是契约"
+    分不清。叫 `ImportedModule` 同时把不变量写进了名字——**只有导入的才在这里**。
+
+    **只有导入的模组有这一行；内置五个模组不落库**——判据是这个项目自己定过的
+    「随发版进来的东西不进数据库」（当年 `coc7/content.py` 与 `game_systems.ruleset`
+    双源不同步那次）。内置模组的 structured 是随仓库走的本地资产，进了库就会多
+    一个"改了不删 `app.db` 就不生效"的坑，还会把第三方正文从"只在 `模组资料/`
+    一处"变成两处。
+
+    🔴 **不可变：每次成功导入产生一条新 scenario，永不原地更新。** 重跑导入会
+    产出不同的 structured，原地改会把正在玩的房间的世界换掉。配套的是"拒绝的
+    不落库"，所以库里通常就一份，不需要版本指针（`exec/29 §④`）。
+
+    版权：这里存的是用户自己找来的第三方模组正文，与 `模组资料/` 同级红线——
+    禁止进 git 跟踪文件 / commit message / 日志 / 评测报告。
+    """
+
+    __tablename__ = "imported_modules"
+
+    scenario_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("scenarios.id"), primary_key=True
+    )
+    structured: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
 

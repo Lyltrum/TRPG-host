@@ -8,8 +8,8 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.keeper.contract.catalog import resolve_structured_path
 from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.contract.source import ResolvedModule, resolve_module
 from app.core.keeper.runtime.agent import KeeperAgent
 from app.core.narration.contract import (
     CheckResultCallback,
@@ -43,40 +43,42 @@ class RoomAwareKeeperNarrator(Narrator):
         self._ruleset = build_coc7_ruleset()
         self._agents: dict[str, Narrator] = {}
 
-    def _agent_for(self, path: Path) -> Narrator:
-
-        key = str(path.resolve())
-        agent = self._agents.get(key)
+    def _agent_for(self, resolved: ResolvedModule) -> Narrator:
+        agent = self._agents.get(resolved.cache_key)
         if agent is None:
             agent = KeeperAgent(
                 api_key=self._api_key,
-                module=load_module(path),
+                module=resolved.module,
                 ruleset=self._ruleset,
                 session_factory=self._session_factory,
             )
-            self._agents[key] = agent
+            self._agents[resolved.cache_key] = agent
         return agent
 
-    async def _resolve_path(self, room_id: str | None) -> Path:
+    async def _resolve(self, room_id: str | None) -> ResolvedModule:
+        """解析这个房间该玩哪份剧本（内置走文件、导入走库，见 `contract/source.py`）。"""
         from app.models.room import Room
 
         if room_id:
             async with self._session_factory() as db:
                 room = await db.get(Room, room_id)
                 scenario_id = room.scenario_id if room is not None else None
-            mapped = resolve_structured_path(self._modules_dir, scenario_id)
-            if mapped is not None:
-                return mapped
+                resolved = await resolve_module(db, self._modules_dir, scenario_id)
+            if resolved is not None:
+                return resolved
         if self._fallback_path is not None and self._fallback_path.is_file():
-            return self._fallback_path
+            return ResolvedModule(
+                cache_key=str(self._fallback_path.resolve()),
+                module=load_module(self._fallback_path),
+            )
         raise FileNotFoundError(
             "房间未绑定可玩模组，且未配置可用的 KEEPER_MODULE_PATH 兜底；"
             f"modules_dir={self._modules_dir}"
         )
 
     async def narrate(self, context: NarrationContext) -> NarrationOutcome:
-        path = await self._resolve_path(context.room_id)
-        return await self._agent_for(path).narrate(context)
+        resolved = await self._resolve(context.room_id)
+        return await self._agent_for(resolved).narrate(context)
 
     async def resolve_check(
         self,
@@ -85,7 +87,7 @@ class RoomAwareKeeperNarrator(Narrator):
         check_request_id: str,
         on_result: CheckResultCallback | None = None,
     ) -> NarrationOutcome:
-        path = await self._resolve_path(room_id)
-        return await self._agent_for(path).resolve_check(
+        resolved = await self._resolve(room_id)
+        return await self._agent_for(resolved).resolve_check(
             room_id, player_id, check_request_id, on_result
         )

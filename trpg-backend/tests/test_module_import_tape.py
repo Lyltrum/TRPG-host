@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from pathlib import Path
 
 import pytest
@@ -171,28 +172,82 @@ def test_sync_client_is_not_the_async_one() -> None:
     assert not inspect.iscoroutinefunction(TapedSyncClient(_FakeInner([])).chat.completions.create)
 
 
+# ── 🔴 CLI 得自己开磁带 ──────────────────────────────
+
+
+def test_cli_activates_the_tape_itself() -> None:
+    """🔴 `LLM_TAPE_MODE=record` 在命令行下必须真的开始录。
+
+    实测踩过：`activate_from_env()` 原本只在 `app/main.py` 的 lifespan 里被调用
+    ——**服务端那条路有人开，命令行这条没有**。于是设了环境变量跑一趟，花掉
+    ¥0.35 / 3 分钟，磁带一条都没录上，而且全程没有任何提示：空磁带和"没开录制"
+    看起来一模一样。
+
+    同族于「探测器不是闸门，零命中 ≠ 没问题」——这次是「录了 0 条 ≠ 录制在工作」。
+    """
+    from scripts.module_probe import pipeline
+
+    src = inspect.getsource(pipeline.main)
+
+    assert "activate_from_env()" in src, "CLI 没开磁带，录制会是静默空操作"
+    assert "session.tape.entries" in src, "跑完要报条数——不报就没人会发现录了 0 条"
+
+
 # ── 端到端回归：要磁带，进不了 CI ───────────────────
 
 
-_TAPE = Path(__file__).resolve().parents[1] / "tapes" / "module-import.json"
+_BACKEND = Path(__file__).resolve().parents[1]
+_TAPE = _BACKEND / "tapes" / "module-import.json"
+_EXPECTED = _BACKEND / "tapes" / "module-import.expected.json"
+#: 录制时用的源文件。`模组资料/` 是 gitignored 的第三方正文。
+_SOURCE = _BACKEND.parent / "模组资料" / "林中屋.pdf"
 
 
-def test_import_pipeline_replays_from_tape() -> None:
-    """🔴 有磁带时，整条转换链能在**断网**下重放，产出同一份 structured。
+def _skip_unless_taped() -> None:
+    for path, what in ((_TAPE, "磁带"), (_EXPECTED, "基准产物"), (_SOURCE, "源文件")):
+        if not path.exists():
+            msg = f"缺少{what} {path.name}，跳过端到端回归（录一条见 pipeline.py 文档）"
+            pytest.skip(msg)  # ty: ignore[too-many-positional-arguments]
 
-    没磁带就 skip：真实模组的磁带含正文（prompt 是整份原文、响应是 structured
-    产物），只能落 gitignored 的 `tapes/`。录一条见 `pipeline.py` 模块文档。
-    """
-    if not _TAPE.exists():
-        msg = f"没有磁带 {_TAPE.name}，跳过端到端回归（录一条见 pipeline.py 文档）"
-        pytest.skip(msg)  # ty: ignore[too-many-positional-arguments]
 
+def test_tape_only_contains_import_pipeline_calls() -> None:
+    """磁带里不该混进导入管线之外的调用——那说明录制时有别的东西在跑。"""
+    _skip_unless_taped()
     from app.core.llm_tape import Tape
 
-    tape = Tape.load(_TAPE)
-    kinds = {e.kind for e in tape.entries}
+    kinds = {e.kind for e in Tape.load(_TAPE).entries}
 
-    assert kinds <= {"module_probe", "module_relations", "module_assemble"}, (
-        f"磁带里有导入管线之外的调用：{kinds}"
-    )
+    assert kinds <= {"module_probe", "module_relations", "module_assemble"}
     assert "module_assemble" in kinds, "磁带没录到组装那一步，说明当时没跑完"
+
+
+def test_import_pipeline_replays_to_the_same_structured(tmp_path: Path) -> None:
+    """🔴 **断网重放整条转换链，产出必须与录制时逐字节一致。**
+
+    这才是这套装置的兑现点。只查磁带形状是不够的——那只证明"文件长得像磁带"，
+    不证明"回放能替代那 ¥0.35"。
+
+    它守的是：改组装代码 / 改 prompt 组装 / 重构脚本之后，**给定同样的模型输出，
+    产物没变**。变了就是代码行为变了，跟模型无关。
+
+    没磁带就 skip：真实模组的磁带含正文（prompt 是整份原文、响应是 structured
+    产物），只能落 gitignored 的 `tapes/`，进不了 CI。这是取舍不是没写完。
+    """
+    _skip_unless_taped()
+
+    from app.core.llm_tape import replaying
+    from scripts.module_probe import pipeline
+
+    out = tmp_path / "structured.json"
+    with replaying(_TAPE):
+        result = pipeline.convert(_SOURCE, work_dir=tmp_path / "work", out_structured=out)
+
+    # 🔴 录制那次的结局本身也是产物的一部分：那一跑是**被拒绝**的
+    # （1 条 leak）。回放要重现的是「同样的模型输出 → 同样的判决」，
+    # 不是"这份模组是好的"。
+    assert result.hard_failures == 1
+    assert "leak" in result.failure_reason
+
+    assert json.loads(out.read_text(encoding="utf-8")) == json.loads(
+        _EXPECTED.read_text(encoding="utf-8")
+    ), "回放产出的 structured 与录制时不一致——代码行为变了"

@@ -23,6 +23,15 @@ dependencies = [
   "openai>=2.45,<3",
   "openai-agents>=0.18.3",
   "cryptography<49",
+  # 模组导入取文层（exec/29 §5）：两个都是 MIT。
+  # 🔴 PyMuPDF 更快更全，但它是 AGPL —— 本项目是网络服务，触发条件成立，
+  # 且其供应商有实际诉讼记录。pdfplumber 同样提供字级坐标（双栏按列排序可做），
+  # 短板只有慢与图片导出别扭，而我们对图只清点不存取，短板用不上。
+  "pdfplumber>=0.11,<1.0",
+  "python-docx>=1.1,<2.0",
+  # `.doc`（Word 97-2003 OLE2 复合文档）：只用它读 OLE2 容器，
+  # Word 的分片表（piece table）由我们自己解，见 extract.py。
+  "olefile>=0.47,<1.0",
 ]
 
 [tool.hatch.build.targets.wheel]

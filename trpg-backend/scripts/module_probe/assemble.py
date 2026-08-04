@@ -366,7 +366,7 @@ STAGE1_SYSTEM = """\
 归宿种类（dest_kind）：
 - node —— 调查场景/地点/可到达节点/可发现的线索与行动（会进入 nodes[]）
 - npc —— 人物或怪物（会进入 npcs[]）
-- ending —— 结局相关（会进入 endings[]）
+- ending —— **玩家能走到的收束点**（会进入 endings[]）
 - agenda —— 不依赖玩家行动、世界自己会推进的事件/时间压力（会进入 agenda[]）
 - kp_truth —— 顶层 KP 绝密真相（**仅**纯背景真相/超自然设定）
 - kp_guidance —— 顶层 KP 主持指引（节奏、战斗警告、跑偏处理等）
@@ -399,6 +399,16 @@ B. **薄公开字段各只收 1 个片段**：player_intro / opening / meta **�
    player_intro+opening+meta 合计 ≤ 3。
 C. **结局与时间压力要建实体**（强制，不可吞进 kp_truth）：
    - what_kind_of_thing 指示「结局 / 结尾 / 结束」→ dest_kind=**ending**，建 ending 实体；
+     🔴 **但先分清是"收束点"还是"收尾材料"**。ending 只装**玩家的行动能触发的
+     结果**（"如果调查员烧掉那本书，则…"）。下面这些**不是** ending，一律进
+     **kp_guidance**：
+       · 尾声 / 后日谈 / 战役延续的可能性 / 续作钩子
+       · 奖励表 / 理智值奖惩清单 / 经验结算
+       · 「后续冒险选项」这类给守秘人的续跑建议
+     判据一句话：**玩家能不能靠做某件事走到它？** 不能，就不是 ending。
+     🔴 **endings[] 可以为空。** 开放收尾的模组本来就没有可到达的收束点，如实
+     留空即可，**不要为了填满它而把尾声改写成结局**——伪造出来的那条会一路骗
+     到试跑判据，让整个模组永远"收束不了"。
    - 指示「当前事件 / 行动规律 / 时间压力 / 今晚 / 期限」等时间驱动 → dest_kind=**agenda**，
      建 agenda 条目（trigger 用自由文本）。
    - 可有多条 agenda；至少覆盖所有带上述信号的片段。
@@ -1311,8 +1321,12 @@ def repair_module(
         "- 不泄密：从 key_facts 抽出的关键词不得出现在 player_intro 与 opening.script；"
         "可改写玩家可见字段，或把过细的关键词从 key_facts 改成更抽象的表述。\n"
         "- node.kp_text 可以含真相，不要为了「不泄密」去清空 kp_text。\n"
-        "- 若 structure 报 endings/agenda 为空：从现有 kp_truth/node 文本抽出对应条目，"
-        "补进 endings[] / agenda[]（不要只改 key_facts）。\n"
+        # 🔴 这条原来是「endings/agenda 为空就去补一条」——那正是伪造结局的另一
+        # 条路（`exec/29`：林中屋的尾声就是这么变成 endings[0] 的）。门已改成
+        # 「不许吞进 kp_truth」，这里必须跟着改，否则自修器还在按旧门修。
+        "- 若 structure 报「信号片段被吞进 kp_truth」：把那段材料从 kp_truth 挪到它真正的"
+        "归宿（玩家能走到的收束点→endings[]；尾声/奖励/续跑建议→kp_guidance；"
+        "时间压力→agenda[]）。**不要凭空造一条结局来交差**；endings[] 允许为空。\n"
         # 🔴 下面两类是 exec/29 新增的忠实度门。加了门却不告诉自修器怎么修，
         # 它就只会在别处瞎改 —— 实测林中屋那 3 条 numeric 自修 1 轮没动过。
         "- numeric（数值对不上原文）：产物里的骰型/百分比必须**逐字**来自原文。"

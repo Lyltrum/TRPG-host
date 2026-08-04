@@ -9,6 +9,22 @@
 判据是**排除性**的：**跑不通几乎一定是模组坏了；跑通不代表模组好。**
 这个不对称正是我们要的——它是个便宜的排除器，不是质量分。
 
+## 🔴 「跑不通」有两种，第一版把它们混成了同一个 bool
+
+实测林中屋：80 轮撞满、判「没走到结局」。而真相是**这个模组根本没有可到达的
+结局**——它的 `endings[]` 只有一条 `epilogue`，源头是原文里的**一行**，取文层
+自己都写着「关于模组尾声的叙述，提供战役延续的可能性」。收束的唯一入口是
+`ending_reached`（`progression/executor.py`），所以对这类模组，
+`对局阶段==finished` **结构上不可能被满足**：不管模组转得多好、守秘人主持得
+多好，判据都返回 False。
+
+这跟第一版把判据写成代码库里不存在的字符串 `rooms.phase == "Finished"` 是**同一
+类错**，只是升了一层——那次是常量错，这次是判据预设了一个模组不具备的属性。
+当时给自己立的规矩是「验证器上线前先造一个必然通过和一个必然失败的样本，两头
+都验」，而我只验了必然通过那头（追书人有 4 条真结局）。
+
+所以结论不再是 bool，是 `verdict` 四选一，见 `_decide_verdict`。
+
 ## 🔴 这不是给 AI 队友恢复行动权
 
 `exec/25 #60` 把 AI 队友的行动权**结构性地**拿掉了：它的话发进讨论区，那条通道
@@ -102,16 +118,34 @@ class TurnRecord:
     checks: list[str] = field(default_factory=list)
 
 
+#: 一轮结束却一条叙事都没收到——对局卡住了，跟"模组没结局"是两回事。
+NO_REPLY = "本轮未收到任何叙事"
+
+VERDICTS = {
+    "ending": "到达结局",
+    "open-ended": "模组没有可到达的结局，跑满且无死锁",
+    "stalled": "模组有结局但没走到",
+    "broken": "对局卡住或驱动器空转",
+}
+
+
 @dataclass
 class PlaythroughResult:
     module_id: str
     module_title: str
-    reached_ending: bool = False
+    #: `VERDICTS` 的键。**不是 bool**——见模块文档「跑不通有两种」。
+    verdict: str = ""
+    verdict_reason: str = ""
     ending_id: str | None = None
+    #: 模组自己提供了哪些结局 id。空 = 这个模组压根没有可到达的收束点。
+    module_ending_ids: list[str] = field(default_factory=list)
     turns_used: int = 0
     max_turns: int = 0
-    nodes_visited: list[str] = field(default_factory=list)
-    stall_reason: str = ""
+    #: 🔴 **终局快照，不是访问历史。** 旧名字叫 `nodes_visited`，我因此拿它当
+    #: 走过的节点列表读，得出「`当前场景节点` 整局没被写过」——而事件表里
+    #: `keeper.node` 写了 74 次、落在 9 个真实节点上。名字撒的谎比空值更贵：
+    #: 空值会让人去查，错名字会让人直接下结论。走过哪些节点要读 events 表。
+    final_state: list[str] = field(default_factory=list)
     llm_calls: int = 0
     elapsed_s: float = 0.0
     turns: list[TurnRecord] = field(default_factory=list)
@@ -203,6 +237,68 @@ def _is_finished(state: dict) -> bool:
     return str(state.get("对局阶段") or "") == "finished"
 
 
+def _module_ending_ids(module_id: str) -> list[str]:
+    """这个模组提供了哪些可到达的结局 id。
+
+    🔴 **验证器读剧本是合法的，驱动器读剧本才不合法。** 有限视角约束的是"演员
+    看得见什么"（给它剧本它会直奔结局），不是"裁判按什么判"。裁判必须知道
+    及格线在哪，否则就是拿一把没有刻度的尺子量。
+
+    🔴 解析不出来直接炸，不返回空列表——空列表的语义是「这个模组没有结局」，
+    而"读不到"跟"没有"是两件事。混成同一个值正是这次要修的那个 bug 的同族。
+    """
+    import asyncio
+
+    from app.core.config import get_settings
+    from app.core.db import async_session_factory
+    from app.core.keeper.contract.catalog import default_modules_dir
+    from app.core.keeper.contract.source import resolve_module
+
+    settings = get_settings()
+    modules_dir = (
+        Path(settings.keeper_modules_dir).expanduser().resolve()
+        if settings.keeper_modules_dir
+        else default_modules_dir()
+    )
+
+    box: list[str] = []
+
+    async def _read() -> None:
+        async with async_session_factory() as db:
+            resolved = await resolve_module(db, modules_dir, module_id)
+            if resolved is None:
+                raise SystemExit(f"解析不出剧本，无法定判据：{module_id}")
+            box.extend(e.id for e in resolved.module.endings)
+
+    asyncio.run(_read())
+    return box
+
+
+def _decide_verdict(
+    *,
+    finished: bool,
+    module_ending_ids: list[str],
+    silent_turns: int,
+    turns_used: int,
+    max_turns: int,
+    driver_stalled: bool,
+) -> tuple[str, str]:
+    """判据本体。返回 (verdict, 一句话理由)。
+
+    顺序有语义：**先判卡住，再判有没有及格线。** 一局既卡住又没结局时，该报的
+    是卡住——「模组没有结局」是个良性事实，用它盖掉死锁就等于把 bug 洗白了。
+    """
+    if finished:
+        return "ending", "到达结局"
+    if driver_stalled:
+        return "broken", "驱动器没给出行动"
+    if silent_turns:
+        return "broken", f"{silent_turns} 轮没有收到任何叙事——对局卡住了"
+    if not module_ending_ids:
+        return "open-ended", f"模组没有可到达的结局；跑满 {turns_used} 轮无死锁"
+    return "stalled", f"{max_turns} 轮内未收束（模组有 {len(module_ending_ids)} 条结局）"
+
+
 def _decide(oa: OpenAI, history: list[str], result: PlaythroughResult) -> str:
     """驱动器这一轮说什么。只喂它**自己收到过的**叙事，不喂剧本。"""
     convo = "\n\n".join(history[-12:])
@@ -284,7 +380,7 @@ def _drain_until_idle(ws, result: PlaythroughResult, history: list[str], turn: i
         history.append("守秘人：" + " ".join(kp_text))
     else:
         history.append("守秘人：（没有回应）")
-        result.errors.append(f"turn{turn} 本轮未收到任何叙事")
+        result.errors.append(f"turn{turn} {NO_REPLY}")
     return checks
 
 
@@ -299,6 +395,7 @@ def run(module_id: str, max_turns: int) -> PlaythroughResult:
         if mod is None:
             raise SystemExit(f"模组 id 不在目录里：{module_id}")
         result.module_title = mod["title"]
+        result.module_ending_ids = _module_ending_ids(module_id)
 
         token = _register(client)
         auth = {"Authorization": f"Bearer {token}"}
@@ -323,6 +420,7 @@ def run(module_id: str, max_turns: int) -> PlaythroughResult:
         _complete_character(client, rid, rtok)
 
         history: list[str] = []
+        driver_stalled = False
         with client.websocket_connect(f"/ws/{rid}?token={token}") as ws:
             ws.send_json(
                 {"type": "room.join", "playerId": pid, "payload": {"reconnectToken": rtok}}
@@ -335,12 +433,11 @@ def run(module_id: str, max_turns: int) -> PlaythroughResult:
             for turn in range(1, max_turns + 1):
                 state = _keeper_state(rid)
                 if _is_finished(state):
-                    result.reached_ending = True
                     result.ending_id = str(state.get("结局") or "") or None
                     break
                 utter = _decide(oa, history, result)
                 if not utter:
-                    result.stall_reason = "驱动器没给出行动"
+                    driver_stalled = True
                     break
                 history.append("我：" + utter)
                 ws.send_json(
@@ -359,15 +456,21 @@ def run(module_id: str, max_turns: int) -> PlaythroughResult:
                 print(f"  第 {turn:2d} 轮 · {utter[:32]}… · 检定 {checks}", flush=True)
 
         final_state = _keeper_state(rid)
-        if not result.reached_ending and _is_finished(final_state):
-            result.reached_ending = True
+        finished = _is_finished(final_state)
+        if finished and not result.ending_id:
             result.ending_id = str(final_state.get("结局") or "") or None
-        if not result.reached_ending and not result.stall_reason:
-            result.stall_reason = f"{max_turns} 轮内未收束"
+        result.verdict, result.verdict_reason = _decide_verdict(
+            finished=finished,
+            module_ending_ids=result.module_ending_ids,
+            silent_turns=sum(1 for e in result.errors if NO_REPLY in e),
+            turns_used=result.turns_used,
+            max_turns=max_turns,
+            driver_stalled=driver_stalled,
+        )
         # 停在哪：场景指针是代码写的 id，不是模型现编的自由文本
         for key in ("当前场景节点", "当前场景", "对局阶段"):
             if final_state.get(key):
-                result.nodes_visited.append(f"{key}={final_state[key]}")
+                result.final_state.append(f"{key}={final_state[key]}")
 
     result.elapsed_s = round(time.perf_counter() - t0, 1)
     return result
@@ -389,10 +492,10 @@ def main() -> None:
     out.write_text(json.dumps(asdict(result), ensure_ascii=False, indent=2), encoding="utf-8")
 
     print()
-    print(f"模组       {result.module_title}")
-    print(f"到达结局   {'是' if result.reached_ending else '否'}  {result.ending_id or ''}")
+    print(f"模组       {result.module_title}（结局 {len(result.module_ending_ids)} 条）")
+    print(f"判定       {result.verdict} · {VERDICTS[result.verdict]}  {result.ending_id or ''}")
+    print(f"理由       {result.verdict_reason}")
     print(f"用了轮数   {result.turns_used} / {result.max_turns}")
-    print(f"停在       {result.stall_reason or '—'}")
     print(f"驱动器调用 {result.llm_calls} 次 | 总耗时 {result.elapsed_s}s")
     if result.errors:
         print(f"错误       {result.errors[:3]}")

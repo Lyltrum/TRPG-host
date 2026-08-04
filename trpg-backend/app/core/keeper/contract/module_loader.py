@@ -363,7 +363,21 @@ def render_npc(npc: ModuleNpc) -> str:
     return "\n".join(p for p in parts if p)
 
 
+#: `endings` 为空时给守秘人的话。
+#:
+#: 🔴 **空段落是最坏的一种表达**：标题在、底下什么都没有，而裁决 prompt 还写着
+#: 「每轮顺带判断 endings[].trigger 是否满足」——模型只能自己猜那是漏了还是没有。
+#: 开放收尾的模组是合法的（`exec/29`：林中屋原文只有一句战役延续钩子），所以这件
+#: 事要**说出口**，不能靠留白暗示。
+NO_ENDINGS_NOTICE = (
+    "本模组没有预设结局——它是开放收尾的。不要编造结局，也不要因为"
+    "「该结束了」就宣布收束；ending_reached 永远填 null，让故事停在它自然停下的地方。"
+)
+
+
 def render_endings(module: ScenarioModule) -> str:
+    if not module.endings:
+        return NO_ENDINGS_NOTICE
     lines: list[str] = []
     for e in module.endings:
         # trigger 是提案③的可判定口径；有则并列展示，没有就不占位置。

@@ -20,7 +20,16 @@ async def execute_progression(
 
     if ending_reached:
         eid = ending_reached
-        if deps.module.endings and not any(e.id == eid for e in deps.module.endings):
+        if not deps.module.endings:
+            # 🔴 `exec/29`：这一支原先跟"id 对得上"共用一个 else，于是**模组没有
+            # 结局时任何字符串都能收束**——`endings and not any(...)` 在空列表上
+            # 短路成 False，直接走进 set_phase(finished)。
+            #
+            # 以前撞不上是因为六个预设模组个个非空；而开放收尾的模组是合法的
+            # （林中屋原文只有一句战役延续钩子），放开 endings 可以为空的同时，
+            # 这条静默兜底就活了。**没有结局的模组就是收束不了，要说出来。**
+            issues.append(f"结局收束未执行：本模组没有预设结局（ending_reached={eid}）")
+        elif not any(e.id == eid for e in deps.module.endings):
             issues.append(f"结局收束未执行：剧本里没有 ending id={eid}")
         else:
             try:

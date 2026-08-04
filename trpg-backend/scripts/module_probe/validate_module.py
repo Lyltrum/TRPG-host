@@ -14,7 +14,7 @@
 06 新增三项（硬失败）：
 6. 薄公开槽上限 —— player_intro / opening / meta 各 ≤1 片段，合计 ≤3
 7. 绝密不进公开槽 —— audience 含绝密/守密人/KP 的片段不得归到 player_intro/opening
-8. 结构完整性 —— 源片段 what_kind 带结局/议程信号时，最终 endings/agenda 不得为空
+8. 结构完整性 —— 源片段 what_kind 带结局/议程信号时，那个片段不得被吞进 kp_truth
    （完整性检查，不是路由逻辑；信号取自片段自身 what_kind_of_thing）
 
 06 内容保全（软，不硬失败）：
@@ -922,48 +922,43 @@ def _kind_has_signal(what_kind: str, signals: tuple[str, ...]) -> bool:
 
 def check_structure_integrity(
     items: list[dict[str, Any]],
-    module: ScenarioModule | None,
-    *,
-    raw: dict[str, Any] | None = None,
+    assignment_map: dict[str, Any],
 ) -> list[str]:
-    """完整性检查：带结局/议程信号的片段存在时，对应数组不得为空。
+    """完整性检查：带结局/议程信号的片段**不得被吞进 kp_truth**。
 
-    路由仍由阶段1 LLM 做；此处只机械核对「信号片段没被全丢掉」。
-    信号取自片段自己的 what_kind_of_thing，不预设专属路由表。
+    ## 🔴 这道门原来问错了问题（2026-08-04 修）
+
+    旧口径是「有结局信号片段 → `endings[]` 不得为空」。它把两件事焊死了：
+    「这段材料没丢」和「这段材料落在 endings 里」。而实测林中屋证明第二件
+    **不该**成立——原文那一行是「模组尾声，提供战役延续的可能性」，它是收尾
+    材料，不是玩家能走到的收束点。旧口径连同阶段1 的 prompt 一起，把它硬顶
+    成了 `endings[0]`，于是这个模组永远收束不了，而试跑只会报「没走到结局」。
+
+    这道门真正要防的失败模式，rule C 那行括号里写得很清楚：**不可吞进
+    kp_truth**（信息进了守秘人真相块 = 谁也用不上，等于蒸发）。所以现在只查
+    这一条：信号片段的归宿不能是 kp_truth。
+
+    **落在哪里仍由阶段1 的 LLM 决定**——`ending` 还是 `kp_guidance` 还是终局
+    那个 `node`，是语义判断，机械层不该替它选。门只管兜住那个已知的坏归宿。
+
+    副作用（有意的）：`endings[]` 从此**可以合法为空**。一个开放收尾的模组
+    就是没有可到达结局，这是事实，不是缺陷。承认它比伪造一条强——伪造出来的
+    那条会一路骗到试跑判据。
     """
-    ending_signal_ids = [
-        str(it.get("id") or "")
-        for it in items
-        if it.get("id")
-        and _kind_has_signal(str(it.get("what_kind_of_thing") or ""), _ENDING_KIND_SIGNALS)
-    ]
-    agenda_signal_ids = [
-        str(it.get("id") or "")
-        for it in items
-        if it.get("id")
-        and _kind_has_signal(str(it.get("what_kind_of_thing") or ""), _AGENDA_KIND_SIGNALS)
-    ]
+    swallowed: list[str] = []
+    for it in items:
+        iid = str(it.get("id") or "")
+        if not iid:
+            continue
+        wk = str(it.get("what_kind_of_thing") or "")
+        if not _kind_has_signal(wk, _ENDING_KIND_SIGNALS + _AGENDA_KIND_SIGNALS):
+            continue
+        if _dest_kind_of(assignment_map.get(iid)) == "kp_truth":
+            swallowed.append(iid)
 
-    if module is not None:
-        endings_n = len(module.endings)
-        agenda_n = len(module.agenda)
-    else:
-        raw = raw or {}
-        endings_n = len(raw.get("endings") or []) if isinstance(raw.get("endings"), list) else 0
-        agenda_n = len(raw.get("agenda") or []) if isinstance(raw.get("agenda"), list) else 0
-
-    errors: list[str] = []
-    if ending_signal_ids and endings_n == 0:
-        errors.append(
-            f"存在 what_kind 含结局/结尾/结束 信号的片段 {ending_signal_ids}，"
-            f"但 endings[] 为空——结构完整性失败"
-        )
-    if agenda_signal_ids and agenda_n == 0:
-        errors.append(
-            f"存在 what_kind 含当前事件/行动规律/时间压力/今晚/期限 信号的片段 "
-            f"{agenda_signal_ids}，但 agenda[] 为空——结构完整性失败"
-        )
-    return errors
+    if not swallowed:
+        return []
+    return [f"结局/议程信号片段被吞进 kp_truth（谁也用不上，等于蒸发）：{sorted(swallowed)}"]
 
 
 def _summary_keywords(summary: str) -> list[str]:
@@ -1224,7 +1219,7 @@ def validate_assembled(
     secret_public_errors = (
         check_secret_not_public(assignment_map, items_by_id) if items_by_id else []
     )
-    structure_errors = check_structure_integrity(items, module, raw=raw) if items else []
+    structure_errors = check_structure_integrity(items, assignment_map) if items else []
     trace_errors = (
         check_source_traceability(items, assignment_map, raw, source_lines)
         if items and source_lines

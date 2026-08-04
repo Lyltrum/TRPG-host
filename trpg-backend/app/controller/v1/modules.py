@@ -2,18 +2,21 @@
 模组详情 / 导入 2 个新端点）。
 
 `GET /modules`、`GET /modules/{moduleId}` 是真实的数据库查询（内容库
-`Scenario` 表）；`POST /modules/import`、`GET /modules/import/{jobId}`
-依赖真实 LLM 解析管线（归 #57），本期固定 NOT_IMPLEMENTED（issue 决策 7）。
+`Scenario` 表）。导入那三个端点由 `exec/29` 第 5 步填成真实现：上传是
+**multipart**（全项目第一个 `UploadFile`），转换在后台跑 5–26 分钟，靠轮询
+拿进度，失败给一个重跑入口。
 """
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.db import get_db
+from app.controller.dependencies import get_current_user
+from app.core.db import async_session_factory, get_db
 from app.core.errors import AppException, ErrorCode
 from app.dto.common import ApiResponse
-from app.dto.module import ModuleDetailRead, ModuleImportJobRead, ModuleImportRequestBody
+from app.dto.module import ModuleDetailRead, ModuleImportJobRead
 from app.dto.room import ModuleRead
+from app.models.user import User
 from app.service import module_import as module_import_service
 from app.service import room as room_service
 
@@ -42,10 +45,18 @@ async def get_module_detail(
     "/import", response_model=ApiResponse[ModuleImportJobRead], status_code=status.HTTP_201_CREATED
 )
 async def import_module(
-    payload: ModuleImportRequestBody, db: AsyncSession = Depends(get_db)
+    file: UploadFile = File(..., description="模组正文（pdf/docx/doc/txt），一个文件"),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> ApiResponse[ModuleImportJobRead]:
-    """POST /api/v1/modules/import —— 导入模组（提交异步任务，本期未实现）。"""
-    job = await module_import_service.start_import(db, payload)
+    """POST /api/v1/modules/import —— 上传模组，起一个后台转换任务。
+
+    🔴 **全项目第一个 `UploadFile`**。转换要跑 5–26 分钟，所以这里只收文件、
+    建 job、立刻返回；进度靠 `GET /import/{jobId}` 轮询。
+    """
+    job = await module_import_service.start_import(
+        db, file, user_id=user.id, session_factory=async_session_factory
+    )
     return ApiResponse.ok(job)
 
 
@@ -53,6 +64,24 @@ async def import_module(
 async def get_import_job(
     job_id: str, db: AsyncSession = Depends(get_db)
 ) -> ApiResponse[ModuleImportJobRead]:
-    """GET /api/v1/modules/import/{jobId} —— 轮询导入任务状态（本期未实现）。"""
+    """GET /api/v1/modules/import/{jobId} —— 轮询导入任务状态。"""
     job = await module_import_service.get_import_job(db, job_id)
+    return ApiResponse.ok(job)
+
+
+@router.post("/import/{job_id}/retry", response_model=ApiResponse[ModuleImportJobRead])
+async def retry_import_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ApiResponse[ModuleImportJobRead]:
+    """POST /api/v1/modules/import/{jobId}/retry —— 重跑一次。
+
+    🔴 **新建一个 job，不复活旧的**：旧 job 的失败理由要留着，否则用户点三次
+    就再也不知道前两次为什么失败（`exec/29 §7.2 ②`）。重跑由用户点，**不自动**
+    ——那等于默默再花一次钱。
+    """
+    job = await module_import_service.retry_import(
+        db, job_id, session_factory=async_session_factory
+    )
     return ApiResponse.ok(job)

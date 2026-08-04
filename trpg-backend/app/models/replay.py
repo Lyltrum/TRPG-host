@@ -112,7 +112,10 @@ class ModuleImportJob(Base):
     ending_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     agenda_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     hard_failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    llm_call_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 🔴 这里没有 `llm_call_count`：整条链的调用分散在 probe / relation_probe /
+    # assemble 三个脚本里，只有 assemble 会往报告里写 `stats.calls`。填一个只覆盖
+    # 三分之一的数、却叫"调用次数"，正是这个项目反复被咬的那种半真值。要它就得
+    # 先统一三个脚本的客户端（那件事本来就欠着），不然就别立这个字段。
 
     # 重跑是**新建一个 job**，不是复活旧的——旧 job 的失败理由要留着，
     # 否则用户点三次就再也不知道前两次为什么失败（`exec/29 §7.2 ②`）。

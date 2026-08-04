@@ -1,9 +1,10 @@
 """模组详情 / 导入相关的 pydantic 请求/响应模型（issue #77 §2 新增端点）。
 
 `GET /modules/{moduleId}` 是真实的数据库查询（复用内容库的 `Scenario` 表）。
-`POST /modules/import` 和 `GET /modules/import/{jobId}` 依赖的是真实 LLM
-解析管线（归 #57，本期不做），两个接口本期固定返回 `NOT_IMPLEMENTED`
-（issue 决策 7），这里只定义 DTO 形状占住协议位置。
+`POST /modules/import` / `GET /modules/import/{jobId}` 的协议位是骨架期
+（issue #77）占下的，`exec/29` 第 5 步把它们填成了真实现——上传从 JSON 体
+换成 multipart（全项目第一个 `UploadFile`），所以原来的
+`ModuleImportRequestBody` 已删除。
 """
 
 from pydantic import Field
@@ -27,28 +28,45 @@ class ModuleDetailRead(ModuleRead):
     story_pages: list[str] = Field(default_factory=list)
 
 
-class ModuleImportRequestBody(CamelModel):
-    """POST /api/v1/modules/import 请求体。
-
-    真实实现（#57）会接收模组原始文档做 LLM 解析，本期这个接口固定返回
-    NOT_IMPLEMENTED，请求体只占位描述"以后大概会传什么"，不做内容校验。
-    """
-
-    source_filename: str = Field(..., min_length=1, max_length=255)
-
-
 class ModuleImportJobRead(CamelModel):
     """POST /api/v1/modules/import 与 GET /api/v1/modules/import/{jobId} 返回。
 
     不用 `from_attributes` 直接从 ORM 对象转换——ORM 主键列叫 `id`，这里
     对外字段叫 `job_id`（避免跟其它 DTO 的 `xxxId` 命名约定不一致），两者
     对不上，构造时由 service 层显式传关键字参数更直接。
+
+    🔴 **这个 DTO 是剧透约束的最后一道关**（`exec/29 §2`）。导入的人就是即将
+    开玩的玩家，所以跨到前端的**只有数量与拓扑**——没有节点标题、没有 NPC 名字、
+    **连生成的实体 id 都没有**（id 是从内容里长出来的）。失败原因只给封闭集合里
+    的类别词（`job_state.FAILURE_KINDS`），不是错误原文——原文里带着 id、数值和
+    半句正文。
+
+    加字段前先回答：**它能不能装下一句剧透？** 能就别加。
     """
 
     job_id: str
     status: str
+    #: 进度阶段，取值见 `job_state.STAGES`。
+    stage: str = "received"
+    #: 用户自己起的文件名——不是模组内容。
     source_filename: str | None = None
     result_scenario_id: str | None = None
+    #: 拒绝理由。必须可执行（告诉用户下一步做什么）。
     error_message: str | None = None
+    failure_kinds: list[str] = Field(default_factory=list)
+
+    # ── 报告：只有数量与拓扑 ──────────────────────────
+    page_count: int = 0
+    image_count: int = 0
+    char_count: int = 0
+    item_count: int = 0
+    node_count: int = 0
+    npc_count: int = 0
+    ending_count: int = 0
+    agenda_count: int = 0
+    hard_failure_count: int = 0
+
+    retried_from_job_id: str | None = None
     created_at: UtcDatetime
     updated_at: UtcDatetime
+    finished_at: UtcDatetime | None = None

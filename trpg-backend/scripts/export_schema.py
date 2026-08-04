@@ -79,9 +79,10 @@ _MODELS: list[type[BaseModel]] = [
     game.SkillSpec,
     game.OccupationSpec,
     game.RulesetRead,
-    # 模组详情 / 导入（issue #77 新增）
+    # 模组详情 / 导入（issue #77 新增；`exec/29` 第 5 步填成真实现）
     module.ModuleDetailRead,
-    module.ModuleImportRequestBody,
+    # 🔴 没有 `ModuleImportRequestBody` 了：上传改成 multipart，请求体不再是
+    # JSON，所以它没有对应的契约类型。SDK 那边走 FormData。
     module.ModuleImportJobRead,
     # 复盘 / 回放（issue #77 新增）
     replay.RoomSummaryRead,

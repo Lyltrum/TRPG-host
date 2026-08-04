@@ -18,6 +18,12 @@ export class ApiError extends Error {
   }
 }
 
+/** `request` 的内部开关。不进公开 API——调用方走 `postForm` 就够了。 */
+interface RequestExtras {
+  /** 让运行时自己决定 Content-Type（multipart 必须这样，见 `request`）。 */
+  omitContentType?: boolean;
+}
+
 export interface ApiClientOptions {
   /** 后端 API 的根地址，比如 "http://127.0.0.1:8000/api/v1"（要包含版本前缀）。 */
   baseUrl: string;
@@ -50,7 +56,7 @@ export class ApiClient {
    * 成功时直接返回 `data` 字段（调用方不需要自己拆 `{success,data,error}`）；
    * 失败（`success:false`）或网络异常都会以抛异常的形式表现。
    */
-  async request<T>(path: string, init?: RequestInit): Promise<T> {
+  async request<T>(path: string, init?: RequestInit, options?: RequestExtras): Promise<T> {
     // `HeadersInit` 有三种形态：Headers 实例 / string[][] / Record<string,string>。
     // 之前这里写的 `{...init?.headers}` 只对 Record<string,string> 是对的——
     // 展开 Headers 实例得到 `{}`（它没有可枚举自有属性），展开 string[][]
@@ -58,7 +64,13 @@ export class ApiClient {
     // 不报错（issue #75 code review 时发现的真实 bug，见 client.test.ts）。
     // `new Headers(...)` 本身就能正确解析这三种形态，这里委托给它，而不是
     // 自己再判断一次调用方传的是哪种形态。
-    const headers = new Headers({ 'Content-Type': 'application/json' });
+    // 🔴 multipart 一定不能自己写 Content-Type：那个头必须带 `boundary=...`，
+    // 而 boundary 是运行时序列化 FormData 时才生成的。写死成 json（甚至写死成
+    // multipart/form-data 不带 boundary）都会让后端收到一个解析不了的 body，
+    // 而且**报错发生在服务端**——本地看起来只是"上传失败"，很难查。
+    const headers = new Headers(
+      options?.omitContentType ? {} : { 'Content-Type': 'application/json' }
+    );
     if (init?.headers) {
       new Headers(init.headers).forEach((value, key) => headers.set(key, value));
     }
@@ -91,6 +103,15 @@ export class ApiClient {
       method: 'POST',
       body: JSON.stringify(payload)
     });
+  }
+
+  /**
+   * multipart 上传。全项目唯一的非 JSON 出口（模组导入，`exec/29` 第 5 步）。
+   *
+   * 🔴 **不设 Content-Type**，交给运行时——见 `request` 里那段注释。
+   */
+  postForm<T>(path: string, form: FormData, init?: RequestInit): Promise<T> {
+    return this.request<T>(path, { ...init, method: 'POST', body: form }, { omitContentType: true });
   }
 
   put<T>(path: string, payload: unknown): Promise<T> {

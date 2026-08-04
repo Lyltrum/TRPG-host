@@ -40,6 +40,7 @@ import shutil
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -83,14 +84,27 @@ class ConversionResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def convert(source: Path, *, work_dir: Path, out_structured: Path) -> ConversionResult:
-    """跑完整条链。任何一步失败都**抛 `ConversionError`**，不返回半份产物。"""
+def convert(
+    source: Path,
+    *,
+    work_dir: Path,
+    out_structured: Path,
+    on_stage: Callable[[str], None] | None = None,
+) -> ConversionResult:
+    """跑完整条链。任何一步失败都**抛 `ConversionError`**，不返回半份产物。
+
+    `on_stage`：每进入一个阶段调一次，取值是 `job_state.STAGES` 里的词。
+    导入 job 拿它报进度——**分阶段是因为每一阶段的失败对用户意味着不同的下一步**，
+    不是为了好看。CLI 不传，行为不变。
+    """
     t0 = time.perf_counter()
+    notify = on_stage or (lambda _stage: None)
     work_dir.mkdir(parents=True, exist_ok=True)
     stem = source.stem
     result = ConversionResult(ok=False)
 
     # ── 1. 取文 ────────────────────────────────────
+    notify("extracting")
     try:
         doc = extract_document(source)
     except UnsupportedDocumentError as exc:
@@ -116,6 +130,7 @@ def convert(source: Path, *, work_dir: Path, out_structured: Path) -> Conversion
     print(f"[2/5] 重组 {'已重组' if result.reassembled else '无需重组'} 字{result.chars}")
 
     # ── 3. 裸抽取 ──────────────────────────────────
+    notify("probing")
     extract_json = work_dir / f"{stem}.裸抽取.json"
     coverage_md = work_dir / f"{stem}.覆盖率.md"
     if probe.run(source_txt, extract_json, coverage_md) != 0:
@@ -126,6 +141,7 @@ def convert(source: Path, *, work_dir: Path, out_structured: Path) -> Conversion
         raise ConversionError("这份文稿抽不出任何条目，可能不是模组文本")
 
     # ── 4. 关系发现（🔴 总是分批）────────────────────
+    notify("relating")
     if relation_probe.run(extract_json, source_txt, batch_size=RELATION_BATCH_SIZE) != 0:
         raise ConversionError("关系发现失败")
     pass1 = work_dir / f"{stem}.关系-pass1.json"
@@ -135,6 +151,7 @@ def convert(source: Path, *, work_dir: Path, out_structured: Path) -> Conversion
     print("[4/5] 关系发现 完成（分批）")
 
     # ── 5. 组装 + 校验 + 自修 ───────────────────────
+    notify("assembling")
     intermediate = work_dir / f"{stem}.组装中间态.json"
     report = work_dir / f"{stem}.校验报告.json"
     assemble.run_pipeline(

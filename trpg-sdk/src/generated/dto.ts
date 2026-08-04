@@ -592,25 +592,36 @@ export interface ModuleDetailRead {
  * 不用 `from_attributes` 直接从 ORM 对象转换——ORM 主键列叫 `id`，这里
  * 对外字段叫 `job_id`（避免跟其它 DTO 的 `xxxId` 命名约定不一致），两者
  * 对不上，构造时由 service 层显式传关键字参数更直接。
+ *
+ * 🔴 **这个 DTO 是剧透约束的最后一道关**（`exec/29 §2`）。导入的人就是即将
+ * 开玩的玩家，所以跨到前端的**只有数量与拓扑**——没有节点标题、没有 NPC 名字、
+ * **连生成的实体 id 都没有**（id 是从内容里长出来的）。失败原因只给封闭集合里
+ * 的类别词（`job_state.FAILURE_KINDS`），不是错误原文——原文里带着 id、数值和
+ * 半句正文。
+ *
+ * 加字段前先回答：**它能不能装下一句剧透？** 能就别加。
  */
 export interface ModuleImportJobRead {
   jobId: string;
   status: string;
+  stage?: string;
   sourceFilename?: string | null;
   resultScenarioId?: string | null;
   errorMessage?: string | null;
+  failureKinds?: string[];
+  pageCount?: number;
+  imageCount?: number;
+  charCount?: number;
+  itemCount?: number;
+  nodeCount?: number;
+  npcCount?: number;
+  endingCount?: number;
+  agendaCount?: number;
+  hardFailureCount?: number;
+  retriedFromJobId?: string | null;
   createdAt: string;
   updatedAt: string;
-}
-
-/**
- * POST /api/v1/modules/import 请求体。
- *
- * 真实实现（#57）会接收模组原始文档做 LLM 解析，本期这个接口固定返回
- * NOT_IMPLEMENTED，请求体只占位描述"以后大概会传什么"，不做内容校验。
- */
-export interface ModuleImportRequestBody {
-  sourceFilename: string;
+  finishedAt?: string | null;
 }
 
 /**

@@ -289,6 +289,39 @@ def skill_resolvable(skill_name: str, ruleset: RulesetRead) -> bool:
     return False
 
 
+def _strip_check_suffix(s: str) -> str:
+    """剥掉「检定」后缀。
+
+    🔴 判**类别**（SAN / 多技能 / 属性）之前必须先剥：原实现是先查
+    `SAN_CHECK_WRITINGS` 再剥后缀，于是「理智检定」这种写法直接漏过去
+    （林中屋实测 2/3 条硬失败就是它）。别名表收多少种写法都补不完这个洞——
+    洞在顺序上，不在表的大小上。
+    """
+    s = s.strip()
+    return s[: -len("检定")].strip() if s.endswith("检定") else s
+
+
+def specialization_candidates(name: str, ruleset: RulesetRead) -> list[str]:
+    """把「动物学」这种**专项名**匹配回完整技能名（`科学：动物学`）。
+
+    模组写专项名不带母技能很常见。这不是同义词——是「专项 ⊂ 母技能」的结构
+    关系，所以做成规则而不是查表。
+
+    🔴 **返回全部候选，由调用方在多于一个时放弃。** 当前规则表 33 个专项名
+    零重名、也不与顶层技能撞名，但规则表会变；歧义时猜一个就等于悄悄改了模组。
+    """
+    wanted = name.strip()
+    if not wanted:
+        return []
+    out: list[str] = []
+    for spec in ruleset.skills:
+        for sep in ("：", ":"):
+            if sep in spec.name and spec.name.split(sep, 1)[1].strip() == wanted:
+                out.append(spec.name)
+                break
+    return out
+
+
 def resolve_check_skill(raw_skill: str, ruleset: RulesetRead) -> tuple[str, list[str], str]:
     """把模组里的一条检定点写法解析成 `(kind, skill_ids, 展示名)`（exec/17 (A)）。
 
@@ -302,14 +335,16 @@ def resolve_check_skill(raw_skill: str, ruleset: RulesetRead) -> tuple[str, list
     s = (raw_skill or "").strip()
     if not s:
         return "skill", [], ""
-    if s in SAN_CHECK_WRITINGS:
+    # 类别判定一律基于剥掉「检定」后缀的写法，见 `_strip_check_suffix`
+    base = _strip_check_suffix(s)
+    if base in SAN_CHECK_WRITINGS:
         return "san", [], "理智检定"
-    if s in MULTI_SKILL_CHECKS:
-        ids = MULTI_SKILL_CHECKS[s]
+    if base in MULTI_SKILL_CHECKS:
+        ids = MULTI_SKILL_CHECKS[base]
         catalog = skill_id_catalog(ruleset)
         return "skill", ids, "/".join(catalog.get(i, i) for i in ids)
-    if s in COC6_ATTRIBUTE_CHECKS:
-        key = COC6_ATTRIBUTE_CHECKS[s]
+    if base in COC6_ATTRIBUTE_CHECKS:
+        key = COC6_ATTRIBUTE_CHECKS[base]
         catalog = skill_id_catalog(ruleset)
         return "skill", [key], catalog.get(key, key)
     wanted = normalize_skill_name(s)
@@ -321,6 +356,13 @@ def resolve_check_skill(raw_skill: str, ruleset: RulesetRead) -> tuple[str, list
             spec.name_en is not None and wanted.lower() == spec.name_en.lower()
         ):
             return "skill", [spec.id], spec.name
+    # 兜底之前的最后一条**结构性**规则：光写了专项名（「动物学」）。
+    # 唯一匹配才接受——歧义时宁可退回原文让 check_skills 报错。
+    candidates = specialization_candidates(wanted, ruleset)
+    if len(candidates) == 1:
+        for spec in ruleset.skills:
+            if spec.name == candidates[0]:
+                return "skill", [spec.id], spec.name
     return "skill", [], s
 
 

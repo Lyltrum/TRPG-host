@@ -169,6 +169,9 @@ class ValidationReport:
     secret_public_errors: list[str] = field(default_factory=list)
     structure_ok: bool = True
     structure_errors: list[str] = field(default_factory=list)
+    # exec/29 §4 忠实度硬门：实体能否回溯到原文
+    trace_ok: bool = True
+    trace_errors: list[str] = field(default_factory=list)
     # 06 内容保全（软）
     content_preserve_ok: bool = True  # 仅作观察；不参与 ok
     content_preserve_suspects: list[ContentPreserveItem] = field(default_factory=list)
@@ -184,6 +187,7 @@ class ValidationReport:
         out.extend(f"[thin_slot] {e}" for e in self.thin_slot_errors)
         out.extend(f"[secret_public] {e}" for e in self.secret_public_errors)
         out.extend(f"[structure] {e}" for e in self.structure_errors)
+        out.extend(f"[trace] {e}" for e in self.trace_errors)
         return out
 
     def needs_stage1_repair(self) -> bool:
@@ -207,6 +211,7 @@ class ValidationReport:
                 "errors": self.secret_public_errors,
             },
             "structure": {"ok": self.structure_ok, "errors": self.structure_errors},
+            "trace": {"ok": self.trace_ok, "errors": self.trace_errors},
             "content_preserve": {
                 "ok": self.content_preserve_ok,
                 "suspect_count": len(self.content_preserve_suspects),
@@ -236,6 +241,7 @@ class ValidationReport:
                 f"  结构完整性：{'✓' if self.structure_ok else '✗'} "
                 f"({len(self.structure_errors)} 条)"
             ),
+            (f"  溯源忠实度：{'✓' if self.trace_ok else '✗'} ({len(self.trace_errors)} 条)"),
             f"  内容保全（软）：疑似丢失 {len(self.content_preserve_suspects)} 条",
         ]
         if self.all_errors():
@@ -287,6 +293,156 @@ def skill_resolvable(skill_name: str, ruleset: RulesetRead) -> bool:
         ):
             return True
     return False
+
+
+# 实体文本与其源行的最低词面关联（`exec/29 §4`）。
+#
+# 🔴 **这道门抓不到「改写」与「编造」的边界，别指望它。** 在林中屋（唯一未经
+# 人手修改的组装产物）上实测，重合值是一条 3→11→18→30+ 的**连续分布，没有自然
+# 断点**——阈值取 6 抓 2 个、取 8 抓 3 个、取 12 抓 7 个，全是任意的。根因是
+# 组装阶段本来就在改写，改写与编造在词面上没有分界。
+#
+# 所以它只当**兜底**：中文里 3 字约等于一个词，`< 3` 意味着**连一个词都没对上**，
+# 那已经不是改写，是这段文本跟它声称的出处没有关系。真正能抓错位/编造的是
+# ③ AI 玩家试跑，不是这里。
+MIN_TRACE_RUN = 3
+
+
+def _compact(s: str) -> str:
+    return re.sub(r"\s+", "", s or "")
+
+
+def _longest_run_in(needle: str, hay: str) -> int:
+    """needle 里能在 hay 中逐字找到的最长连续片段长度。
+
+    与 `access/leak_guard.py` 判泄密同一手法——**逐字重合，不问模型**。
+    """
+    if not needle or not hay:
+        return 0
+    best = 0
+    n = len(needle)
+    for i in range(n):
+        if n - i <= best:
+            break
+        lo, hi = best, n - i
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if needle[i : i + mid] in hay:
+                lo = mid
+            else:
+                hi = mid - 1
+        best = max(best, lo)
+    return best
+
+
+def _entity_own_text(obj: dict[str, Any], keys: tuple[str, ...]) -> str:
+    return _compact(" ".join(str(obj.get(k) or "") for k in keys))
+
+
+def _walk_entities(module: dict[str, Any]) -> list[tuple[str, str, str, str | None]]:
+    """列出全部实体：`(kind, id, 自身文本, 父实体 id)`。
+
+    父 id 只对 `sub_nodes` 非空——子节点是组装阶段现拆的，没有自己的归组映射，
+    要靠它向上继承锚点。
+    """
+    out: list[tuple[str, str, str, str | None]] = []
+
+    def walk_nodes(nodes: Any, parent: str | None) -> None:
+        for nd in nodes or []:
+            if not isinstance(nd, dict):
+                continue
+            nid = str(nd.get("id") or "")
+            text = _entity_own_text(nd, ("title", "kp_text", "public_text"))
+            for chk in nd.get("checks") or []:
+                if isinstance(chk, dict):
+                    text += _entity_own_text(chk, ("on_success", "on_failure", "on_fumble"))
+            out.append(("node", nid, text, parent))
+            walk_nodes(nd.get("sub_nodes"), nid)
+
+    walk_nodes(module.get("nodes"), None)
+    for npc in module.get("npcs") or []:
+        if isinstance(npc, dict):
+            out.append(
+                (
+                    "npc",
+                    str(npc.get("id") or ""),
+                    _entity_own_text(npc, ("name", "kp_notes", "public_text")),
+                    None,
+                )
+            )
+    for end in module.get("endings") or []:
+        if isinstance(end, dict):
+            out.append(
+                ("ending", str(end.get("id") or ""), _entity_own_text(end, ("title", "text")), None)
+            )
+    for ag in module.get("agenda") or []:
+        if isinstance(ag, dict):
+            out.append(
+                (
+                    "agenda",
+                    str(ag.get("id") or ""),
+                    _entity_own_text(ag, ("title", "kp_text")),
+                    None,
+                )
+            )
+    return out
+
+
+def check_source_traceability(
+    items: list[dict[str, Any]],
+    assignment_map: dict[str, Any],
+    module: dict[str, Any],
+    source_lines: list[str],
+) -> list[str]:
+    """忠实度硬门：每个实体都要能回溯到原文，且文本与源行逐字重合 ≥ `MIN_TRACE_RUN`。
+
+    锚点来自「片段自报的 `line_start`/`line_end` + 阶段 1 归组映射」。它是模型
+    自报的、可以被编造——**但编造的锚点一比对当场红**，这正是本检查的意义：
+    把「不可检测的内容编造」变成「可检测的定位造假」。
+
+    🔴 子节点向上继承祖先锚点：实测 25–57% 的实体"无锚点"，几乎全是 `sub_nodes`。
+    """
+    if not source_lines:
+        return []
+
+    by_id = {str(it.get("id")): it for it in items if it.get("id")}
+    # 实体 → 它认领的片段原文（压紧空白）
+    anchors: dict[str, str] = {}
+    for iid, info in assignment_map.items():
+        it = by_id.get(str(iid))
+        if it is None:
+            continue
+        a, b = it.get("line_start"), it.get("line_end")
+        if not isinstance(a, int) or not isinstance(b, int):
+            continue
+        a, b = max(1, min(a, b)), min(len(source_lines), max(a, b))
+        if a > b:
+            continue
+        did = _dest_id_of(info)
+        anchors[did] = anchors.get(did, "") + _compact("".join(source_lines[a - 1 : b]))
+
+    errors: list[str] = []
+    parents = {eid: parent for _k, eid, _t, parent in _walk_entities(module)}
+    for kind, eid, text, _parent in _walk_entities(module):
+        if not eid or not text:
+            continue
+        # 向上找最近一个有锚点的祖先
+        hay, cursor = anchors.get(eid, ""), eid
+        while not hay:
+            cursor = parents.get(cursor) or ""
+            if not cursor:
+                break
+            hay = anchors.get(cursor, "")
+        if not hay:
+            errors.append(f"{kind} {eid!r} 没有溯源锚点（无归组片段，也没有可继承的祖先）")
+            continue
+        run = _longest_run_in(text, hay)
+        if run < MIN_TRACE_RUN:
+            errors.append(
+                f"{kind} {eid!r} 与源行的最长逐字重合仅 {run} 字"
+                f"（下限 {MIN_TRACE_RUN}）——疑似脱离原文编造"
+            )
+    return errors
 
 
 def _strip_check_suffix(s: str) -> str:
@@ -963,11 +1119,16 @@ def validate_assembled(
     assignment_map: dict[str, Any],
     items: list[dict[str, Any]] | None = None,
     ruleset: RulesetRead | None = None,
+    source_lines: list[str] | None = None,
 ) -> ValidationReport:
     """跑完全部硬校验 + 内容保全软项。
 
     items：源片段列表（含 what_kind_of_thing / audience / summary）。
     缺省时结构完整性/绝密公开槽/内容保全会尽量降级（无信号则跳过）。
+
+    source_lines：原文按行切开（`exec/29 §4` 忠实度硬门要它）。
+    🔴 **缺省时溯源检查整条跳过**——没有原文就无从比对，此时报告的 `ok`
+    不包含忠实度这一层，别拿它当"忠实度过了"。
     """
     ruleset = ruleset or build_coc7_ruleset()
     items = items or []
@@ -994,6 +1155,11 @@ def validate_assembled(
         check_secret_not_public(assignment_map, items_by_id) if items_by_id else []
     )
     structure_errors = check_structure_integrity(items, module, raw=raw) if items else []
+    trace_errors = (
+        check_source_traceability(items, assignment_map, raw, source_lines)
+        if items and source_lines
+        else []
+    )
     suspects = check_content_preservation(items, assignment_map, module, raw) if items else []
 
     ref_ok = not ref_errors
@@ -1004,6 +1170,7 @@ def validate_assembled(
     thin_slot_ok = not thin_slot_errors
     secret_public_ok = not secret_public_errors
     structure_ok = not structure_errors
+    trace_ok = not trace_errors
     ok = (
         schema_ok
         and ref_ok
@@ -1014,6 +1181,7 @@ def validate_assembled(
         and thin_slot_ok
         and secret_public_ok
         and structure_ok
+        and trace_ok
     )
     return ValidationReport(
         ok=ok,
@@ -1035,6 +1203,8 @@ def validate_assembled(
         secret_public_errors=secret_public_errors,
         structure_ok=structure_ok,
         structure_errors=structure_errors,
+        trace_ok=trace_ok,
+        trace_errors=trace_errors,
         content_preserve_ok=len(suspects) == 0,
         content_preserve_suspects=suspects,
     )

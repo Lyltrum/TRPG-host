@@ -1386,6 +1386,17 @@ def run_pipeline(
     rels = merge_relations(p1.get("relations") or [], p2.get("relations") or [])
     print(f"relations merged: {len(rels)}", flush=True)
 
+    # 🔴 裸抽取里的 line_start/line_end 是**相对它当时读的那个文件**的。
+    # `--source-txt` 传成另一个（`.txt` 而不是 `.重组.txt`）会让行号整体错位，
+    # 而症状是溯源校验凭空报一堆"疑似编造"——查了半天才发现是拿错了原文。
+    # 所以这里对齐一次，不一致就当场退出，不给它静默走下去的机会。
+    recorded_source = str(extract.get("source") or "")
+    if recorded_source and Path(recorded_source).resolve() != source_txt.resolve():
+        raise SystemExit(
+            f"--source-txt 与裸抽取记录的原文不是同一个文件，行号会错位：\n"
+            f"  裸抽取用的：{recorded_source}\n"
+            f"  本次传入的：{source_txt.resolve()}"
+        )
     lines = read_numbered_lines(source_txt)
     schema_doc = load_example_skeleton(example_path)
     title_hint = extract_path.name.split(".")[0]
@@ -1485,6 +1496,7 @@ def run_pipeline(
         source_item_ids=source_item_ids,
         assignment_map=assignment_map,
         items=items,
+        source_lines=lines,
     )
     print(report.summary_text(), flush=True)
 
@@ -1544,6 +1556,7 @@ def run_pipeline(
                 source_item_ids=source_item_ids,
                 assignment_map=assignment_map,
                 items=items,
+                source_lines=lines,
             )
             print(report.summary_text(), flush=True)
             # 归组修好后若只剩产物级问题，同轮再修一次 JSON（不另计 repair）
@@ -1563,6 +1576,7 @@ def run_pipeline(
             source_item_ids=source_item_ids,
             assignment_map=assignment_map,
             items=items,
+            source_lines=lines,
         )
         print(report.summary_text(), flush=True)
         if report.ok:
@@ -1600,6 +1614,7 @@ def run_pipeline(
             source_item_ids=source_item_ids,
             assignment_map=assignment_map,
             items=items,
+            source_lines=lines,
         )
         print(report.summary_text(), flush=True)
 

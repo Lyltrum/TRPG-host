@@ -1,0 +1,244 @@
+"""导入 job：状态机 + 启动清扫 + 剧透约束的 schema 执行（`exec/29 §7.2`）。
+
+三组不变量，每一组坏掉的症状都不一样：
+
+1. **清扫**坏了 → 用户的 job 永远显示"进行中"，而没有任何进程在跑它。
+2. **`interrupted` 跟 `failed` 混了** → 用户以为自己的模组转不了（其实是我们
+   重启了）。
+3. **剧透约束**坏了 → 模组内容跨到前端，这个功能的全部意义就没了。
+
+第 3 组是这个文件里最重要的：它不检查"我们记得没写正文"，而检查**表结构里
+根本没有能装下正文的地方**。同「保密靠拿不到，不是请你别说」。
+"""
+
+from __future__ import annotations
+
+import tempfile
+from pathlib import Path
+
+import pytest
+from sqlalchemy import inspect, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+
+from app.core.db import Base
+from app.core.module_import.job_state import (
+    ALL_STATUSES,
+    FAILURE_KINDS,
+    STAGES,
+    STATUS_FAILED,
+    STATUS_INTERRUPTED,
+    STATUS_PENDING,
+    STATUS_RUNNING,
+    STATUS_SUCCEEDED,
+    is_terminal,
+    normalize_failure_kinds,
+    stage_index,
+)
+from app.core.module_import.sweep import sweep_stale_jobs
+from app.models.replay import ModuleImportJob
+
+_db_path = Path(tempfile.mkdtemp(prefix="trpg-import-job-test-")) / "job.db"
+_engine = create_async_engine(f"sqlite+aiosqlite:///{_db_path}", poolclass=NullPool)
+_session_factory = async_sessionmaker(_engine, expire_on_commit=False)
+
+
+@pytest.fixture(autouse=True)
+async def _fresh_db():
+    async with _engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+
+
+# ── 1. 启动清扫 ───────────────────────────────────────
+
+
+async def test_running_and_pending_are_both_swept() -> None:
+    """🔴 `pending` 也要扫。
+
+    它是"已收下文件、还没开始跑"，同样只活在进程内存的调度里——进程没了它
+    永远不会被捡起来，**留在 pending 就是永久转圈**，比 running 还隐蔽。
+    """
+    async with _session_factory() as db:
+        db.add_all(
+            [
+                ModuleImportJob(status=STATUS_RUNNING, stage="assembling"),
+                ModuleImportJob(status=STATUS_PENDING, stage="received"),
+            ]
+        )
+        await db.commit()
+
+        assert await sweep_stale_jobs(db) == 2
+        rows = (await db.scalars(select(ModuleImportJob))).all()
+        assert {r.status for r in rows} == {STATUS_INTERRUPTED}
+        assert all(r.finished_at is not None for r in rows)
+
+
+async def test_terminal_jobs_are_left_alone() -> None:
+    """已经有结论的不许被改写——失败理由是用户唯一能看的东西。"""
+    async with _session_factory() as db:
+        db.add_all(
+            [
+                ModuleImportJob(status=STATUS_SUCCEEDED, stage="registering"),
+                ModuleImportJob(status=STATUS_FAILED, error_message="这份文稿抽不出任何条目"),
+            ]
+        )
+        await db.commit()
+
+        assert await sweep_stale_jobs(db) == 0
+        failed = (
+            await db.scalars(select(ModuleImportJob).where(ModuleImportJob.status == STATUS_FAILED))
+        ).one()
+        assert failed.error_message == "这份文稿抽不出任何条目"
+
+
+async def test_sweep_on_empty_table_is_a_noop() -> None:
+    async with _session_factory() as db:
+        assert await sweep_stale_jobs(db) == 0
+
+
+async def test_interrupted_is_not_failed() -> None:
+    """🔴 作废不是失败：这不是模组的问题，是我们的进程没了。
+
+    理由文案必须指向"重新导入"，而不是"这份模组不行"。
+    """
+    async with _session_factory() as db:
+        db.add(ModuleImportJob(status=STATUS_RUNNING))
+        await db.commit()
+        await sweep_stale_jobs(db)
+
+        job = (await db.scalars(select(ModuleImportJob))).one()
+
+    assert job.status == STATUS_INTERRUPTED != STATUS_FAILED
+    assert job.error_message and "重新导入" in job.error_message
+
+
+async def test_sweep_never_reruns_anything() -> None:
+    """🔴 绝不自动重跑——重启后默默再花一次钱（¥0.35 / 71 次调用）是最坏的。
+
+    表现为：清扫只写终态，不产生任何新 job。
+    """
+    async with _session_factory() as db:
+        db.add(ModuleImportJob(status=STATUS_RUNNING, source_filename="x.pdf"))
+        await db.commit()
+        await sweep_stale_jobs(db)
+
+        assert len((await db.scalars(select(ModuleImportJob))).all()) == 1
+
+
+# ── 2. 状态机本身 ─────────────────────────────────────
+
+
+def test_terminal_statuses_are_exactly_the_three() -> None:
+    assert is_terminal(STATUS_SUCCEEDED)
+    assert is_terminal(STATUS_FAILED)
+    assert is_terminal(STATUS_INTERRUPTED)
+    assert not is_terminal(STATUS_RUNNING)
+    assert not is_terminal(STATUS_PENDING)
+
+
+def test_unknown_stage_is_not_reported_as_the_beginning() -> None:
+    """未知阶段返回 -1，**不是 0** —— 0 会让它看起来刚开始，进度条直接撒谎。"""
+    assert stage_index("received") == 0
+    assert stage_index("registering") == len(STAGES) - 1
+    assert stage_index("没这个阶段") == -1
+
+
+def test_stage_order_matches_the_pipeline() -> None:
+    """阶段是给用户看的，不是内部调用图——五步管线 + 落库，多一步都不该有。"""
+    assert STAGES == (
+        "received",
+        "extracting",
+        "probing",
+        "relating",
+        "assembling",
+        "registering",
+    )
+
+
+# ── 3. 🔴 剧透约束靠 schema 执行 ──────────────────────
+
+
+def test_failure_kinds_keep_only_the_category_word() -> None:
+    """🔴 错误原文里带着实体 id、数值、半句原文，跨到前端的只能是类别词。"""
+    kinds = normalize_failure_kinds(
+        [
+            "[numeric] node 'mi-go' 的数值 '701d6+1' 在原文里找不到——疑似凭空生成",
+            "[skill] node 'outside-house' checks[1] 未归一到技能 id（原文 '动物学'）",
+            "[numeric] 又一条",
+        ]
+    )
+
+    assert kinds == ["numeric", "skill"]
+
+
+def test_unknown_prefix_is_dropped_not_passed_through() -> None:
+    """🔴 不做"未知类别"兜底——那个兜底会把任意字符串放行到前端。"""
+    assert normalize_failure_kinds(["[某个真相] 泄露了", "没有方括号的一行"]) == []
+
+
+def test_every_failure_kind_is_a_bare_word() -> None:
+    """封闭集合里的词本身不能携带信息——都是短的英文标识符。"""
+    assert all(k.isascii() and k.islower() and len(k) <= 14 for k in FAILURE_KINDS)
+
+
+def test_job_table_has_no_free_form_content_column() -> None:
+    """🔴 本文件最重要的一条：**表里没有能装下模组正文的地方**。
+
+    这条不检查"我们记得没写正文"，检查的是结构。允许的自由文本只有两处，
+    每一处都有明确理由：
+
+    - `source_filename` —— 用户自己起的文件名，不是模组内容
+    - `error_message`   —— 拒绝理由，由代码生成（只说数量与类别）
+    - `source_path`     —— 服务器上的上传件路径，**内部字段，不进 DTO**
+
+    再加一个就要先回答：**它能不能装下一句剧透？**
+    """
+    columns = {c.key: c for c in inspect(ModuleImportJob).columns}
+    textual = {
+        name
+        for name, col in columns.items()
+        if col.type.__class__.__name__ in ("Text", "String", "JSON")
+    }
+
+    # id / owner_user_id / result_scenario_id / retried_from_job_id 是 Uuid 列，
+    # 装不下自由文本，不在这个集合里。
+    assert textual == {
+        "status",
+        "stage",
+        "source_filename",
+        "source_sha256",
+        "source_path",
+        "error_message",
+        "failure_kinds",
+    }
+
+
+def test_report_numbers_are_separate_integer_columns() -> None:
+    """报告是数量与拓扑，所以它是一组 Integer，不是一个 `stats: JSON`。"""
+    columns = {c.key: c for c in inspect(ModuleImportJob).columns}
+    counters = [
+        "page_count",
+        "image_count",
+        "char_count",
+        "item_count",
+        "node_count",
+        "npc_count",
+        "ending_count",
+        "agenda_count",
+        "hard_failure_count",
+        "llm_call_count",
+    ]
+
+    assert all(columns[c].type.__class__.__name__ == "Integer" for c in counters)
+
+
+def test_status_vocabulary_is_closed() -> None:
+    assert {
+        STATUS_PENDING,
+        STATUS_RUNNING,
+        STATUS_SUCCEEDED,
+        STATUS_FAILED,
+        STATUS_INTERRUPTED,
+    } == ALL_STATUSES

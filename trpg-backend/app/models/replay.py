@@ -11,7 +11,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, Uuid
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -51,17 +51,75 @@ class RoomSession(Base):
 
 
 class ModuleImportJob(Base):
+    """一次模组导入的全过程（`exec/29` 第 5 步）。状态机在
+    `app/core/module_import/job_state.py`。
+
+    ## 🔴 这张表里为什么全是整数列，没有一个自由 JSON
+
+    job 的字段是**唯一跨到前端的东西**，而本功能的第一性约束是「人类不许看见
+    模组内容」。一个 `stats: JSON` 能装下任何东西——包括模组正文。所以进度与
+    报告一律拆成**显式的整数列**，失败原因只留**封闭集合**里的类别词
+    （`job_state.FAILURE_KINDS`）。
+
+    **schema 表达不了的东西才漏不出去**，同「保密靠拿不到，不是请你别说」。
+    加字段前先问：**它能不能装下一句剧透？** 能就别加。
+
+    连生成的实体 id 都不许出现在这里——id 是从内容里长出来的。
+
+    ## 版权
+
+    `source_path` 指向服务器上保存的用户上传件（第三方模组正文），与
+    `模组资料/` 同级红线：禁止进 git / 日志 / 磁带。**不出现在任何 DTO 里。**
+    """
+
     __tablename__ = "module_import_jobs"
 
     id: Mapped[str] = mapped_column(
         Uuid(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
     )
+    # 谁导入的。导入的模组归导入者所有（`Scenario.owner_user_id` 同源）。
+    owner_user_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("users.id"), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    # 进度阶段，取值见 `job_state.STAGES`。分阶段是因为**每一阶段的失败对用户
+    # 意味着不同的下一步**，不是为了好看。
+    stage: Mapped[str] = mapped_column(String(20), nullable=False, default="received")
+
+    # 用户自己的文件名——用户自己提供的，不算剧透。
     source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 内容哈希：同一份文件导过就别再付一次钱（¥0.35 / 71 次调用）。
+    source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # 🔴 服务器上的上传件路径。**内部字段，绝不进 DTO。**
+    source_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     result_scenario_id: Mapped[str | None] = mapped_column(
         Uuid(as_uuid=False), ForeignKey("scenarios.id"), nullable=True
     )
+    # 拒绝理由。**必须可执行**（"换个文件" / "这是扫描件" / "这份模组转不了"），
+    # 且只说数量与类别，不带 id、不带正文。
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 硬失败的**类别**（封闭集合，见 `job_state.FAILURE_KINDS`），不是原文。
+    failure_kinds: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+
+    # ── 报告：只有数量与拓扑 ──────────────────────────
+    page_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    image_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    char_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    item_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    node_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    npc_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ending_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    agenda_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    hard_failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    llm_call_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # 重跑是**新建一个 job**，不是复活旧的——旧 job 的失败理由要留着，
+    # 否则用户点三次就再也不知道前两次为什么失败（`exec/29 §7.2 ②`）。
+    retried_from_job_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("module_import_jobs.id"), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -70,3 +128,4 @@ class ModuleImportJob(Base):
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -166,7 +166,7 @@ export default function CreateRoomPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-[13px] font-bold text-text-primary">{selectedGame?.name} · {systemName}</div>
-                <div className="text-[11px] text-text-muted mt-0.5">模组：{selectedScenario?.name}</div>
+                <div className="text-[11px] text-text-muted mt-0.5">模组：{store.sceneName ?? '未选择'}</div>
               </div>
               <button onClick={handleChangeGame}
                 className="text-[11px] font-bold text-text-primary underline whitespace-nowrap">更换</button>
@@ -191,7 +191,7 @@ export default function CreateRoomPage() {
               { k: '房间名', v: roomName || '未设置', strong: true },
               { k: '游戏', v: selectedGame?.name || (store.gameId || '未选择') },
               { k: '规则', v: systemName || (store.systemId || '未选择') },
-              { k: '模组', v: selectedScenario?.name || '未选择' },
+              { k: '模组', v: store.sceneName || '未选择' },
               { k: '人数上限', v: `${maxPlayers} 人` },
             ].map((row) => (
               <div key={row.k} className="flex items-center justify-between border-b border-dotted border-text-primary/25 pb-1">

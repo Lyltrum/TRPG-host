@@ -15,9 +15,22 @@ import type { ModuleDetail, ModuleImportJob } from '../types';
 export class ModulesResource {
   constructor(private readonly client: ApiClient) {}
 
+  private authenticated(token: string): RequestInit {
+    return { headers: { Authorization: `Bearer ${token}` } };
+  }
+
   /** GET /api/v1/modules/{moduleId} — 模组详情 */
   getDetail(moduleId: string): Promise<ModuleDetail> {
     return this.client.get<ModuleDetail>(`/modules/${moduleId}`);
+  }
+
+  /**
+   * GET /api/v1/modules/import — 我的导入记录（含正在转的那条）。
+   *
+   * 「我的模组」那一屏靠它回答"关掉页面之后怎么回来"，所以它返回的不只是终态。
+   */
+  listImportJobs(token: string): Promise<ModuleImportJob[]> {
+    return this.client.get<ModuleImportJob[]>('/modules/import', this.authenticated(token));
   }
 
   /**
@@ -25,12 +38,16 @@ export class ModulesResource {
    *
    * 只收**一个文件**（pdf/docx/doc/txt）；压缩包会被后端明确拒绝并说明原因。
    */
-  startImport(file: File | Blob, filename?: string): Promise<ModuleImportJob> {
+  startImport(token: string, file: File | Blob, filename?: string): Promise<ModuleImportJob> {
     const form = new FormData();
     // 第三个参数是文件名。Blob 没有 name，不显式给的话后端会收到
     // "blob" 这个占位名——用户看到的就是一条叫 blob 的导入记录。
     form.append('file', file, filename ?? (file instanceof File ? file.name : 'module'));
-    return this.client.postForm<ModuleImportJob>('/modules/import', form);
+    return this.client.postForm<ModuleImportJob>(
+      '/modules/import',
+      form,
+      this.authenticated(token)
+    );
   }
 
   /** GET /api/v1/modules/import/{jobId} — 轮询导入任务状态 */
@@ -44,7 +61,11 @@ export class ModulesResource {
    * 🔴 **返回的是一个新 job**：旧 job 的失败理由要留着，否则用户点三次就再也
    * 不知道前两次为什么失败。重跑由用户点，不自动（那等于默默再花一次钱）。
    */
-  retryImport(jobId: string): Promise<ModuleImportJob> {
-    return this.client.post<ModuleImportJob>(`/modules/import/${jobId}/retry`, {});
+  retryImport(token: string, jobId: string): Promise<ModuleImportJob> {
+    return this.client.post<ModuleImportJob>(
+      `/modules/import/${jobId}/retry`,
+      {},
+      this.authenticated(token)
+    );
   }
 }

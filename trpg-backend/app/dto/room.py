@@ -123,6 +123,11 @@ class ModuleRead(CamelModel):
     players_max: int
     difficulty: int
     estimated_duration: str | None = None
+    #: 这个模组是不是导入进来的。前端靠它区分「内置」与「我导入的」——两者能给的
+    #: 信息不一样：内置有人工填的难度与简介，导入的只有导入日期与规模。
+    #: 由 `owner_user_id` 推出（内置无主），不是另一份状态。
+    is_imported: bool = False
+    created_at: UtcDatetime | None = None
 
 
 class RoomPreview(CamelModel):

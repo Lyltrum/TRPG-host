@@ -580,6 +580,8 @@ export interface ModuleDetailRead {
   playersMax: number;
   difficulty: number;
   estimatedDuration?: string | null;
+  isImported?: boolean;
+  createdAt?: string | null;
   synopsis?: string | null;
   playerIntro?: string | null;
   openingScript?: string | null;
@@ -604,20 +606,20 @@ export interface ModuleDetailRead {
 export interface ModuleImportJobRead {
   jobId: string;
   status: string;
-  stage?: string;
+  stage: string;
   sourceFilename?: string | null;
   resultScenarioId?: string | null;
   errorMessage?: string | null;
   failureKinds?: string[];
-  pageCount?: number;
-  imageCount?: number;
-  charCount?: number;
-  itemCount?: number;
-  nodeCount?: number;
-  npcCount?: number;
-  endingCount?: number;
-  agendaCount?: number;
-  hardFailureCount?: number;
+  pageCount: number;
+  imageCount: number;
+  charCount: number;
+  itemCount: number;
+  nodeCount: number;
+  npcCount: number;
+  endingCount: number;
+  agendaCount: number;
+  hardFailureCount: number;
   retriedFromJobId?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -637,6 +639,8 @@ export interface ModuleRead {
   playersMax: number;
   difficulty: number;
   estimatedDuration?: string | null;
+  isImported?: boolean;
+  createdAt?: string | null;
 }
 
 /**

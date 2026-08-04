@@ -20,6 +20,9 @@ const RoomPage = lazy(() => import('@/routes/games/trpg/RoomPage'));
 const MyRoomsPage = lazy(() => import('@/routes/my-rooms/MyRoomsPage'));
 const ReviewPage = lazy(() => import('@/routes/review/ReviewPage'));
 const ProfilePage = lazy(() => import('@/routes/profile/ProfilePage'));
+const MyModulesPage = lazy(() => import('@/routes/modules/MyModulesPage'));
+const ImportModulePage = lazy(() => import('@/routes/modules/ImportModulePage'));
+const ImportJobPage = lazy(() => import('@/routes/modules/ImportJobPage'));
 
 function LoadingFallback() {
   return (
@@ -76,6 +79,11 @@ function App() {
           <Route path="/home/my-rooms" element={<MyRoomsPage />} />
           <Route path="/home/my-rooms/review/:roomCode" element={<ReviewPage />} />
           <Route path="/home/profile" element={<ProfilePage />} />
+          {/* 模组导入（exec/29 第 5 步）。`/import` 必须排在 `/:jobId` 之前，
+              否则会被当成 jobId="import"——跟后端路由那一处同一个坑。 */}
+          <Route path="/home/modules" element={<MyModulesPage />} />
+          <Route path="/home/modules/import" element={<ImportModulePage />} />
+          <Route path="/home/modules/:jobId" element={<ImportJobPage />} />
 
           {/* /room/* —— 已经加入/创建了房间之后的整条游戏内流程：大厅→背景介绍→
               建卡→建卡准备→聊天室，都是同一个房间生命周期里的阶段。 */}

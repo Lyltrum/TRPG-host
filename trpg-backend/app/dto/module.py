@@ -47,7 +47,7 @@ class ModuleImportJobRead(CamelModel):
     job_id: str
     status: str
     #: 进度阶段，取值见 `job_state.STAGES`。
-    stage: str = "received"
+    stage: str
     #: 用户自己起的文件名——不是模组内容。
     source_filename: str | None = None
     result_scenario_id: str | None = None
@@ -56,15 +56,20 @@ class ModuleImportJobRead(CamelModel):
     failure_kinds: list[str] = Field(default_factory=list)
 
     # ── 报告：只有数量与拓扑 ──────────────────────────
-    page_count: int = 0
-    image_count: int = 0
-    char_count: int = 0
-    item_count: int = 0
-    node_count: int = 0
-    npc_count: int = 0
-    ending_count: int = 0
-    agenda_count: int = 0
-    hard_failure_count: int = 0
+    #
+    # 🔴 **故意不给默认值**。这些列在库里非空、有 server default，服务端每次都
+    # 送得出来；给了默认值，生成的 TS 契约就变成 `pageCount?: number`，前端被迫
+    # 写 `?? 0` —— 那正是这个项目反复禁止的静默兜底（数据没到位就用假值）。
+    # 契约要如实说「这些数字一定在」。
+    page_count: int
+    image_count: int
+    char_count: int
+    item_count: int
+    node_count: int
+    npc_count: int
+    ending_count: int
+    agenda_count: int
+    hard_failure_count: int
 
     retried_from_job_id: str | None = None
     created_at: UtcDatetime

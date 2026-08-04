@@ -216,6 +216,22 @@ def _spawn(job_id: str, session_factory: async_sessionmaker[AsyncSession]) -> No
     task.add_done_callback(_running.discard)
 
 
+async def list_import_jobs(db: AsyncSession, *, user_id: str) -> list[ModuleImportJobRead]:
+    """我的导入记录，最近的在前。
+
+    「我的模组」那一屏要同时显示**正在转的、转好的、没转成的**——正在转的那条
+    就是"关掉页面之后怎么回来"的答案，所以这个接口不能只返回终态。
+
+    🔴 按 `owner_user_id` 过滤：别人导入的模组连文件名都不该露出去。
+    """
+    rows = await db.scalars(
+        select(ModuleImportJob)
+        .where(ModuleImportJob.owner_user_id == user_id)
+        .order_by(ModuleImportJob.created_at.desc())
+    )
+    return [_to_dto(row) for row in rows]
+
+
 async def get_import_job(db: AsyncSession, job_id: str) -> ModuleImportJobRead:
     job = await db.get(ModuleImportJob, job_id)
     if job is None:

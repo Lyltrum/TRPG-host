@@ -40,9 +40,10 @@ export async function createGameRoom(
   );
 }
 
-// 拉取可用模组列表（与后端 seed/catalog 对齐：追书人、科比特先生等）
+// 拉取可用模组列表：内置的 + 我自己导入的。
+// 🔴 必须带账号凭证——导入的模组归导入者所有，服务端认不出你是谁就只给内置那几个。
 export async function listModules(): Promise<ModuleSummary[]> {
-  return sdk.rooms.listModules();
+  return sdk.rooms.listModules(getAuthToken() ?? undefined);
 }
 
 // 房主确定模组

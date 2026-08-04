@@ -37,7 +37,7 @@ export default function JoinRoomPage() {
         const mid = preview.moduleId
         if (mid) {
           setModuleId(mid)
-          setScene(mid)
+          setScene(mid, preview.moduleTitle ?? null)
         }
       } catch { /* 预览失败不挡进房 */ }
       // ★ 访客也要先进大厅——所有玩家到齐、都准备好之后才能一起进入建卡

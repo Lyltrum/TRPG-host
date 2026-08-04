@@ -24,7 +24,7 @@ export function useRoomPlayers(roomCode: string | null, intervalMs = 3000) {
           if (data.moduleId) {
             setModuleId(data.moduleId)
             if (!useGameStore.getState().sceneId) {
-              setScene(data.moduleId)
+              setScene(data.moduleId, data.moduleTitle ?? null)
             }
           }
         })

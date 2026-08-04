@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Hash, Plus, ScrollText } from 'lucide-react'
+import { Hash, Paperclip, Plus, ScrollText } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 import ShellPage from '@/shared/components/ShellPage'
 import BrandMark from '@/shared/components/BrandMark'
@@ -44,8 +44,8 @@ export default function HomePage() {
         </p>
       </div>
 
-      {/* 🔴 三个入口占据**剩余空间的中间**，不是贴着品牌区往下堆。
-          这一屏只有三颗按钮，靠自然流排会把内容全挤在上半屏、下面空一大片
+      {/* 🔴 入口占据**剩余空间的中间**，不是贴着品牌区往下堆。
+          这一屏按钮不多，靠自然流排会把内容全挤在上半屏、下面空一大片
           （真机反馈）。`flex-1 + justify-center` 让空白平均分到上下两侧。 */}
       <div className="flex-1 flex flex-col justify-center px-5 gap-3 py-6">
         <button
@@ -68,6 +68,16 @@ export default function HomePage() {
         >
           <ScrollText className="w-[18px] h-[18px]" />
           我的游戏
+        </button>
+        {/* 🔴 导入模组是**备料**，跟开局在时间上是分开的（可能是聚会前几天），
+            而且转换要跑 5–26 分钟——它不可能是建房流程里的一步。所以入口在顶层，
+            不只挂在选模组页底下（`exec/29 §7.2`）。 */}
+        <button
+          className="press w-full py-3 flex items-center justify-center gap-2 text-[14px] font-extrabold tracking-[0.16em] indent-[0.16em] bg-card text-text-primary"
+          onClick={() => navigate('/home/modules')}
+        >
+          <Paperclip className="w-[18px] h-[18px]" />
+          我的模组
         </button>
       </div>
 

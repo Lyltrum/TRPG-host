@@ -49,8 +49,14 @@ export class RoomsResource {
   }
 
   /** GET /api/v1/modules — 获取可用模组列表 */
-  listModules(): Promise<ModuleSummary[]> {
-    return this.client.get<ModuleSummary[]>('/modules');
+  listModules(token?: string): Promise<ModuleSummary[]> {
+    // 🔴 token 是**可选**的，但不传就只看得到内置模组——自己导入的模组归自己
+    // 所有，服务端认不出你是谁就不会给（`exec/29`）。这个接口在导入功能之前
+    // 完全公开，所以不能改成必需，否则当场打断既有调用方。
+    return this.client.get<ModuleSummary[]>(
+      '/modules',
+      token ? { headers: { Authorization: `Bearer ${token}` } } : undefined
+    );
   }
 
   /** POST /api/v1/rooms/{roomId}/module — 房主选定模组 */

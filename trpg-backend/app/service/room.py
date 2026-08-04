@@ -10,7 +10,7 @@ import secrets
 import string
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -534,10 +534,35 @@ async def require_ruleset(db: AsyncSession, system_id: str) -> RulesetRead:
     return ruleset
 
 
-async def list_modules(db: AsyncSession) -> list[ModuleRead]:
-    """获取可用模组列表。"""
-    result = await db.scalars(select(Scenario))
-    return [ModuleRead.model_validate(s) for s in result]
+async def list_modules(db: AsyncSession, *, user_id: str | None = None) -> list[ModuleRead]:
+    """获取可用模组列表：内置的（无主）+ 我自己导入的。
+
+    🔴 **必须按主人过滤。** 在导入功能落地之前这张表里只有内置模组，所以
+    "返回全部"是对的；导入落地的那一刻它就变成"每个人都能看到别人导入的模组"
+    ——连第三方模组的标题都露出去了。同族判据：**放开一个约束前，先找谁在依赖
+    它**（这里依赖的是"scenarios 表里只有无主行"）。
+
+    `user_id=None`（没登录）只看得到内置模组。**不是看到全部**——未登录退化成
+    更大的可见范围是最坏的一种默认值。
+
+    注意这只管"谁能拿它开新局"。已经在玩的房间照旧看 `rooms.scenario_id`，
+    同房间其他玩家不需要拥有这个模组（`Scenario.owner_user_id` 的注释）。
+    """
+    stmt = select(Scenario).where(Scenario.owner_user_id.is_(None))
+    if user_id is not None:
+        stmt = select(Scenario).where(
+            or_(Scenario.owner_user_id.is_(None), Scenario.owner_user_id == user_id)
+        )
+    result = await db.scalars(stmt)
+    return [_to_module_read(s) for s in result]
+
+
+def _to_module_read(scenario: Scenario) -> ModuleRead:
+    """`is_imported` 由 `owner_user_id` 推出，不另存一份状态。"""
+    dto = ModuleRead.model_validate(scenario)
+    dto.is_imported = scenario.owner_user_id is not None
+    dto.created_at = scenario.created_at
+    return dto
 
 
 async def _load_public_story(

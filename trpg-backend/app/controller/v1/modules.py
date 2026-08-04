@@ -10,7 +10,7 @@
 from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.controller.dependencies import get_current_user
+from app.controller.dependencies import get_current_user, get_optional_user
 from app.core.db import async_session_factory, get_db
 from app.core.errors import AppException, ErrorCode
 from app.dto.common import ApiResponse
@@ -24,10 +24,32 @@ router = APIRouter(prefix="/modules", tags=["modules"])
 
 
 @router.get("", response_model=ApiResponse[list[ModuleRead]])
-async def list_modules(db: AsyncSession = Depends(get_db)) -> ApiResponse[list[ModuleRead]]:
-    """GET /api/v1/modules —— 获取可用模组列表。"""
-    modules = await room_service.list_modules(db)
+async def list_modules(
+    db: AsyncSession = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+) -> ApiResponse[list[ModuleRead]]:
+    """GET /api/v1/modules —— 可用模组：内置的 + 我自己导入的。
+
+    🔴 登录**可选**而不是必需：这个接口在导入功能之前是完全公开的（e2e 与
+    未登录的选模组页都在用），改成必需会当场打断那些调用方。可选的代价是
+    没登录时看不到自己的导入——这正是想要的默认（见 service 层注释）。
+    """
+    modules = await room_service.list_modules(db, user_id=user.id if user else None)
     return ApiResponse.ok(modules)
+
+
+@router.get("/import", response_model=ApiResponse[list[ModuleImportJobRead]])
+async def list_import_jobs(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ApiResponse[list[ModuleImportJobRead]]:
+    """GET /api/v1/modules/import —— 我的导入记录（含正在转的）。
+
+    🔴 **必须声明在 `/{module_id}` 之前**：FastAPI 按声明顺序匹配，写在后面
+    会被 `/modules/{module_id}` 当成 module_id="import" 吞掉。
+    """
+    jobs = await module_import_service.list_import_jobs(db, user_id=user.id)
+    return ApiResponse.ok(jobs)
 
 
 @router.get("/{module_id}", response_model=ApiResponse[ModuleDetailRead])

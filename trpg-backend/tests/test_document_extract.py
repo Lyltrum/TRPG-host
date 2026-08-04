@@ -95,7 +95,7 @@ def test_docx_is_extracted(tmp_path: Path) -> None:
     d = Document()
     d.add_paragraph("宅邸的门厅积满灰尘。")
     d.add_paragraph("厨房的水槽里泡着一只搪瓷碗。")
-    d.save(src)
+    d.save(str(src))
 
     doc = extract_document(src)
 
@@ -122,7 +122,7 @@ def test_docx_tables_are_read_too(tmp_path: Path) -> None:
     table.rows[1].cells[0].text = "65"
     table.rows[1].cells[1].text = "70"
     table.rows[1].cells[2].text = "55"
-    d.save(src)
+    d.save(str(src))
 
     doc = extract_document(src)
 

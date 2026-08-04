@@ -395,6 +395,47 @@ def _walk_entities(module: dict[str, Any]) -> list[tuple[str, str, str, str | No
     return out
 
 
+def build_entity_anchors(
+    items: list[dict[str, Any]],
+    assignment_map: dict[str, Any],
+    module: dict[str, Any],
+    source_lines: list[str],
+) -> dict[str, str]:
+    """实体 id → 它认领的那几行原文（压紧空白）。子节点向上继承祖先锚点。
+
+    抽出来是因为**自修也要用**：`[numeric]`/`[trace]` 这两类错误说的是「跟原文
+    对不上」，而自修器手里只有模组 JSON —— 不把相关原文一起给它，它只能靠猜，
+    而猜正是这两道门要禁的。
+    """
+    by_id = {str(it.get("id")): it for it in items if it.get("id")}
+    direct: dict[str, str] = {}
+    for iid, info in assignment_map.items():
+        it = by_id.get(str(iid))
+        if it is None:
+            continue
+        a, b = it.get("line_start"), it.get("line_end")
+        if not isinstance(a, int) or not isinstance(b, int):
+            continue
+        a, b = max(1, min(a, b)), min(len(source_lines), max(a, b))
+        if a > b:
+            continue
+        did = _dest_id_of(info)
+        direct[did] = direct.get(did, "") + _compact("".join(source_lines[a - 1 : b]))
+
+    parents = {eid: parent for _k, eid, _t, parent in _walk_entities(module)}
+    resolved: dict[str, str] = {}
+    for _kind, eid, _text, _parent in _walk_entities(module):
+        hay, cursor = direct.get(eid, ""), eid
+        while not hay:
+            cursor = parents.get(cursor) or ""
+            if not cursor:
+                break
+            hay = direct.get(cursor, "")
+        if hay:
+            resolved[eid] = hay
+    return resolved
+
+
 def check_source_traceability(
     items: list[dict[str, Any]],
     assignment_map: dict[str, Any],
@@ -412,34 +453,13 @@ def check_source_traceability(
     if not source_lines:
         return []
 
-    by_id = {str(it.get("id")): it for it in items if it.get("id")}
-    # 实体 → 它认领的片段原文（压紧空白）
-    anchors: dict[str, str] = {}
-    for iid, info in assignment_map.items():
-        it = by_id.get(str(iid))
-        if it is None:
-            continue
-        a, b = it.get("line_start"), it.get("line_end")
-        if not isinstance(a, int) or not isinstance(b, int):
-            continue
-        a, b = max(1, min(a, b)), min(len(source_lines), max(a, b))
-        if a > b:
-            continue
-        did = _dest_id_of(info)
-        anchors[did] = anchors.get(did, "") + _compact("".join(source_lines[a - 1 : b]))
+    anchors = build_entity_anchors(items, assignment_map, module, source_lines)
 
     errors: list[str] = []
-    parents = {eid: parent for _k, eid, _t, parent in _walk_entities(module)}
     for kind, eid, text, _parent in _walk_entities(module):
         if not eid or not text:
             continue
-        # 向上找最近一个有锚点的祖先
-        hay, cursor = anchors.get(eid, ""), eid
-        while not hay:
-            cursor = parents.get(cursor) or ""
-            if not cursor:
-                break
-            hay = anchors.get(cursor, "")
+        hay = anchors.get(eid, "")
         if not hay:
             errors.append(f"{kind} {eid!r} 没有溯源锚点（无归组片段，也没有可继承的祖先）")
             continue

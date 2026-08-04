@@ -16,10 +16,9 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "module_probe"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pipeline import (  # noqa: E402
+from scripts.module_probe.pipeline import (  # noqa: E402
     RELATION_BATCH_SIZE,
     ConversionError,
     convert,

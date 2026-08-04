@@ -67,6 +67,7 @@ import probe  # noqa: E402
 import reassemble_paragraphs  # noqa: E402
 import relation_probe  # noqa: E402
 
+from app.core.llm_tape import activate_from_env  # noqa: E402
 from app.core.module_import.extract import (  # noqa: E402
     UnsupportedDocumentError,
     extract_document,
@@ -202,6 +203,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--keep-work", action="store_true", help="保留中间产物（默认删）")
     args = ap.parse_args(argv)
 
+    # 🔴 CLI 必须自己开磁带。`activate_from_env` 原先只在 `app/main.py` 的
+    # lifespan 里被调用——服务端那条路有人开，**命令行这条没有**。于是
+    # `LLM_TAPE_MODE=record` 在这里是个静默空操作：跑完 ¥0.35，一条都没录上，
+    # 而且什么都不会提示。同族于「探测器不是闸门，零命中 ≠ 没问题」。
+    session = activate_from_env()
+
     tmp = args.work_dir or Path(tempfile.mkdtemp(prefix="module-import-"))
     try:
         result = convert(args.input, work_dir=tmp, out_structured=args.out)
@@ -214,6 +221,11 @@ def main(argv: list[str] | None = None) -> int:
 
     print()
     print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+    if session is not None:
+        # 🔴 **把录到的条数说出来。** 空磁带跟没开录制看起来一模一样，而两者
+        # 差着一次真金白银的运行——不报数字就没人会发现。
+        session.flush()
+        print(f"\n磁带：{session.path} · {len(session.tape.entries)} 条")
     return 0 if result.ok else 1
 
 

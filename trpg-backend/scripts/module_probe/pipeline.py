@@ -20,11 +20,24 @@
 导入功能面对的是用户上传的文件，产物要能整批清理，所以走 `--work-dir`
 （默认临时目录）。**版权红线照旧**：中间产物含第三方正文，绝不进 git。
 
-## 🔴 已知欠账：LLM 客户端还没统一
+## LLM 客户端已统一（2026-08-04）
 
-三个脚本各自 `OpenAI(api_key=…)`，所以**导入过程走不了 `llm_tape`，录不了、
-回放不了**。要统一得改三个脚本的客户端构造，属于 `exec/29` 第 3 步的后半段，
-**本次未做**——先把「一条命令」这件事做出来。不写在这里的话它就会被忘掉。
+三个脚本原本各自 `OpenAI(api_key=…)`，导入过程录不了也放不了。现在都走
+`build_sync_llm_client`（`app/core/llm_tape.py` 的同步那一半），三个 `tape_kind`：
+
+    probe → module_probe   relation_probe → module_relations   assemble → module_assemble
+
+录一条：
+
+    LLM_TAPE_MODE=record LLM_TAPE_PATH=tapes/林中屋.json \\
+    LLM_TAPE_SCENARIO=模组资料/林中屋.pdf .venv/bin/python scripts/module_probe/pipeline.py ...
+
+🔴 **磁带含模组正文（prompt 是整份原文，响应是 structured 产物），只能落
+gitignored 的 `trpg-backend/tapes/`**，跟 keeper 的真实模组磁带同一条红线。
+所以它是**本地回归工具，进不了 CI**——回归用例没有磁带时 skip。
+
+🔴 回放时 `response.usage` 是 `None`（磁带没录 token 数），统计出来的成本会是
+0。三个脚本本来就写着 `if usage is not None`，行为不变。
 
 ## 用法
 

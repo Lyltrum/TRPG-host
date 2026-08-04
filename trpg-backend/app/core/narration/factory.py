@@ -38,7 +38,7 @@ def build_narrator(settings: Settings) -> Narrator:
         else None
     )
     # 🔴 显式配了 keeper_module_path 却指不到文件 = 配置错误，**启动期就炸**。
-    # 不能只在 _resolve_path 里推迟到玩家第一次发言才报——那会把"服务起不来"
+    # 不能只在 RoomAwareKeeperNarrator._resolve 里推迟到玩家第一次发言才报——那会把"服务起不来"
     # 这种一眼可见的故障，变成"对局跑到一半 AI 突然失灵"。
     if fallback is not None and not fallback.is_file():
         raise FileNotFoundError(f"KEEPER_MODULE_PATH 指向的剧本不存在：{fallback}")

@@ -369,14 +369,14 @@ _OPENING_FALLBACK = (
 )
 
 
-def opening_narration_for_scenario(scenario_id: str | None) -> str:
+async def opening_narration_for_scenario(db: AsyncSession, scenario_id: str | None) -> str:
     """正式开局时念给玩家的开场白：优先 structured 的 opening.script，其次 player_intro。
 
     structured 缺失（CI/未组装）时用中性引导，避免再推「案件已加载」空壳。
     """
     if not scenario_id:
         return _OPENING_FALLBACK
-    _intro, opening, pages = _load_public_story(scenario_id)
+    _intro, opening, pages = await _load_public_story(db, scenario_id)
     text = (opening or _intro or (pages[0] if pages else "")).strip()
     return text or _OPENING_FALLBACK
 
@@ -400,7 +400,7 @@ async def begin_game(db: AsyncSession, room_id: str, player_id: str) -> str:
     room.phase = "InGame"
     room.started_at = datetime.now(UTC)
     await db.commit()
-    return opening_narration_for_scenario(room.scenario_id)
+    return await opening_narration_for_scenario(db, room.scenario_id)
 
 
 async def list_my_rooms(db: AsyncSession, user: User) -> list[MyRoomSummary]:
@@ -540,13 +540,19 @@ async def list_modules(db: AsyncSession) -> list[ModuleRead]:
     return [ModuleRead.model_validate(s) for s in result]
 
 
-def _load_public_story(module_id: str) -> tuple[str | None, str | None, list[str]]:
-    """从 keeper structured JSON 读玩家可见前情；文件缺失/损坏时返回空。"""
+async def _load_public_story(
+    db: AsyncSession, module_id: str
+) -> tuple[str | None, str | None, list[str]]:
+    """从 structured 读玩家可见前情；解析不出/损坏时返回空。
+
+    内置走文件、导入走库，两者的区别收在 `contract/source.py` 里（`exec/29`）。
+    """
     from pathlib import Path
 
     from app.core.config import get_settings
-    from app.core.keeper.contract.catalog import default_modules_dir, resolve_structured_path
-    from app.core.keeper.contract.module_loader import load_module, public_story_from_module
+    from app.core.keeper.contract.catalog import default_modules_dir
+    from app.core.keeper.contract.module_loader import public_story_from_module
+    from app.core.keeper.contract.source import resolve_module
 
     settings = get_settings()
     modules_dir = (
@@ -554,14 +560,14 @@ def _load_public_story(module_id: str) -> tuple[str | None, str | None, list[str
         if settings.keeper_modules_dir
         else default_modules_dir()
     )
-    path = resolve_structured_path(modules_dir, module_id)
-    if path is None:
-        return None, None, []
     try:
-        return public_story_from_module(load_module(path))
+        resolved = await resolve_module(db, modules_dir, module_id)
     except Exception:
         # JSON 坏 / schema 不符时不拖垮详情接口；列表仍有 synopsis
         return None, None, []
+    if resolved is None:
+        return None, None, []
+    return public_story_from_module(resolved.module)
 
 
 async def get_module_detail(db: AsyncSession, module_id: str) -> ModuleDetailRead | None:
@@ -570,7 +576,7 @@ async def get_module_detail(db: AsyncSession, module_id: str) -> ModuleDetailRea
     if scenario is None:
         return None
     detail = ModuleDetailRead.model_validate(scenario)
-    intro, opening, pages = _load_public_story(module_id)
+    intro, opening, pages = await _load_public_story(db, module_id)
     if not pages and detail.synopsis:
         pages = [detail.synopsis]
     return detail.model_copy(

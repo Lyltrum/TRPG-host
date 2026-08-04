@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     keeper_modules_dir: str | None = None
     keeper_module_path: str | None = None
 
+    # 模组导入（`exec/29` 第 5 步）：用户上传件与中间产物的落脚点。
+    # 🔴 里面全是第三方模组正文，与 `模组资料/` 同级红线——目录必须在仓库之外
+    # 或已 gitignore；不进 git / 日志 / 磁带。
+    module_import_dir: str | None = None
+    # 同时在跑的导入任务上限。一次导入 ≈ 71 次 LLM 调用，没有闸门的话几个人
+    # 同时上传就会把 provider 那边排满、把本进程拖垮。
+    module_import_max_concurrent: int = 2
+
     # action.submit 房间锁的超时兜底秒数。keeper agent 一轮回应要跑多跳工具
     # 调用（30-90s），60s 会让锁在正常裁决中途过期、放另一个玩家插进来打断——
     # keeper 模式建议配 180。

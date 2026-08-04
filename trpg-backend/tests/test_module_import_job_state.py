@@ -228,10 +228,12 @@ def test_report_numbers_are_separate_integer_columns() -> None:
         "ending_count",
         "agenda_count",
         "hard_failure_count",
-        "llm_call_count",
     ]
 
     assert all(columns[c].type.__class__.__name__ == "Integer" for c in counters)
+    # 🔴 没有 `llm_call_count`：整条链的调用散在三个脚本里，只有 assemble 会报数。
+    # 一个只覆盖三分之一却叫"调用次数"的列，是半真值，不如不立。
+    assert "llm_call_count" not in columns
 
 
 def test_status_vocabulary_is_closed() -> None:

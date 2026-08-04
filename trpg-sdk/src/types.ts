@@ -63,7 +63,8 @@ export type {
   SkillSpec,
   // 模组详情 / 导入（issue #77）—— 对应后端 dto/module.py
   ModuleDetailRead as ModuleDetail,
-  ModuleImportRequestBody as ImportModuleInput,
+  // 🔴 没有 `ImportModuleInput`：上传是 multipart，请求体不是 JSON，所以它没有
+  // 契约类型。`ModulesResource.startImport` 直接收 `File`。
   ModuleImportJobRead as ModuleImportJob,
   // 复盘 / 回放（issue #77）—— 对应后端 dto/replay.py
   RoomSummaryRead as RoomSummary,

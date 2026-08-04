@@ -40,7 +40,6 @@ _COUNTERS = (
     "ending_count",
     "agenda_count",
     "hard_failure_count",
-    "llm_call_count",
 )
 
 

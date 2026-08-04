@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -172,6 +173,9 @@ class ValidationReport:
     # exec/29 §4 忠实度硬门：实体能否回溯到原文
     trace_ok: bool = True
     trace_errors: list[str] = field(default_factory=list)
+    # exec/29 §4.6 ⑥：骰型/百分比必须在原文出现过
+    numeric_ok: bool = True
+    numeric_errors: list[str] = field(default_factory=list)
     # 06 内容保全（软）
     content_preserve_ok: bool = True  # 仅作观察；不参与 ok
     content_preserve_suspects: list[ContentPreserveItem] = field(default_factory=list)
@@ -188,6 +192,7 @@ class ValidationReport:
         out.extend(f"[secret_public] {e}" for e in self.secret_public_errors)
         out.extend(f"[structure] {e}" for e in self.structure_errors)
         out.extend(f"[trace] {e}" for e in self.trace_errors)
+        out.extend(f"[numeric] {e}" for e in self.numeric_errors)
         return out
 
     def needs_stage1_repair(self) -> bool:
@@ -212,6 +217,7 @@ class ValidationReport:
             },
             "structure": {"ok": self.structure_ok, "errors": self.structure_errors},
             "trace": {"ok": self.trace_ok, "errors": self.trace_errors},
+            "numeric": {"ok": self.numeric_ok, "errors": self.numeric_errors},
             "content_preserve": {
                 "ok": self.content_preserve_ok,
                 "suspect_count": len(self.content_preserve_suspects),
@@ -242,6 +248,7 @@ class ValidationReport:
                 f"({len(self.structure_errors)} 条)"
             ),
             (f"  溯源忠实度：{'✓' if self.trace_ok else '✗'} ({len(self.trace_errors)} 条)"),
+            f"  数值忠实度：{'✓' if self.numeric_ok else '✗'} ({len(self.numeric_errors)} 条)",
             f"  内容保全（软）：疑似丢失 {len(self.content_preserve_suspects)} 条",
         ]
         if self.all_errors():
@@ -442,6 +449,49 @@ def check_source_traceability(
                 f"{kind} {eid!r} 与源行的最长逐字重合仅 {run} 字"
                 f"（下限 {MIN_TRACE_RUN}）——疑似脱离原文编造"
             )
+    return errors
+
+
+#: 有语义的数值 token：骰型（1d6 / 4D6+1）与百分比。
+#: 🔴 **故意不含孤立整数**——id 序号、年龄、数量词噪声太大，查了全是假阳性。
+_NUMERIC_TOKENS = re.compile(r"\d*d\d+(?:[+\-]\d+)?|\d{1,3}%")
+
+
+def _normalize_numeric(s: str) -> str:
+    """归一大小写与全半角。
+
+    🔴 不做这一步会报一堆假阳性：原文写 `1D6`、产物写 `1d6`，实测五份模组里
+    有 8 个是这么来的。
+    """
+    return unicodedata.normalize("NFKC", s or "").lower()
+
+
+def check_numeric_fidelity(module: dict[str, Any], source_lines: list[str]) -> list[str]:
+    """产物里的骰型/百分比必须在原文里出现过（`exec/29 §4.6 ⑥`）。
+
+    数值是模组里**唯一具有清晰对错的东西**：散文改写没有对错，`1d6` 写成 `1d4`
+    就是错。而它是唯一能抓到这类错的检查——结构校验说合法、词面兜底说重合充足、
+    AI 玩家试跑少扣两点 SAN 照样通关。
+
+    🔴 **判据是全文，不是源行。** 源行级假阳性太高（实测复足 21%）：组装会跨片段
+    合并，而锚点是片段粒度。代价是抓不到「数值从别的场景搬过来」——那属于错位，
+    本来就归 AI 玩家试跑。
+
+    🔴 **当前几乎零命中**（五份实测 95.7–100% 可定位）。它守的是「以后会不会错」，
+    不是「现在错了」。
+    """
+    if not source_lines:
+        return []
+
+    haystack = _normalize_numeric("".join(source_lines))
+    errors: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for kind, eid, text, _parent in _walk_entities(module):
+        for tok in _NUMERIC_TOKENS.findall(_normalize_numeric(text)):
+            if tok in haystack or (kind, tok) in seen:
+                continue
+            seen.add((kind, tok))
+            errors.append(f"{kind} {eid!r} 的数值 {tok!r} 在原文里找不到——疑似凭空生成")
     return errors
 
 
@@ -1160,6 +1210,7 @@ def validate_assembled(
         if items and source_lines
         else []
     )
+    numeric_errors = check_numeric_fidelity(raw, source_lines) if source_lines else []
     suspects = check_content_preservation(items, assignment_map, module, raw) if items else []
 
     ref_ok = not ref_errors
@@ -1171,6 +1222,7 @@ def validate_assembled(
     secret_public_ok = not secret_public_errors
     structure_ok = not structure_errors
     trace_ok = not trace_errors
+    numeric_ok = not numeric_errors
     ok = (
         schema_ok
         and ref_ok
@@ -1182,6 +1234,7 @@ def validate_assembled(
         and secret_public_ok
         and structure_ok
         and trace_ok
+        and numeric_ok
     )
     return ValidationReport(
         ok=ok,
@@ -1205,6 +1258,8 @@ def validate_assembled(
         structure_errors=structure_errors,
         trace_ok=trace_ok,
         trace_errors=trace_errors,
+        numeric_ok=numeric_ok,
+        numeric_errors=numeric_errors,
         content_preserve_ok=len(suspects) == 0,
         content_preserve_suspects=suspects,
     )

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -53,6 +54,7 @@ from probe import (  # noqa: E402
 )
 from validate_module import (  # noqa: E402
     ValidationReport,
+    build_entity_anchors,
     normalize_module_skills,
     validate_assembled,
 )
@@ -1175,6 +1177,116 @@ def _ensure_agenda_minimums(agenda: list[dict[str, Any]]) -> list[dict[str, Any]
     return out
 
 
+def _fidelity_entity_ids(report: ValidationReport) -> list[str]:
+    """从 `[trace]`/`[numeric]` 错误里取出实体 id。
+
+    🔴 这里解析的是**我们自己产生**的错误文本，格式由本仓库控制（`kind 'id' …`），
+    不是在猜第三方字符串。仍然做成一个函数而不是散在调用处，是因为一旦那两条
+    消息改了措辞，只有这里要跟着改。
+    """
+    out: list[str] = []
+    for err in list(report.trace_errors) + list(report.numeric_errors):
+        m = re.search(r"'([^']+)'", err)
+        if m:
+            out.append(m.group(1))
+    return list(dict.fromkeys(out))
+
+
+def _source_excerpt(anchors: dict[str, str], entity_ids: list[str], limit: int = 600) -> str:
+    """出问题实体各自的源行，拼成给自修器看的原文摘录。
+
+    🔴 **只给出问题的那几个实体**，不给全文：全文会把 prompt 撑爆、也更贵，
+    而自修要的只是「这一段原文到底怎么写的」。
+    """
+    parts: list[str] = []
+    for eid in entity_ids:
+        text = anchors.get(eid)
+        if text:
+            parts.append(f"- {eid}：{text[:limit]}")
+    return "\n".join(parts)
+
+
+#: 这几类错误挂在**某一个实体**上，可以只重吐那一个实体（输出有界）。
+#: 其余（leak / structure / facts / schema）跨越整份产物，只能整份修。
+_ENTITY_SCOPED = ("[skill]", "[trace]", "[numeric]")
+
+
+def entity_scoped_errors(report: ValidationReport) -> dict[str, list[str]]:
+    """把实体级错误按实体 id 归拢。"""
+    grouped: dict[str, list[str]] = {}
+    for err in report.all_errors():
+        if not err.startswith(_ENTITY_SCOPED):
+            continue
+        m = re.search(r"'([^']+)'", err)
+        if m:
+            grouped.setdefault(m.group(1), []).append(err)
+    return grouped
+
+
+def find_entity(module: dict[str, Any], entity_id: str) -> tuple[list[Any], int] | None:
+    """在模组里定位实体，返回 `(所在列表, 下标)` 以便原地替换。含 `sub_nodes` 递归。"""
+
+    def walk(nodes: list[Any]) -> tuple[list[Any], int] | None:
+        for i, nd in enumerate(nodes):
+            if not isinstance(nd, dict):
+                continue
+            if str(nd.get("id")) == entity_id:
+                return nodes, i
+            hit = walk(nd.get("sub_nodes") or [])
+            if hit:
+                return hit
+        return None
+
+    found = walk(module.get("nodes") or [])
+    if found:
+        return found
+    for key in ("npcs", "endings", "agenda"):
+        arr = module.get(key) or []
+        for i, obj in enumerate(arr):
+            if isinstance(obj, dict) and str(obj.get("id")) == entity_id:
+                return arr, i
+    return None
+
+
+def repair_entity(
+    client: OpenAI,
+    *,
+    entity: dict[str, Any],
+    errors: list[str],
+    source_excerpt: str,
+    stats: CallStats,
+    label: str,
+) -> dict[str, Any]:
+    """只重吐**一个实体**。
+
+    🔴 这是为了让**输出长度有界**。整份重吐在真实体量的模组上结构性地吐不完：
+    实测林中屋产物 25407 字符，自修响应被截在 21916 —— 三次尝试全断在同一位置。
+    而自修是拒绝率的最后一道缓冲，它坏了拒绝率就等于首次校验的失败率。
+    """
+    system = (
+        "你在修一份 TRPG 模组结构化数据里的**一个实体**。"
+        "只输出修正后的那个实体的 JSON 对象，保持它的 id 不变，不要输出别的东西。\n\n"
+        "修正要求：\n"
+        "- 技能名必须是 COC7 中文名（斗殴 应写作 格斗：斗殴；手枪 应写作 射击：手枪）。\n"
+        "- 数值（骰型/百分比）必须**逐字**来自【原文】。最常见的坏法是**把两个数粘成"
+        "一个**——「爪击70 1D6+1」是「技能值 70」与「伤害 1D6+1」两个数，写成 701d6+1 "
+        "就是错的。原文里没有的数字**一律删掉，不要另编一个**。\n"
+        "- 文字要能对上【原文】；对不上就照原文重写，**宁可写短，也不要编**。\n"
+        "- 不要新增字段，不要改 id。\n"
+    )
+    user = (
+        "【这个实体的问题】\n" + "\n".join(f"- {e}" for e in errors) + "\n\n"
+        f"【原文】（照它改，不要凭印象）\n{source_excerpt or '（这个实体没有可用的原文锚点）'}\n\n"
+        f"【当前实体 JSON】\n{json.dumps(entity, ensure_ascii=False, indent=2)}"
+    )
+    data = _chat_json(
+        client, system=system, user=user, temperature=TEMPERATURE, stats=stats, label=label
+    )
+    if not isinstance(data, dict) or not data.get("id"):
+        raise RuntimeError("实体自修返回的不是一个带 id 的对象")
+    return data
+
+
 def repair_module(
     client: OpenAI,
     *,
@@ -1183,8 +1295,9 @@ def repair_module(
     stats: CallStats,
     schema_doc: str,
     attempt: int,
+    source_excerpt: str = "",
 ) -> dict[str, Any]:
-    """把错误清单 + 当前 JSON 喂回 LLM，要求整份修正。"""
+    """把错误清单 + 当前 JSON（+ 相关原文）喂回 LLM，要求整份修正。"""
     system = (
         "你是模组预处理流水线的「自修」阶段。收到一份 ScenarioModule JSON 与"
         "机械校验错误清单。请输出修正后的**完整** ScenarioModule JSON（不要只给 diff）。"
@@ -1200,10 +1313,21 @@ def repair_module(
         "- node.kp_text 可以含真相，不要为了「不泄密」去清空 kp_text。\n"
         "- 若 structure 报 endings/agenda 为空：从现有 kp_truth/node 文本抽出对应条目，"
         "补进 endings[] / agenda[]（不要只改 key_facts）。\n"
+        # 🔴 下面两类是 exec/29 新增的忠实度门。加了门却不告诉自修器怎么修，
+        # 它就只会在别处瞎改 —— 实测林中屋那 3 条 numeric 自修 1 轮没动过。
+        "- numeric（数值对不上原文）：产物里的骰型/百分比必须**逐字**来自原文。"
+        "最常见的坏法是**把两个数粘成一个**——NPC 属性块里「爪击70 1D6+1」是"
+        "「技能值 70」与「伤害 1D6+1」两个数，写成 701d6+1 就是错的。"
+        "照【相关原文】改回去；原文里没有的数字**一律删掉，不要另编一个**。\n"
+        "- trace（追不回原文）：每个实体的文字都要能对上它的出处。"
+        "对不上就照【相关原文】重写那一条；**宁可写短，也不要编**。\n"
         "- 只输出一个 JSON 对象，即完整模组。\n\n" + schema_doc
     )
+    excerpt_block = (
+        f"\n\n【相关原文】（照它改，不要凭印象）\n{source_excerpt}" if source_excerpt else ""
+    )
     user = (
-        f"【校验错误】\n{report.summary_text()}\n\n"
+        f"【校验错误】\n{report.summary_text()}{excerpt_block}\n\n"
         f"【当前模组 JSON】\n{json.dumps(module, ensure_ascii=False, indent=2)}"
     )
     data = _chat_json(
@@ -1582,24 +1706,58 @@ def run_pipeline(
         if report.ok:
             continue
 
-        # 仅非引用类错误才上 LLM 整份自修（大体量 JSON 易截断）
+        # 仅非引用类错误才上 LLM 自修（引用类走机械修补）
         hard = [e for e in report.all_errors() if not e.startswith("[ref]")]
         if not hard:
             print("  → 仅剩 ref 类错误且机械修补后仍在，跳过 LLM 自修", flush=True)
             continue
 
-        print("  → 仍有非 ref 错误，尝试整份 JSON 自修…", flush=True)
-        try:
-            module = repair_module(
-                client,
-                module=module,
-                report=report,
-                stats=stats,
-                schema_doc=schema_doc,
-                attempt=repair_count,
-            )
-        except RuntimeError as exc:
-            print(f"  → LLM 自修失败（保留当前产物继续）：{exc}", flush=True)
+        # 🔴 **先分片修**：实体级错误只重吐那一个实体，输出长度有界。
+        # 整份重吐在真实体量的模组上结构性地吐不完（林中屋产物 25407 字符，
+        # 自修响应截在 21916，三次尝试全断在同一位置）。
+        anchors = build_entity_anchors(items, assignment_map, module, lines)
+        grouped = entity_scoped_errors(report)
+        patched = 0
+        for eid, errs in grouped.items():
+            spot = find_entity(module, eid)
+            if spot is None:
+                continue
+            arr, idx = spot
+            try:
+                arr[idx] = repair_entity(
+                    client,
+                    entity=arr[idx],
+                    errors=errs,
+                    source_excerpt=_source_excerpt(anchors, [eid]),
+                    stats=stats,
+                    label=f"repair#{repair_count}.entity:{eid}",
+                )
+                patched += 1
+            except RuntimeError as exc:
+                print(f"    · 实体 {eid} 自修失败：{exc}", flush=True)
+        if patched:
+            print(f"  → 分片自修 {patched}/{len(grouped)} 个实体", flush=True)
+
+        # 剩下的是跨实体错误（leak / structure / facts / schema），只能整份修
+        rest = [e for e in hard if not e.startswith(_ENTITY_SCOPED)]
+        if rest:
+            print(f"  → 另有 {len(rest)} 条跨实体错误，尝试整份 JSON 自修…", flush=True)
+            try:
+                module = repair_module(
+                    client,
+                    module=module,
+                    report=report,
+                    stats=stats,
+                    schema_doc=schema_doc,
+                    attempt=repair_count,
+                    source_excerpt=_source_excerpt(anchors, _fidelity_entity_ids(report)),
+                )
+            except RuntimeError as exc:
+                # 🔴 不 break：分片修可能已经改好了一部分，让它走完下面的重新校验，
+                # 拿到真实的剩余错误数，而不是把这一轮的成果一起丢掉。
+                print(f"  → 整份自修失败（保留分片修的结果）：{exc}", flush=True)
+        elif not patched:
+            print("  → 没有可修的东西，停止自修", flush=True)
             break
         module["nodes"] = _ensure_node_minimums(module.get("nodes") or [])
         module["npcs"] = _ensure_npc_minimums(module.get("npcs") or [])

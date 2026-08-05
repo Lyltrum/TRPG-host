@@ -182,9 +182,11 @@ class ValidationReport:
     secret_public_errors: list[str] = field(default_factory=list)
     structure_ok: bool = True
     structure_errors: list[str] = field(default_factory=list)
-    # exec/29 §4 忠实度硬门：实体能否回溯到原文
+    # exec/29 §4 溯源：**只有「完全没有锚点」是硬的**，逐字重合太低已降为软项
+    # （见 `check_source_traceability` 的两头标定）。
     trace_ok: bool = True
     trace_errors: list[str] = field(default_factory=list)
+    trace_suspects: list[str] = field(default_factory=list)  # 仅作观察；不参与 ok
     # exec/29 §4.6 ⑥：骰型/百分比必须在原文出现过
     numeric_ok: bool = True
     numeric_errors: list[str] = field(default_factory=list)
@@ -228,7 +230,11 @@ class ValidationReport:
                 "errors": self.secret_public_errors,
             },
             "structure": {"ok": self.structure_ok, "errors": self.structure_errors},
-            "trace": {"ok": self.trace_ok, "errors": self.trace_errors},
+            "trace": {
+                "ok": self.trace_ok,
+                "errors": self.trace_errors,
+                "suspects": self.trace_suspects,
+            },
             "numeric": {"ok": self.numeric_ok, "errors": self.numeric_errors},
             "content_preserve": {
                 "ok": self.content_preserve_ok,
@@ -259,7 +265,10 @@ class ValidationReport:
                 f"  结构完整性：{'✓' if self.structure_ok else '✗'} "
                 f"({len(self.structure_errors)} 条)"
             ),
-            (f"  溯源忠实度：{'✓' if self.trace_ok else '✗'} ({len(self.trace_errors)} 条)"),
+            (
+                f"  溯源锚点：{'✓' if self.trace_ok else '✗'} ({len(self.trace_errors)} 条)"
+                f"；逐字重合偏低（软）{len(self.trace_suspects)} 条"
+            ),
             f"  数值忠实度：{'✓' if self.numeric_ok else '✗'} ({len(self.numeric_errors)} 条)",
             f"  内容保全（软）：疑似丢失 {len(self.content_preserve_suspects)} 条",
         ]
@@ -453,21 +462,41 @@ def check_source_traceability(
     assignment_map: dict[str, Any],
     module: dict[str, Any],
     source_lines: list[str],
-) -> list[str]:
-    """忠实度硬门：每个实体都要能回溯到原文，且文本与源行逐字重合 ≥ `MIN_TRACE_RUN`。
+) -> tuple[list[str], list[str]]:
+    """溯源检查。返回 `(硬失败, 软疑点)`——**两者的可靠性差着一个量级**。
 
-    锚点来自「片段自报的 `line_start`/`line_end` + 阶段 1 归组映射」。它是模型
-    自报的、可以被编造——**但编造的锚点一比对当场红**，这正是本检查的意义：
-    把「不可检测的内容编造」变成「可检测的定位造假」。
+    ## 硬：完全没有锚点
 
-    🔴 子节点向上继承祖先锚点：实测 25–57% 的实体"无锚点"，几乎全是 `sub_nodes`。
+    实体连一个归组片段都认领不到（也没有可继承的祖先）。这是个**结构事实**，
+    二值、不含相似度判断，误报只可能来自归组映射本身坏掉。它继续阻断产出。
+
+    ## 软：逐字重合低于 `MIN_TRACE_RUN`
+
+    🔴 **这一条曾经是硬门，2026-08-05 两头标定后降级。** 标定方法是判据要求的
+    「造一个必然通过和一个必然失败的样本」，而**第一次的失败样本造得太容易了**
+    （飞船/甜点/服务器这种外行话），它让这道门看起来能分开。换成**同题材**的
+    编造（用模组里真有的词说原文没有的事）再量，78 个真实实体 + 312 组编造：
+
+        门限 3： 真实误拒 2/78      编造漏放 224/312（72%）
+        门限 4： 真实误拒 7/78      编造漏放  52/312
+
+    没有可用的门限，换判据也没用——2/3/4-gram 覆盖率同样重叠（真实最低 0.10 对
+    编造最高 0.29）。**因为这本来就是语义判断**：「照原文压缩」和「照着腔调编」
+    在词面上没有分界，确定性代码分不了（CLAUDE.md：别把语义任务交给确定性代码）。
+
+    而它的代价是实打实的：一个实体被误判，**整份模组被拒**。两次误拒都手工核过——
+    `唐尼·凯泽` 原文写作 `唐尼.凯泽`（差一个分隔符），老鼠那条是原文
+    「那只老鼠会当场死掉…钻回柜子后的老鼠洞里…人是没办法进去的」的忠实压缩。
+
+    所以它留下来当**报出来的信号**，不再有否决权。真能抓编造的是 AI 玩家试跑。
     """
     if not source_lines:
-        return []
+        return [], []
 
     anchors = build_entity_anchors(items, assignment_map, module, source_lines)
 
     errors: list[str] = []
+    suspects: list[str] = []
     for kind, eid, text, _parent in _walk_entities(module):
         if not eid or not text:
             continue
@@ -477,11 +506,10 @@ def check_source_traceability(
             continue
         run = _longest_run_in(text, hay)
         if run < MIN_TRACE_RUN:
-            errors.append(
-                f"{kind} {eid!r} 与源行的最长逐字重合仅 {run} 字"
-                f"（下限 {MIN_TRACE_RUN}）——疑似脱离原文编造"
+            suspects.append(
+                f"{kind} {eid!r} 与源行的最长逐字重合仅 {run} 字（下限 {MIN_TRACE_RUN}）"
             )
-    return errors
+    return errors, suspects
 
 
 #: 有语义的数值 token：骰型（1d6 / 4D6+1）与百分比。
@@ -1300,10 +1328,10 @@ def validate_assembled(
         check_secret_not_public(assignment_map, items_by_id) if items_by_id else []
     )
     structure_errors = check_structure_integrity(items, assignment_map) if items else []
-    trace_errors = (
+    trace_errors, trace_suspects = (
         check_source_traceability(items, assignment_map, raw, source_lines)
         if items and source_lines
-        else []
+        else ([], [])
     )
     numeric_errors = check_numeric_fidelity(raw, source_lines) if source_lines else []
     suspects = check_content_preservation(items, assignment_map, module, raw) if items else []
@@ -1353,6 +1381,7 @@ def validate_assembled(
         structure_errors=structure_errors,
         trace_ok=trace_ok,
         trace_errors=trace_errors,
+        trace_suspects=trace_suspects,
         numeric_ok=numeric_ok,
         numeric_errors=numeric_errors,
         content_preserve_ok=len(suspects) == 0,

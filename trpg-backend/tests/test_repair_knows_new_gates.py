@@ -33,7 +33,8 @@ def _report() -> ValidationReport:
     return ValidationReport(
         ok=False,
         schema_ok=True,
-        trace_errors=["node 'kitchen' 与源行的最长逐字重合仅 1 字（下限 3）——疑似脱离原文编造"],
+        # 硬的 trace 只剩「完全没有锚点」这一种（逐字重合已降为软项）。
+        trace_errors=["node 'kitchen' 没有溯源锚点（无归组片段，也没有可继承的祖先）"],
         numeric_errors=["node 'mi-go' 的数值 '701d6+1' 在原文里找不到——疑似凭空生成"],
     )
 

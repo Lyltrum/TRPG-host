@@ -18,11 +18,17 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
 from collections import Counter
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any
+
+# parallel 与本文件同目录（直接跑脚本时脚本目录自动在 sys.path 上；被 pipeline
+# import 时由它插入）。
+from parallel import run_parallel
 
 from app.core.llm_tape import TapedSyncClient, build_sync_llm_client
 
@@ -81,6 +87,8 @@ class ExtractStats:
     total_tokens: int = 0
     failed_chunks: list[dict[str, Any]] = field(default_factory=list)
     retried_chunks: list[dict[str, Any]] = field(default_factory=list)
+    # 多个 chunk 并行时会同时记账；`+=` 是读-改-写，不是原子的。
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
 
 def _backend_root() -> Path:
@@ -301,6 +309,8 @@ def extract_chunk(
             t0 = time.perf_counter()
             response = client.chat.completions.create(
                 tape_kind="module_probe",
+                # chunk.index 在一次跑里唯一且可复现——正好当磁带子键（见 parallel.py）
+                tape_key=f"probe:chunk{chunk.index}",
                 model=DEEPSEEK_MODEL,
                 temperature=TEMPERATURE,
                 response_format={"type": "json_object"},
@@ -310,12 +320,13 @@ def extract_chunk(
                 ],
             )
             elapsed = time.perf_counter() - t0
-            stats.calls += 1
             usage = response.usage
-            if usage is not None:
-                stats.prompt_tokens += usage.prompt_tokens or 0
-                stats.completion_tokens += usage.completion_tokens or 0
-                stats.total_tokens += usage.total_tokens or 0
+            with stats.lock:
+                stats.calls += 1
+                if usage is not None:
+                    stats.prompt_tokens += usage.prompt_tokens or 0
+                    stats.completion_tokens += usage.completion_tokens or 0
+                    stats.total_tokens += usage.total_tokens or 0
             content = response.choices[0].message.content or ""
             items = _parse_items_payload(content)
             # 规范化 + 保留 extra
@@ -551,8 +562,9 @@ def run(input_path: Path, json_out: Path, md_out: Path) -> int:
     all_items: list[dict[str, Any]] = []
 
     t0 = time.perf_counter()
-    for chunk in chunks:
-        items = extract_chunk(client, chunk, lines, stats)
+    # 各 chunk 之间没有数据依赖；run_parallel 按输入顺序返回，所以 all_items
+    # 的顺序与串行时完全一致（后面的覆盖率统计依赖这个顺序）。
+    for items in run_parallel([partial(extract_chunk, client, c, lines, stats) for c in chunks]):
         all_items.extend(items)
     elapsed = time.perf_counter() - t0
 

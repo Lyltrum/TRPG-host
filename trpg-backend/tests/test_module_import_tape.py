@@ -243,10 +243,13 @@ def test_import_pipeline_replays_to_the_same_structured(tmp_path: Path) -> None:
         result = pipeline.convert(_SOURCE, work_dir=tmp_path / "work", out_structured=out)
 
     # 🔴 录制那次的结局本身也是产物的一部分：那一跑是**被拒绝**的
-    # （1 条 leak）。回放要重现的是「同样的模型输出 → 同样的判决」，
-    # 不是"这份模组是好的"。
-    assert result.hard_failures == 1
-    assert "leak" in result.failure_reason
+    # （4 条，skill + thin_slot）。回放要重现的是「同样的模型输出 → 同样的
+    # 判决」，不是"这份模组是好的"。
+    #
+    # 🔴 这几个数字会随重录而变，那是磁带的性质不是 bug：录到哪条路径取决于
+    # 录制那一刻模型的输出。重录后照着新结果改这里，别反过来去"修"代码。
+    assert result.hard_failures == 4
+    assert "skill" in result.failure_reason
 
     assert json.loads(out.read_text(encoding="utf-8")) == json.loads(
         _EXPECTED.read_text(encoding="utf-8")

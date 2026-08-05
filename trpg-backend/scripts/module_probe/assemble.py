@@ -1307,6 +1307,100 @@ def find_entity(module: dict[str, Any], entity_id: str) -> tuple[list[Any], int]
     return None
 
 
+#: `check_leak` 报出来的那句话的形状。解析它是为了知道**改哪个字段、避哪些词**。
+_LEAK_ERROR = re.compile(r"真相关键词 '(?P<kw>[^']+)' 出现在玩家可见字段 (?P<field>\S+)")
+
+#: 泄密只可能发生在这两个字段上（`check_leak` 只扫这两个）。
+#: 值是取/放这段文本的函数对——写死路径比传字符串路径可读，也不会拼错。
+_LEAK_FIELDS = ("player_intro", "opening.script")
+
+
+def leaky_fields(errors: list[str]) -> dict[str, list[str]]:
+    """把 `[leak]` 错误按字段归拢成 `字段 → 要避开的词`。"""
+    out: dict[str, list[str]] = {}
+    for err in errors:
+        m = _LEAK_ERROR.search(err)
+        if not m or m.group("field") not in _LEAK_FIELDS:
+            continue
+        kws = out.setdefault(m.group("field"), [])
+        if m.group("kw") not in kws:
+            kws.append(m.group("kw"))
+    return out
+
+
+def read_leaky_field(module: dict[str, Any], field: str) -> str:
+    if field == "player_intro":
+        return str(module.get("player_intro") or "")
+    opening = module.get("opening")
+    return str(opening.get("script") or "") if isinstance(opening, dict) else ""
+
+
+def write_leaky_field(module: dict[str, Any], field: str, text: str) -> None:
+    if field == "player_intro":
+        module["player_intro"] = text
+        return
+    opening = module.get("opening")
+    if isinstance(opening, dict):
+        opening["script"] = text
+
+
+def repair_leaky_text(
+    client: TapedSyncClient,
+    *,
+    field: str,
+    text: str,
+    keywords: list[str],
+    stats: CallStats,
+    label: str,
+) -> str:
+    """把一段**玩家开场就会读到**的文字里的真相摘出去，只重吐这一段。
+
+    ## 🔴 为什么单独给它一条路
+
+    `leak` 是跨实体错误，此前唯一的修法是**整份重吐**——而那条路在真实体量的
+    模组上是结构性失败（林中屋产物 25407 字符，响应截在 21916，三次全断在同一
+    位置）。于是 leak 实际上**修不掉**，只能变成一次拒绝。
+
+    但泄密的作用域其实很小：`check_leak` 只扫 `player_intro` 和 `opening.script`
+    两个字段，各是一段话。重吐一段话输出长度有界，跟分片修实体是同一个道理。
+
+    ## 边界
+
+    改写完仍然泄密就是**真失败**，照旧拒绝——不做「把这段删掉」之类的兜底。
+    删掉玩家开场白是把模组悄悄弄残，比拒绝更糟（禁止静默兜底）。
+    """
+    system = (
+        "你在改写一段**玩家在开场就会读到**的文字。\n\n"
+        "下面列出的词属于守秘人的绝密真相，玩家此刻不该知道。要求：\n"
+        "- 这些词**一个都不能出现**；也不要换成同义词或用暗示的方式说出同一件事\n"
+        "- 保持原来的长度、语气和信息密度，只把涉及那些内容的地方改写成"
+        "**玩家此刻真的知道的样子**（通常是更含糊、更外部视角的说法）\n"
+        "- 不要新增原文没有的设定\n"
+        "- 只输出改写后的正文，不要解释、不要加引号、不要 markdown\n"
+    )
+    user = f"【不能出现的词】\n{'、'.join(keywords)}\n\n【要改写的字段】{field}\n\n【原文】\n{text}"
+    # 这一段是散文不是 JSON，所以不走 `_chat_json`。
+    tape_key = tape_key_for(stats, label)
+    response = client.chat.completions.create(
+        tape_kind="module_assemble",
+        tape_key=tape_key,
+        model=DEEPSEEK_MODEL,
+        temperature=TEMPERATURE,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+    )
+    usage = response.usage
+    with stats.lock:
+        stats.calls += 1
+        if usage is not None:
+            stats.prompt_tokens += usage.prompt_tokens or 0
+            stats.completion_tokens += usage.completion_tokens or 0
+            stats.total_tokens += usage.total_tokens or 0
+    out = (response.choices[0].message.content or "").strip()
+    if not out:
+        raise RuntimeError(f"{label}：改写返回空文本")
+    return out
+
+
 def repair_entity(
     client: TapedSyncClient,
     *,
@@ -1806,8 +1900,36 @@ def run_pipeline(
         if patched:
             print(f"  → 分片自修 {patched}/{len(grouped)} 个实体", flush=True)
 
-        # 剩下的是跨实体错误（leak / structure / facts / schema），只能整份修
-        rest = [e for e in hard if not e.startswith(_ENTITY_SCOPED)]
+        # 🔴 泄密单独走一条：它虽然是跨实体错误，作用域却只有两个短字段
+        # （`check_leak` 只扫 player_intro / opening.script）。丢给整份重吐等于
+        # 修不掉——那条路在真实体量上吐不完，leak 于是必然变成一次拒绝。
+        leaks = leaky_fields(report.leak_errors)
+        for leak_field, keywords in leaks.items():
+            original = read_leaky_field(module, leak_field)
+            if not original:
+                continue
+            try:
+                write_leaky_field(
+                    module,
+                    leak_field,
+                    repair_leaky_text(
+                        client,
+                        field=leak_field,
+                        text=original,
+                        keywords=keywords,
+                        stats=stats,
+                        label=f"repair#{repair_count}.leak:{leak_field}",
+                    ),
+                )
+                print(
+                    f"  → 重写玩家可见字段 {leak_field}（避开 {len(keywords)} 个真相词）",
+                    flush=True,
+                )
+            except RuntimeError as exc:
+                print(f"    · {leak_field} 改写失败：{exc}", flush=True)
+
+        # 剩下的是跨实体错误（structure / facts / schema），只能整份修
+        rest = [e for e in hard if not e.startswith(_ENTITY_SCOPED) and not e.startswith("[leak]")]
         if rest:
             print(f"  → 另有 {len(rest)} 条跨实体错误，尝试整份 JSON 自修…", flush=True)
             try:
@@ -1824,7 +1946,9 @@ def run_pipeline(
                 # 🔴 不 break：分片修可能已经改好了一部分，让它走完下面的重新校验，
                 # 拿到真实的剩余错误数，而不是把这一轮的成果一起丢掉。
                 print(f"  → 整份自修失败（保留分片修的结果）：{exc}", flush=True)
-        elif not patched:
+        elif not patched and not leaks:
+            # 🔴 `leaks` 也要算进来：只修了泄密字段时这里会误判成"什么都没修"
+            # 而提前 break，那一轮的成果被丢掉、还得多花一次自修额度。
             print("  → 没有可修的东西，停止自修", flush=True)
             break
         module["nodes"] = _ensure_node_minimums(module.get("nodes") or [])

@@ -1,4 +1,9 @@
-"""忠实度硬门：组装出来的每个实体都要能回溯到原文（`exec/29 §4`）。
+"""溯源：组装出来的每个实体都要能回溯到原文（`exec/29 §4`）。
+
+🔴 **2026-08-05 这里从"一道硬门"拆成了"一硬一软"。** 详见
+`check_source_traceability` 的 docstring：逐字重合那一半经两头标定后证明
+既拦不住同题材编造（漏放 72%）、又在真拦好模组（每份误拒 1–2 个实体，
+而一个实体就整份被拒），已降为**只报不拦**。硬的只剩「完全没有锚点」。
 
 ## 为什么是这个形状
 
@@ -15,8 +20,8 @@
 ## 判据
 
 - **无锚点 = 硬失败**（继承之后还没有的，就是真的凭空长出来的）。信号清晰、二值。
-- **有锚点者：与源行的最长逐字重合 ≥ `MIN_TRACE_RUN`**——只是**兜底**，见该常量
-  的说明：实测重合值是连续分布、没有自然断点，这道门分不出「改写」和「编造」。
+- **有锚点者：与源行的最长逐字重合 ≥ `MIN_TRACE_RUN`**——**软项，只报不拦**。
+  实测重合值是连续分布、没有自然断点，这道门分不出「改写」和「编造」。
 
 手法与 `leak_guard` 判泄密同源——**逐字重合，不问模型**。
 """
@@ -85,7 +90,9 @@ def test_sub_node_inherits_parent_anchor() -> None:
     这是实测里 25–57% 实体"没有锚点"的唯一成因。
     """
     subs = [{"id": "kitchen-sink", "title": "水槽", "kp_text": "水槽里泡着一只缺口的搪瓷碗"}]
-    errors = check_source_traceability(_items(), _assign(), _module(kitchen_subs=subs), SOURCE)
+    errors, _suspects = check_source_traceability(
+        _items(), _assign(), _module(kitchen_subs=subs), SOURCE
+    )
 
     assert errors == [], f"子节点应继承父锚点，实际报了：{errors}"
 
@@ -93,9 +100,11 @@ def test_sub_node_inherits_parent_anchor() -> None:
 def test_sub_node_inheriting_but_not_matching_still_fails() -> None:
     """继承来的锚点不是免死金牌——文本对不上源行照样硬失败。"""
     subs = [{"id": "kitchen-ufo", "title": "飞碟", "kp_text": "银色圆盘悬停于灶具正上方"}]
-    errors = check_source_traceability(_items(), _assign(), _module(kitchen_subs=subs), SOURCE)
+    _errors, suspects = check_source_traceability(
+        _items(), _assign(), _module(kitchen_subs=subs), SOURCE
+    )
 
-    assert any("kitchen-ufo" in e for e in errors)
+    assert any("kitchen-ufo" in s for s in suspects)
 
 
 # ── 无锚点 = 硬失败 ───────────────────────────────────
@@ -104,7 +113,9 @@ def test_sub_node_inheriting_but_not_matching_still_fails() -> None:
 def test_entity_without_any_anchor_is_hard_failure() -> None:
     """顶层实体没有任何片段指派 → 它是凭空长出来的，硬失败。"""
     extra = [{"id": "attic", "title": "阁楼", "kp_text": "阁楼里堆着旧箱子"}]
-    errors = check_source_traceability(_items(), _assign(), _module(extra_nodes=extra), SOURCE)
+    errors, _suspects = check_source_traceability(
+        _items(), _assign(), _module(extra_nodes=extra), SOURCE
+    )
 
     assert any("attic" in e and "锚点" in e for e in errors)
 
@@ -113,7 +124,7 @@ def test_entity_without_any_anchor_is_hard_failure() -> None:
 
 
 def test_entity_faithful_to_its_source_passes() -> None:
-    errors = check_source_traceability(_items(), _assign(), _module(), SOURCE)
+    errors, _suspects = check_source_traceability(_items(), _assign(), _module(), SOURCE)
 
     assert errors == []
 
@@ -122,9 +133,9 @@ def test_entity_diverging_from_its_source_fails() -> None:
     """有锚点，但整段文本跟源行毫无逐字重合 → 编造。"""
     module = _module()
     module["nodes"][0]["kp_text"] = "海面漂来一只木桶，里头装着航海志。"
-    errors = check_source_traceability(_items(), _assign(), module, SOURCE)
+    _errors, suspects = check_source_traceability(_items(), _assign(), module, SOURCE)
 
-    assert any("hall" in e for e in errors)
+    assert any("hall" in s for s in suspects)
 
 
 def test_threshold_stays_a_floor_not_a_fidelity_judgement() -> None:
@@ -138,3 +149,35 @@ def test_threshold_stays_a_floor_not_a_fidelity_judgement() -> None:
     assert 2 <= MIN_TRACE_RUN <= 4, (
         "中文 3 字约等于一个词；调高它就不再是「连一个词都没对上」而是在判改写"
     )
+
+
+# ── 🔴 降级本身要有测试守着 ──────────────────────────
+
+
+def test_low_overlap_no_longer_blocks_the_module() -> None:
+    """逐字重合偏低**不许**再有否决权。
+
+    两头标定的结论：门限 3 时同题材编造漏放 224/312，而真实实体误拒 2/78——
+    它拦不住要拦的，却在拦好的。一个实体被误判就整份模组被拒，代价与收益完全
+    不成比例，所以它只剩报告价值。
+
+    没有这条用例，下一个人看到 `suspects` 里有东西，很自然就会把它接回 `ok`。
+    """
+    module = _module()
+    module["nodes"][0]["kp_text"] = "海面漂来一只木桶，里头装着航海志。"
+
+    errors, suspects = check_source_traceability(_items(), _assign(), module, SOURCE)
+
+    assert suspects, "低重合仍然要被报出来"
+    assert errors == [], "但它不能进硬失败——否则等于没降级"
+
+
+def test_missing_anchor_is_still_hard() -> None:
+    """降级只降那一半。「连锚点都没有」是结构事实，不含相似度判断，继续拦。"""
+    extra = [{"id": "attic", "title": "阁楼", "kp_text": "阁楼里堆着旧箱子"}]
+
+    errors, _suspects = check_source_traceability(
+        _items(), _assign(), _module(extra_nodes=extra), SOURCE
+    )
+
+    assert any("attic" in e for e in errors)

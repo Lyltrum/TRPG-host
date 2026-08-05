@@ -70,3 +70,33 @@ def test_out_of_scope_is_not_reported_as_lost_content() -> None:
     suspects = check_content_preservation(items, assignments, None, {})
 
     assert [s for s in suspects if s.dest_kind in OUT_OF_SCOPE_KINDS] == []
+
+
+# ── 🔴 归宿与说明必须成对 ─────────────────────────────
+
+
+def test_every_out_of_scope_kind_has_something_to_say() -> None:
+    """加一类「用不上」的归宿，就得配一句告诉用户的话。
+
+    漏了那一句，那类材料就从"显式降级"退回"静默丢弃"——而且什么都不会红。
+    同族于「加了新的失败类别，要同步更新每一个逐个列出类别的消费方」。
+    """
+    from scripts.module_probe.pipeline import _OUT_OF_SCOPE_NOTICES
+
+    assert set(_OUT_OF_SCOPE_NOTICES) == set(OUT_OF_SCOPE_KINDS)
+    for kind, sentence in _OUT_OF_SCOPE_NOTICES.items():
+        assert "{count}" in sentence, f"{kind} 那句话没报数量"
+
+
+def test_front_matter_is_the_second_case_of_the_same_disease() -> None:
+    """目录/版权页/译者说明看起来最像 meta，八段一起挤进上限 1 的薄槽。
+
+    真机实测：回灌归组也修不好，因为它还是没别的地方可放。
+    """
+    front = {
+        f"fm-{i}": {"dest_kind": "front_matter", "dest_id": "front", "reason": "附页"}
+        for i in range(8)
+    }
+
+    assert check_thin_public_slots(front) == []
+    assert count_out_of_scope(front) == {"front_matter": 8}

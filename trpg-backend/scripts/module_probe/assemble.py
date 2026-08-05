@@ -58,7 +58,9 @@ from probe import (  # noqa: E402
 from validate_module import (  # noqa: E402
     ValidationReport,
     build_entity_anchors,
+    count_out_of_scope,
     normalize_module_skills,
+    render_skill_whitelist,
     validate_assembled,
 )
 
@@ -400,6 +402,9 @@ STAGE1_SYSTEM = """\
 - opening —— 开场脚本素材（薄字段，最多 1 个片段）
 - player_intro —— 玩家开场介绍素材（薄字段，最多 1 个片段；仅玩家可见）
 - meta —— 模组元信息（薄字段，最多 1 个片段）
+- pregen —— **预设调查员卡**（模组附的现成角色：姓名+职业+属性+技能+背景那种）。
+  本系统的角色由玩家自己建，这些卡片用不上，但**不许硬塞进别处**——尤其不是
+  player_intro（它是薄槽，塞两张就整份作废）。一张卡一个片段，各自归到这里。
 
 规则：
 1. **无孤儿**：每个输入片段 id 必须出现在 assignments 里恰好一次。
@@ -423,6 +428,7 @@ B. **薄公开字段各只收 1 个片段**：player_intro / opening / meta **�
    - 模组简介若 audience 是守密人/KP → 进 **kp_guidance**，不要塞 opening/meta。
    **调查线索**（报纸剪报、证词、现场发现、可挣得的情报）、**调查行动**、**地点描述**
    一律进 **node**（在某个调查节点里被发现），**禁止**塞进 player_intro。
+   **预设调查员卡**进 **pregen**，一张一条——它们确实是玩家可见的，但不是开场介绍。
    player_intro+opening+meta 合计 ≤ 3。
 C. **结局与时间压力要建实体**（强制，不可吞进 kp_truth）：
    - what_kind_of_thing 指示「结局 / 结尾 / 结束」→ dest_kind=**ending**，建 ending 实体；
@@ -582,8 +588,14 @@ STAGE2_NODE_SYSTEM = """\
 你是模组预处理流水线的「实体成形·节点」阶段。
 
 任务：根据归到同一 node 的片段原文，合成 ScenarioModule.nodes[] 里的对象。
-严格遵守目标 schema。skill 必须用 COC7 中文技能名（侦察、聆听、图书馆使用、\
-话术、恐吓、说服、心理学、潜行、格斗：斗殴、射击：手枪……）。
+严格遵守目标 schema。
+
+检定点 checks[] 每条填三个字段：
+- skill_ids：从下面那张白名单里挑，**逐字照抄 id**。多个 id 表示「任一命中即可」\
+（原文写成「话术/魅惑」这种就填多个）。原文的写法不在表里时，挑语义最接近的那个 id；\
+实在找不到就**不要写这条检定**，别自己造一个名字。
+- kind："skill"；理智检定填 "san" 且 skill_ids 留空。
+- skill：白名单里对应的中文名，逐字照抄。
 
 图边必须分开填（只能引用已知 node id）：
 - exits：空间上相邻的房间/地点
@@ -692,6 +704,10 @@ def stage2_form_kind(
     if system is None:
         print(f"  stage2.{kind}: 非成形种类，跳过（留给阶段3）", flush=True)
         return []
+    if kind == "node":
+        # 🔴 白名单跟 `check_skills` 用的是同一份 id 表——让模型**在写的时候**
+        # 就从 enum 里挑，而不是事后拿别名表去猜它写了什么。
+        system += "\n" + render_skill_whitelist()
 
     # 按实体逐个调用——窄合同，避免一次塞太多
     results: list[dict[str, Any]] = []
@@ -1310,13 +1326,18 @@ def repair_entity(
         "你在修一份 TRPG 模组结构化数据里的**一个实体**。"
         "只输出修正后的那个实体的 JSON 对象，保持它的 id 不变，不要输出别的东西。\n\n"
         "修正要求：\n"
-        "- 技能名必须是 COC7 中文名（斗殴 应写作 格斗：斗殴；手枪 应写作 射击：手枪）。\n"
+        # 🔴 自修器也得拿到白名单。它逐条列着"该修什么"，而「未归一到技能 id」
+        # 这类错误说的正是"你写的名字不在表里"——不给它表，它只能再猜一次。
+        "- checks[].skill_ids 逐字取自下面的白名单；skill 填表里对应的中文名。"
+        "表里找不到对应的，把整条检定删掉，不要造名字。\n"
         "- 数值（骰型/百分比）必须**逐字**来自【原文】。最常见的坏法是**把两个数粘成"
         "一个**——「爪击70 1D6+1」是「技能值 70」与「伤害 1D6+1」两个数，写成 701d6+1 "
         "就是错的。原文里没有的数字**一律删掉，不要另编一个**。\n"
         "- 文字要能对上【原文】；对不上就照原文重写，**宁可写短，也不要编**。\n"
         "- 不要新增字段，不要改 id。\n"
     )
+    if any(e.startswith("[skill]") or "技能 id" in e for e in errors):
+        system += "\n" + render_skill_whitelist()
     user = (
         "【这个实体的问题】\n" + "\n".join(f"- {e}" for e in errors) + "\n\n"
         f"【原文】（照它改，不要凭印象）\n{source_excerpt or '（这个实体没有可用的原文锚点）'}\n\n"
@@ -1833,6 +1854,7 @@ def run_pipeline(
     intermediate["validation"] = report.to_dict()
     intermediate["repair_count"] = repair_count
     intermediate["thin_slot_counts"] = thin_counts
+    intermediate["out_of_scope_counts"] = count_out_of_scope(assignment_map)
     intermediate["content_preserve_suspect_count"] = len(report.content_preserve_suspects)
     intermediate["stats"] = {
         "elapsed_seconds": round(elapsed_all, 2),
@@ -1878,6 +1900,7 @@ def run_pipeline(
                 "report": report.to_dict(),
                 "counts": intermediate["counts"],
                 "thin_slot_counts": thin_counts,
+                "out_of_scope_counts": intermediate["out_of_scope_counts"],
                 "stats": intermediate["stats"],
             },
             ensure_ascii=False,

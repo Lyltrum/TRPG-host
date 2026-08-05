@@ -237,8 +237,13 @@ def _is_finished(state: dict) -> bool:
     return str(state.get("对局阶段") or "") == "finished"
 
 
-def _module_ending_ids(module_id: str) -> list[str]:
-    """这个模组提供了哪些可到达的结局 id。
+def _module_title_and_endings(module_id: str) -> tuple[str, list[str]]:
+    """这个模组叫什么、提供了哪些可到达的结局 id。
+
+    🔴 **走 `resolve_module` 而不是 `/api/v1/modules` 目录接口。** 导入进来的模组
+    带 `owner_user_id`，目录接口按归属过滤，而驱动器注册的是一个全新用户——
+    它**发现不到**任何导入的模组（选模组那一步不查归属，所以只卡在发现这一步）。
+    直接解析剧本既绕开这个不对称，也少一次 HTTP 往返。
 
     🔴 **验证器读剧本是合法的，驱动器读剧本才不合法。** 有限视角约束的是"演员
     看得见什么"（给它剧本它会直奔结局），不是"裁判按什么判"。裁判必须知道
@@ -262,16 +267,18 @@ def _module_ending_ids(module_id: str) -> list[str]:
     )
 
     box: list[str] = []
+    title: list[str] = []
 
     async def _read() -> None:
         async with async_session_factory() as db:
             resolved = await resolve_module(db, modules_dir, module_id)
             if resolved is None:
                 raise SystemExit(f"解析不出剧本，无法定判据：{module_id}")
+            title.append(resolved.module.meta.title or module_id)
             box.extend(e.id for e in resolved.module.endings)
 
     asyncio.run(_read())
-    return box
+    return (title[0] if title else module_id), box
 
 
 def _decide_verdict(
@@ -390,18 +397,13 @@ def run(module_id: str, max_turns: int) -> PlaythroughResult:
     t0 = time.perf_counter()
 
     with TestClient(app) as client:
-        mods = client.get("/api/v1/modules").json()["data"]
-        mod = next((m for m in mods if m["id"] == module_id), None)
-        if mod is None:
-            raise SystemExit(f"模组 id 不在目录里：{module_id}")
-        result.module_title = mod["title"]
-        result.module_ending_ids = _module_ending_ids(module_id)
+        result.module_title, result.module_ending_ids = _module_title_and_endings(module_id)
 
         token = _register(client)
         auth = {"Authorization": f"Bearer {token}"}
         room = client.post(
             ROOMS,
-            json={"roomName": f"试跑-{mod['title']}", "nickname": "试跑员", "maxPlayers": 1},
+            json={"roomName": f"试跑-{result.module_title}", "nickname": "试跑员", "maxPlayers": 1},
             headers=auth,
         ).json()["data"]
         rid, rtok, pid, _rcode = (

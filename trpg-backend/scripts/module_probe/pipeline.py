@@ -182,6 +182,17 @@ def convert(
     result.report_path = str(report)
 
     payload = json.loads(report.read_text(encoding="utf-8"))
+    # 🔴 显式降级，不是静默丢弃：模组附的预设调查员卡本系统用不上（角色由玩家
+    # 自己建），但丢了多少必须说出来——跟图片占位同一条纪律。
+    pregen = (payload.get("out_of_scope_counts") or {}).get("pregen", 0)
+    if pregen:
+        # 🔴 说"片段"不说"张"：我们数的是归到 pregen 的**片段**，而一张卡常被
+        # 切成好几段（标题/属性/背景/页码各一段），实测 4 张卡数出 14 段。
+        # 报一个自己算不出来的单位，就是在编。
+        result.warnings.append(
+            f"这份模组附了预设调查员卡（{pregen} 段材料）。本系统的角色由玩家自己建，"
+            "这部分没有收进来。"
+        )
     errors = payload.get("report", {}).get("all_errors") or []
     result.hard_failures = len(errors)
     result.ok = bool(payload.get("success")) and not errors

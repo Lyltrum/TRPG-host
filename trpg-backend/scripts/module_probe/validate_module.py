@@ -41,6 +41,18 @@ _MIN_KEYWORD_LEN = 4
 
 # 薄公开槽：阶段1 归宿 dest_kind
 _THIN_PUBLIC_KINDS = ("player_intro", "opening", "meta")
+
+#: 🔴 **本版本用不上、但必须有名字的归宿。**
+#:
+#: 预设调查员卡（pregen）是模组常见的附件，而本系统的角色是玩家自己建的，
+#: schema 里没有它的位置。此前它在归组时无处可去，模型就近塞进了 `player_intro`
+#: ——五张角色卡挤进一个"最多 1 个片段"的薄槽，`thin_slot` 当场拒绝整份模组
+#: （复足实测）。模型的理由「预制角色，玩家可见」本身没错，**错的是我们没给它
+#: 一个落点**：schema 表达不了的东西会从别处漏出去。
+#:
+#: 所以给它一个显式的名字，然后**显式降级**——不进 structured，但清点并告知，
+#: 跟图片占位是同一条纪律（禁止静默丢弃）。
+OUT_OF_SCOPE_KINDS = ("pregen",)
 _PUBLIC_SLOT_KINDS = ("player_intro", "opening")  # 绝密不得进入的槽
 
 # 结构完整性：用片段自己的 what_kind_of_thing 子串当信号（非 COC 专属路由）
@@ -527,6 +539,40 @@ def _strip_check_suffix(s: str) -> str:
     return s[: -len("检定")].strip() if s.endswith("检定") else s
 
 
+def render_skill_whitelist(ruleset: RulesetRead | None = None) -> str:
+    """把「合法的检定 id」渲染成给组装模型看的白名单。
+
+    ## 🔴 为什么是白名单，不是更大的别名表
+
+    `resolve_check_skill` 的 docstring 写着「输入是固定的 5 个模组文件，组装期
+    不是运行时，所以别名表不算打地鼠」。**模组导入把那个前提拿掉了**——输入
+    变成用户随手传的任何一份 PDF，别名表当场退化成打地鼠：真机实测撞到
+    `电器维修`（规则表里是「电气维修」，差一个字）、`踢`（该归到格斗：斗殴）、
+    `INT×4`（属性倍数检定，规则表里根本没有这个条目）。
+
+    判据早就写好了：**不要用自由文本当标识符，解决它的是 enum**。所以做法不是
+    继续往别名表里加词，是**在模型写的时候就让它从这张表里挑**。同一份 id 表
+    既喂给模型也喂给 `check_skills`，两边不可能漂。
+
+    属性也在表里：`INT×5`（灵感）这类属性检定在 COC7 里是合法的检定点，
+    而它不是技能——不给它一个合法的落点，模型就只能编一个技能名。
+
+    🔴 **表本身取自 `skill_id_catalog`——跟 `check_skills` 是同一个函数**，不是
+    另抄一份 `ruleset.skills`。两份拷贝会漂，而漂的症状是「我们发给模型的 id，
+    我们自己的校验不认」，模型怎么改都过不去。
+    """
+    ruleset = ruleset or build_coc7_ruleset()
+    catalog = skill_id_catalog(ruleset)
+    attr_keys = {a.key for a in ruleset.attributes}
+    skills = [f"  {i} {n}" for i, n in catalog.items() if i not in attr_keys]
+    attrs = [f"  {i} {n}" for i, n in catalog.items() if i in attr_keys]
+    return (
+        "【检定 id 白名单——checks[].skill_ids 里的每一项都必须**逐字**取自下表】\n"
+        "技能：\n" + "\n".join(skills) + "\n"
+        "属性（用于「智力×5」「幸运」这类属性检定，写属性 id 本身）：\n" + "\n".join(attrs)
+    )
+
+
 def specialization_candidates(name: str, ruleset: RulesetRead) -> list[str]:
     """把「动物学」这种**专项名**匹配回完整技能名（`科学：动物学`）。
 
@@ -593,8 +639,18 @@ def resolve_check_skill(raw_skill: str, ruleset: RulesetRead) -> tuple[str, list
 
 
 def normalize_module_skills(raw: dict[str, Any], ruleset: RulesetRead | None = None) -> int:
-    """就地把 nodes[].checks[] 归一成 `(kind, skill_ids, 展示名)`，返回改动条数。"""
+    """就地把 nodes[].checks[] 归一成 `(kind, skill_ids, 展示名)`，返回改动条数。
+
+    ## 🔴 已经合法的 `skill_ids` 优先于展示名
+
+    组装期现在把白名单发给模型、让它直接挑 id（`render_skill_whitelist`）。
+    此前这里**只从展示名解析、并覆盖 `skill_ids`**——于是模型 id 挑对了、
+    中文名写岔一个字（「电器维修」对「电气维修」），正确的 id 会被反过来擦掉，
+    然后 `check_skills` 报「未归一」。id 是机器可读的那一份，它说了算；
+    展示名从表里回填即可。
+    """
     ruleset = ruleset or build_coc7_ruleset()
+    catalog = skill_id_catalog(ruleset)
     changed = 0
     nodes = raw.get("nodes")
     if not isinstance(nodes, list):
@@ -610,6 +666,12 @@ def normalize_module_skills(raw: dict[str, Any], ruleset: RulesetRead | None = N
                 old_name = str(check.get("skill") or "")
                 old_ids = list(check.get("skill_ids") or [])
                 old_kind = check.get("kind") or "skill"
+                if old_kind != "san" and old_ids and all(sid in catalog for sid in old_ids):
+                    display = "/".join(catalog[sid] for sid in old_ids)
+                    if display != old_name:
+                        check["skill"] = display
+                        changed += 1
+                    continue
                 kind, ids, display = resolve_check_skill(old_name, ruleset)
                 if (ids, kind, display) != (old_ids, old_kind, old_name):
                     check["skill_ids"] = ids
@@ -868,6 +930,20 @@ def _dest_id_of(info: Any) -> str:
     return ""
 
 
+def count_out_of_scope(assignment_map: dict[str, Any]) -> dict[str, int]:
+    """清点被判为「本版本用不上」的片段，按归宿分类。
+
+    🔴 **要清点，因为静默丢弃和"这份模组本来就没有"看起来一模一样。**
+    数字会变成给用户的一句显式降级说明，跟图片占位同一条纪律。
+    """
+    counts: dict[str, int] = {}
+    for info in assignment_map.values():
+        kind = _dest_kind_of(info)
+        if kind in OUT_OF_SCOPE_KINDS:
+            counts[kind] = counts.get(kind, 0) + 1
+    return counts
+
+
 def check_thin_public_slots(assignment_map: dict[str, Any]) -> list[str]:
     """player_intro / opening / meta 各 ≤1，合计 ≤3。"""
     counts: dict[str, list[str]] = {k: [] for k in _THIN_PUBLIC_KINDS}
@@ -1107,6 +1183,10 @@ def check_content_preservation(
 
         dest_kind = _dest_kind_of(info)
         dest_id = _dest_id_of(info)
+        if dest_kind in OUT_OF_SCOPE_KINDS:
+            # 本来就不进 structured（见 OUT_OF_SCOPE_KINDS），不是"内容丢了"。
+            # 它由 `count_out_of_scope` 单独清点并告知用户。
+            continue
         if dest_kind == "unassigned":
             suspects.append(
                 ContentPreserveItem(

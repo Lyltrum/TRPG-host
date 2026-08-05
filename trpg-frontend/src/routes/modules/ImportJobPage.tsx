@@ -32,6 +32,14 @@ export default function ImportJobPage() {
 
   useEffect(() => {
     if (jobId) void load(jobId)
+    // 🔴 换了 job 就不再是"提交中"。
+    //
+    // 重试成功后走的是 `navigate` 到新 jobId，而路由模式没变
+    // （`/home/modules/:jobId`）——**组件实例被复用，state 不会重置**。
+    // `busy` 原来只在 catch 里放开，于是成功路径上它永远是 true，按钮从第一次
+    // 重试之后就永久禁用、卡在「重新提交中…」。真机第一轮就撞上了：用户点第二次
+    // 重试，请求根本没发出去，后端日志里只有一条 retry。
+    setBusy(false)
   }, [jobId, load])
 
   const running = job ? isJobRunning(job) : false

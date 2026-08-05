@@ -30,8 +30,10 @@ import argparse
 import json
 import re
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +48,7 @@ _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
+from parallel import run_parallel  # noqa: E402
 from probe import (  # noqa: E402
     DEEPSEEK_BASE_URL,
     DEEPSEEK_MODEL,
@@ -187,12 +190,31 @@ class CallStats:
     stage_logs: list[dict[str, Any]] = field(default_factory=list)
     failures: list[dict[str, Any]] = field(default_factory=list)
     retries: list[dict[str, Any]] = field(default_factory=list)
+    # 阶段 2 各实体并行时会同时记账；`+=` 是读-改-写，不是原子的。
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+    #: label → 已经用过几次。见 `tape_key_for`。
+    label_seq: dict[str, int] = field(default_factory=dict)
 
     def estimate_cost_cny(self) -> float:
         return (
             self.prompt_tokens / 1_000_000 * _PRICE_INPUT_PER_M
             + self.completion_tokens / 1_000_000 * _PRICE_OUTPUT_PER_M
         )
+
+
+def tape_key_for(stats: CallStats, label: str) -> str:
+    """磁带子键。**`label` 本身不够用**——自修会回灌阶段 1 再重跑阶段 2/3，
+    于是 `stage2.node:xxx` 在一次跑里出现好几遍。直接拿它当 key，第二轮会
+    覆盖第一轮的录音，回放时第二轮拿到第一轮的响应，而且悄无声息。
+
+    加出现序号就够了：回放时控制流由录好的响应决定，是确定性的，所以"第 N 次
+    用到这个 label"两次跑一定对得上。并行组内每个 label 只出现一次，所以线程
+    顺序也影响不到它。
+    """
+    with stats.lock:
+        n = stats.label_seq.get(label, 0) + 1
+        stats.label_seq[label] = n
+    return label if n == 1 else f"{label}#{n}"
 
 
 def _chat_json(
@@ -204,12 +226,15 @@ def _chat_json(
     stats: CallStats,
     label: str,
 ) -> dict[str, Any]:
+    # 🔴 键在重试循环**外面**算：重试是同一次逻辑调用，不能拿到两个不同的键。
+    tape_key = tape_key_for(stats, label)
     last_err: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             t0 = time.perf_counter()
             response = client.chat.completions.create(
                 tape_kind="module_assemble",
+                tape_key=tape_key,
                 model=DEEPSEEK_MODEL,
                 temperature=temperature,
                 response_format={"type": "json_object"},
@@ -219,16 +244,17 @@ def _chat_json(
                 ],
             )
             elapsed = time.perf_counter() - t0
-            stats.calls += 1
             usage = response.usage
             pt = ct = tt = 0
-            if usage is not None:
-                pt = usage.prompt_tokens or 0
-                ct = usage.completion_tokens or 0
-                tt = usage.total_tokens or 0
-                stats.prompt_tokens += pt
-                stats.completion_tokens += ct
-                stats.total_tokens += tt
+            with stats.lock:
+                stats.calls += 1
+                if usage is not None:
+                    pt = usage.prompt_tokens or 0
+                    ct = usage.completion_tokens or 0
+                    tt = usage.total_tokens or 0
+                    stats.prompt_tokens += pt
+                    stats.completion_tokens += ct
+                    stats.total_tokens += tt
             raw = response.choices[0].message.content or ""
             data = json.loads(raw)
             if not isinstance(data, dict):
@@ -676,7 +702,8 @@ def stage2_form_kind(
         "agenda": "agenda",
     }[kind]
 
-    for ent in targets:
+    # 每个实体一次窄合同调用，彼此无依赖（`known_node_ids` 是上游传进来的定值）。
+    def _one_entity(ent: dict[str, Any]) -> dict[str, Any]:
         materials = _bundle_entity_materials(ent, items_by_id, lines, rels)
         user = (
             f"{schema_doc}\n\n"
@@ -688,7 +715,7 @@ def stage2_form_kind(
         )
         if repair_notes:
             user += f"\n\n【校验问题请一并修正】\n{repair_notes}"
-        data = _chat_json(
+        return _chat_json(
             client,
             system=system,
             user=user,
@@ -696,6 +723,11 @@ def stage2_form_kind(
             stats=stats,
             label=f"stage2.{kind}:{ent['id']}",
         )
+
+    # run_parallel 按输入顺序返回，所以 results 的顺序与串行时一致。
+    for ent, data in zip(
+        targets, run_parallel([partial(_one_entity, e) for e in targets]), strict=True
+    ):
         arr = data.get(key_name)
         if isinstance(arr, list):
             for obj in arr:

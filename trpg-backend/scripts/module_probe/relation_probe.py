@@ -30,9 +30,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
 from collections import Counter
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +45,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+from parallel import run_parallel  # noqa: E402 — 脚本同目录导入
 from probe import (  # noqa: E402 — 脚本同目录导入
     DEEPSEEK_BASE_URL,
     DEEPSEEK_MODEL,
@@ -111,6 +114,8 @@ class CallStats:
     total_tokens: int = 0
     failures: list[dict[str, Any]] = field(default_factory=list)
     retries: list[dict[str, Any]] = field(default_factory=list)
+    # 多个批次并行时会同时记账；`+=` 是读-改-写，不是原子的。
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
 
 def _chat_json(
@@ -122,12 +127,14 @@ def _chat_json(
     stats: CallStats,
     label: str,
 ) -> dict[str, Any]:
+    """`label` 同时当磁带子键——它在一次跑里唯一且可复现（见 parallel.py）。"""
     last_err: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             t0 = time.perf_counter()
             response = client.chat.completions.create(
                 tape_kind="module_relations",
+                tape_key=label,
                 model=DEEPSEEK_MODEL,
                 temperature=temperature,
                 response_format={"type": "json_object"},
@@ -137,12 +144,13 @@ def _chat_json(
                 ],
             )
             elapsed = time.perf_counter() - t0
-            stats.calls += 1
             usage = response.usage
-            if usage is not None:
-                stats.prompt_tokens += usage.prompt_tokens or 0
-                stats.completion_tokens += usage.completion_tokens or 0
-                stats.total_tokens += usage.total_tokens or 0
+            with stats.lock:
+                stats.calls += 1
+                if usage is not None:
+                    stats.prompt_tokens += usage.prompt_tokens or 0
+                    stats.completion_tokens += usage.completion_tokens or 0
+                    stats.total_tokens += usage.total_tokens or 0
             raw = response.choices[0].message.content or ""
             data = json.loads(raw)
             if not isinstance(data, dict):
@@ -212,8 +220,9 @@ def backfill_missing_kinds(
         f"A · 字段补抽：{scope} 且 what_kind_of_thing 为空 → {len(targets)} 条",
         flush=True,
     )
-    results: list[dict[str, Any]] = []
-    for it in targets:
+
+    # 每条条目彼此独立（这正是上面 docstring 说的"不附带其它条目"），并行跑。
+    def _one_item(it: dict[str, Any]) -> str:
         item_id = it.get("id")
         body = _item_body(lines, it)
         user = (
@@ -234,12 +243,17 @@ def backfill_missing_kinds(
         kind = data.get("what_kind_of_thing")
         if kind is None or not str(kind).strip():
             raise RuntimeError(f"补抽 {item_id} 返回空 what_kind_of_thing: {data!r}")
-        kind_str = str(kind).strip()
-        # 原地更新：只动 kind 与来源标记
+        return str(kind).strip()
+
+    kinds = run_parallel([partial(_one_item, it) for it in targets])
+
+    # 🔴 落盘（原地改 payload）留在主线程串行做：并行的只是问模型那一段。
+    results: list[dict[str, Any]] = []
+    for it, kind_str in zip(targets, kinds, strict=True):
         it["what_kind_of_thing"] = kind_str
         it["what_kind_of_thing_source"] = "backfill"
-        results.append({"id": item_id, "what_kind_of_thing": kind_str})
-        print(f"    ← {item_id}: {kind_str}", flush=True)
+        results.append({"id": it.get("id"), "what_kind_of_thing": kind_str})
+        print(f"    ← {it.get('id')}: {kind_str}", flush=True)
     return results
 
 
@@ -408,7 +422,9 @@ def discover_relations_batched(
         flush=True,
     )
 
-    for bi, focus in enumerate(batches):
+    # 🔴 各批之间没有任何数据依赖，串行跑掉整条链 70% 的墙钟时间（`exec/30` §4.4）。
+    # 并行的代价是磁带不能再按序回放——所以每批带一个稳定子键（见 parallel.py）。
+    def _one_batch(bi: int, focus: list[dict[str, Any]]) -> list[dict[str, Any]]:
         focus_catalog = _format_catalog(focus)
         # 核心任务句与 discover_relations 全量路径保持一致；仅增加简表 + 本批对象结构。
         user = (
@@ -434,6 +450,11 @@ def discover_relations_batched(
             f"focus={len(focus)} → {len(rels)} relations",
             flush=True,
         )
+        return rels
+
+    # run_parallel 按输入顺序返回，所以下面的合并/元信息与串行时逐字节一致。
+    all_rels = run_parallel([partial(_one_batch, bi, focus) for bi, focus in enumerate(batches)])
+    for bi, (focus, rels) in enumerate(zip(batches, all_rels, strict=True)):
         batch_rows.append((bi, rels))
         batch_meta.append(
             {

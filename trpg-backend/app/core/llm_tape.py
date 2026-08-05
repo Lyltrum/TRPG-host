@@ -28,6 +28,9 @@ digest 差异作为「漂移」如实报出来，供人判断这次 prompt 变�
 ⚠️ 单进程内并发对局 / 心跳插队会打乱顺序——录制真实对局时请只开一局、
 关掉心跳（`KEEPER_HEARTBEAT_ENABLED=false`）。
 
+**一处已知并发是内建支持的**：模组导入把彼此独立的调用并行了（`exec/30` 步骤 1），
+那些调用带一个稳定子键、按 key 回放而不按序，见 `TapeSession` 的 docstring。
+
 ## 🔴 版权
 
 真实模组的磁带里含剧本正文（system prompt 常驻整份 `render_full`），
@@ -42,6 +45,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -68,6 +72,9 @@ class TapeEntry:
 
     `messages` 录制时存全文（人工审阅磁带时要看得懂上下文），回放时不依赖它——
     回放只按顺序取 `response_text`。
+
+    `key` 是**并发调用**的稳定子键（见 `TapeSession` 的 docstring）。为 None 的
+    条目走原来的按序回放；有 key 的按 key 查找，不参与顺序。
     """
 
     index: int
@@ -77,6 +84,7 @@ class TapeEntry:
     response_text: str
     finish_reason: str | None = None
     messages: list[dict[str, Any]] | None = None
+    key: str | None = None
 
 
 @dataclass
@@ -126,7 +134,24 @@ def request_digest(model: str, messages: list[Any], params: dict[str, Any]) -> s
 
 
 class TapeSession:
-    """一次录制或回放。进程内全局单例，由上下文管理器装卸。"""
+    """一次录制或回放。进程内全局单例，由上下文管理器装卸。
+
+    ## 🔴 两种条目：按序的，和按 key 的
+
+    按序回放的前提是调用顺序稳定。**并发一上，完成顺序就不确定了**——
+    模组导入的关系发现是 8 批彼此独立的调用，串行跑掉整条链 70% 的墙钟时间
+    （`exec/30` §4.4），而一旦 `gather` 起来，按序磁带当场炸。
+
+    修法**不是**「录制时强制串行」——那样磁带跑的路径跟生产路径不同构，
+    守不住真正在跑的那条。修法是给并发组里的每次调用一个**稳定子键**
+    （`relations:pass1:batch3` 这种，由业务侧算得出、跑多少次都一样），
+    磁带于是从「一条流水线」变成「若干有序的组」：
+
+    - `key=None` 的调用：老规矩，按 `cursor` 顺序取，顺序变了立刻报错
+    - 有 `key` 的调用：按 key 查，**不动 cursor**，所以并发组内乱序无所谓
+
+    两者互不干扰：keyed 条目整体不参与 sequential 的计数。
+    """
 
     def __init__(self, mode: TapeMode, tape: Tape, path: Path | None = None) -> None:
         self.mode = mode
@@ -134,6 +159,20 @@ class TapeSession:
         self.path = path
         self.cursor = 0
         self.drifts: list[Drift] = []
+        # 🔴 并发组是真的多线程在跑（导入管线用 ThreadPoolExecutor），录制要往
+        # 同一个 list 追加、往同一个文件整份重写，两件事都得串起来。
+        self._lock = threading.Lock()
+        self._sequential = [e for e in tape.entries if e.key is None]
+        self._by_key: dict[str, TapeEntry] = {}
+        for entry in tape.entries:
+            if entry.key is None:
+                continue
+            if entry.key in self._by_key:
+                # 🔴 key 撞车 = 它不是稳定唯一的，回放会静默取错一条。宁可现在炸。
+                raise TapeMismatch(f"磁带里有两条 key={entry.key!r} 的录音——子键必须唯一。")
+            self._by_key[entry.key] = entry
+        #: 录制时用来当场发现 key 撞车（录完再发现就白花钱了）。
+        self._recorded_keys: set[str] = set(self._by_key)
 
     def record(
         self,
@@ -144,29 +183,50 @@ class TapeSession:
         params: dict[str, Any],
         response_text: str,
         finish_reason: str | None,
+        key: str | None = None,
     ) -> None:
-        self.tape.entries.append(
-            TapeEntry(
+        digest = request_digest(model, messages, params)
+        with self._lock:
+            entry = TapeEntry(
                 index=len(self.tape.entries),
                 kind=kind,
                 model=model,
-                request_digest=request_digest(model, messages, params),
+                request_digest=digest,
                 response_text=response_text,
                 finish_reason=finish_reason,
                 messages=[dict(m) for m in messages],
+                key=key,
             )
-        )
+            if key is not None and key in self._recorded_keys:
+                # 🔴 覆盖，不报错。同一个 key 录第二次的正常来路是**重试**——
+                # 响应回来了但 JSON 解析失败，业务侧重发一次。为此中断录制等于
+                # 白烧一次钱。真正的子键撞车（两个不同调用共用一个 key）会表现为
+                # 磁带条数少于调用次数，由跑完打印的那个数字暴露。
+                logger.warning("llm_tape_key_overwritten", key=key, kind=kind)
+                self._replace_locked(key, entry)
+            else:
+                if key is not None:
+                    self._recorded_keys.add(key)
+                self.tape.entries.append(entry)
+            self._dump_locked()
+
+    def _replace_locked(self, key: str, entry: TapeEntry) -> None:
+        for i, old in enumerate(self.tape.entries):
+            if old.key == key:
+                entry.index = old.index
+                self.tape.entries[i] = entry
+                return
 
     def next_entry(
-        self, *, kind: str, model: str, messages: list[Any], params: dict[str, Any]
+        self,
+        *,
+        kind: str,
+        model: str,
+        messages: list[Any],
+        params: dict[str, Any],
+        key: str | None = None,
     ) -> TapeEntry:
-        if self.cursor >= len(self.tape.entries):
-            raise TapeExhausted(
-                f"磁带只录了 {len(self.tape.entries)} 次调用，第 {self.cursor + 1} 次"
-                f"（kind={kind}）没有对应录音——代码比录制时多调了一次模型。"
-            )
-        entry = self.tape.entries[self.cursor]
-        self.cursor += 1
+        entry = self._lookup(kind=kind, key=key)
         if entry.kind != kind:
             raise TapeMismatch(
                 f"第 {entry.index} 次调用录的是 kind={entry.kind}，实际是 kind={kind}"
@@ -184,7 +244,30 @@ class TapeSession:
             )
         return entry
 
+    def _lookup(self, *, kind: str, key: str | None) -> TapeEntry:
+        if key is not None:
+            entry = self._by_key.get(key)
+            if entry is None:
+                raise TapeExhausted(
+                    f"磁带里没有 key={key!r}（kind={kind}）的录音——"
+                    "并发组的成员变了（批次划分/实体集合跟录制时不同）。"
+                )
+            return entry
+        with self._lock:
+            if self.cursor >= len(self._sequential):
+                raise TapeExhausted(
+                    f"磁带只录了 {len(self._sequential)} 次按序调用，第 {self.cursor + 1} 次"
+                    f"（kind={kind}）没有对应录音——代码比录制时多调了一次模型。"
+                )
+            entry = self._sequential[self.cursor]
+            self.cursor += 1
+        return entry
+
     def flush(self) -> None:
+        with self._lock:
+            self._dump_locked()
+
+    def _dump_locked(self) -> None:
         if self.mode == "record" and self.path is not None:
             self.tape.dump(self.path)
 
@@ -265,6 +348,7 @@ def _replay_or_none(
     session: TapeSession | None,
     *,
     tape_kind: str,
+    tape_key: str | None,
     model: str,
     messages: list[Any],
     params: dict[str, Any],
@@ -272,7 +356,9 @@ def _replay_or_none(
     """在放磁带就返回录好的那一条，否则返回 None（调用方去真打网络）。"""
     if session is None or session.mode != "replay":
         return None
-    entry = session.next_entry(kind=tape_kind, model=model, messages=messages, params=params)
+    entry = session.next_entry(
+        kind=tape_kind, key=tape_key, model=model, messages=messages, params=params
+    )
     return _ReplayResponse(
         choices=[
             _ReplayChoice(
@@ -288,6 +374,7 @@ def _record_if_needed(
     response: Any,
     *,
     tape_kind: str,
+    tape_key: str | None,
     model: str,
     messages: list[Any],
     params: dict[str, Any],
@@ -297,6 +384,7 @@ def _record_if_needed(
     choice = response.choices[0]
     session.record(
         kind=tape_kind,
+        key=tape_key,
         model=model,
         messages=messages,
         params=params,
@@ -310,19 +398,30 @@ class _TapedCompletions:
     def __init__(self, inner: Any) -> None:
         self._inner = inner
 
-    async def create(self, *, tape_kind: str, **kwargs: Any) -> Any:
+    async def create(self, *, tape_kind: str, tape_key: str | None = None, **kwargs: Any) -> Any:
         session = active_session()
         model, messages, params = _split_call(kwargs)
 
         replayed = _replay_or_none(
-            session, tape_kind=tape_kind, model=model, messages=messages, params=params
+            session,
+            tape_kind=tape_kind,
+            tape_key=tape_key,
+            model=model,
+            messages=messages,
+            params=params,
         )
         if replayed is not None:
             return replayed
 
         response = await self._inner.create(**kwargs)
         _record_if_needed(
-            session, response, tape_kind=tape_kind, model=model, messages=messages, params=params
+            session,
+            response,
+            tape_kind=tape_kind,
+            tape_key=tape_key,
+            model=model,
+            messages=messages,
+            params=params,
         )
         return response
 
@@ -480,19 +579,30 @@ class _TapedSyncCompletions:
     def __init__(self, inner: Any) -> None:
         self._inner = inner
 
-    def create(self, *, tape_kind: str, **kwargs: Any) -> Any:
+    def create(self, *, tape_kind: str, tape_key: str | None = None, **kwargs: Any) -> Any:
         session = active_session()
         model, messages, params = _split_call(kwargs)
 
         replayed = _replay_or_none(
-            session, tape_kind=tape_kind, model=model, messages=messages, params=params
+            session,
+            tape_kind=tape_kind,
+            tape_key=tape_key,
+            model=model,
+            messages=messages,
+            params=params,
         )
         if replayed is not None:
             return replayed
 
         response = self._inner.create(**kwargs)
         _record_if_needed(
-            session, response, tape_kind=tape_kind, model=model, messages=messages, params=params
+            session,
+            response,
+            tape_kind=tape_kind,
+            tape_key=tape_key,
+            model=model,
+            messages=messages,
+            params=params,
         )
         return response
 
@@ -517,9 +627,12 @@ class TapedSyncClient:
 
     ## 🔴 `_active` 是模块级全局，不是 contextvar
 
-    所以工作线程看得见主线程开的磁带，这条路才通。代价是**同一进程里并发录制
-    会把顺序录乱**——录制是开发者显式动作（`LLM_TAPE_MODE=record`），录的时候
-    只跑一条导入即可，跟"录真实对局要只开一局、关心跳"是同一条纪律。
+    所以工作线程看得见主线程开的磁带，这条路才通——而且导入内部自己的并行
+    （`exec/30` 步骤 1）也是线程，同样看得见。**组内乱序由稳定子键解决**
+    （`TapeSession`），会话本身的记账加了锁。
+
+    仍然要守的纪律：**录制时只跑一条导入**。两条导入的按序段会互相插队，
+    那是子键管不到的，跟"录真实对局要只开一局、关心跳"是同一条。
     """
 
     def __init__(self, inner: Any) -> None:

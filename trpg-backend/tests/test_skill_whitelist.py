@@ -117,3 +117,44 @@ def test_normalized_module_passes_the_skill_gate() -> None:
     normalize_module_skills(raw)
 
     assert check_skills(ScenarioModule.model_validate(raw)) == []
+
+
+# ── 属性×倍数是写法，不是同义词 ────────────────────────
+
+
+def test_attribute_multiplier_forms_resolve_to_the_attribute() -> None:
+    """🔴 真机连续撞到 `INT×4`。
+
+    它不是"智力的另一种叫法"——是 COC 表达属性检定的**写法**（COC6 的灵感是
+    INT×5、知识是 EDU×5，模组里什么倍数都写得出来）。往别名表里加 `INT×4`
+    只挡得住这一个数字，下一份写 `INT×3` 又漏。所以做成规则。
+    """
+    from scripts.module_probe.validate_module import resolve_check_skill
+
+    ruleset = build_coc7_ruleset()
+    for writing in ("INT×4", "INT×5", "智力×5", "POW x 5", "EDU*5", "int×4"):
+        kind, ids, _display = resolve_check_skill(writing, ruleset)
+        assert kind == "skill", writing
+        assert ids and ids[0] in {"INT", "POW", "EDU"}, f"{writing} 没解析成属性 id：{ids}"
+
+
+def test_a_multiplier_on_something_that_is_not_an_attribute_is_not_guessed() -> None:
+    """只有属性才吃这条规则。`侦察×2` 不是属性检定，猜它等于悄悄改了模组。"""
+    from scripts.module_probe.validate_module import attribute_multiplier_check
+
+    ruleset = build_coc7_ruleset()
+
+    assert attribute_multiplier_check("侦察×2", ruleset) is None
+    assert attribute_multiplier_check("智力", ruleset) is None, "没有倍数就不归这条规则管"
+
+
+def test_the_multiplier_is_dropped_on_purpose() -> None:
+    """倍数没有落点：本系统的难度走 SUCCESS_TIERS（÷2 / ÷5），没有"×N"这一档。
+
+    `灵感 → INT` 早就是这么处理的，这里只是把同一件事推广到写法上。
+    """
+    from scripts.module_probe.validate_module import resolve_check_skill
+
+    ruleset = build_coc7_ruleset()
+
+    assert resolve_check_skill("INT×4", ruleset)[1] == resolve_check_skill("灵感", ruleset)[1]

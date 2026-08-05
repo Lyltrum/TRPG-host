@@ -52,7 +52,15 @@ _THIN_PUBLIC_KINDS = ("player_intro", "opening", "meta")
 #:
 #: 所以给它一个显式的名字，然后**显式降级**——不进 structured，但清点并告知，
 #: 跟图片占位是同一条纪律（禁止静默丢弃）。
-OUT_OF_SCOPE_KINDS = ("pregen",)
+#:
+#: `front_matter` 是同一个病的第二例（真机实测）：目录、版权页、译者说明、页码、
+#: 出版方 logo——它们**看起来最像 `meta`**，于是八个片段一起挤进那个"最多 1 个"
+#: 的薄槽，`thin_slot` 拒绝整份模组，而回灌归组也修不好（它还是没别的地方可放）。
+#:
+#: 🔴 **这两个名字都要定义得窄。** 宽了就变成第二个 `kp_truth` 兜底垃圾桶——
+#: 那正是阶段 1 硬约束 A 在防的事。判据：**它是不是印在书上但跟"玩这个模组"
+#: 无关的东西**；只要还能想出一个玩家或守秘人会用到它的场合，就不属于这里。
+OUT_OF_SCOPE_KINDS = ("pregen", "front_matter")
 _PUBLIC_SLOT_KINDS = ("player_intro", "opening")  # 绝密不得进入的槽
 
 # 结构完整性：用片段自己的 what_kind_of_thing 子串当信号（非 COC 专属路由）
@@ -601,6 +609,38 @@ def render_skill_whitelist(ruleset: RulesetRead | None = None) -> str:
     )
 
 
+#: 「属性 × 倍数」这个**写法**：`INT×4`、`智力×5`、`POW x 5`、`EDU*5`。
+#: 全角/半角乘号、大小写 x、空格都算。
+_ATTR_MULTIPLIER = re.compile(r"^(?P<attr>[^\s×xX*✕]+)\s*[×xX*✕]\s*\d+$")
+
+
+def attribute_multiplier_check(name: str, ruleset: RulesetRead) -> str | None:
+    """把「属性×倍数」解析成属性 id；不是这个形状就返回 None。
+
+    ## 🔴 这是规则，不是同义词表
+
+    真机实测反复撞到 `INT×4`。它不是"智力的另一种叫法"——**是 COC 表达属性检定
+    的写法**：COC6 的灵感是 INT×5、知识是 EDU×5，模组里各种倍数都写得出来。
+    往别名表里加 `INT×4` 只能挡住这一个数字，下一份模组写 `INT×3` 又漏。
+
+    跟 `specialization_candidates`（专项名 ⊂ 母技能）同族：**结构关系做成规则，
+    只有真·同义词才进表。**
+
+    倍数被丢掉是**有意的**：本系统的属性检定难度走 `SUCCESS_TIERS`（÷2 / ÷5），
+    没有"×N"这一档。保留它没有落点，而 `灵感 → INT` 早就是这么处理的。
+    """
+    m = _ATTR_MULTIPLIER.match((name or "").strip())
+    if not m:
+        return None
+    wanted = normalize_skill_name(m.group("attr"))
+    for attr in ruleset.attributes:
+        # 属性 key 是大写三字母，而模组里 `int×4` 这样写也很常见——
+        # 大小写不是同义词问题，直接归一。
+        if wanted == attr.label or wanted.upper() == attr.key:
+            return attr.key
+    return None
+
+
 def specialization_candidates(name: str, ruleset: RulesetRead) -> list[str]:
     """把「动物学」这种**专项名**匹配回完整技能名（`科学：动物学`）。
 
@@ -647,6 +687,10 @@ def resolve_check_skill(raw_skill: str, ruleset: RulesetRead) -> tuple[str, list
         key = COC6_ATTRIBUTE_CHECKS[base]
         catalog = skill_id_catalog(ruleset)
         return "skill", [key], catalog.get(key, key)
+    attr_key = attribute_multiplier_check(base, ruleset)
+    if attr_key is not None:
+        catalog = skill_id_catalog(ruleset)
+        return "skill", [attr_key], catalog.get(attr_key, attr_key)
     wanted = normalize_skill_name(s)
     for attr in ruleset.attributes:
         if wanted in (attr.key, attr.label):

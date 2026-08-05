@@ -31,6 +31,7 @@ from typing import Any
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.config import get_settings
 from app.core.keeper.contract.module_loader import ScenarioModule
 from app.core.module_import.job_state import (
     STATUS_FAILED,
@@ -132,8 +133,21 @@ async def run_import_job(
         )
 
     outcome = await _register(job_id, out_structured, session_factory, result=result)
-    shutil.rmtree(work_dir, ignore_errors=True)
+    _cleanup(work_dir)
     return outcome
+
+
+def _cleanup(work_dir: Path) -> None:
+    """删中间产物；`MODULE_IMPORT_KEEP_WORK=1` 时留下来。
+
+    🔴 留现场的理由：失败的中间产物是唯一能回答"自修跑没跑、修了什么"的东西，
+    而删掉之后只能靠再花一次 ¥0.35 重现——**且结果未必一样**（实测同一份 PDF
+    四次跑出三种不同的失败）。默认仍然删：那些文件含第三方正文。
+    """
+    if get_settings().module_import_keep_work:
+        logger.info("module_import_work_kept", path=str(work_dir))
+        return
+    shutil.rmtree(work_dir, ignore_errors=True)
 
 
 async def _finish_failed(
@@ -154,7 +168,7 @@ async def _finish_failed(
             job.finished_at = datetime.now(UTC)
             _copy_counts(job, result)
             await db.commit()
-    shutil.rmtree(work_dir, ignore_errors=True)
+    _cleanup(work_dir)
     return ImportOutcome(ok=False, failure_reason=reason, failure_kinds=kinds)
 
 

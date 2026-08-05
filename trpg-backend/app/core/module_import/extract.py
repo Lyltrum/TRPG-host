@@ -39,6 +39,18 @@ MIN_CHARS_PER_PAGE = 20
 
 SUPPORTED_SUFFIXES = (".txt", ".pdf", ".docx", ".doc")
 
+#: 🔴 pdfplumber 判「这两个字符之间算不算一个空格」的阈值（PDF 用户单位）。
+#:
+#: 默认 3 是按西文字距定的，**中文正文的字间距本来就接近 3**，于是真正的空格
+#: 被一并吞掉：`爪击 70  1D6+1D6` 抽出来变成 `爪击70 1D6+1D6`。技能名与它的
+#: 成功率粘成一个词，下游再也分不开——之前判成"PDF 属性表被拍平"、以为要写
+#: 表格识别器，其实是这一层**没有保真搬运**。
+#:
+#: 2 是四份真实模组上量出来的拐点：粘连 46/34/14 → 0/0/3，同时汉字之间不会
+#: 被插进多余空格（继续调到 1 就开始切碎）。剩下的少数几处是脚注上标数字，
+#: 属于另一个现象，不归这个参数管。
+PDF_X_TOLERANCE = 2.0
+
 
 class UnsupportedDocumentError(ValueError):
     """这份文稿本层处理不了。**必须带上可执行的下一步**，不能只说"不支持"。"""
@@ -158,7 +170,7 @@ def _extract_pdf(path: Path) -> ExtractedDocument:
         for page_no, page in enumerate(pdf.pages, start=1):
             n_img = len(page.images)
             images += n_img
-            body = page.extract_text() or ""
+            body = page.extract_text(x_tolerance=PDF_X_TOLERANCE) or ""
             marks = "".join("\n" + image_placeholder(page_no, k + 1) + "\n" for k in range(n_img))
             pages_text.append(body + marks)
 

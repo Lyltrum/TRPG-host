@@ -73,6 +73,7 @@ FAILURE_KINDS: Final[tuple[str, ...]] = (
     "structure",
     "trace",
     "numeric",
+    "reach",
 )
 
 

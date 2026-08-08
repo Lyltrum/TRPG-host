@@ -198,6 +198,9 @@ class ValidationReport:
     # exec/29 §4.6 ⑥：骰型/百分比必须在原文出现过
     numeric_ok: bool = True
     numeric_errors: list[str] = field(default_factory=list)
+    # exec/30 §9：自称 encounter 的节点必须在图里走得到
+    reach_ok: bool = True
+    reach_errors: list[str] = field(default_factory=list)
     # 06 内容保全（软）
     content_preserve_ok: bool = True  # 仅作观察；不参与 ok
     content_preserve_suspects: list[ContentPreserveItem] = field(default_factory=list)
@@ -215,6 +218,7 @@ class ValidationReport:
         out.extend(f"[structure] {e}" for e in self.structure_errors)
         out.extend(f"[trace] {e}" for e in self.trace_errors)
         out.extend(f"[numeric] {e}" for e in self.numeric_errors)
+        out.extend(f"[reach] {e}" for e in self.reach_errors)
         return out
 
     def needs_stage1_repair(self) -> bool:
@@ -244,6 +248,7 @@ class ValidationReport:
                 "suspects": self.trace_suspects,
             },
             "numeric": {"ok": self.numeric_ok, "errors": self.numeric_errors},
+            "reach": {"ok": self.reach_ok, "errors": self.reach_errors},
             "content_preserve": {
                 "ok": self.content_preserve_ok,
                 "suspect_count": len(self.content_preserve_suspects),
@@ -278,6 +283,7 @@ class ValidationReport:
                 f"；逐字重合偏低（软）{len(self.trace_suspects)} 条"
             ),
             f"  数值忠实度：{'✓' if self.numeric_ok else '✗'} ({len(self.numeric_errors)} 条)",
+            f"  遭遇可达：{'✓' if self.reach_ok else '✗'} ({len(self.reach_errors)} 条)",
             f"  内容保全（软）：疑似丢失 {len(self.content_preserve_suspects)} 条",
         ]
         if self.all_errors():
@@ -843,6 +849,57 @@ def check_refs(module: ScenarioModule) -> list[str]:
     return errors
 
 
+ENCOUNTER_KIND = "encounter"
+
+
+def check_encounter_reachability(module: ScenarioModule) -> list[str]:
+    """自称遭遇的节点必须走得到（`exec/30 §9`）。
+
+    ## 为什么只管 encounter，不管所有节点
+
+    「孤立节点（无进无出）」这道门 §8.5 试过，**在内置 6 份模组里 4 份命中**——
+    背景资料条目本来就不是"走得到的地方"，泛化的可达性会判死我们自己的模组。
+    实测同一份好产物 23 个顶层节点里 11 个没有入边，全部合法。
+
+    `kind="encounter"` 不一样：它是**组装层自己声明**的一个封闭类别，语义就是
+    「玩家会撞上的一幕」。一幕没有任何入边 = 它在对局里永远不会发生。所以这道
+    门问的不是"这模组切得细不细"（语义、代码做不了），而是"这幕接上了没有"
+    （图不变量、机械可判）。
+
+    ## 🔴 这道门的边界，别拿它当那个 bug 的探测器
+
+    §9 那份真机坏产物**根本没有 encounter 节点**——整幕的材料压进了
+    `npcs[].kp_notes`，一个节点都没生成。所以这道门**抓不到那次失败**。
+    它守的是修法的后一半：遭遇有了自己的归宿之后，别再退化成"建了节点但
+    悬在图外"。**「材料该不该成为节点」仍然是语义判断，没有机械判据**
+    （§8.5 三个候选 + §9 复核时又量废四个，全都在内置模组上误伤）。
+    """
+    node_ids = _collect_node_ids(module.nodes)
+    incoming: dict[str, list[str]] = {}
+    for node in _iter_nodes(module.nodes):
+        for field_name in ("leads_to", "exits", "contains"):
+            for target in getattr(node, field_name):
+                if target in node_ids:
+                    incoming.setdefault(target, []).append(f"{node.id}.{field_name}")
+        if node.sub_node is not None:
+            incoming.setdefault(node.sub_node.id, []).append(f"{node.id}.sub_node")
+        for sub in node.sub_nodes:
+            incoming.setdefault(sub.id, []).append(f"{node.id}.sub_nodes")
+
+    errors: list[str] = []
+    for node in _iter_nodes(module.nodes):
+        if (node.kind or "").strip().lower() != ENCOUNTER_KIND:
+            continue
+        if incoming.get(node.id):
+            continue
+        errors.append(
+            f"遭遇节点 {node.id!r} 没有任何入边（leads_to/exits/contains 都没人指向它），"
+            "这一幕在对局里永远不会发生：请从触发它的调查点用 leads_to 指过来，"
+            "或用 exits 接上它发生的地点"
+        )
+    return errors
+
+
 _FACT_TIERS = {"diegetic", "meta"}
 _FACT_KINDS = {"clue", "npc_knowledge", "truth"}
 
@@ -1358,11 +1415,13 @@ def validate_assembled(
     skill_errors: list[str] = []
     leak_errors: list[str] = []
     facts_errors: list[str] = []
+    reach_errors: list[str] = []
     if module is not None:
         ref_errors = check_refs(module)
         skill_errors = check_skills(module, ruleset)
         leak_errors = check_leak(module)
         facts_errors = check_facts(module)
+        reach_errors = check_encounter_reachability(module)
     else:
         schema_errors = schema_errors or ["ScenarioModule.model_validate 失败"]
 
@@ -1390,6 +1449,7 @@ def validate_assembled(
     structure_ok = not structure_errors
     trace_ok = not trace_errors
     numeric_ok = not numeric_errors
+    reach_ok = not reach_errors
     ok = (
         schema_ok
         and ref_ok
@@ -1402,6 +1462,7 @@ def validate_assembled(
         and structure_ok
         and trace_ok
         and numeric_ok
+        and reach_ok
     )
     return ValidationReport(
         ok=ok,
@@ -1428,6 +1489,8 @@ def validate_assembled(
         trace_suspects=trace_suspects,
         numeric_ok=numeric_ok,
         numeric_errors=numeric_errors,
+        reach_ok=reach_ok,
+        reach_errors=reach_errors,
         content_preserve_ok=len(suspects) == 0,
         content_preserve_suspects=suspects,
     )

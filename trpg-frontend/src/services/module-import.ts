@@ -62,6 +62,7 @@ export const FAILURE_KIND_LABELS: Record<string, string> = {
   structure: '结构不完整',
   trace: '追不回原文',
   numeric: '数值对不上',
+  reach: '有一幕玩家走不到',
 }
 
 export function isJobRunning(job: ModuleImportJob): boolean {

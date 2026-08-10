@@ -108,7 +108,10 @@ async def _run(room_code: str, player_state: str):
             player_state=player_state,  # ty: ignore[invalid-argument-type]
             checks=[CheckRequest(skill_id="spot-hidden", reason="环顾门厅")],
             current_node_id="cellar",
-            moves=[PlayerMove(player="凌铭辉", node_id="cellar")],
+            # 目标必须跟 current_node_id 不同：两个字段指同一个节点是"只有他去"的
+            # 自相矛盾写法，执行层会消解成只跑 moves（房间指针因此不动），
+            # 这条用例要验的是"场景照推"，会被那条消解规则遮住。
+            moves=[PlayerMove(player="凌铭辉", node_id="hidden-safe")],
         )
 
     async def fake_narrate_prose(

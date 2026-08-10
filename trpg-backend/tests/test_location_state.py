@@ -15,7 +15,7 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7.content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys, situation_blocks
-from app.core.keeper.capabilities.movement.schema import NewLocation, PlayerMove
+from app.core.keeper.capabilities.movement.schema import HidingChange, NewLocation, PlayerMove
 from app.core.keeper.capabilities.movement.situation import render_improvised_locations
 from app.core.keeper.capabilities.world_state.executor import update_state_impl
 from app.core.keeper.contract.decision import KeeperDecision
@@ -28,6 +28,7 @@ from app.core.keeper.runtime.location_state import (
     format_party_locations,
     group_players,
     is_party_split,
+    load_hidden_players,
     load_improvised_locations,
     load_player_locations,
     location_of,
@@ -245,6 +246,50 @@ async def test_declaring_a_scene_with_no_node_id_also_clears(party) -> None:
     assert location_of(await _state(deps), a_id) is None
 
 
+async def test_clearing_only_moves_the_speakers_not_the_whole_room(party) -> None:
+    """🔴 一个人走出地图，不该把**所有人**的位置一起抹掉（2026-08-10 多人实测）。
+
+    实测证据链：阿贵一个人说「我离开客厅去门厅」（门厅不是剧本节点）→ 清空 →
+    在地下室的阿福也丢了位置 → `group_players` 判成全都不知道在哪 = 同一组 =
+    **不再算分头** → 下一段本该只发给阿福的结算叙事广播给了全房间
+    （事件表里那一行 audience 为空）。**分头状态被一次清空推平，而私密性正是
+    从位置派生的。**
+    """
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    await execute_side_effects(
+        deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="cellar")])
+    )
+    # 本轮发言的是阿福（fixture 的 turn_player_ids），他走到了图外
+    decision = KeeperDecision.model_validate(
+        {"state_updates": [{"key": "当前场景", "value": "屋后的小巷"}]}
+    )
+    await execute_side_effects(deps, decision)
+
+    state = await _state(deps)
+    assert location_of(state, a_id) is None, "走出去的人该被清掉"
+    assert location_of(state, b_id) == "cellar", "🔴 留在地窖的人不该被连带清空"
+    assert is_party_split(state, [a_id, b_id]) is True, "分头状态必须还在"
+
+
+async def test_clearing_also_drops_stealth(party) -> None:
+    """离开地点 → 解除隐匿（exec/19 #46）。清空也是"离开"，第一版漏了这一半。
+
+    实测：阿贵藏在窗帘后，说「我离开客厅去门厅」，之后 `隐匿玩家` 还挂着他。
+    """
+    deps, a_id, _b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    await execute_side_effects(
+        deps, KeeperDecision(hiding=[HidingChange(player="阿福", hidden=True)])
+    )
+    assert load_hidden_players(await _state(deps)) == {a_id}
+    leaving = KeeperDecision.model_validate(
+        {"state_updates": [{"key": "当前场景", "value": "屋后小巷"}]}
+    )
+    await execute_side_effects(deps, leaving)
+    assert load_hidden_players(await _state(deps)) == set()
+
+
 async def test_an_ordinary_turn_leaves_the_pointer_alone(party) -> None:
     """没提场景也没给节点的普通轮次（对话、检定结算）不该动指针。"""
     deps, a_id, _b_id = party
@@ -349,6 +394,37 @@ def test_no_improvised_location_renders_nothing() -> None:
     """退化保证：一局都没用到时，局面块与 exec/32 之前逐字一致。"""
     module = load_module(_FIXTURE_MODULE)
     assert render_improvised_locations(SituationContext(module, {CURRENT_NODE_KEY: "hall"})) == ""
+
+
+async def test_a_solo_move_to_the_same_node_does_not_drag_the_others(party) -> None:
+    """🔴 「我去地下室，你留在客厅」——被留下的人不许被拖走（2026-08-10 多人实测）。
+
+    裁决器同时写了 `current_node_id=cellar` 和 `moves=[阿福→cellar]`
+    （thinking 写着"处理分头"）。两个字段说的是同一次移动，`moves` 点了名，
+    它更具体。此前 `current_node_id` 先执行，把同处的阿贵一起带进了地窖：
+    叙事说他在客厅、位置说他在地窖。
+    """
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    decision = KeeperDecision(
+        current_node_id="cellar",
+        moves=[PlayerMove(player="阿福", node_id="cellar")],
+    )
+    _report, issues = await execute_side_effects(deps, decision)
+    assert issues == []
+    state = await _state(deps)
+    assert location_of(state, a_id) == "cellar"
+    assert location_of(state, b_id) == "hall", "🔴 被留下的人不该跟着走"
+    assert is_party_split(state, [a_id, b_id]) is True
+
+
+async def test_a_normal_group_move_still_takes_everyone(party) -> None:
+    """退化保证：`moves` 没指向同一个节点时，#37 的"同处者跟随"照旧。"""
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    await execute_side_effects(deps, KeeperDecision(current_node_id="cellar"))
+    state = await _state(deps)
+    assert location_of(state, a_id) == "cellar" and location_of(state, b_id) == "cellar"
 
 
 async def test_move_with_unknown_node_or_player_is_issue_not_crash(party) -> None:

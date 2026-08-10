@@ -307,16 +307,43 @@ def _check_request_envelope(
     )
 
 
-async def _broadcast_check_request(room_id: str, notice: CheckRequestNotice) -> None:
-    """广播一次"待掷检定"通知（两段式玩家掷骰）——守秘人裁决需要检定后
-    随叙事一起推给房间，玩家在前端看到卡片、点击掷骰后才真正生成骰值。"""
+async def _broadcast_check_request(
+    room_id: str, notice: CheckRequestNotice, db: AsyncSession | None = None
+) -> None:
+    """推一次"待掷检定"通知（两段式玩家掷骰）：玩家看到卡片、点击后才生成骰值。
+
+    🔴 **按位置裁受众**（2026-08-10 多人实测）：此前是全房间广播，实测中在客厅
+    的阿贵收到了阿福在地下室的「侦察」卡片——同一条投递隔离，叙事那一半早就
+    按位置裁了，检定这一半漏了。**同一件事的两头，一头做了一头没做。**
+    （服务端拒绝替掷，所以这是泄露与噪声，不是越权掷骰。）
+
+    `db=None` 时退化成全房间广播——只留给拿不到会话的调用点，现在没有。
+    """
     payload, event_type = _check_request_envelope(notice)
     envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))
-    await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
+    await _send_to_colocated(db, room_id, notice.player_id, envelope.model_dump(by_alias=True))
 
 
-async def _broadcast_check_result(room_id: str, notice: CheckResultNotice) -> None:
-    """广播一次检定结果（玩家点击掷骰确认后，服务端权威生成骰值的结果）。"""
+async def _send_to_colocated(
+    db: AsyncSession | None, room_id: str, player_id: str, envelope: dict
+) -> None:
+    """发给跟这个人同处一地的连接；未分头（或拿不到会话）时照旧全房间。"""
+    audience = (
+        await _audience_at_speaker_location(db, room_id, player_id) if db is not None else None
+    )
+    if audience is None:
+        await manager.broadcast(room_id, envelope)
+    else:
+        await manager.send_to_players(room_id, audience, envelope)
+
+
+async def _broadcast_check_result(
+    room_id: str, notice: CheckResultNotice, db: AsyncSession | None = None
+) -> None:
+    """推一次检定结果（玩家点击掷骰确认后，服务端权威生成的骰值）。
+
+    受众同 `_broadcast_check_request`：别处的人不该看见这边掷了多少。
+    """
     if notice.kind == "san":
         payload: SanCheckResultPayload | CheckResultPayload = SanCheckResultPayload(
             player_id=notice.player_id,
@@ -343,7 +370,7 @@ async def _broadcast_check_result(room_id: str, notice: CheckResultNotice) -> No
         )
         event_type = "check.result"
     envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))
-    await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
+    await _send_to_colocated(db, room_id, notice.player_id, envelope.model_dump(by_alias=True))
 
 
 async def _broadcast_stat_change(room_id: str, notice: StatChangeNotice) -> None:
@@ -675,7 +702,7 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
     rolled: set[str] = set()
 
     async def _push(notice: CheckResultNotice) -> None:
-        await _broadcast_check_result(room_id, notice)
+        await _broadcast_check_result(room_id, notice, db)
         rolled.add(notice.check_request_id)
 
     for _ in range(_AI_AUTO_ROLL_LIMIT):
@@ -698,14 +725,14 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
         for notice in outcome.check_results:
             if notice.check_request_id in rolled:
                 continue
-            await _broadcast_check_result(room_id, notice)
+            await _broadcast_check_result(room_id, notice, db)
         for notice in outcome.stat_changes:
             await _broadcast_stat_change(room_id, notice)
         if outcome.text:
             await _broadcast_narration(db, room_id, pending.player_id, outcome.text)
         await _deliver_narration_segments(db, room_id, outcome.segments)
         for notice in outcome.check_requests:
-            await _broadcast_check_request(room_id, notice)
+            await _broadcast_check_request(room_id, notice, db)
     logger.warning("ai_auto_roll_limit_reached", room_id=room_id, limit=_AI_AUTO_ROLL_LIMIT)
 
 
@@ -797,7 +824,7 @@ async def _run_turn(
         )
     await _deliver_narration_segments(db, room_id, outcome.segments)
     for notice in outcome.check_requests:
-        await _broadcast_check_request(room_id, notice)
+        await _broadcast_check_request(room_id, notice, db)
 
 
 async def _handle_check_roll(
@@ -834,7 +861,7 @@ async def _handle_check_roll(
             pushed: set[str] = set()
 
             async def _push_result(notice: CheckResultNotice) -> None:
-                await _broadcast_check_result(room_id, notice)
+                await _broadcast_check_result(room_id, notice, db)
                 pushed.add(notice.check_request_id)
 
             outcome = await narrator.resolve_check(
@@ -860,14 +887,14 @@ async def _handle_check_roll(
         for notice in outcome.check_results:
             if notice.check_request_id in pushed:
                 continue  # 骰子落地那一刻已经推过了
-            await _broadcast_check_result(room_id, notice)
+            await _broadcast_check_result(room_id, notice, db)
         for notice in outcome.stat_changes:
             await _broadcast_stat_change(room_id, notice)
         if outcome.text:
             await _broadcast_narration(db, room_id, player_id, outcome.text)
         await _deliver_narration_segments(db, room_id, outcome.segments)
         for notice in outcome.check_requests:
-            await _broadcast_check_request(room_id, notice)
+            await _broadcast_check_request(room_id, notice, db)
         # 这位掷完了，排在他后面的 AI 检定该轮到了（exec/21 第三层）
         await _auto_roll_ai_checks(db, websocket, room_id)
     finally:

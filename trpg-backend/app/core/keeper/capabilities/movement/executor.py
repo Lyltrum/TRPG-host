@@ -69,6 +69,24 @@ async def execute_movement(
         except KeeperToolError as exc:
             issues.append(f"新地点未建立：{exc}")
 
+    moves = list(getattr(decision, "moves", ()))
+    if node_id is not None and any(move.node_id == node_id for move in moves):
+        # 🔴 矛盾信号消解（2026-08-10 多人实测）：`moves` 已经把某个人**单独**挪到了
+        # `current_node_id` 指的那个地方——那就是"只有他去"的意思。
+        #
+        # 实测原话「我去地下室看看，阿贵你留在客厅」，裁决器写了
+        # `current_node_id=basement-laboratory` **且** `moves=[阿福→basement-laboratory]`
+        # （thinking 写着"处理分头"）。而 `current_node_id` 会带上"此刻与发言者同处
+        # 的人"（`exec/19 #37` 的默认值），于是被明确留下的阿贵**也被拖进了地下室**：
+        # 叙事说他在客厅、结构化位置说他在地下室，两边各说各话（这类只能读事件表
+        # 才发现，`exec/19 #43` 同族）。模型随后自己造了 `阿贵位置` 这样的自由文本键
+        # 来记它表达不了的东西——「看到模型往奇怪的地方塞，先问它还能塞哪」。
+        #
+        # 两个字段说的是同一次移动时，**更具体的那个赢**：`moves` 点了名。
+        # 这不是给 #37 的默认值加例外，是拒绝执行一条自相矛盾的指令。
+        report.append(f"场景定位交给 moves 执行（{node_id} 已被逐人指定）")
+        node_id = None
+
     located = False
     if node_id:
         # node_id 存在性由 set_current_node_impl 校验（module.node_by_id）——
@@ -96,7 +114,7 @@ async def execute_movement(
         except KeeperToolError as exc:
             issues.append(f"场景指针清空未执行：{exc}")
 
-    for move in getattr(decision, "moves", ()):
+    for move in moves:
         try:
             report.append(await move_player_impl(deps, move.player, move.node_id))
         except KeeperToolError as exc:

@@ -24,7 +24,11 @@ from app.controller import ws as ws_module
 from app.core.db import Base
 from app.core.keeper.runtime.location_state import PLAYER_LOCATION_KEY
 from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
-from app.core.narration.contract import CheckRequestNotice, CheckResultNotice
+from app.core.narration.contract import (
+    CheckRequestNotice,
+    CheckResultNotice,
+    StatChangeNotice,
+)
 from app.models.room import Player, Room
 
 _db_path = Path(tempfile.mkdtemp(prefix="trpg-check-deliver-")) / "deliver.db"
@@ -125,3 +129,37 @@ async def test_without_a_session_it_falls_back_to_broadcast(sent) -> None:
     room_id, a_id, _b_id = await _room({CURRENT_NODE_KEY: "hall"})
     await ws_module._broadcast_check_request(room_id, _request(a_id))
     assert sent == [("check.request", None)]
+
+
+# ── HP 变更（exec/33 §3.1）：跟检定同一套受众 ──
+
+
+def _stat(player_id: str) -> StatChangeNotice:
+    return StatChangeNotice(player_id=player_id, hp=7, hp_max=12, reason="被壁橱里的东西抓伤")
+
+
+async def test_split_party_only_the_hurt_group_sees_the_hp_change(sent) -> None:
+    """🔴 payload 里带着 `reason`，全房间推等于告诉另一组**这边有人受伤了、
+    还是被什么伤的**。掉血是虚构世界里发生的事，按位置裁。"""
+    room_id, a_id, b_id = await _room({CURRENT_NODE_KEY: "hall"})
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        room.keeper_state = {
+            CURRENT_NODE_KEY: "hall",
+            PLAYER_LOCATION_KEY: f"{a_id}@cellar, {b_id}@hall",
+        }
+        await db.commit()
+
+    async with _session_factory() as db:
+        await ws_module._broadcast_stat_change(room_id, _stat(a_id), db)
+
+    assert sent == [("character.stat_changed", [a_id])]
+
+
+async def test_hp_change_still_broadcasts_when_together(sent) -> None:
+    """退化保证：没分头时与 §3.1 之前逐字一致（全房间）。"""
+    room_id, a_id, _b_id = await _room({CURRENT_NODE_KEY: "hall"})
+    async with _session_factory() as db:
+        await ws_module._broadcast_stat_change(room_id, _stat(a_id), db)
+    assert sent == [("character.stat_changed", None)]

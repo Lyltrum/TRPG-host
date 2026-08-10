@@ -81,3 +81,20 @@ async def join_room(
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]
+
+
+#: `party.update` / `keeper.busy` 是**环境事件**：每一轮都会发，跟被测行为无关
+#: （`exec/33 §5.4`）。按顺序读消息的用例只想要"下一条真正的游戏事件"。
+#:
+#: 🔴 这个跳过是**故意的、且有边界**：这两个事件本身的契约由
+#: `tests/test_chat_ws.py` 显式守住（含失败路径上 busy 必须熄灭那条），
+#: 不是没人测。这里跳过只是为了别让每个用例都去数环境事件的条数。
+AMBIENT_WS_EVENTS = frozenset({"party.update", "keeper.busy"})
+
+
+def next_game_event(ws, *, skip=AMBIENT_WS_EVENTS):  # noqa: ANN001, ANN201
+    """读到下一条非环境事件为止。"""
+    while True:
+        envelope = ws.receive_json()
+        if envelope.get("type") not in skip:
+            return envelope

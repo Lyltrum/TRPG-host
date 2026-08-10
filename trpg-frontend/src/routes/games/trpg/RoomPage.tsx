@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Users, Map, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll, EyeOff } from 'lucide-react'
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react'
-import type { ChatMessage, PartyCharacter } from 'trpg-sdk'
+import type { ChatMessage, PartyCharacter, PartyUpdatePayload } from 'trpg-sdk'
 import { useRoomStore } from '@/stores/room-store'
 import { useGameStore } from '@/stores/game-store'
 import { useAuthStore } from '@/stores/auth-store'
@@ -605,6 +605,13 @@ export default function RoomPage() {
   // 不做成常驻开关：忘了关会把整局都变成私密，而玩家不会察觉。
   const [privateAction, setPrivateAction] = useState(false)
   const [typing, setTyping] = useState(false)
+  // 🔴 守秘人在忙（exec/33 §5.4）：上面那个 typing 是**本地**在自己提交时点亮
+  // 的，没发言的人看不到——分头时另一组因此是整整十几秒黑屏。这条来自服务端
+  // 广播，属于元层信息（不含任何虚构内容）。
+  const [keeperBusy, setKeeperBusy] = useState(false)
+  // 我自己的空间处境（我在哪 · 谁跟我在一处 · 别处还有几组）。逐人裁过再发，
+  // 不是全房间的分组表。它存在的理由：系统把位置认错时此前没人看得见。
+  const [party, setParty] = useState<PartyUpdatePayload | null>(null)
   const [openPanel, setOpenPanel] = useState<string | null>(null)
   const [sheetPage, setSheetPage] = useState<'info' | 'background'>('info')
   // 队友角色卡（exec/14 P5.3）：真人桌上卡是互相传阅的，此前系统只能读回
@@ -961,6 +968,12 @@ export default function RoomPage() {
           content: reason ? `🎲 ${label}（${reason}）` : `🎲 ${label}`,
           time: now,
         }])
+      } else if (envelope.type === 'party.update') {
+        // exec/33 §5.4：我自己的空间处境。逐人裁过再发，别处那组在哪不在里面。
+        setParty(envelope.payload)
+      } else if (envelope.type === 'keeper.busy') {
+        // 守秘人开始/结束这一轮。没发言的人靠它知道"他在忙"，而不是盯着黑屏。
+        setKeeperBusy(envelope.payload.busy)
       } else if (envelope.type === 'error') {
         // QUEUED 不是错误，是**回执**：话已经记下了，守秘人处理完手头这轮就会
         // 回到你（exec/19 #36）。所以这一支不清打字指示——它确实还在写。
@@ -1076,6 +1089,14 @@ export default function RoomPage() {
     } else {
       sdk.roomSocket.rollCheck(playerId, { checkRequestId: pendingCheck.id })
     }
+  }
+
+  // 会合确认（exec/33 §5.2）：走到别人所在的地方时，系统**先按没碰上处理**，
+  // 由当事人点这一下才真的并组。只有确认没有否认——不确认就是维持分离，
+  // 那本来就是默认与安全方向；也没有超时自动确认（超时自动 = 静默泄露）。
+  const handleConfirmMerge = () => {
+    if (!playerId) return
+    sdk.roomSocket.confirmMerge(playerId)
   }
 
   const handleDiceResult = (result: number, diceType: DiceType) => {
@@ -1345,8 +1366,11 @@ export default function RoomPage() {
           )
         })}
 
-        {/* Typing indicator（只属于主持人频道——讨论区没有"守秘人正在输入"这回事） */}
-        {channel === 'dm' && typing && (
+        {/* Typing indicator（只属于主持人频道——讨论区没有"守秘人正在输入"这回事）
+            🔴 `typing` 只由**自己**的提交点亮，没发言的人看不到；分头时另一组
+            因此是整整十几秒黑屏（exec/33 §5.4）。`keeperBusy` 来自服务端广播，
+            补的正是这一半——线下你至少看得见 KP 在跟别人说话。 */}
+        {channel === 'dm' && (typing || keeperBusy) && (
           <div className="flex gap-2.5 animate-[msgIn_0.3s_ease]">
             <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-sm bg-[#faf5eb] border border-brass">
               📜
@@ -1356,7 +1380,9 @@ export default function RoomPage() {
                 的符号"上已经翻过一次车：队友角色卡代码完整，入口是顶栏一个没
                 文字的小图标，真人实测直接反馈"没有实现"。 */}
             <div className="bg-panel inline-flex gap-2 items-center px-3.5 py-2.5 rounded-md">
-              <span className="text-[12px] text-text-body">守秘人正在思考</span>
+              <span className="text-[12px] text-text-body">
+                {typing ? '守秘人正在思考' : '守秘人正在跟别处的调查员说话'}
+              </span>
               {[0, 1, 2].map((i) => (
                 <span key={i} className="w-1.5 h-1.5 bg-brass rounded-full animate-bounce"
                   style={{ animationDelay: `${i * 0.2}s`, animationDuration: '1.4s' }} />
@@ -1428,6 +1454,41 @@ export default function RoomPage() {
               {character.derived.san}
               <span className="text-text-dim">/{SAN_MAX}</span>
             </span>
+          </div>
+        </div>
+      )}
+
+      {/* 🔴 我在哪（exec/33 §5.4）。真人多人实测里系统把队友拖进了地下室，而
+          界面上**一处都没有位置信息**，于是没有任何人会发现——这条的作用是把
+          静默错误变成看得见、能当场纠正的错误。
+          只在**真的分头**时出现（otherGroups > 0）：全队在一起时它是噪声。 */}
+      {channel === 'dm' && party && party.otherGroups > 0 && (
+        <div className="relative z-[1] px-3 pt-2 flex-shrink-0">
+          <div className="paper-grain relative bg-note text-ink border-l-[3px] border-brass px-3 py-2">
+            <div className="text-[11.5px] leading-[1.6]">
+              <strong className="font-semibold">你在{party.locationName ?? '未记录的地方'}</strong>
+              {party.companions.length > 1 && (
+                <span className="text-ink-soft">· 同处：{party.companions.join('、')}</span>
+              )}
+              <span className="text-ink-soft">· 另有 {party.otherGroups} 组调查员在别处</span>
+            </div>
+            {party.mergePendingAt && (
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="flex-1 text-[11.5px] leading-[1.6]">
+                  你走到了{party.mergePendingAt}——和那边的人碰上了吗？
+                  <em className="typed not-italic block text-[10px] text-ink-soft">
+                    没碰上就别点：在你确认之前，两边的消息是分开的。
+                  </em>
+                </span>
+                <button
+                  type="button"
+                  onClick={handleConfirmMerge}
+                  className="typed flex-shrink-0 bg-rust text-paper text-[11.5px] font-semibold px-2.5 py-1.5"
+                >
+                  已会合
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

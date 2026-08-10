@@ -133,8 +133,16 @@ def test_action_submit_broadcasts_utterance_then_narration(sync_client: TestClie
         _join_ws(ws, room)
         _submit_action(ws, room, "我推开吱呀作响的木门")
         echo = ws.receive_json()
+        # exec/33 §5.4：原话之后先来一条「守秘人在忙」——前端的「正在思考」是
+        # 本地在自己提交时点亮的，没发言的人看不到，分头时另一组因此是黑屏。
+        busy_on = ws.receive_json()
         narration = ws.receive_json()
+        busy_off = ws.receive_json()
+        party = ws.receive_json()
 
+    assert (busy_on["type"], busy_on["payload"]["busy"]) == ("keeper.busy", True)
+    assert (busy_off["type"], busy_off["payload"]["busy"]) == ("keeper.busy", False)
+    assert party["type"] == "party.update"
     assert echo["type"] == "action.broadcast"
     assert echo["payload"]["utterance"] == "我推开吱呀作响的木门"
     assert echo["payload"]["nickname"] == "房主"
@@ -164,18 +172,24 @@ def test_lock_released_after_narrator_failure(sync_client: TestClient) -> None:
 
         _submit_action(ws, room, "我尝试翻译古籍")
         assert ws.receive_json()["type"] == "action.broadcast"
+        assert ws.receive_json() == {"type": "keeper.busy", "payload": {"busy": True}}
         failure = ws.receive_json()
         assert failure["type"] == "error"
         assert failure["payload"]["code"] == "INTERNAL_ERROR"
         # 失败后还会广播一条可见兜底叙事——聊天区不能静默，否则玩家以为断线。
         # error 只发给发起者，这条兜底是全房间可见的。
         assert ws.receive_json()["type"] == "narration.push"
+        # 🔴 失败路径上「守秘人在忙」也必须熄灭（finally），否则它在所有人
+        # 屏幕上永远亮着。这条用例正好守住那个 early return。
+        assert ws.receive_json() == {"type": "keeper.busy", "payload": {"busy": False}}
+        assert ws.receive_json()["type"] == "party.update"
 
         # 换一个能正常返回的 narrator，立刻重试——若锁没被释放，这里会收到
         # ACTION_IN_PROGRESS 而不是 action.broadcast。
         app.state.narrator = FallbackNarrator()
         _submit_action(ws, room, "我再次尝试翻译")
         assert ws.receive_json()["type"] == "action.broadcast"
+        assert ws.receive_json() == {"type": "keeper.busy", "payload": {"busy": True}}
         assert ws.receive_json()["type"] == "narration.push"
 
 

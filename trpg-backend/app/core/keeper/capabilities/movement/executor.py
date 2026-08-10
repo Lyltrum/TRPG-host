@@ -14,19 +14,29 @@ from app.core.keeper.runtime.location_state import (
 )
 
 
-def _scene_moved_off_the_map(decision: BaseModel, facts: TurnFacts) -> bool:
-    """本轮换了场景，却没给出任何剧本节点 id（exec/19 #48）。
+def _position_left_the_map(attempted_node_id: str | None, facts: TurnFacts) -> bool:
+    """这一轮「人在哪」没能落在任何剧本节点上。
 
-    只在裁决器**明确写了新的「当前场景」**时才成立——没提场景的普通轮次
-    （对话、检定结算）不该动节点指针。
+    两种情况语义上是同一件事，都必须走清空：
+
+    - **主路没走**：裁决器换了场景却给不出节点 id（exec/19 #48）。只在它
+      **明确写了新的「当前场景」**时才成立——没提场景的普通轮次（对话、检定
+      结算）不该动节点指针。
+    - **主路失败**：给了 id 但那个 id 不是剧本节点（exec/31 #72，真机三次全中：
+      玩家说「去卡比家」，裁决器写了一个 **NPC id**）。它写下这个 id 本身就是在
+      说"人已经不在原处了"，所以不必再等场景声明。
+
+    🔴 原来这两支写成 `if / elif`：主路抛异常被 except 吞成 issue 之后，**兜底
+    永远轮不到**，指针保留旧值 = 静默说谎（护栏拿错节点的检定表卡玩家、分组也
+    跟着错）。判据：**兜底的触发条件要包含「主路失败」，不能只包含「主路没走」。**
 
     「有没有声明新场景」由 `world_state` publish 进 `TurnFacts`（那个字段是它
     的），本能力只 consume。切分之初这里直接读 `decision.state_updates`——一片
     能力伸手进另一片的字段，没有 import 所以架构测试抓不到，正是最坏的那种
     **隐式**耦合。
     """
-    if getattr(decision, "current_node_id", None):
-        return False
+    if attempted_node_id:
+        return True
     return facts.scene_name_declared is not None
 
 
@@ -43,15 +53,18 @@ async def execute_movement(
     issues: list[str] = []
 
     node_id = getattr(decision, "current_node_id", None)
+    located = False
     if node_id:
         # node_id 存在性由 set_current_node_impl 校验（module.node_by_id）——
         # 非法 id 不写入、记为 issue，不炸整轮。
         try:
             report.append(await set_current_node_impl(deps, node_id))
+            located = True
         except KeeperToolError as exc:
             issues.append(f"场景定位未执行：{exc}")
-    elif _scene_moved_off_the_map(decision, facts):
-        # 🔴 场景变了、但没有任何剧本节点对应得上（exec/19 #48）。
+    if not located and _position_left_the_map(node_id, facts):
+        # 🔴 人在剧本节点之外：换了场景却没有节点对应得上（exec/19 #48），
+        # 或者给出的 id 根本不是节点（exec/31 #72）。判据见上面那个谓词。
         #
         # 试玩实测：终局「当前场景 = 科比特家门外（警察到场）」，而节点指针还
         # 停在 basement-laboratory——玩家已经站在屋外，护栏却拿地下室的 checks[]

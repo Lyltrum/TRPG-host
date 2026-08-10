@@ -208,6 +208,47 @@ async def test_moves_override_current_node(party) -> None:
     assert is_party_split(state, [a_id, b_id]) is True
 
 
+async def test_a_bogus_node_id_clears_the_pointer_instead_of_keeping_a_lie(party) -> None:
+    """🔴 exec/31 #72：主路失败必须落进兜底，不许保留旧值。
+
+    真机三次全中——玩家说「去卡比家」（原文提到、没建节点），裁决器手上正好有
+    那个人的 **NPC id**，就把它写进了 current_node_id。set 抛异常被记成 issue，
+    而清空写在 `elif` 里，于是**永远轮不到**：指针停在旧节点，护栏拿错节点的
+    检定表去卡玩家、分组也跟着错。
+    """
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+
+    _report, issues = await execute_side_effects(
+        deps,
+        KeeperDecision(current_node_id="butler-public"),  # NPC id，不是节点 id
+    )
+    assert any("butler-public" in i for i in issues)
+    state = await _state(deps)
+    assert CURRENT_NODE_KEY not in state
+    assert load_player_locations(state) == {}
+    assert location_of(state, a_id) is None and location_of(state, b_id) is None
+
+
+async def test_declaring_a_scene_with_no_node_id_also_clears(party) -> None:
+    """exec/19 #48 原本那一支：换了场景但剧本里没有对应节点 → 承认不知道。"""
+    deps, a_id, _b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    decision = KeeperDecision.model_validate(
+        {"state_updates": [{"key": "当前场景", "value": "墓地石堆旁"}]}
+    )
+    await execute_side_effects(deps, decision)
+    assert location_of(await _state(deps), a_id) is None
+
+
+async def test_an_ordinary_turn_leaves_the_pointer_alone(party) -> None:
+    """没提场景也没给节点的普通轮次（对话、检定结算）不该动指针。"""
+    deps, a_id, _b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    await execute_side_effects(deps, KeeperDecision())
+    assert location_of(await _state(deps), a_id) == "hall"
+
+
 async def test_move_with_unknown_node_or_player_is_issue_not_crash(party) -> None:
     deps, a_id, _b_id = party
     decision = KeeperDecision(

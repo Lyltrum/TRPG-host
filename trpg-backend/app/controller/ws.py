@@ -98,6 +98,32 @@ async def _send_error(websocket: WebSocket, code: str, message: str) -> None:
     await websocket.send_json(envelope.model_dump(by_alias=True))
 
 
+#: 「点一下就该生效」的小操作等房间锁最多等这么久（秒）。一轮叙事实测 13–18s。
+_SMALL_OP_LOCK_WAIT_SECONDS = 30.0
+
+
+async def _acquire_for_small_op(room_id: str) -> str | None:
+    """等房间锁，等不到才放弃。给**不需要 LLM 的小状态修改**用。
+
+    🔴 为什么不能像 `action.submit` 那样当场拒绝（2026-08-10 多人验证跑）：
+    那两条路上被拒的是**玩家已经点下去的按钮**——「已会合」和「投掷」。锁在
+    整轮叙事期间（10 秒级）一直握着，于是真机上出现了两件事：确认会合点了
+    没反应；护栏刚说「请先完成待掷的检定」，玩家点掷骰又被同一把锁挡回去。
+    **一句话的提示 + 一个必须再点一次的按钮**，玩家只会认为坏了。
+
+    发言可以回「已记下」（话在空气里，KP 稍后处理），按钮不行——它没有缓冲区。
+    所以这里改成**等**：反正这两件事本来就该排在当前这一轮后面。
+    """
+    deadline = asyncio.get_running_loop().time() + _SMALL_OP_LOCK_WAIT_SECONDS
+    while True:
+        token = action_lock_manager.try_acquire(room_id)
+        if token is not None:
+            return token
+        if asyncio.get_running_loop().time() >= deadline:
+            return None
+        await asyncio.sleep(0.2)
+
+
 async def _broadcast_narration(
     db: AsyncSession,
     room_id: str,
@@ -223,7 +249,9 @@ async def _push_party_update(db: AsyncSession, websocket: WebSocket, room_id: st
     pending = load_pending_merges(keeper_state)
     nicknames: dict[str, str] = dict(roster)
     for location_id, members in groups:
-        merge_at = next((pending[pid] for pid in members if pid in pending), None)
+        # 待确认的人自己一组（group_players 保证），所以那一组的位置就是"他站在
+        # 哪里等确认"。**不从待确认记录里读位置**——那份拷贝已经删了，位置只有一份。
+        merge_at = location_id if any(pid in pending for pid in members) else None
         payload = PartyUpdatePayload(
             location_id=location_id,
             location_name=await _label(location_id),
@@ -247,7 +275,7 @@ async def _handle_merge_confirm(
     from app.core.keeper.runtime.location_state import confirm_merge_impl
 
     # keeper_state 是整列读-改-写，必须跟裁决那条循环串行（同 check.roll 的理由）。
-    lock_token = action_lock_manager.try_acquire(room_id)
+    lock_token = await _acquire_for_small_op(room_id)
     if lock_token is None:
         await _send_error(websocket, "ACTION_IN_PROGRESS", "守秘人正在处理其他玩家的行动，请稍候")
         return
@@ -957,8 +985,10 @@ async def _handle_check_roll(
 
     跟 action.submit 共用同一把房间锁：掷骰同样可能触发"读世界状态→跑 AI
     续写→写回"的循环，必须串行，防止和另一名玩家的提交并发读到同一份旧状态。
+    但**拿不到锁时是等，不是拒**（见 `_acquire_for_small_op`）：这是玩家已经
+    点下去的按钮，拒绝就等于让他再点一次。
     """
-    lock_token = action_lock_manager.try_acquire(room_id)
+    lock_token = await _acquire_for_small_op(room_id)
     if lock_token is None:
         await _send_error(websocket, "ACTION_IN_PROGRESS", "守秘人正在处理其他玩家的行动，请稍候")
         return

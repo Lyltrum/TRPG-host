@@ -64,7 +64,7 @@ PLAYER_LOCATION_KEY = "玩家位置"
 HIDDEN_PLAYERS_KEY = "隐匿玩家"
 
 #: 走到了别人所在的地点、但**还没被本人确认**是不是真的会合了（exec/33 §5）。
-#: 存 `player_id@node_id`，与 `PLAYER_LOCATION_KEY` 同一套编解码。
+#: 存 player_id 的逗号串（同 `HIDDEN_PLAYERS_KEY`），理由见本段末尾。
 #:
 #: ## 🔴 为什么需要它：分组此前是概率性的
 #:
@@ -84,6 +84,12 @@ HIDDEN_PLAYERS_KEY = "隐匿玩家"
 #:
 #: **位置照常写**（它仍是唯一地基，不新增第二份真相）；这个键只让 `group_players`
 #: 在**投递侧**保守一点：没确认之前，这个人自己一组。
+#:
+#: 🔴 存的是**一串 player_id**，不是 `id@地点`。第一版存了地点，于是"这张卡还
+#: 算不算数"被写成 `pending[pid] != node_id`——**位置有了第二份拷贝**，而它跟
+#: 真位置一变就对不上：全组一起换场景时那张卡被判成过期丢掉，人却还在一起，
+#: 结果就是**没人点头就合并了**（2026-08-10 多人验证跑实锤）。他在哪问
+#: `location_of` 就够了。
 PENDING_MERGE_KEY = "待确认会合"
 
 #: 这一局即兴出来的地点（exec/32）。玩家去了剧本图外的地方——「卡比家」原文
@@ -200,22 +206,25 @@ def location_of(keeper_state: dict | None, player_id: str) -> str | None:
     return load_current_node_id(keeper_state)
 
 
-def load_pending_merges(keeper_state: dict | None) -> dict[str, str]:
-    """待确认会合：player_id → 他走到的那个地点 id。编解码同逐人位置表。"""
+def load_pending_merges(keeper_state: dict | None) -> set[str]:
+    """待确认会合的人。逗号分隔的 player_id，见 `PENDING_MERGE_KEY`。"""
     if not keeper_state:
-        return {}
+        return set()
     raw = keeper_state.get(PENDING_MERGE_KEY)
     if raw is None or raw == "":
-        return {}
-    out: dict[str, str] = {}
+        return set()
+    out: set[str] = set()
     for part in str(raw).split(","):
-        part = part.strip()
-        if not part or "@" not in part:
-            continue
-        player_id, node_id = part.split("@", 1)
-        if player_id.strip() and node_id.strip():
-            out[player_id.strip()] = node_id.strip()
+        # 老格式 `id@地点` 也认：只取 id，地点那半本来就是多出来的一份拷贝。
+        player_id = part.split("@", 1)[0].strip()
+        if player_id:
+            out.add(player_id)
     return out
+
+
+def serialize_pending_merges(player_ids: set[str]) -> str:
+    """`load_pending_merges` 的逆。排序是为了写库结果可断言。"""
+    return ",".join(sorted(player_ids))
 
 
 def group_players(
@@ -329,6 +338,14 @@ async def record_merges_since(deps: KeeperDeps, before: dict[str, str | None]) -
     会合，凭空弹一张确认卡。会合的定义是"**之前不在一起，现在在一起**"，
     只有回合级的前后快照答得了这个问题。
 
+    同一份前后快照顺带**维护已经挂着的卡**：这张卡的意思是"他人在那儿，但还没
+    确认碰上了"，所以它该在**身边一个人都没有**的时候作废，而不是在"位置变了"
+    的时候作废——全组一起换个场景，人还在一起，卡不该没。作废方向永远朝隔离。
+
+    🔴 作废判定原来写在三个写入函数里（`_drop_stale_pending_merge`），跟会合
+    检测本身是同一个毛病的两半：**在中间态里判**。删掉那个函数、一并搬到这里，
+    是因为「变化」只有能看见前后两个快照的这一层答得了。
+
     AI 队友不挂卡：它没有独立意图，跟着谁走由代码定（`exec/21` 第一层）。
     """
     async with deps.write_lock, deps.session_factory() as db:
@@ -345,6 +362,13 @@ async def record_merges_since(deps: KeeperDeps, before: dict[str, str | None]) -
         )
         after = {pid: location_of(current_state, pid) for pid in before}
         pending = load_pending_merges(current_state)
+        before_pending = set(pending)
+
+        def _has_company(pid: str) -> bool:
+            return any(other != pid and here == after.get(pid) for other, here in after.items())
+
+        pending = {pid for pid in pending if _has_company(pid)}
+
         asked: list[str] = []
         for pid in sorted(humans & set(before)):
             here = after.get(pid)
@@ -361,32 +385,21 @@ async def record_merges_since(deps: KeeperDeps, before: dict[str, str | None]) -
                 if other != pid and other_here == here and before.get(other) != before.get(pid)
             ]
             if newly_together:
-                pending[pid] = here
+                pending.add(pid)
                 asked.append(pid)
-        if not asked:
-            return []
-        current_state[PENDING_MERGE_KEY] = serialize_player_locations(pending)
+        if pending == before_pending:
+            return asked
+        if pending:
+            current_state[PENDING_MERGE_KEY] = serialize_pending_merges(pending)
+        else:
+            current_state.pop(PENDING_MERGE_KEY, None)
         room.keeper_state = current_state
-        await record_event(db, deps, "keeper.merge_pending", {"players": asked})
+        if asked:
+            await record_event(db, deps, "keeper.merge_pending", {"players": asked})
+        else:
+            # 只作废、没新挂起 → 没有 record_event 顺带 commit，得自己提交。
+            await db.commit()
     return asked
-
-
-def _drop_stale_pending_merge(state: dict, player_ids: set[str], node_id: str | None) -> None:
-    """人又走了（去了别处、或位置被清空）→ 那张确认卡作废。就地改 `state`。
-
-    不清的话他会永远单独一组：**没确认就维持分离**是对的默认，但**已经离开
-    那个地点之后还挂着**就变成了永久隔离，那是另一个 bug。
-    """
-    pending = load_pending_merges(state)
-    stale = [pid for pid in player_ids if pid in pending and pending[pid] != node_id]
-    if not stale:
-        return
-    for pid in stale:
-        pending.pop(pid, None)
-    if pending:
-        state[PENDING_MERGE_KEY] = serialize_player_locations(pending)
-    else:
-        state.pop(PENDING_MERGE_KEY, None)
 
 
 def _drop_stealth_on_move(state: dict, moved_player_ids: set[str]) -> None:
@@ -475,7 +488,6 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
             locations[pid] = node_id
         current_state[PLAYER_LOCATION_KEY] = serialize_player_locations(locations)
         _drop_stealth_on_move(current_state, moved_away)
-        _drop_stale_pending_merge(current_state, movers, node_id)
         room.keeper_state = current_state
         await record_event(db, deps, "keeper.node", {"node_id": node_id, "title": title})
     return f"当前场景节点：{title}（{node_id}）"
@@ -571,8 +583,6 @@ async def clear_current_node_impl(deps: KeeperDeps) -> str:
         # 离开原地点 → 解除隐匿（exec/19 #46）。清空也是"离开"，第一版漏了这一半：
         # 实测里阿贵藏在窗帘后、说"我离开客厅去门厅"，之后 `隐匿玩家` 还挂着他。
         _drop_stealth_on_move(current_state, leaving)
-        # 人已经不在那个地点了，那张会合确认卡作废（exec/33 §5.3）
-        _drop_stale_pending_merge(current_state, leaving, None)
         room.keeper_state = current_state
         await record_event(db, deps, "keeper.node", {"node_id": None, "title": None})
     return "场景已离开剧本节点范围，节点指针清空"
@@ -601,7 +611,6 @@ async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> 
         current_state[PLAYER_LOCATION_KEY] = serialize_player_locations(locations)
         # 离开原地点 → 解除隐匿（exec/19 #46），与 set_current_node_impl 同口径
         _drop_stealth_on_move(current_state, moved_away)
-        _drop_stale_pending_merge(current_state, {player.id}, node_id)
         room.keeper_state = current_state
         await record_event(
             db,
@@ -656,9 +665,10 @@ async def confirm_merge_impl(db: AsyncSession, room_id: str, player_id: str) -> 
     pending = load_pending_merges(current_state)
     if player_id not in pending:
         return False
-    node_id = pending.pop(player_id)
+    node_id = location_of(current_state, player_id)
+    pending.discard(player_id)
     if pending:
-        current_state[PENDING_MERGE_KEY] = serialize_player_locations(pending)
+        current_state[PENDING_MERGE_KEY] = serialize_pending_merges(pending)
     else:
         current_state.pop(PENDING_MERGE_KEY, None)
     room.keeper_state = current_state

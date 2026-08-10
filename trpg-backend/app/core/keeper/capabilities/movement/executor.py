@@ -94,8 +94,11 @@ async def execute_movement(
         # 两种写法的区别只在**谁被点名**：点自己 = 我一个人去；点别人 = 带上他们。
         report.append(f"场景定位交给 moves 执行（{node_id} 已被逐人指定）")
         node_id = None
+        handed_to_moves = True
+    else:
+        handed_to_moves = False
 
-    located = False
+    located = handed_to_moves
     if node_id:
         # node_id 存在性由 set_current_node_impl 校验（module.node_by_id）——
         # 非法 id 不写入、记为 issue，不炸整轮。
@@ -105,7 +108,11 @@ async def execute_movement(
         except KeeperToolError as exc:
             issues.append(f"场景定位未执行：{exc}")
     if not located and _position_left_the_map(node_id, facts):
-        # 🔴 人在剧本节点之外：换了场景却没有节点对应得上（exec/19 #48），
+        # 🔴 `located` 把"消解掉的那一支"也算进来（2026-08-10 验证跑）：消解的
+        # 意思是**这一轮的落点由 moves 逐人负责**，不是"大家都走出了剧本图"。
+        # 漏算的后果是它紧接着落进下面这条清空——把明确留在原地的队友一并抹掉。
+        #
+        # 人在剧本节点之外：换了场景却没有节点对应得上（exec/19 #48），
         # 或者给出的 id 根本不是节点（exec/31 #72）。判据见上面那个谓词。
         #
         # 试玩实测：终局「当前场景 = 科比特家门外（警察到场）」，而节点指针还

@@ -235,7 +235,7 @@ async def test_a_speaker_awaiting_merge_confirmation_still_gets_his_own_segment(
         room.keeper_state = {
             **(room.keeper_state or {}),
             PLAYER_LOCATION_KEY: f"{b_id}@hall",
-            PENDING_MERGE_KEY: f"{b_id}@hall",
+            PENDING_MERGE_KEY: b_id,
         }
         await db.commit()
 

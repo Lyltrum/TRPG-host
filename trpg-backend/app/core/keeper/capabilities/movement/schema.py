@@ -120,5 +120,15 @@ FIELD_CAPABILITIES = {
 
 
 def audit_fields(decision: BaseModel) -> Mapping[str, object]:
-    """位置是多人局里一切的地基，逐人记谁去了哪。"""
-    return {"moves": [f"{m.player}→{m.node_id}" for m in getattr(decision, "moves", ())]}
+    """位置是多人局里一切的地基，逐人记谁去了哪。
+
+    🔴 `new_location` 也要留痕：2026-08-10 真机实测时它**不在这里**，于是
+    `keeper.decision` 里看不出地点是哪一轮申请的，只能靠 `keeper.location`
+    事件反推。加一个字段就要回来加一行——同「骨架里每一处逐个列出各能力字段
+    的地方」那条判据。
+    """
+    new_location = getattr(decision, "new_location", None)
+    return {
+        "moves": [f"{m.player}→{m.node_id}" for m in getattr(decision, "moves", ())],
+        "new_location": new_location.name if new_location is not None else None,
+    }

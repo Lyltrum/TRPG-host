@@ -132,7 +132,7 @@ async def test_splitting_apart_needs_no_confirmation(party) -> None:
     deps, a_id, b_id = party
     await _split(deps)
     state = await _state(deps)
-    assert load_pending_merges(state) == {}
+    assert load_pending_merges(state) == set()
     assert is_party_split(state, [a_id, b_id]) is True
 
 
@@ -143,7 +143,7 @@ async def test_moving_to_an_empty_place_is_not_a_merge(party) -> None:
     await execute_side_effects(
         deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="hidden-safe")])
     )
-    assert load_pending_merges(await _state(deps)) == {}
+    assert load_pending_merges(await _state(deps)) == set()
 
 
 # ── 会合：挂起，等当事人确认 ────────────────────────
@@ -158,7 +158,7 @@ async def test_walking_into_someone_holds_them_apart_until_confirmed(party) -> N
         deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="hall")])
     )
     state = await _state(deps)
-    assert load_pending_merges(state) == {b_id: "hall"}
+    assert load_pending_merges(state) == {b_id}
     # 位置确实写了（位置是唯一地基，不新增第二份真相）
     assert state["玩家位置"].count("hall") == 2
     # 但投递上还是两组——判错的方向必须朝保密
@@ -175,7 +175,7 @@ async def test_confirming_merges_them(party) -> None:
     async with _session_factory() as db:
         assert await confirm_merge_impl(db, deps.room_id, b_id) is True
     state = await _state(deps)
-    assert load_pending_merges(state) == {}
+    assert load_pending_merges(state) == set()
     assert is_party_split(state, [a_id, b_id]) is False
 
 
@@ -203,11 +203,31 @@ async def test_leaving_again_cancels_the_card(party) -> None:
     await execute_side_effects(
         deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="hall")])
     )
-    assert load_pending_merges(await _state(deps)) == {b_id: "hall"}
+    assert load_pending_merges(await _state(deps)) == {b_id}
     await execute_side_effects(
         deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="cellar")])
     )
-    assert load_pending_merges(await _state(deps)) == {}
+    assert load_pending_merges(await _state(deps)) == set()
+
+
+async def test_the_card_survives_the_whole_group_changing_scene(party) -> None:
+    """🔴 全组一起换个地方 → 人还在一起 → 那张卡**不作废**（2026-08-10 验证跑）。
+
+    第一版把"还算不算数"写成 `pending[player] != node_id`——待确认记录里存了
+    一份位置拷贝，位置一变就对不上，于是卡被当成过期丢掉，**没人点头就合并了**。
+    作废的条件是"身边一个人都没有"，不是"位置变了"。
+    """
+    deps, a_id, b_id = party
+    await _split(deps)
+    await execute_side_effects(
+        deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="hall")])
+    )
+    assert load_pending_merges(await _state(deps)) == {b_id}
+    # 两个人一起挪到暗格（谁都没走散）
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hidden-safe"))
+    state = await _state(deps)
+    assert load_pending_merges(state) == {b_id}, "🔴 没确认就被合并了"
+    assert [members for _loc, members in group_players(state, [a_id, b_id])] == [[a_id], [b_id]]
 
 
 async def test_the_key_is_reserved_from_state_updates(party) -> None:
@@ -224,5 +244,5 @@ async def test_a_party_that_never_splits_never_sees_the_protocol(party) -> None:
     await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
     await execute_side_effects(deps, KeeperDecision(current_node_id="cellar"))
     state = await _state(deps)
-    assert load_pending_merges(state) == {}
+    assert load_pending_merges(state) == set()
     assert is_party_split(state, [a_id, b_id]) is False

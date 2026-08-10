@@ -99,20 +99,41 @@ async def update_state_impl(
     return f"已记录：{stored_key} = {value}", issue
 
 
+async def _current_scene_name(deps: KeeperDeps) -> str | None:
+    """本轮开始时 `keeper_state` 里记的「当前场景」。没有就是 None。"""
+    async with deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        value = (room.keeper_state or {}).get(SCENE_NAME_KEY) if room is not None else None
+    return value.strip() if isinstance(value, str) else None
+
+
 async def execute_state_updates(
     deps: KeeperDeps, decision: BaseModel, facts: TurnFacts
 ) -> tuple[list[str], list[str]]:
     """逐条记账。非法主体/保留键跳过并记 issue，不炸整轮。
 
-    顺带 publish 一条本轮事实：裁决器有没有声明新的「当前场景」。`movement`
+    顺带 publish 一条本轮事实：裁决器有没有声明**新的**「当前场景」。`movement`
     要用它决定要不要清空节点指针（`exec/19 #48`），见 `TurnFacts` 的说明。
     **在这里设而不是在写库成功之后**：判定条件与切分前逐字一致（那时它读的是
     `decision.state_updates` 原始值，不管写没写成功）。
+
+    🔴 **「写了」不等于「变了」**（2026-08-10 多人验证跑实锤）：裁决器几乎每轮
+    都会把「当前场景」原样重写一遍，而这里第一版只看它写没写 → `movement` 每轮
+    都以为换了场景 → 每轮清空位置表。真机后果是分头彻底失效：全房间位置一起
+    掉成 None，None 是个**吸收态**（`group_players` 判成同一组），于是不但分头
+    没了，连挂起的会合确认都被一起丢掉 = **没人点头就合并了**。
+    字段的名字（`scene_name_declared`）和两处 docstring 说的都是"新场景"，
+    只有实现没有比较新旧。
     """
     report: list[str] = []
     issues: list[str] = []
+    previous_scene = await _current_scene_name(deps)
     for update in getattr(decision, "state_updates", ()):
-        if update.key == SCENE_NAME_KEY and update.value.strip():
+        if (
+            update.key == SCENE_NAME_KEY
+            and update.value.strip()
+            and update.value.strip() != previous_scene
+        ):
             facts.scene_name_declared = update.value
         try:
             line, issue = await update_state_impl(deps, update.key, update.value, update.subject)

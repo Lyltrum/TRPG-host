@@ -12,7 +12,12 @@ import uuid
 import structlog
 from pydantic import BaseModel
 
-from app.core.keeper.contract.registry import PendingContext
+from app.core.keeper.capabilities.san_check.state import (
+    SAN_POINTS_FIRED_KEY,
+    fired_refs_at,
+    load_fired_san_points,
+)
+from app.core.keeper.contract.registry import PendingContext, TurnFacts
 from app.core.keeper.primitives import dice
 from app.core.keeper.runtime.deps import (
     KeeperDeps,
@@ -22,8 +27,10 @@ from app.core.keeper.runtime.deps import (
     resolve_character,
     write_stat,
 )
+from app.core.keeper.runtime.location_state import location_of
 from app.core.keeper.runtime.pending import PendingCheck
 from app.core.narration.contract import CheckResultNotice
+from app.models.room import Room
 
 logger = structlog.get_logger()
 
@@ -127,6 +134,53 @@ async def create_pending_san_checks(
             )
         )
     return pending, issues
+
+
+async def mark_san_points_fired(
+    deps: KeeperDeps, decision: BaseModel, _facts: TurnFacts
+) -> tuple[list[str], list[str]]:
+    """本轮发起过理智检定 → 把这些人所在节点上标注的检定点记为已触发。
+
+    只为一件事：让局面块那条提醒**不再重复**。COC7 里同一来源不重复检定，而
+    没有这笔记账的话，玩家在这个节点待几轮就会被提醒几轮（`exec/31 #73`）。
+
+    刻意做得粗：按"发起检定的人此刻在哪"整节点标掉，不去对应"标注的是哪一条"
+    ——`ModuleCheck` 没有 id，模型的 `san_checks` 里也没有指回标注的字段，
+    真要精确对应只能拿理由文本去猜，那正是**不要用自由文本当标识符**。
+    排在 movement（order 30）之后：要用的是本轮移动完成后的位置。
+    """
+    requests = list(getattr(decision, "san_checks", ()))
+    if not requests:
+        return [], []
+    async with deps.write_lock, deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            return [], ["理智检定点记账未执行：房间不存在"]
+        current_state = dict(room.keeper_state or {})
+        already = load_fired_san_points(current_state)
+        newly: list[str] = []
+        for san in requests:
+            try:
+                player, _character = await resolve_character(db, deps, san.player)
+            except KeeperToolError:
+                # 发起侧（create_pending_san_checks）已经把这条记成 issue 了，
+                # 这里不重复报，只是没有位置可记。
+                continue
+            node_id = location_of(current_state, player.id)
+            if not node_id:
+                continue
+            for ref in fired_refs_at(deps.module, node_id):
+                if ref not in already:
+                    already.append(ref)
+                    newly.append(ref)
+        if newly:
+            current_state[SAN_POINTS_FIRED_KEY] = ", ".join(already)
+            room.keeper_state = current_state
+            # 留痕**也是**这里唯一的 commit（record_event 负责提交，同 agenda）。
+            await record_event(db, deps, "keeper.san_point", {"refs": newly})
+    if not newly:
+        return [], []
+    return [f"模组标注的理智检定点已触发：{'、'.join(newly)}"], []
 
 
 async def settle_san_check(deps: KeeperDeps, pending: PendingCheck) -> CheckResultNotice:

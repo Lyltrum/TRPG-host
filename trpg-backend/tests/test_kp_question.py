@@ -115,7 +115,15 @@ async def _run(room_code: str, player_state: str):
         )
 
     async def fake_narrate_prose(
-        situation, decision, report, issues, *, max_tokens, max_chars, extra_suffix=""
+        situation,
+        decision,
+        report,
+        issues,
+        *,
+        max_tokens,
+        max_chars,
+        extra_suffix="",
+        tape_key=None,
     ):
         captured["guidance"] = decision.narration_guidance
         return "占位叙事文本。"

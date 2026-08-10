@@ -76,6 +76,10 @@ class NarrationContext:
     # 🔴 它**不改变返回值**——`NarrationOutcome.text` 仍然是完整的一段话，
     # 落库、replay、历史全部照原样走。delta 只是提前把同样的内容送到玩家眼前。
     on_delta: NarrationDeltaSink | None = None
+    # 分头叙事的流式口（`exec/33 §3.2`）。跟 `on_delta` 分开是因为分头时**没有
+    # 「全房间那一段」**：每段各有各的受众与事件 id，所以这里要的是一个工厂，
+    # 不是一个 sink。不传 = 分头段落照旧攒完整段再发（退化保证）。
+    segment_delta_sink: "SegmentDeltaSinkFactory | None" = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +146,19 @@ class NarrationSegment:
     #: 这段是「只给你一个人」的隐秘结果（②潜行 / ⑥私密行动），不是"这处的
     #: 大家都看得见"。前端据此折叠成点按查看——线下同桌旁人看得见你的屏幕。
     covert: bool = False
+    #: 这段的事件 id。**流式时必须在开流之前就有**——delta 靠它跟最终那条
+    #: `narration.push` 认亲（`exec/28`），所以身份要先于第一个字存在。
+    #: 非流式路径为 None，由投递层落库时分配（行为与 `exec/33 §3.2` 之前一致）。
+    event_id: str | None = None
+
+
+#: 给「一段」取一个 delta 投递口：入参是这一段的事件 id 与受众，返回只发给
+#: 这几个人的 sink（`exec/33 §3.2`）。
+#:
+#: 🔴 **受众是入参，不是 sink 自己去查**：并行叙事落地那一刻，全房间广播的
+#: delta 就是泄露——两组同时在写，谁的字都会推到对面屏幕上。把受众放进签名里，
+#: 是让"忘了裁"变成一个类型错误而不是一次静默的泄密。
+SegmentDeltaSinkFactory = Callable[[str, tuple[str, ...]], "NarrationDeltaSink"]
 
 
 #: 「骰子已经掷出来了」的即时回调（见 `Narrator.resolve_check`）。

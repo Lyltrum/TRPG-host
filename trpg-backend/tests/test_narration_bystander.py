@@ -106,7 +106,15 @@ def _stub(agent: KeeperAgent) -> list[str]:
         return KeeperDecision(thinking="无事", narration_guidance="继续")
 
     async def fake_narrate_prose(
-        situation, decision, report, issues, *, max_tokens, max_chars, extra_suffix=""
+        situation,
+        decision,
+        report,
+        issues,
+        *,
+        max_tokens,
+        max_chars,
+        extra_suffix="",
+        tape_key=None,
     ):
         suffixes.append(extra_suffix)
         return f"第{len(suffixes)}段叙事。"

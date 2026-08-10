@@ -27,6 +27,8 @@ from app.core.coc7.rules import (
     GENERATION_POINT_BUY,
     NON_ALLOCATABLE_SKILL_IDS,
     SKILL_CAP,
+    evaluate_skill_base,
+    evaluate_skill_points_formula,
     validate_character_with_occupation,
 )
 from app.core.db import Base
@@ -38,6 +40,7 @@ from app.service.ai_player import (
     count_ai_players,
     create_ai_player,
 )
+from app.service.character_generator import DEFAULT_AGE_RANGE, roll_character_sheet
 
 _RULESET = build_coc7_ruleset()
 
@@ -122,6 +125,47 @@ def test_never_allocates_forbidden_skills() -> None:
         skills = _allocate_skills(_RULESET, occupation, attributes, rng)
         assert not (set(skills) & NON_ALLOCATABLE_SKILL_IDS)
         assert all(v <= SKILL_CAP for v in skills.values())
+
+
+def test_both_point_pools_are_spent_to_the_last_point() -> None:
+    """🔴 职业点与兴趣点都要花完（2026-08-10，用户实测发现一键生成没花兴趣点）。
+
+    旧版每次剩 0–8 点职业点（整除余数）+ **整整 80–150 点兴趣点**（那时是有意的，
+    理由写的是"让 AI 的卡朴素一点，它不该比真人玩家更强"）。而玩家的「一键生成」
+    走的就是这个生成器，**被比较的"真人玩家"就是同一张卡**——为了不让 AI 比玩家
+    强，把玩家自己削弱了。用户原话：「没有一个新人玩家会希望自己的职业点或者
+    兴趣点没有花完就开始游戏。」
+
+    这条**不比较绝对值只比较差额**：预算公式改了它也不会假红。
+    """
+    by_id = {s.id: s for s in _RULESET.skills}
+    for seed in range(20):
+        sheet = roll_character_sheet(seed=seed)
+        budget = (
+            evaluate_skill_points_formula(sheet.occupation.skill_points_formula, sheet.attributes)
+            + sheet.attributes["INT"] * 2
+        )
+        spent = 0
+        for skill_id, value in sheet.skills.items():
+            base = (
+                0
+                if skill_id == "credit-rating"
+                else evaluate_skill_base(by_id[skill_id].base, sheet.attributes)
+            )
+            spent += value - base
+        assert spent == budget, f"seed={seed} 预算 {budget} 只花了 {spent}"
+
+
+def test_age_is_the_callers_decision_not_the_generators() -> None:
+    """AI 固定 30 岁是"AI 的年龄不影响玩法"，这条对真人玩家不成立。
+
+    不传 age → 在 `DEFAULT_AGE_RANGE` 里随机（那个区间的年龄修正为零，所以
+    分配值与有效值仍然相同，不牵动那套双份记账）。
+    """
+    ages = {roll_character_sheet(seed=seed).age for seed in range(20)}
+    assert len(ages) > 1, "不传 age 时不该恒定"
+    assert all(DEFAULT_AGE_RANGE[0] <= a <= DEFAULT_AGE_RANGE[1] for a in ages)
+    assert roll_character_sheet(seed=1, age=30).age == 30
 
 
 # ── 落库 ───────────────────────────────────────────

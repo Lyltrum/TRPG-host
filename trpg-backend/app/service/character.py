@@ -122,16 +122,21 @@ async def quick_build_character(
     """「一键生成」：给这个玩家造一张**规则上合法**的完成态角色卡。
 
     真人实测反馈（零基础玩家）：八步向导对新人不友好，光是"职业技能点该怎么
-    分"就足以劝退。这条路径让他填个名字就能开局，卡仍然完全合法——生成器与
-    AI 队友共用同一个（`ai_player.roll_character_sheet`），所以新手卡不会莫名
-    其妙比 AI 队友弱或强。
+    分"就足以劝退。这条路径让他填个名字就能开局，**卡跟老老实实走完向导的那张
+    等价**：职业点与兴趣点都花完、年龄不是固定值。
+
+    🔴 生成器在 `service/character_generator.py`，**不是** `ai_player`（2026-08-10
+    搬的）：此前它住在 AI 那边、这里 import 过去，于是玩家继承了一整套按
+    "AI 补位"定的默认值——兴趣点故意不花（理由写的是"AI 不该比真人玩家更强"，
+    可玩家的卡就是它生成的，这条理由自相矛盾）、固定 30 岁。
+    用户原话：**「一键生成走的应该是和真人自己加点一样的完整逻辑。」**
 
     生成完就是 `complete`：这张卡不进向导。想改的人走原来那条路。
 
     🔴 角色名必填、不做兜底：名字是代入感的落点（建完卡之后守秘人就用它称呼
     你，见 `complete_character`），静默塞一个"无名调查员"只会让人以为坏了。
     """
-    from app.service.ai_player import roll_character_sheet
+    from app.service.character_generator import roll_character_sheet
 
     trimmed = (name or "").strip()
     if not trimmed:
@@ -157,7 +162,8 @@ async def quick_build_character(
     character.occupation = sheet.occupation.name
     character.age = sheet.age
     character.attributes = sheet.attributes
-    # 生成器固定 30 岁 —— COC7 在这个区间没有年龄修正，分配值与有效值天然相同
+    # 生成器只在 20–39 岁里取 —— COC7 在这个区间没有年龄修正，分配值与有效值
+    # 天然相同，不必在这条路径上维护那套双份记账（`DEFAULT_AGE_RANGE` 的说明）
     character.allocated_attributes = dict(sheet.attributes)
     character.derived_stats = compute_derived_stats(sheet.attributes, sheet.age)
     character.skills = sheet.skills

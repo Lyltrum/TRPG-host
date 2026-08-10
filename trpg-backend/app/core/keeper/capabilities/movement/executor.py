@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import structlog
 from pydantic import BaseModel
 
+from app.core.keeper.capabilities.movement.schema import PlayerMove as _Move
 from app.core.keeper.contract.registry import TurnFacts
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.runtime.location_state import (
@@ -16,6 +18,8 @@ from app.core.keeper.runtime.location_state import (
     set_stealth_impl,
     snapshot_locations,
 )
+
+logger = structlog.get_logger()
 
 
 def _position_left_the_map(attempted_node_id: str | None, facts: TurnFacts) -> bool:
@@ -63,19 +67,27 @@ async def execute_movement(
 
     node_id = getattr(decision, "current_node_id", None)
     new_location = getattr(decision, "new_location", None)
+    moves = list(getattr(decision, "moves", ()))
     if new_location is not None:
         try:
             created_id, line = await create_improvised_location_impl(
                 deps, new_location.name, new_location.from_id
             )
             report.append(line)
-            # 建了却没说去哪 = 去的就是这里。裁决器显式写了别的落点时不覆盖它
-            # （它可能是"我打发 NPC 去卡比家"这种，人并没有过去）。
-            node_id = node_id or created_id
+            if new_location.movers:
+                # 🔴 只有一部分人去（望风、绕后、留在门口）：翻译成逐人 `moves`，
+                # **不动房间指针**，其他人留在原地。id 是代码刚分配的，模型写不出来，
+                # 所以这条"引用本轮新建地点"的通路只能由代码接上。
+                moves = moves + [
+                    _Move(player=name, node_id=created_id) for name in new_location.movers
+                ]
+            else:
+                # 建了却没说谁去 = 全队一起去。裁决器显式写了别的落点时不覆盖它
+                # （它可能是"我打发 NPC 去卡比家"这种，人并没有过去）。
+                node_id = node_id or created_id
         except KeeperToolError as exc:
             issues.append(f"新地点未建立：{exc}")
 
-    moves = list(getattr(decision, "moves", ()))
     named_here = [move for move in moves if move.node_id == node_id] if node_id else []
     if named_here and await only_speakers_named(deps, [m.player for m in named_here]):
         # 🔴 矛盾信号消解（2026-08-10 多人实测）：`moves` 把**发言者本人**单独挪到了
@@ -146,4 +158,30 @@ async def execute_movement(
     if await record_merges_since(deps, before_locations):
         report.append("有人走到了别人所在的地方，等本人确认是否会合")
 
+    # 🔴 保险丝：消解分支说明裁决器**点名让发言者单独去某处**（= 它想分头），
+    # 而全队仍在同一个位置 → 分头没成立。这**不是闸门**（零命中不代表没问题），
+    # 它存在的唯一理由是：2026-08-10 两次真机分头失败，系统里没有任何东西会说
+    # 一声，上一跑还因为"清空位置"的副作用给出了**假的成功**。
+    #
+    # 触发条件只能是消解分支，不能是"写了 moves"：`node=X + moves=[其他每个人→X]`
+    # 是「全队一起去」的合法写法，那时大家在同一处本来就是对的。
+    if handed_to_moves:
+        await _report_split_that_did_not_take(deps, issues)
+
     return report, issues
+
+
+async def _report_split_that_did_not_take(deps: KeeperDeps, issues: list[str]) -> None:
+    """点名单独行动之后大家仍在一处 → 记一条 issue，让叙事和日志都看得见。"""
+    after = await snapshot_locations(deps)
+    if len(after) > 1 and len(set(after.values())) == 1:
+        issues.append(
+            "分头未成立：裁决点名让人单独行动，但全队仍在同一个位置——要让一部分人"
+            "待在别处，得给那个地方一个落点（new_location 带 movers）"
+        )
+        logger.warning(
+            "keeper_split_did_not_take",
+            room_id=deps.room_id,
+            location=next(iter(after.values())),
+            players=len(after),
+        )

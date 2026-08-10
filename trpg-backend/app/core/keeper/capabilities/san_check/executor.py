@@ -27,7 +27,7 @@ from app.core.keeper.runtime.deps import (
     resolve_character,
     write_stat,
 )
-from app.core.keeper.runtime.location_state import location_of
+from app.core.keeper.runtime.location_state import location_of, resolve_content_node_id
 from app.core.keeper.runtime.pending import PendingCheck
 from app.core.narration.contract import CheckResultNotice
 from app.models.room import Room
@@ -166,7 +166,11 @@ async def mark_san_points_fired(
                 # 发起侧（create_pending_san_checks）已经把这条记成 issue 了，
                 # 这里不重复报，只是没有位置可记。
                 continue
-            node_id = location_of(current_state, player.id)
+            # 记账要记在**内容节点**上（即兴地点沿 from 上溯），跟局面块同一
+            # 口径——两边口径不一致就会"提醒了却记不掉"，玩家在屋后被反复提醒。
+            node_id = resolve_content_node_id(
+                deps.module, current_state, location_of(current_state, player.id)
+            )
             if not node_id:
                 continue
             for ref in fired_refs_at(deps.module, node_id):

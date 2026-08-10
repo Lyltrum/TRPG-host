@@ -32,6 +32,7 @@ from app.core.keeper.runtime.location_state import (
     load_improvised_locations,
     load_player_locations,
     location_of,
+    resolve_content_node_id,
     serialize_player_locations,
 )
 from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
@@ -500,3 +501,84 @@ async def test_check_guard_uses_each_players_own_location(party) -> None:
     # 阿贵那条被他自己所在的门厅护栏否掉（门厅只标注了 spot-hidden）
     assert len(issues) == 1
     assert "library-use" in issues[0] and "门厅" in issues[0]
+
+
+# ── 位置的两个角色：可见性单元 vs 内容单位（2026-08-10 多人验证跑） ──
+
+
+async def test_only_the_named_go_to_the_new_place(party) -> None:
+    """🔴 「我一个人绕到屋后，你守着门口」——`movers` 让新地点只带走点到的人。
+
+    没有它的时候，新地点一律走 `current_node_id`，会带走此刻与发言者同处的
+    所有人，于是**最常见的那类分头**（望风、绕后、断后）表达不出来：真机上
+    裁决器 thinking 明写「分头行动」，两个人的位置却还是同一个 id。
+    """
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    await execute_side_effects(
+        deps,
+        KeeperDecision(new_location=NewLocation(name="屋后", from_id="hall", movers=["阿福"])),
+    )
+    state = await _state(deps)
+    assert location_of(state, a_id) == "loc-1"
+    assert location_of(state, b_id) == "hall", "🔴 没被点名的人不该跟着走"
+    assert is_party_split(state, [a_id, b_id]) is True
+
+
+async def test_new_place_without_movers_still_takes_everyone(party) -> None:
+    """退化保证：不写 `movers` 时行为与 exec/32 逐字一致（全队一起去）。"""
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    await execute_side_effects(
+        deps, KeeperDecision(new_location=NewLocation(name="卡比家", from_id="hall"))
+    )
+    state = await _state(deps)
+    assert location_of(state, a_id) == location_of(state, b_id) == "loc-1"
+
+
+async def test_a_derived_place_still_reads_the_module_node(party) -> None:
+    """🔴 站在「屋后」的人读得到「门厅」的内容——即兴地点沿 `from` 上溯。
+
+    在此之前 `from` 只在局面块里渲染成"从哪来的"，从没被消费过：即兴地点是
+    内容盲区，护栏找不到节点就全部放行、线索也查不到。位置的两个角色
+    （可见性单元 / 内容单位）粒度天生不同，靠这条链各取所需。
+    """
+    deps, a_id, _b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    await execute_side_effects(
+        deps,
+        KeeperDecision(new_location=NewLocation(name="屋后", from_id="hall", movers=["阿福"])),
+    )
+    state = await _state(deps)
+    assert location_of(state, a_id) == "loc-1"
+    assert resolve_content_node_id(deps.module, state, "loc-1") == "hall"
+    # 跟剧本无关的地方（没有 from）仍然什么都读不到——显式降级，不是兜底
+    await execute_side_effects(deps, KeeperDecision(new_location=NewLocation(name="镇外的路")))
+    assert resolve_content_node_id(deps.module, await _state(deps), "loc-2") is None
+
+
+async def test_a_split_that_did_not_take_leaves_a_trace(party) -> None:
+    """🔴 保险丝：点名单独行动、结果全队还在一处 → 记 issue。
+
+    两次真机分头失败时系统里没有任何东西会说一声，上一跑还因为"清空位置"的
+    副作用给出了假的成功。它不是闸门（零命中不代表没问题），只是让这件事**可见**。
+    """
+    deps, _a_id, _b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    # 裁决器想让阿福单独去，但目标就是大家所在的那个 id
+    _report, issues = await execute_side_effects(
+        deps,
+        KeeperDecision(current_node_id="hall", moves=[PlayerMove(player="阿福", node_id="hall")]),
+    )
+    assert any("分头未成立" in issue for issue in issues)
+
+
+async def test_everyone_together_is_not_a_failed_split(party) -> None:
+    """退化保证：`node=X + moves=[其他每个人→X]` 是「全队一起去」的合法写法，
+    不许被上面那条保险丝误报。"""
+    deps, _a_id, _b_id = party
+    _report, issues = await execute_side_effects(
+        deps,
+        KeeperDecision(current_node_id="hall", moves=[PlayerMove(player="阿贵", node_id="hall")]),
+    )
+    assert issues == []

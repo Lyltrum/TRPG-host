@@ -110,7 +110,11 @@ IMPROVISED_ID_PREFIX = "loc-"
 #: 超过这个条数就打一条 warning。**膨胀本身是信号，不是要治的病**：它说明模型
 #: 在拿地点表当便签本，那时该查的是"它缺哪一类落点"，而不是给这张表加裁剪
 #: （局面块必须全量列出，藏起来的地点模型看不见，就会重建一个同名的）。
-IMPROVISED_SOFT_LIMIT = 8
+#:
+#: 🔴 从 8 调到 20：地点的定义改成**可见性单元**之后（谁看得见谁，不是地图上的
+#: 地名），望风、绕后、断后每次都会建一个，一局几十条是正常的。阈值还是纯观测，
+#: 只是"正常"的量级变了——8 会让它每局都报，报警报到没人看就等于没有。
+IMPROVISED_SOFT_LIMIT = 20
 
 
 def load_player_locations(keeper_state: dict | None) -> dict[str, str]:
@@ -195,6 +199,45 @@ def resolve_location(
     improvised = load_improvised_locations(keeper_state).get(location_id)
     if improvised is not None:
         return improvised["name"]
+    return None
+
+
+def resolve_content_node_id(
+    module: ScenarioModule, keeper_state: dict | None, location_id: str | None
+) -> str | None:
+    """站在这个位置的人，读得到剧本里哪个节点的内容。都对不上返回 None。
+
+    ## 🔴 位置有两个角色，粒度天生不同
+
+    - **内容单位**：你在剧本的哪一段（有什么线索、什么检定、什么描述）——
+      模组按地点分条，这就是 node。
+    - **可见性单位**：你跟谁看得见听得见——COC 里凡是「谁知道什么」的规则
+      （潜行/侦察是视线对抗、理智检定触发在「目睹」那一刻）用的都是这个。
+
+    同一个 id 同时扮演两个角色，于是分头卡在最常见的那一半：望风、绕后、
+    留在门口盯着——这类位置模组永远不会写成独立条目，可它恰恰是即兴分头的
+    主要形态（2026-08-10 多人验证跑实锤：裁决器 thinking 明写「分头行动」，
+    但两个人的结构化位置都是同一个 id，分头压根没成立）。
+
+    修法不是引入第二个维度，是让即兴地点**沿 `from` 上溯**：`loc-2「屋后」
+    from loc-1「科比特家」` —— 可见性用 loc-2（分头成立），内容用 loc-1
+    （护栏、线索、理智检定点照常）。一个 id 空间，一条派生链。
+
+    🔴 在此之前 `from` 只在局面块里渲染成"从哪来的"，**从没被消费过**，
+    于是即兴地点是个内容盲区：护栏找不到节点就全部放行、线索查不到。
+    这个洞早就在了，只是分头没成立所以没暴露。
+    """
+    seen: set[str] = set()
+    current = location_id
+    table = load_improvised_locations(keeper_state)
+    while current and current not in seen:
+        seen.add(current)
+        if module.node_by_id(current) is not None:
+            return current
+        entry = table.get(current)
+        if entry is None:
+            return None
+        current = entry.get("from")
     return None
 
 

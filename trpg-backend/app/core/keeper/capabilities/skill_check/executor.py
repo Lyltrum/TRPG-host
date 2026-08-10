@@ -229,6 +229,7 @@ async def create_pending_skill_checks(
                 [check.skill_id],
                 current_scene=context.current_scene,
                 current_node_id=node_id,
+                keeper_state=context.keeper_state,
             )
             issues.extend(guard_issues)
         else:
@@ -237,7 +238,12 @@ async def create_pending_skill_checks(
             continue
         # 事实账本（exec/14 P4）：这名玩家所在节点上同名检定标注的
         # reveals，绑定到待掷记录上。查不到节点/查不到同名检定就是空。
-        scene_node = find_node_for_scene(deps.module, context.current_scene, node_id=node_id)
+        scene_node = find_node_for_scene(
+            deps.module,
+            context.current_scene,
+            node_id=node_id,
+            keeper_state=context.keeper_state,
+        )
         reveals: tuple[str, ...] = ()
         if scene_node is not None:
             for module_check in scene_node.checks:

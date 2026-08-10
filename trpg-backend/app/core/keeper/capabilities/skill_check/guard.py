@@ -16,6 +16,7 @@ exec/17 (A) 起两侧都是 id，本模块**不再做任何技能名归一**—�
 from __future__ import annotations
 
 from app.core.keeper.contract.module_loader import ModuleNode, ScenarioModule
+from app.core.keeper.runtime.location_state import resolve_content_node_id
 
 
 def iter_nodes(nodes: list[ModuleNode]) -> list[ModuleNode]:
@@ -43,11 +44,22 @@ def find_node_for_scene(
     scene_hint: str | None,
     *,
     node_id: str | None = None,
+    keeper_state: dict | None = None,
 ) -> ModuleNode | None:
     """定位当前节点：结构化 node_id 精确查找优先，退回对「当前场景」自由
-    文本人类地名做模糊匹配（兼容尚未产出 node id 的历史房间/模组）。"""
+    文本人类地名做模糊匹配（兼容尚未产出 node id 的历史房间/模组）。
+
+    `keeper_state` 非空时，即兴地点（`loc-N`）沿 `from` 链上溯到它派生自的
+    剧本节点——站在「科比特家屋后」的人读得到「科比特家」的内容。理由见
+    `location_state.resolve_content_node_id`。不传就退化成原来的行为。
+    """
     if node_id:
-        node = module.node_by_id(node_id)
+        resolved = (
+            resolve_content_node_id(module, keeper_state, node_id)
+            if keeper_state is not None
+            else node_id
+        )
+        node = module.node_by_id(resolved) if resolved else None
         if node is not None:
             return node
     if not scene_hint or not scene_hint.strip():
@@ -70,6 +82,7 @@ def filter_checks_against_module(
     *,
     current_scene: str | None,
     current_node_id: str | None = None,
+    keeper_state: dict | None = None,
 ) -> tuple[list[str], list[str]]:
     """返回 (保留的 skill_id 列表, issue 文案)。
 
@@ -84,7 +97,9 @@ def filter_checks_against_module(
     模组里一条检定点可以带**多个** id（"话术/魅惑/信用"这类多选检定点）：
     任一命中即放行。`kind="san"` 的检定点不指向技能，不参与这里的白名单。
     """
-    node = find_node_for_scene(module, current_scene, node_id=current_node_id)
+    node = find_node_for_scene(
+        module, current_scene, node_id=current_node_id, keeper_state=keeper_state
+    )
     if node is None or not node.checks:
         return list(check_skill_ids), []
 

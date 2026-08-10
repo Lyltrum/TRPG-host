@@ -104,7 +104,7 @@ def test_split_party_sees_only_their_own_nodes() -> None:
 
 def test_no_location_means_no_reminder() -> None:
     """人在剧本节点之外（`exec/31 #72` 清空之后）→ 没有"模组标注"可言。"""
-    assert occupied_node_ids({}, (("p1", "阿福"),)) == []
+    assert occupied_node_ids(_MODULE, {}, (("p1", "阿福"),)) == []
     assert format_san_points(_MODULE, {}, (("p1", "阿福"),)) == ""
 
 

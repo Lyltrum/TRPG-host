@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from app.core.keeper.contract.module_loader import ModuleCheck, ScenarioModule
 from app.core.keeper.contract.registry import SituationContext
-from app.core.keeper.runtime.location_state import location_of
+from app.core.keeper.runtime.location_state import location_of, resolve_content_node_id
 from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
 
 SAN_POINTS_FIRED_KEY = "已触发理智检定点"
@@ -48,17 +48,32 @@ def load_fired_san_points(keeper_state: dict | None) -> list[str]:
     return [part.strip() for part in str(raw).split(",") if part.strip()]
 
 
-def occupied_node_ids(keeper_state: dict | None, players: tuple[tuple[str, str], ...]) -> list[str]:
+def occupied_node_ids(
+    module: ScenarioModule,
+    keeper_state: dict | None,
+    players: tuple[tuple[str, str], ...],
+) -> list[str]:
     """调查员此刻所在的剧本节点（保序去重）。
 
     分头时是多个。谁都定位不到（人在剧本节点之外）就是空列表——那时本来也
     没有"模组标注的检定点"可言，与护栏的退化口径一致。
+
+    即兴地点沿 `from` 上溯（`resolve_content_node_id`）：站在「屋后」的人
+    照样看得见「科比特家」标注的理智检定点，否则一旦分头到即兴位置，这块
+    反向护栏就整个失效。
     """
     found: list[str] = []
     seen: set[str] = set()
-    candidates = [location_of(keeper_state, pid) for pid, _name in players]
+    candidates = [
+        resolve_content_node_id(module, keeper_state, location_of(keeper_state, pid))
+        for pid, _name in players
+    ]
     if not players:
-        candidates = [(keeper_state or {}).get(CURRENT_NODE_KEY)]
+        candidates = [
+            resolve_content_node_id(
+                module, keeper_state, (keeper_state or {}).get(CURRENT_NODE_KEY)
+            )
+        ]
     for node_id in candidates:
         if node_id and node_id not in seen:
             seen.add(node_id)
@@ -100,7 +115,7 @@ def format_san_points(
     """局面块正文。没有待触发的检定点就返回空串——整块不渲染。"""
     fired = set(load_fired_san_points(keeper_state))
     lines: list[str] = []
-    for node_id in occupied_node_ids(keeper_state, players):
+    for node_id in occupied_node_ids(module, keeper_state, players):
         node = module.node_by_id(node_id)
         if node is None:
             continue

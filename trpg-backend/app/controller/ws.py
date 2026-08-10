@@ -789,44 +789,49 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
         return
 
     narrator = websocket.app.state.narrator
-    # 已经在"骰子落地"那一刻推过的检定 id。整个函数共用一个集合而不是每轮新建
-    # 一个——闭包捕获循环内的变量是 B023 那类经典陷阱，而 id 本来就全局唯一。
-    rolled: set[str] = set()
+    # AI 替自己掷骰同样要亮指示器：真人在旁边等的是**结算叙事**那十几秒。
+    await _broadcast_keeper_busy(room_id, True)
+    try:
+        # 已经在"骰子落地"那一刻推过的检定 id。整个函数共用一个集合而不是每轮新建
+        # 一个——闭包捕获循环内的变量是 B023 那类经典陷阱，而 id 本来就全局唯一。
+        rolled: set[str] = set()
 
-    async def _push(notice: CheckResultNotice) -> None:
-        await _broadcast_check_result(room_id, notice, db)
-        rolled.add(notice.check_request_id)
-
-    for _ in range(_AI_AUTO_ROLL_LIMIT):
-        pending = await pending_check_manager.first(db, room_id)
-        if pending is None or pending.player_id not in ai_ids:
-            return
-        try:
-            # AI 的骰子同样先落地再等叙事——真人在旁边看着，没理由让他多等
-            outcome = await narrator.resolve_check(
-                room_id, pending.player_id, pending.check_request_id, _push
-            )
-        except Exception:  # noqa: BLE001 — 失败就让它留在队列里，真人可见地卡住好过静默丢骰
-            logger.warning(
-                "ai_auto_roll_failed",
-                room_id=room_id,
-                player_id=pending.player_id,
-                exc_info=True,
-            )
-            return
-        for notice in outcome.check_results:
-            if notice.check_request_id in rolled:
-                continue
+        async def _push(notice: CheckResultNotice) -> None:
             await _broadcast_check_result(room_id, notice, db)
-        for notice in outcome.stat_changes:
-            await _broadcast_stat_change(room_id, notice)
-        if outcome.text:
-            await _broadcast_narration(db, room_id, pending.player_id, outcome.text)
-        await _deliver_narration_segments(db, room_id, outcome.segments)
-        for notice in outcome.check_requests:
-            await _broadcast_check_request(room_id, notice, db)
-        # 位置可能刚变过（分头/会合/走到图外）——把每个人自己的处境推给他
-        await _push_party_update(db, websocket, room_id)
+            rolled.add(notice.check_request_id)
+
+        for _ in range(_AI_AUTO_ROLL_LIMIT):
+            pending = await pending_check_manager.first(db, room_id)
+            if pending is None or pending.player_id not in ai_ids:
+                return
+            try:
+                # AI 的骰子同样先落地再等叙事——真人在旁边看着，没理由让他多等
+                outcome = await narrator.resolve_check(
+                    room_id, pending.player_id, pending.check_request_id, _push
+                )
+            except Exception:  # noqa: BLE001 — 失败就让它留在队列里，真人可见地卡住好过静默丢骰
+                logger.warning(
+                    "ai_auto_roll_failed",
+                    room_id=room_id,
+                    player_id=pending.player_id,
+                    exc_info=True,
+                )
+                return
+            for notice in outcome.check_results:
+                if notice.check_request_id in rolled:
+                    continue
+                await _broadcast_check_result(room_id, notice, db)
+            for notice in outcome.stat_changes:
+                await _broadcast_stat_change(room_id, notice)
+            if outcome.text:
+                await _broadcast_narration(db, room_id, pending.player_id, outcome.text)
+            await _deliver_narration_segments(db, room_id, outcome.segments)
+            for notice in outcome.check_requests:
+                await _broadcast_check_request(room_id, notice, db)
+            # 位置可能刚变过（分头/会合/走到图外）——把每个人自己的处境推给他
+            await _push_party_update(db, websocket, room_id)
+    finally:
+        # 这条路有好几个 early return（队列空、没有 AI、掷骰失败），只能靠 finally 配对。
         await _broadcast_keeper_busy(room_id, False)
     logger.warning("ai_auto_roll_limit_reached", room_id=room_id, limit=_AI_AUTO_ROLL_LIMIT)
 
@@ -958,6 +963,7 @@ async def _handle_check_roll(
         await _send_error(websocket, "ACTION_IN_PROGRESS", "守秘人正在处理其他玩家的行动，请稍候")
         return
 
+    await _broadcast_keeper_busy(room_id, True)
     try:
         narrator = websocket.app.state.narrator
         try:
@@ -1005,10 +1011,13 @@ async def _handle_check_roll(
             await _broadcast_check_request(room_id, notice, db)
         # 位置可能刚变过（分头/会合/走到图外）——把每个人自己的处境推给他
         await _push_party_update(db, websocket, room_id)
-        await _broadcast_keeper_busy(room_id, False)
         # 这位掷完了，排在他后面的 AI 检定该轮到了（exec/21 第三层）
         await _auto_roll_ai_checks(db, websocket, room_id)
     finally:
+        # 🔴 只关不开是错的（2026-08-10 验证跑抓到：序列出现「开→关→关→开」）。
+        # 结算叙事恰恰是最需要指示器的那十几秒——那时全房间只看得见一个骰子数字
+        # 然后是十几秒静默。开在下面 try 的入口，这里配对关掉。
+        await _broadcast_keeper_busy(room_id, False)
         action_lock_manager.release(room_id, lock_token)
 
 

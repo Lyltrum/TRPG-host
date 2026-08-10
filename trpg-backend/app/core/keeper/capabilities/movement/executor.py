@@ -10,8 +10,11 @@ from app.core.keeper.runtime.location_state import (
     clear_current_node_impl,
     create_improvised_location_impl,
     move_player_impl,
+    only_speakers_named,
+    record_merges_since,
     set_current_node_impl,
     set_stealth_impl,
+    snapshot_locations,
 )
 
 
@@ -54,6 +57,9 @@ async def execute_movement(
     """
     report: list[str] = []
     issues: list[str] = []
+    # 会合检测的基线：**回合开始时**谁在哪（exec/33 §5）。必须在任何移动之前取，
+    # 也必须按回合比对——逐次写入各判各的会把"同一批一起走的队友"判成会合。
+    before_locations = await snapshot_locations(deps)
 
     node_id = getattr(decision, "current_node_id", None)
     new_location = getattr(decision, "new_location", None)
@@ -70,20 +76,22 @@ async def execute_movement(
             issues.append(f"新地点未建立：{exc}")
 
     moves = list(getattr(decision, "moves", ()))
-    if node_id is not None and any(move.node_id == node_id for move in moves):
-        # 🔴 矛盾信号消解（2026-08-10 多人实测）：`moves` 已经把某个人**单独**挪到了
+    named_here = [move for move in moves if move.node_id == node_id] if node_id else []
+    if named_here and await only_speakers_named(deps, [m.player for m in named_here]):
+        # 🔴 矛盾信号消解（2026-08-10 多人实测）：`moves` 把**发言者本人**单独挪到了
         # `current_node_id` 指的那个地方——那就是"只有他去"的意思。
         #
         # 实测原话「我去地下室看看，阿贵你留在客厅」，裁决器写了
         # `current_node_id=basement-laboratory` **且** `moves=[阿福→basement-laboratory]`
         # （thinking 写着"处理分头"）。而 `current_node_id` 会带上"此刻与发言者同处
         # 的人"（`exec/19 #37` 的默认值），于是被明确留下的阿贵**也被拖进了地下室**：
-        # 叙事说他在客厅、结构化位置说他在地下室，两边各说各话（这类只能读事件表
-        # 才发现，`exec/19 #43` 同族）。模型随后自己造了 `阿贵位置` 这样的自由文本键
-        # 来记它表达不了的东西——「看到模型往奇怪的地方塞，先问它还能塞哪」。
+        # 叙事说他在客厅、结构化位置说他在地窖，两边各说各话。
         #
-        # 两个字段说的是同一次移动时，**更具体的那个赢**：`moves` 点了名。
-        # 这不是给 #37 的默认值加例外，是拒绝执行一条自相矛盾的指令。
+        # 🔴 **必须看"点名的是谁"，不能只看"目标节点相同"**——第一版就是只看目标，
+        # 当天的验证跑里当场反噬：模型表达「全队一起去」的写法是
+        # `node=X + moves=[其他每个人→X]`（发言者不在 moves 里），被判成"只有他去"，
+        # **发言者反而被留在原地**，位置成了 None。
+        # 两种写法的区别只在**谁被点名**：点自己 = 我一个人去；点别人 = 带上他们。
         report.append(f"场景定位交给 moves 执行（{node_id} 已被逐人指定）")
         node_id = None
 
@@ -125,5 +133,10 @@ async def execute_movement(
             report.append(await set_stealth_impl(deps, change.player, change.hidden))
         except KeeperToolError as exc:
             issues.append(f"潜行状态未执行：{exc}")
+
+    # 谁跟"回合开始时不在一处的人"碰上了 → 挂起，等他本人确认（exec/33 §5.2）。
+    # 分开是安全方向、乐观执行；会合是危险方向、必须有人点头。
+    if await record_merges_since(deps, before_locations):
+        report.append("有人走到了别人所在的地方，等本人确认是否会合")
 
     return report, issues

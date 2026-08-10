@@ -493,18 +493,27 @@ async def _broadcast_check_result(
     await _send_to_colocated(db, room_id, notice.player_id, envelope.model_dump(by_alias=True))
 
 
-async def _broadcast_stat_change(room_id: str, notice: StatChangeNotice) -> None:
-    """广播一次 HP 变更（真人实测 09-#4 修复）：裁决判定伤害后立即执行，没有
+async def _broadcast_stat_change(
+    room_id: str, notice: StatChangeNotice, db: AsyncSession | None = None
+) -> None:
+    """推一次 HP 变更（真人实测 09-#4 修复）：裁决判定伤害后立即执行，没有
     对应的检定/掷骰事件可以携带新值，此前只拼进叙事正文当纯文本，前端角色卡
-    拿不到结构化数据。这条只广播 HP——San 已经有 `san.check.result` 携带
-    `san_remaining`，走"检定→掷骰→广播结果"这条路，不需要这个事件。"""
+    拿不到结构化数据。这条只推 HP——San 已经有 `san.check.result` 携带
+    `san_remaining`，走"检定→掷骰→广播结果"这条路，不需要这个事件。
+
+    🔴 **受众同检定结果，不是全房间**（`exec/33 §3.1`）：payload 里带着
+    `reason`（「被壁橱里的东西抓伤」这类），全房间推等于告诉另一组
+    **这边有人受伤了、还是被什么伤的**——分头刚做成结构性的，这是最后一个
+    绕过位置的通道。掉血是虚构世界里发生的事，按位置裁；元层（谁在等谁、
+    KP 在忙）才可以全房间。
+    """
     payload = CharacterStatChangedPayload(
         player_id=notice.player_id, hp=notice.hp, hp_max=notice.hp_max, reason=notice.reason or None
     )
     envelope = ServerEnvelope(
         type="character.stat_changed", payload=payload.model_dump(by_alias=True)
     )
-    await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
+    await _send_to_colocated(db, room_id, notice.player_id, envelope.model_dump(by_alias=True))
 
 
 async def _handle_room_join(
@@ -850,7 +859,7 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
                     continue
                 await _broadcast_check_result(room_id, notice, db)
             for notice in outcome.stat_changes:
-                await _broadcast_stat_change(room_id, notice)
+                await _broadcast_stat_change(room_id, notice, db)
             if outcome.text:
                 await _broadcast_narration(db, room_id, pending.player_id, outcome.text)
             await _deliver_narration_segments(db, room_id, outcome.segments)
@@ -951,7 +960,7 @@ async def _run_turn(
         # outcome.text 可能为空（两段式玩家掷骰：pending 守卫命中时守秘人只
         # 重发检定请求，不产生新叙事）——空文本不广播一条空 narration.push。
         for notice in outcome.stat_changes:
-            await _broadcast_stat_change(room_id, notice)
+            await _broadcast_stat_change(room_id, notice, db)
         if outcome.text:
             await _broadcast_narration(
                 db, room_id, initiator_id, outcome.text, event_id=narration_event_id
@@ -1033,7 +1042,7 @@ async def _handle_check_roll(
                 continue  # 骰子落地那一刻已经推过了
             await _broadcast_check_result(room_id, notice, db)
         for notice in outcome.stat_changes:
-            await _broadcast_stat_change(room_id, notice)
+            await _broadcast_stat_change(room_id, notice, db)
         if outcome.text:
             await _broadcast_narration(db, room_id, player_id, outcome.text)
         await _deliver_narration_segments(db, room_id, outcome.segments)

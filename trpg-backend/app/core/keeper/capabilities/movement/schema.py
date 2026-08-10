@@ -34,6 +34,24 @@ class PlayerMove(DecisionModel):
     node_id: str = Field(description="他单独所在的剧本节点 id，不得编造")
 
 
+class NewLocation(DecisionModel):
+    """申请一个剧本里没有的地点（exec/32）。
+
+    🔴 **新建必须是一个结构上不同的动作**，不能让模型直接往 `current_node_id`
+    里写一个没见过的字符串"顺便新建"——那正是 `exec/31 #72` 的形状：同一个字段
+    同时表达"去已知的地方"和"去新地方"，就分不清**写错了**和**想新建**，
+    于是错的那一半只能靠白名单硬拦（真机三次全中，它写的是个 NPC id）。
+
+    id 由代码分配，这里只给名字。名字**不是标识符**，重名不去重。
+    """
+
+    name: str = Field(description="这个地方叫什么，玩家听得懂的短名（如「卡比家」）")
+    from_id: str | None = Field(
+        default=None,
+        description="从哪个已知地点去的（剧本节点 id 或 loc-N），不确定就留空",
+    )
+
+
 class HidingChange(DecisionModel):
     """潜行/现身（exec/18 ②）。
 
@@ -61,11 +79,22 @@ class MovementDecisionFields(DecisionModel):
     # exec/14 P5.2：语义收窄为「本轮**发言的**调查员共同到了哪」——不再是
     # "全房间都在这"。没发言的人位置不动（分头探索时他还在别处，不能被这
     # 一个字段隔空传送走）。谁单独在别处走 `moves`。
+    #
+    # exec/32：取值域从"剧本节点 id"扩成"剧本节点 id ∪ 本局的即兴地点 loc-N"。
+    # 两类都在局面块里列全，模型只能挑；要去清单上没有的地方走 `new_location`。
     current_node_id: str | None = Field(
         default=None,
         description=(
-            "本轮结束时**发言的调查员共同**所在的剧本节点 id；无法对应到已知节点或场景"
-            "未变化时留空，不要编造不存在的 id"
+            "本轮结束时**发言的调查员共同**所在的地点 id（剧本节点 id 或局面块里列出的"
+            " loc-N）；场景未变化时留空，不要编造不存在的 id——要去清单上没有的地方"
+            "请用 new_location"
+        ),
+    )
+    new_location: NewLocation | None = Field(
+        default=None,
+        description=(
+            "玩家去了剧本和已知清单里都没有的地方时填它（如原文提过但没写成场景的"
+            "「卡比家」）；系统会分配 id 并把发言的人挪过去。没有新地方时填 null"
         ),
     )
     moves: list[PlayerMove] = Field(
@@ -82,6 +111,8 @@ FIELD_CAPABILITIES = {
     # 分头探索（P5.2）：逐人位置与设置场景是同一件事的不同粒度，共用一条。
     "current_node_id": Capability.SET_SCENE,
     "moves": Capability.SET_SCENE,
+    # 建一个新地点也是"定位这件事"的一部分：不许改场景的主体也不该能建地点。
+    "new_location": Capability.SET_SCENE,
     # 潜行**单独一条**：它是已经成立的状态，不该跟着"世界不推进"一起被收走
     # （exec/27 阶段 3 · B 族，`turn_policy` 模块说明里有完整理由）。
     "hiding": Capability.SET_HIDING,

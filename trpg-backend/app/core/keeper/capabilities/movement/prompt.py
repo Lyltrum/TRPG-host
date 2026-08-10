@@ -19,10 +19,29 @@ _RULE_HIDING = PromptBlock(
     text='4c. **潜行/隐匿**：调查员藏起来、贴墙躲进阴影、跟踪时不想被发现——潜行检定成功（或情境本身足以藏住）就写 `hiding: [{"player": "昵称", "hidden": true}]`。隐匿的人**照常听得见**这里发生的一切，但同处的其他人不知道他在场。被发现、主动现身、离开这个地点时必须写回 `hidden: false`。局面块标了「（隐匿中）」的人，叙事里不要让别人看见他。',
 )
 
+_RULE_NEW_PLACE = PromptBlock(
+    slot="rules",
+    # 4d 已被 world_state 的「游戏内时间」占用（order 4.8）——编号是给模型读的
+    # 顺序标签，撞号会让两条规则看起来是同一条的两半。
+    order=4.9,
+    text="""4e. **玩家去了剧本里没有的地方**：原文提过但没写成场景的地方（某个 NPC 的家、镇上的教堂、路边的墓地），玩家想去就让他去——**但要给它一个落点**：填 `new_location: {"name": "卡比家", "from_id": "当前节点 id"}`，系统会分配一个 `loc-N` 并把发言的人挪过去。
+   🔴 **不要**把这种地方的名字直接写进 `current_node_id`，也不要拿一个 NPC id 顶替（真机出过：玩家说"去卡比家"，裁决器写了那个人的 id，位置当场作废）。**已经建过的地点在局面块「这一局即兴出来的地点」里列着，去那儿就直接用它的 `loc-N`，不要重复新建。**
+   即兴地点上没有模组标注的检定点，检定按常识裁定即可。""",
+)
+
 _EXAMPLE_NODE = PromptBlock(
     slot="output_example", order=50, text='  "current_node_id": "some-node-id"'
 )
+_EXAMPLE_NEW_LOCATION = PromptBlock(slot="output_example", order=55, text='  "new_location": null')
 _EXAMPLE_MOVES = PromptBlock(slot="output_example", order=60, text='  "moves": []')
 _EXAMPLE_HIDING = PromptBlock(slot="output_example", order=70, text='  "hiding": []')
 
-PROMPT_BLOCKS = (_RULE_SPLIT, _RULE_HIDING, _EXAMPLE_NODE, _EXAMPLE_MOVES, _EXAMPLE_HIDING)
+PROMPT_BLOCKS = (
+    _RULE_SPLIT,
+    _RULE_HIDING,
+    _RULE_NEW_PLACE,
+    _EXAMPLE_NODE,
+    _EXAMPLE_NEW_LOCATION,
+    _EXAMPLE_MOVES,
+    _EXAMPLE_HIDING,
+)

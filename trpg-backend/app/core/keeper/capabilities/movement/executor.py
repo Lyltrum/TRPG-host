@@ -8,6 +8,7 @@ from app.core.keeper.contract.registry import TurnFacts
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.runtime.location_state import (
     clear_current_node_impl,
+    create_improvised_location_impl,
     move_player_impl,
     set_current_node_impl,
     set_stealth_impl,
@@ -43,8 +44,10 @@ def _position_left_the_map(attempted_node_id: str | None, facts: TurnFacts) -> b
 async def execute_movement(
     deps: KeeperDeps, decision: BaseModel, facts: TurnFacts
 ) -> tuple[list[str], list[str]]:
-    """三步顺序不能换：
+    """四步顺序不能换：
 
+    0. `new_location` 建表（exec/32）——必须排在最前，这一轮建的地点要能立刻
+       被当作落点用；建完**就是发言者的落点**，除非裁决器另写了 `current_node_id`。
     1. `current_node_id` 是"本轮发言者的默认落点"；
     2. `moves` 是"谁不跟大家一起"——必须排在默认落点**之后**，否则被盖掉；
     3. `hiding` 与移动同一类空间状态，逐条执行、逐条记 issue。
@@ -53,6 +56,19 @@ async def execute_movement(
     issues: list[str] = []
 
     node_id = getattr(decision, "current_node_id", None)
+    new_location = getattr(decision, "new_location", None)
+    if new_location is not None:
+        try:
+            created_id, line = await create_improvised_location_impl(
+                deps, new_location.name, new_location.from_id
+            )
+            report.append(line)
+            # 建了却没说去哪 = 去的就是这里。裁决器显式写了别的落点时不覆盖它
+            # （它可能是"我打发 NPC 去卡比家"这种，人并没有过去）。
+            node_id = node_id or created_id
+        except KeeperToolError as exc:
+            issues.append(f"新地点未建立：{exc}")
+
     located = False
     if node_id:
         # node_id 存在性由 set_current_node_impl 校验（module.node_by_id）——

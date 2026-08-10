@@ -14,17 +14,21 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7.content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.capabilities import reserved_state_keys
-from app.core.keeper.capabilities.movement.schema import PlayerMove
+from app.core.keeper.capabilities import reserved_state_keys, situation_blocks
+from app.core.keeper.capabilities.movement.schema import NewLocation, PlayerMove
+from app.core.keeper.capabilities.movement.situation import render_improvised_locations
 from app.core.keeper.capabilities.world_state.executor import update_state_impl
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.contract.registry import SituationContext
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.runtime.location_state import (
+    IMPROVISED_SOFT_LIMIT,
     PLAYER_LOCATION_KEY,
     format_party_locations,
     group_players,
     is_party_split,
+    load_improvised_locations,
     load_player_locations,
     location_of,
     serialize_player_locations,
@@ -247,6 +251,104 @@ async def test_an_ordinary_turn_leaves_the_pointer_alone(party) -> None:
     await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
     await execute_side_effects(deps, KeeperDecision())
     assert location_of(await _state(deps), a_id) == "hall"
+
+
+# ── 2b. 即兴地点（exec/32）──────────────────────────
+
+
+async def test_a_new_location_gets_a_code_assigned_id_and_takes_the_party_there(party) -> None:
+    """玩家去剧本图外的地方（「卡比家」）→ 建表、发 id、人挪过去。
+
+    真机那一轮（`exec/31 #72`）裁决器把 NPC id 写进了 current_node_id，位置当场
+    作废。有了这条路，"去一个新地方"才有得表达。
+    """
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    report, issues = await execute_side_effects(
+        deps, KeeperDecision(new_location=NewLocation(name="卡比家", from_id="hall"))
+    )
+    assert issues == []
+    state = await _state(deps)
+    table = load_improvised_locations(state)
+    assert list(table) == ["loc-1"]
+    assert table["loc-1"] == {"name": "卡比家", "from": "hall"}
+    # 建了就是发言者的落点，同处的人一起走（与剧本节点同一套语义）
+    assert load_player_locations(state) == {a_id: "loc-1", b_id: "loc-1"}
+    assert any("卡比家" in line for line in report)
+
+
+async def test_an_improvised_location_is_a_legal_target_afterwards(party) -> None:
+    """建过之后它就是合法 id：能当 current_node_id，也能当 moves 的目标。"""
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(new_location=NewLocation(name="墓地")))
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    await execute_side_effects(
+        deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="loc-1")])
+    )
+    state = await _state(deps)
+    assert load_player_locations(state) == {a_id: "hall", b_id: "loc-1"}
+    assert is_party_split(state, [a_id, b_id]) is True
+
+
+async def test_two_people_at_two_off_map_places_are_not_one_group(party) -> None:
+    """🔴 这才是做这件事的主要收益（exec/32 §5）。
+
+    没有地点表时两个图外的人位置都是 None、被判成站在一起——分头投递失效，
+    而"你不在场所以你不知道"正是从位置派生的。
+    """
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(new_location=NewLocation(name="卡比家")))
+    await execute_side_effects(
+        deps, KeeperDecision(new_location=NewLocation(name="墓地"), current_node_id="loc-1")
+    )
+    await execute_side_effects(
+        deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="loc-2")])
+    )
+    state = await _state(deps)
+    assert group_players(state, [a_id, b_id]) == [("loc-1", [a_id]), ("loc-2", [b_id])]
+    # 「各自所在」要写得出名字，不能是「（位置未记录）」
+    text = format_party_locations(deps.module, state, [(a_id, "阿福"), (b_id, "阿贵")])
+    assert "卡比家" in text and "墓地" in text
+
+
+async def test_ids_are_never_reused_and_names_are_not_deduped(party) -> None:
+    """重名不去重（名字不是标识符），id 只增不复用。"""
+    deps, _a_id, _b_id = party
+    await execute_side_effects(deps, KeeperDecision(new_location=NewLocation(name="墓地")))
+    await execute_side_effects(deps, KeeperDecision(new_location=NewLocation(name="墓地")))
+    table = load_improvised_locations(await _state(deps))
+    assert list(table) == ["loc-1", "loc-2"]
+
+
+async def test_an_unresolvable_origin_is_dropped_not_stored(party) -> None:
+    """来路解析不出就丢掉——存下来它就会被当成 id 用（自由文本当标识符）。"""
+    deps, _a_id, _b_id = party
+    await execute_side_effects(
+        deps, KeeperDecision(new_location=NewLocation(name="卡比家", from_id="butler-public"))
+    )
+    assert load_improvised_locations(await _state(deps))["loc-1"]["from"] is None
+
+
+async def test_every_known_location_stays_visible_to_the_model(party) -> None:
+    """🔴 白名单闭环（exec/32 §7.2 与 §8）：建过的每一条都要出现在局面块里。
+
+    一旦有人给渲染加"只显示最近 N 条"，模型就会重建同名地点、一个地方两个 id，
+    而那时什么都不会变红——所以这条要有测试守着。
+    """
+    deps, _a_id, _b_id = party
+    for i in range(IMPROVISED_SOFT_LIMIT + 2):
+        await execute_side_effects(deps, KeeperDecision(new_location=NewLocation(name=f"地点{i}")))
+    state = await _state(deps)
+    blocks = situation_blocks(deps.module, state)
+    rendered = "\n".join(body for _order, body in blocks)
+    for loc_id in load_improvised_locations(state):
+        assert loc_id in rendered
+
+
+def test_no_improvised_location_renders_nothing() -> None:
+    """退化保证：一局都没用到时，局面块与 exec/32 之前逐字一致。"""
+    module = load_module(_FIXTURE_MODULE)
+    assert render_improvised_locations(SituationContext(module, {CURRENT_NODE_KEY: "hall"})) == ""
 
 
 async def test_move_with_unknown_node_or_player_is_issue_not_crash(party) -> None:

@@ -547,6 +547,16 @@ export interface JoinRoomBody {
 }
 
 /**
+ * `keeper.busy` 推送：守秘人正在别处忙（`exec/33 §5.4`）。
+ *
+ * 分头时叙事是逐组生成的，没轮到的那一组屏幕上此前**什么都没有**，静默十几秒
+ * 然后突然弹出一段。线下你至少看得见 KP 在跟别人说话。
+ */
+export interface KeeperBusyPayload {
+  busy: boolean;
+}
+
+/**
  * POST /api/v1/auth/login 请求体
  */
 export interface LoginBody {
@@ -748,6 +758,32 @@ export interface PartyCharacterRead {
   backgroundDetail?: {
     [k: string]: string;
   } | null;
+}
+
+/**
+ * `party.merge.confirm` 客户端事件：当事人确认「我确实跟他们碰上了」。
+ *
+ * 没有对应的"否认"动作——不确认就是维持分离，那本来就是默认与安全方向。
+ */
+export interface PartyMergeConfirmPayload {}
+
+/**
+ * `party.update` 推送：这个玩家自己的空间处境（`exec/33 §5.4`）。
+ *
+ * 🔴 **逐人裁过再发**，不是把全房间的分组表广播出去：别处那一组在哪、有谁，
+ * 对你的角色而言是不该知道的（他们可能还在潜行）。所以这里只有
+ * 「我在哪 · 谁跟我在一处 · 另有几组人在别处」——**够玩家看出系统把他放错了
+ * 地方，又不泄露内容**。
+ *
+ * 它存在的理由：真人实测里系统把队友拖进了地下室，而**界面上一处都没有位置
+ * 信息**，于是没有任何人会发现。装上这只眼睛之后，静默错误变成可见错误。
+ */
+export interface PartyUpdatePayload {
+  locationId: string | null;
+  locationName: string | null;
+  companions: string[];
+  otherGroups: number;
+  mergePendingAt: string | null;
 }
 
 /**

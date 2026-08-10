@@ -121,6 +121,10 @@ _MODELS: list[type[BaseModel]] = [
     ws.CharacterStatChangedPayload,
     # 叙事流式（feat/keeper-agent，exec/28）
     ws.NarrationDeltaPayload,
+    # 分组变更协议与空间处境（exec/33 §5）：S→C 2 个 + C→S 1 个
+    ws.PartyUpdatePayload,
+    ws.KeeperBusyPayload,
+    ws.PartyMergeConfirmPayload,
 ]
 
 _DEFAULT_OUT_PATH = Path(__file__).resolve().parent.parent / ".schema-export" / "models.schema.json"

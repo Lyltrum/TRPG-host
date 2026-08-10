@@ -29,6 +29,7 @@ from app.core.keeper.contract.registry import ExecutorHook, KeeperCapability, Si
 from app.core.keeper.runtime.location_state import (
     HIDDEN_PLAYERS_KEY,
     IMPROVISED_LOCATION_KEY,
+    PENDING_MERGE_KEY,
     PLAYER_LOCATION_KEY,
 )
 from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
@@ -60,5 +61,6 @@ CAPABILITY = KeeperCapability(
         PLAYER_LOCATION_KEY,
         HIDDEN_PLAYERS_KEY,
         IMPROVISED_LOCATION_KEY,
+        PENDING_MERGE_KEY,
     ),
 )

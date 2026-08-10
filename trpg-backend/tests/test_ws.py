@@ -3,6 +3,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.main import app
+from tests.helpers import next_game_event
 
 ROOMS_BASE = "/api/v1/rooms"
 
@@ -115,7 +116,7 @@ def test_room_join_binds_session(sync_client: TestClient) -> None:
                 },
             }
         )
-        envelope = ws.receive_json()
+        envelope = next_game_event(ws)
 
     assert envelope == {
         "type": "session.bound",
@@ -138,7 +139,7 @@ def test_room_join_with_unknown_player_closes_connection(sync_client: TestClient
                 "payload": {"reconnectToken": "whatever"},
             }
         )
-        ws.receive_json()
+        next_game_event(ws)
 
 
 def test_room_join_rejects_wrong_reconnect_token(sync_client: TestClient) -> None:
@@ -160,7 +161,7 @@ def test_room_join_rejects_wrong_reconnect_token(sync_client: TestClient) -> Non
                 "payload": {"reconnectToken": "not-the-real-token"},
             }
         )
-        ws.receive_json()
+        next_game_event(ws)
 
     # 房主本人用正确的 token 仍然能正常绑定。
     with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={host_token}") as ws:
@@ -171,7 +172,7 @@ def test_room_join_rejects_wrong_reconnect_token(sync_client: TestClient) -> Non
                 "payload": {"reconnectToken": room["reconnectToken"]},
             }
         )
-        assert ws.receive_json()["type"] == "session.bound"
+        assert next_game_event(ws)["type"] == "session.bound"
 
 
 def test_player_ready_updates_room_state(sync_client: TestClient) -> None:
@@ -186,7 +187,7 @@ def test_player_ready_updates_room_state(sync_client: TestClient) -> None:
                 "payload": {"reconnectToken": room["reconnectToken"]},
             }
         )
-        ws.receive_json()  # session.bound
+        next_game_event(ws)  # session.bound
         ws.send_json(
             {"type": "player.ready", "playerId": room["playerId"], "payload": {"ready": True}}
         )
@@ -200,7 +201,7 @@ def test_player_ready_updates_room_state(sync_client: TestClient) -> None:
                 "payload": {"reconnectToken": room["reconnectToken"]},
             }
         )
-        ws.receive_json()
+        next_game_event(ws)
 
     preview = sync_client.get(f"{ROOMS_BASE}/{room['roomCode']}").json()["data"]
     assert preview["players"][0]["ready"] is True
@@ -222,9 +223,9 @@ def test_game_start_pushes_opening_narration_and_advances_phase(
                 "payload": {"reconnectToken": room["reconnectToken"]},
             }
         )
-        ws.receive_json()  # session.bound
+        next_game_event(ws)  # session.bound
         ws.send_json({"type": "game.start", "playerId": room["playerId"], "payload": {}})
-        envelope = ws.receive_json()
+        envelope = next_game_event(ws)
 
     assert envelope["type"] == "narration.push"
     assert envelope["payload"]["text"]
@@ -251,13 +252,13 @@ def test_game_start_rejects_non_host(sync_client: TestClient) -> None:
                 "payload": {"reconnectToken": guest["reconnectToken"]},
             }
         )
-        ws.receive_json()  # session.bound
+        next_game_event(ws)  # session.bound
         ws.send_json({"type": "game.start", "playerId": guest["playerId"], "payload": {}})
 
         # 非房主发起 game.start 会被拒绝：收到一条 FORBIDDEN 的 error 事件
         # （issue #77 起明确告知发起者，不再像旧版那样静默忽略）；房间阶段
         # 维持 Building 不变，不会有 narration.push。
-        envelope = ws.receive_json()
+        envelope = next_game_event(ws)
 
     assert envelope["type"] == "error"
     assert envelope["payload"]["code"] == "FORBIDDEN"
@@ -282,7 +283,7 @@ def test_action_submit_broadcasts_narration_to_room_only(sync_client: TestClient
                 "payload": {"reconnectToken": room_a["reconnectToken"]},
             }
         )
-        ws_a.receive_json()  # session.bound
+        next_game_event(ws_a)  # session.bound
         ws_b.send_json(
             {
                 "type": "room.join",
@@ -290,7 +291,7 @@ def test_action_submit_broadcasts_narration_to_room_only(sync_client: TestClient
                 "payload": {"reconnectToken": room_b["reconnectToken"]},
             }
         )
-        ws_b.receive_json()  # session.bound
+        next_game_event(ws_b)  # session.bound
 
         ws_a.send_json(
             {
@@ -301,8 +302,8 @@ def test_action_submit_broadcasts_narration_to_room_only(sync_client: TestClient
         )
         # issue #107 起 action.submit 先广播玩家原话（action.broadcast），
         # 再广播守秘人回复（narration.push），两条按序到达。
-        action_echo = ws_a.receive_json()
-        narration = ws_a.receive_json()
+        action_echo = next_game_event(ws_a)
+        narration = next_game_event(ws_a)
 
         # room_b 没有收到任何广播——发一条 room.join 触发一次同步交互，确认
         # 收到的仍然是它自己的 session.bound，而不是串过来的 narration。
@@ -313,7 +314,7 @@ def test_action_submit_broadcasts_narration_to_room_only(sync_client: TestClient
                 "payload": {"reconnectToken": room_b["reconnectToken"]},
             }
         )
-        envelope_b = ws_b.receive_json()
+        envelope_b = next_game_event(ws_b)
 
     assert action_echo["type"] == "action.broadcast"
     assert action_echo["payload"]["utterance"] == "检查门锁"
@@ -345,7 +346,7 @@ def test_repeated_identical_utterance_gets_distinct_event_ids(sync_client: TestC
                 "payload": {"reconnectToken": room["reconnectToken"]},
             }
         )
-        ws.receive_json()  # session.bound
+        next_game_event(ws)  # session.bound
 
         echoes = []
         narrations = []
@@ -357,8 +358,8 @@ def test_repeated_identical_utterance_gets_distinct_event_ids(sync_client: TestC
                     "payload": {"utterance": "过个侦查"},
                 }
             )
-            echoes.append(ws.receive_json())
-            narrations.append(ws.receive_json())
+            echoes.append(next_game_event(ws))
+            narrations.append(next_game_event(ws))
 
     act_ids = [e["payload"]["eventId"] for e in echoes]
     narr_ids = [n["payload"]["eventId"] for n in narrations]

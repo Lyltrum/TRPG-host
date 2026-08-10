@@ -18,6 +18,7 @@ from app.core.ai_actor import AiActor, AiPlayerIntent, build_view
 from app.core.keeper.memory.history import HistoryLine
 from app.main import app
 from app.service.ai_turn import collect_ai_submissions
+from tests.helpers import next_game_event
 
 
 @pytest.fixture
@@ -225,7 +226,7 @@ def test_ai_teammate_speaks_in_discussion_not_to_the_keeper(
                     "payload": {"reconnectToken": room["reconnectToken"]},
                 }
             )
-            ws.receive_json()  # session.bound
+            next_game_event(ws)  # session.bound
             ws.send_json(
                 {
                     "type": "action.submit",
@@ -233,9 +234,9 @@ def test_ai_teammate_speaks_in_discussion_not_to_the_keeper(
                     "payload": {"utterance": "检查门锁"},
                 }
             )
-            first = ws.receive_json()
-            second = ws.receive_json()
-            third = ws.receive_json()
+            first = next_game_event(ws)
+            second = next_game_event(ws)
+            third = next_game_event(ws)
     finally:
         app.state.ai_actor = previous
 
@@ -266,7 +267,7 @@ def test_silent_ai_teammate_changes_nothing(sync_client: TestClient, stub_narrat
                     "payload": {"reconnectToken": room["reconnectToken"]},
                 }
             )
-            ws.receive_json()
+            next_game_event(ws)
             ws.send_json(
                 {
                     "type": "action.submit",
@@ -274,8 +275,8 @@ def test_silent_ai_teammate_changes_nothing(sync_client: TestClient, stub_narrat
                     "payload": {"utterance": "检查门锁"},
                 }
             )
-            first = ws.receive_json()
-            second = ws.receive_json()
+            first = next_game_event(ws)
+            second = next_game_event(ws)
     finally:
         app.state.ai_actor = previous
 
@@ -306,7 +307,7 @@ def test_broken_ai_teammate_does_not_break_the_human_turn(
                     "payload": {"reconnectToken": room["reconnectToken"]},
                 }
             )
-            ws.receive_json()
+            next_game_event(ws)
             ws.send_json(
                 {
                     "type": "action.submit",
@@ -314,8 +315,8 @@ def test_broken_ai_teammate_does_not_break_the_human_turn(
                     "payload": {"utterance": "检查门锁"},
                 }
             )
-            first = ws.receive_json()
-            second = ws.receive_json()
+            first = next_game_event(ws)
+            second = next_game_event(ws)
     finally:
         app.state.ai_actor = previous
 

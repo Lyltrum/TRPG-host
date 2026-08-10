@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.keeper.contract.module_loader import ScenarioModule
 from app.core.keeper.runtime.deps import (
@@ -50,6 +51,7 @@ from app.core.keeper.runtime.scene_state import (
     SCENE_NAME_KEY,
     load_current_node_id,
 )
+from app.models.event import Event
 from app.models.room import Player, Room
 
 logger = structlog.get_logger()
@@ -60,6 +62,29 @@ PLAYER_LOCATION_KEY = "玩家位置"
 #: 发生的一切（所以不把他从位置分组里摘出去），但他自己的行动不会广播给同处
 #: 的其他人。存 player_id 的逗号串。
 HIDDEN_PLAYERS_KEY = "隐匿玩家"
+
+#: 走到了别人所在的地点、但**还没被本人确认**是不是真的会合了（exec/33 §5）。
+#: 存 `player_id@node_id`，与 `PLAYER_LOCATION_KEY` 同一套编解码。
+#:
+#: ## 🔴 为什么需要它：分组此前是概率性的
+#:
+#: 「谁跟谁在一处」由裁决器**每轮重写**的位置派生，于是**每轮都有一次写错分组的
+#: 机会**。2026-08-10 多人实测实证：它把 `current_node_id` 与 `moves` 写矛盾，
+#: 被明确留下的队友被拖进地下室 → 系统认为没分头 → 全房间广播是**完全正确的
+#: 执行**，只是建立在错的位置上。投递层再结构化也没用——**保证等于最弱的那一环**。
+#:
+#: ## 🔴 协议是不对称的，因为两个方向的错误代价不同
+#:
+#: - **分开**判错 → 多隔离了一个人：困惑、可恢复、**不泄露** → 乐观执行，不打断。
+#: - **会合**判错 → 两组信息当场合并：**泄露、不可撤回** → 必须由**当事人**确认。
+#:
+#: 这是「受众算错必须朝保密方向失败，绝不退化成广播」的直接应用。确认之所以
+#: 合法，是因为问的是当事人自己知道的事（"你走回客厅跟大家会合了吗"）——
+#: 跟被否掉的「房主确认结局」正相反，那次是问一个按设计就不该有信息的人。
+#:
+#: **位置照常写**（它仍是唯一地基，不新增第二份真相）；这个键只让 `group_players`
+#: 在**投递侧**保守一点：没确认之前，这个人自己一组。
+PENDING_MERGE_KEY = "待确认会合"
 
 #: 这一局即兴出来的地点（exec/32）。玩家去了剧本图外的地方——「卡比家」原文
 #: 提过但没建成节点——此前位置这块地基对它失效：`exec/31 #72` 修掉了"保留旧值
@@ -175,6 +200,24 @@ def location_of(keeper_state: dict | None, player_id: str) -> str | None:
     return load_current_node_id(keeper_state)
 
 
+def load_pending_merges(keeper_state: dict | None) -> dict[str, str]:
+    """待确认会合：player_id → 他走到的那个地点 id。编解码同逐人位置表。"""
+    if not keeper_state:
+        return {}
+    raw = keeper_state.get(PENDING_MERGE_KEY)
+    if raw is None or raw == "":
+        return {}
+    out: dict[str, str] = {}
+    for part in str(raw).split(","):
+        part = part.strip()
+        if not part or "@" not in part:
+            continue
+        player_id, node_id = part.split("@", 1)
+        if player_id.strip() and node_id.strip():
+            out[player_id.strip()] = node_id.strip()
+    return out
+
+
 def group_players(
     keeper_state: dict | None, player_ids: list[str]
 ) -> list[tuple[str | None, list[str]]]:
@@ -183,11 +226,25 @@ def group_players(
     保 `player_ids` 的入参顺序（分组顺序 = 各组第一个人出现的顺序），叙事
     分段的顺序因此是确定的、可断言的。位置未知（None）自成一组——**不要**
     把它们并进任何已知位置的组，"不知道他在哪"不等于"他在这儿"。
+
+    🔴 **待确认会合的人单独成组**（exec/33 §5）：他的位置已经写进去了，但"是不是
+    真的跟那边的人碰上了"还没被他本人确认。在确认之前按**没碰上**处理——
+    这个方向判错只是多隔离一个人，反过来判错就是不可撤回的泄露。
     """
-    groups: dict[str | None, list[str]] = {}
+    pending = load_pending_merges(keeper_state)
+    out: list[tuple[str | None, list[str]]] = []
+    index: dict[str | None, int] = {}
     for pid in player_ids:
-        groups.setdefault(location_of(keeper_state, pid), []).append(pid)
-    return list(groups.items())
+        location = location_of(keeper_state, pid)
+        if pid in pending:
+            out.append((location, [pid]))  # 自己一组，且**不进 index**，别人并不进来
+            continue
+        if location in index:
+            out[index[location]][1].append(pid)
+        else:
+            index[location] = len(out)
+            out.append((location, [pid]))
+    return out
 
 
 def is_party_split(keeper_state: dict | None, player_ids: list[str]) -> bool:
@@ -250,6 +307,53 @@ def format_party_locations(
         )
         lines.append(f"- {where}：{who}")
     return "\n".join(lines)
+
+
+def _record_pending_merges(
+    state: dict,
+    *,
+    arrivals: set[str],
+    node_id: str,
+    residents: set[str],
+    humans: set[str],
+) -> list[str]:
+    """到了一个**已经有别人**的地点 → 给到场的人挂上「待确认会合」。就地改 `state`。
+
+    返回被挂起的人（供留痕/推送确认卡）。规则：
+
+    - 目的地没人 → 不是会合，什么都不做（分头、探索空房间都走这条）。
+    - 到场的人里只有 AI 队友 → **自动确认**：它没有独立意图，跟着谁走由代码定
+      （`exec/21` 第一层，它算进分组只是为了让"谁跟谁在一处"算对）。
+    - 真人到场 → 挂起，等他本人点确认。
+    """
+    newcomers = arrivals - residents
+    if not residents or not newcomers:
+        return []
+    pending = load_pending_merges(state)
+    asked = [pid for pid in sorted(newcomers) if pid in humans]
+    for pid in asked:
+        pending[pid] = node_id
+    if asked:
+        state[PENDING_MERGE_KEY] = serialize_player_locations(pending)
+    return asked
+
+
+def _drop_stale_pending_merge(state: dict, player_ids: set[str], node_id: str | None) -> None:
+    """人又走了（去了别处、或位置被清空）→ 那张确认卡作废。就地改 `state`。
+
+    不清的话他会永远单独一组：**没确认就维持分离**是对的默认，但**已经离开
+    那个地点之后还挂着**就变成了永久隔离，那是另一个 bug。
+    """
+    pending = load_pending_merges(state)
+    stale = [pid for pid in player_ids if pid in pending and pending[pid] != node_id]
+    if not stale:
+        return
+    for pid in stale:
+        pending.pop(pid, None)
+    if pending:
+        state[PENDING_MERGE_KEY] = serialize_player_locations(pending)
+    else:
+        state.pop(PENDING_MERGE_KEY, None)
 
 
 def _drop_stealth_on_move(state: dict, moved_player_ids: set[str]) -> None:
@@ -331,6 +435,19 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
         # 再问，所有回落到房间指针的人都会显示成"已经在新节点"，等于没判。
         # （跟上面 speaker_places 同一个坑，写这段时又踩了一次。）
         moved_away = {pid for pid in movers if location_of(current_state, pid) != node_id}
+        # 目的地本来就有谁（不含跟着走的这批）——会合协议要用（exec/33 §5）
+        residents = {
+            pid
+            for pid in roster
+            if pid not in movers and location_of(current_state, pid) == node_id
+        }
+        humans = set(
+            (
+                await db.execute(
+                    select(Player.id).where(Player.room_id == deps.room_id, Player.is_ai.is_(False))
+                )
+            ).scalars()
+        )
 
         current_state[CURRENT_NODE_KEY] = node_id
         locations = load_player_locations(current_state)
@@ -338,8 +455,20 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
             locations[pid] = node_id
         current_state[PLAYER_LOCATION_KEY] = serialize_player_locations(locations)
         _drop_stealth_on_move(current_state, moved_away)
+        _drop_stale_pending_merge(current_state, movers, node_id)
+        asked = _record_pending_merges(
+            current_state,
+            arrivals=movers,
+            node_id=node_id,
+            residents=residents,
+            humans=humans,
+        )
         room.keeper_state = current_state
         await record_event(db, deps, "keeper.node", {"node_id": node_id, "title": title})
+        if asked:
+            await record_event(
+                db, deps, "keeper.merge_pending", {"players": asked, "node_id": node_id}
+            )
     return f"当前场景节点：{title}（{node_id}）"
 
 
@@ -433,6 +562,8 @@ async def clear_current_node_impl(deps: KeeperDeps) -> str:
         # 离开原地点 → 解除隐匿（exec/19 #46）。清空也是"离开"，第一版漏了这一半：
         # 实测里阿贵藏在窗帘后、说"我离开客厅去门厅"，之后 `隐匿玩家` 还挂着他。
         _drop_stealth_on_move(current_state, leaving)
+        # 人已经不在那个地点了，那张会合确认卡作废（exec/33 §5.3）
+        _drop_stale_pending_merge(current_state, leaving, None)
         room.keeper_state = current_state
         await record_event(db, deps, "keeper.node", {"node_id": None, "title": None})
     return "场景已离开剧本节点范围，节点指针清空"
@@ -457,10 +588,31 @@ async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> 
             raise KeeperToolError(f"没有 id={node_id} 的地点（剧本节点与即兴地点里都找不到）")
         locations = load_player_locations(current_state)
         moved_away = {player.id} if location_of(current_state, player.id) != node_id else set()
+        roster = list(
+            (await db.execute(select(Player.id).where(Player.room_id == deps.room_id))).scalars()
+        )
+        residents = {
+            pid for pid in roster if pid != player.id and location_of(current_state, pid) == node_id
+        }
+        humans = set(
+            (
+                await db.execute(
+                    select(Player.id).where(Player.room_id == deps.room_id, Player.is_ai.is_(False))
+                )
+            ).scalars()
+        )
         locations[player.id] = node_id
         current_state[PLAYER_LOCATION_KEY] = serialize_player_locations(locations)
         # 离开原地点 → 解除隐匿（exec/19 #46），与 set_current_node_impl 同口径
         _drop_stealth_on_move(current_state, moved_away)
+        _drop_stale_pending_merge(current_state, {player.id}, node_id)
+        asked = _record_pending_merges(
+            current_state,
+            arrivals={player.id},
+            node_id=node_id,
+            residents=residents,
+            humans=humans,
+        )
         room.keeper_state = current_state
         await record_event(
             db,
@@ -468,7 +620,45 @@ async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> 
             "keeper.move",
             {"player": player.nickname, "node_id": node_id, "title": title},
         )
+        if asked:
+            await record_event(
+                db, deps, "keeper.merge_pending", {"players": asked, "node_id": node_id}
+            )
     return f"{player.nickname}单独前往：{title}（{node_id}）"
+
+
+async def confirm_merge_impl(db: AsyncSession, room_id: str, player_id: str) -> bool:
+    """当事人确认「我确实跟他们碰上了」——从此按同一组投递。返回是否真的有变化。
+
+    **只有一个动作，没有"否认"**：不确认就是维持分离，那本来就是默认与安全方向
+    （`exec/33 §5.3`）。🔴 也**没有超时自动确认**——超时自动 = 静默泄露。
+
+    不走 `KeeperDeps`：这条路径**不碰剧本、不掷骰、不裁决**，只是把一条待确认
+    记录去掉。串行由调用方拿房间行动锁保证（keeper_state 是整列读-改-写）。
+    """
+    room = await db.get(Room, room_id)
+    if room is None:
+        raise KeeperToolError("房间不存在")
+    current_state = dict(room.keeper_state or {})
+    pending = load_pending_merges(current_state)
+    if player_id not in pending:
+        return False
+    node_id = pending.pop(player_id)
+    if pending:
+        current_state[PENDING_MERGE_KEY] = serialize_player_locations(pending)
+    else:
+        current_state.pop(PENDING_MERGE_KEY, None)
+    room.keeper_state = current_state
+    db.add(
+        Event(
+            room_id=room_id,
+            player_id=player_id,
+            event_type="keeper.merge_confirmed",
+            payload={"node_id": node_id},
+        )
+    )
+    await db.commit()
+    return True
 
 
 async def set_stealth_impl(deps: KeeperDeps, player_name: str, hidden: bool) -> str:

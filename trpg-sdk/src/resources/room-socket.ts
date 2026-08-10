@@ -73,6 +73,15 @@ const PAYLOAD_VALIDATORS: {
   'clue.granted': (p) => typeof p.playerId === 'string' && typeof p.clueName === 'string',
   // HP 结构化广播（feat/keeper-agent，真人实测 09-#4 修复）
   'character.stat_changed': (p) => typeof p.playerId === 'string' && typeof p.hp === 'number',
+  // exec/33 §5.4。companions/otherGroups 必填（服务端每次都送得出来，契约就该说
+  // 它一定在）；三个位置字段可为 null，但**必须存在**。
+  'party.update': (p) =>
+    Array.isArray(p.companions) &&
+    typeof p.otherGroups === 'number' &&
+    'locationId' in p &&
+    'locationName' in p &&
+    'mergePendingAt' in p,
+  'keeper.busy': (p) => typeof p.busy === 'boolean',
   error: (p) => typeof p.code === 'string' && typeof p.message === 'string',
 };
 
@@ -210,6 +219,14 @@ export class RoomSocket {
   /** san.check.roll —— 理智检定版本，同 rollCheck。 */
   rollSanCheck(playerId: string, payload: SanCheckRollPayload): void {
     this.send('san.check.roll', playerId, payload);
+  }
+
+  /** party.merge.confirm —— 当事人确认「我确实跟他们碰上了」（exec/33 §5.2）。
+   *
+   * 只有确认这一个动作，**没有否认**：不确认就是维持分离，那本来就是默认与
+   * 安全方向。走到别人所在的地点时后端会在 `party.update` 里给 `mergePendingAt`。 */
+  confirmMerge(playerId: string): void {
+    this.send('party.merge.confirm', playerId, {});
   }
 
   /** room.rejoin —— 断线重连（issue #77 仅铺协议，后端本期回 NOT_IMPLEMENTED）。 */

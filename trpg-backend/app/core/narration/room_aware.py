@@ -76,6 +76,22 @@ class RoomAwareKeeperNarrator(Narrator):
             f"modules_dir={self._modules_dir}"
         )
 
+    async def location_label(
+        self, room_id: str, keeper_state: dict | None, location_id: str
+    ) -> str | None:
+        """位置 id → 玩家看得懂的名字（`party.update` 用，`exec/33 §5.4`）。
+
+        放在这里而不是 ws 层：**剧本是按房间加载的，只有这一层知道该用哪一份**。
+        ws 自己缓存一份就是第二份真相。解析不出就返回 id，**不编造名字**。
+        """
+        from app.core.keeper.runtime.location_state import resolve_location
+
+        try:
+            resolved = await self._resolve(room_id)
+        except FileNotFoundError:
+            return location_id
+        return resolve_location(resolved.module, keeper_state, location_id) or location_id
+
     async def narrate(self, context: NarrationContext) -> NarrationOutcome:
         resolved = await self._resolve(context.room_id)
         return await self._agent_for(resolved).narrate(context)

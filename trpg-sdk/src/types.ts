@@ -99,6 +99,9 @@ export type {
   ChatMessageRead as ChatMessage,
   // HP 结构化广播（feat/keeper-agent，真人实测 09-#4 修复）
   CharacterStatChangedPayload,
+  // 分组变更协议与空间处境（exec/33 §5）
+  PartyUpdatePayload,
+  KeeperBusyPayload,
 } from './generated/dto';
 
 /** GET /api/v1/me/rooms 返回项。 */
@@ -136,8 +139,10 @@ import type {
   ClueGrantedPayload,
   ErrorPayload,
   GameEndedPayload,
+  KeeperBusyPayload,
   NarrationDeltaPayload,
   NarrationPushPayload,
+  PartyUpdatePayload,
   PlayerJoinedPayload,
   RoomStatePayload,
   SanCheckRequestPayload,
@@ -185,4 +190,9 @@ export type ServerToClientEvent =
   // HP 结构化广播（feat/keeper-agent，真人实测 09-#4 修复；San 已有
   // san.check.result 携带 sanRemaining，不需要对应事件）
   | { type: 'character.stat_changed'; payload: CharacterStatChangedPayload }
+  // exec/33 §5.4：这个玩家自己的空间处境（我在哪 · 谁跟我在一处 · 别处还有几组）。
+  // **逐人裁过再发**，不是全房间的分组表。
+  | { type: 'party.update'; payload: PartyUpdatePayload }
+  // exec/33 §5.4：守秘人正在别处忙（分头时叙事逐组生成，没轮到的那组此前是黑屏）
+  | { type: 'keeper.busy'; payload: KeeperBusyPayload }
   | { type: 'error'; payload: ErrorPayload };

@@ -62,8 +62,11 @@ from app.dto.ws import (
     ClientEnvelope,
     ErrorPayload,
     GameStartPayload,
+    KeeperBusyPayload,
     NarrationDeltaPayload,
     NarrationPushPayload,
+    PartyMergeConfirmPayload,
+    PartyUpdatePayload,
     PlayerReadyPayload,
     RoomJoinPayload,
     RoomRejoinPayload,
@@ -168,6 +171,95 @@ async def _deliver_narration_segments(
         await manager.send_to_players(
             room_id, list(segment.audience), envelope.model_dump(by_alias=True)
         )
+
+
+async def _broadcast_keeper_busy(room_id: str, busy: bool) -> None:
+    """守秘人开始/结束这一轮（`exec/33 §5.4`）。
+
+    全房间广播是**对的**：这是元层信息（"KP 在忙"），不含任何虚构内容。
+    前端的「守秘人正在思考」是本地在自己提交时点亮的，**没发言的人看不到**，
+    分头时另一组因此整整十几秒黑屏。
+    """
+    payload = KeeperBusyPayload(busy=busy)
+    envelope = ServerEnvelope(type="keeper.busy", payload=payload.model_dump(by_alias=True))
+    await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
+
+
+async def _push_party_update(db: AsyncSession, websocket: WebSocket, room_id: str) -> None:
+    """把每个人**自己的**空间处境推给他（`exec/33 §5.4`）。
+
+    🔴 逐人裁过再发：别处那一组在哪、有谁，对你的角色不该知道（他们可能正在
+    潜行）。所以只给「我在哪 · 谁跟我在一处 · 另有几组人在别处」。
+    这只眼睛存在的理由是——系统把位置认错时，此前**没有任何人会发现**。
+    """
+    from sqlalchemy import select
+
+    from app.core.keeper.runtime.location_state import group_players, load_pending_merges
+    from app.models.room import Player, Room
+
+    room = await db.get(Room, room_id)
+    if room is None:
+        return
+    keeper_state = room.keeper_state
+    rows = await db.execute(select(Player.id, Player.nickname).where(Player.room_id == room_id))
+    roster: list[tuple[str, str]] = [(pid, nick) for pid, nick in rows.all()]
+    if not roster:
+        return
+
+    # 名字由**持有剧本的那一层**解析：ws 层不持有剧本（它在 narrator 里按房间
+    # 加载），也不该自己缓存一份——那就是第二份真相。拿不到就显示 id，
+    # **不编造名字**。
+    narrator = getattr(websocket.app.state, "narrator", None)
+    resolver = getattr(narrator, "location_label", None)
+
+    async def _label(location_id: str | None) -> str | None:
+        if location_id is None:
+            return None
+        if resolver is None:
+            return location_id
+        return await resolver(room_id, keeper_state, location_id)
+
+    groups = group_players(keeper_state, [pid for pid, _ in roster])
+    pending = load_pending_merges(keeper_state)
+    nicknames: dict[str, str] = dict(roster)
+    for location_id, members in groups:
+        merge_at = next((pending[pid] for pid in members if pid in pending), None)
+        payload = PartyUpdatePayload(
+            location_id=location_id,
+            location_name=await _label(location_id),
+            companions=[nicknames.get(pid, pid) for pid in members],
+            other_groups=len(groups) - 1,
+            merge_pending_at=await _label(merge_at),
+        )
+        envelope = ServerEnvelope(type="party.update", payload=payload.model_dump(by_alias=True))
+        await manager.send_to_players(room_id, list(members), envelope.model_dump(by_alias=True))
+
+
+async def _handle_merge_confirm(
+    db: AsyncSession, websocket: WebSocket, room_id: str, player_id: str
+) -> None:
+    """当事人确认「我确实跟他们碰上了」（`exec/33 §5.2`）。
+
+    只有确认这一个动作，**没有否认**：不确认就是维持分离，那本来就是默认与
+    安全方向；也**没有超时自动确认**——超时自动 = 静默泄露。
+    """
+    from app.core.keeper.runtime.deps import KeeperToolError
+    from app.core.keeper.runtime.location_state import confirm_merge_impl
+
+    # keeper_state 是整列读-改-写，必须跟裁决那条循环串行（同 check.roll 的理由）。
+    lock_token = action_lock_manager.try_acquire(room_id)
+    if lock_token is None:
+        await _send_error(websocket, "ACTION_IN_PROGRESS", "守秘人正在处理其他玩家的行动，请稍候")
+        return
+    try:
+        changed = await confirm_merge_impl(db, room_id, player_id)
+    except KeeperToolError as exc:
+        await _send_error(websocket, "MERGE_CONFIRM_FAILED", str(exc))
+        return
+    finally:
+        action_lock_manager.release(room_id, lock_token)
+    if changed:
+        await _push_party_update(db, websocket, room_id)
 
 
 async def _audience_at_speaker_location(
@@ -733,6 +825,9 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
         await _deliver_narration_segments(db, room_id, outcome.segments)
         for notice in outcome.check_requests:
             await _broadcast_check_request(room_id, notice, db)
+        # 位置可能刚变过（分头/会合/走到图外）——把每个人自己的处境推给他
+        await _push_party_update(db, websocket, room_id)
+        await _broadcast_keeper_busy(room_id, False)
     logger.warning("ai_auto_roll_limit_reached", room_id=room_id, limit=_AI_AUTO_ROLL_LIMIT)
 
 
@@ -788,43 +883,56 @@ async def _run_turn(
     )
     # 事件不在这里记：每条提交在 `_handle_action_submit` 里广播之前就已按**人**
     # 落库了（广播 payload 需要那一行的 id 做去重身份，exec/19 #42）。
-    narrator = websocket.app.state.narrator
-    # 🔴 先分配 id 再开流：第一条 delta 就得带着它，前端才知道后续碎片拼到
-    # 哪条消息上。整段写完后用**同一个** id 落库 + 广播 narration.push。
-    narration_event_id = str(uuid4())
-    context = replace(context, on_delta=_narration_delta_sink(room_id, narration_event_id))
+    #
+    # 🔴 先告诉所有人"守秘人在忙"（exec/33 §5.4）：前端的「正在思考」是**本地**
+    # 在自己提交时点亮的，没发言的人看不到——分头时另一组因此是整整十几秒的
+    # 黑屏。线下你至少看得见 KP 在跟别人说话。
+    await _broadcast_keeper_busy(room_id, True)
     try:
-        outcome = await narrator.narrate(context)
-    except Exception as exc:  # 外部服务的失败面（网络/超时/API 错）就是宽的，故意宽捕获
-        logger.warning("narrator_failed", room_id=room_id, error=str(exc))
-        await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
-        # 聊天区不能静默：补一条可见兜底，避免玩家以为断线
-        with contextlib.suppress(Exception):  # 兜底广播失败也不再抛
-            await _broadcast_narration(
-                db,
-                room_id,
-                initiator_id,
-                "守秘人整理思路时卡了一下。请用一句更明确的行动再说一次。",
-            )
-        return
-    # 玩家行动重置心跳节流（路线 6）
-    try:
-        from app.core.keeper.runtime.heartbeat import touch_activity
+        narrator = websocket.app.state.narrator
+        # 🔴 先分配 id 再开流：第一条 delta 就得带着它，前端才知道后续碎片拼到
+        # 哪条消息上。整段写完后用**同一个** id 落库 + 广播 narration.push。
+        narration_event_id = str(uuid4())
+        context = replace(context, on_delta=_narration_delta_sink(room_id, narration_event_id))
+        try:
+            outcome = await narrator.narrate(context)
+        except Exception as exc:  # 外部服务的失败面（网络/超时/API 错）就是宽的，故意宽捕获
+            logger.warning("narrator_failed", room_id=room_id, error=str(exc))
+            await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
+            # 聊天区不能静默：补一条可见兜底，避免玩家以为断线
+            with contextlib.suppress(Exception):  # 兜底广播失败也不再抛
+                await _broadcast_narration(
+                    db,
+                    room_id,
+                    initiator_id,
+                    "守秘人整理思路时卡了一下。请用一句更明确的行动再说一次。",
+                )
+            return
+        # 玩家行动重置心跳节流（路线 6）
+        try:
+            from app.core.keeper.runtime.heartbeat import touch_activity
 
-        touch_activity(room_id)
-    except Exception:  # noqa: BLE001 — 心跳模块不可用时不影响主路径
-        pass
-    # outcome.text 可能为空（两段式玩家掷骰：pending 守卫命中时守秘人只
-    # 重发检定请求，不产生新叙事）——空文本不广播一条空 narration.push。
-    for notice in outcome.stat_changes:
-        await _broadcast_stat_change(room_id, notice)
-    if outcome.text:
-        await _broadcast_narration(
-            db, room_id, initiator_id, outcome.text, event_id=narration_event_id
-        )
-    await _deliver_narration_segments(db, room_id, outcome.segments)
-    for notice in outcome.check_requests:
-        await _broadcast_check_request(room_id, notice, db)
+            touch_activity(room_id)
+        except Exception:  # noqa: BLE001 — 心跳模块不可用时不影响主路径
+            pass
+        # outcome.text 可能为空（两段式玩家掷骰：pending 守卫命中时守秘人只
+        # 重发检定请求，不产生新叙事）——空文本不广播一条空 narration.push。
+        for notice in outcome.stat_changes:
+            await _broadcast_stat_change(room_id, notice)
+        if outcome.text:
+            await _broadcast_narration(
+                db, room_id, initiator_id, outcome.text, event_id=narration_event_id
+            )
+        await _deliver_narration_segments(db, room_id, outcome.segments)
+        for notice in outcome.check_requests:
+            await _broadcast_check_request(room_id, notice, db)
+    finally:
+        # 🔴 必须在 finally：叙事失败那条路径上有 early return，写在成功分支里
+        # 就会让「守秘人正在忙」在所有人屏幕上永远亮着。
+        await _broadcast_keeper_busy(room_id, False)
+        # 位置可能刚变过（分头/会合/走到图外）——把每个人自己的处境推给他
+        with contextlib.suppress(Exception):
+            await _push_party_update(db, websocket, room_id)
 
 
 async def _handle_check_roll(
@@ -895,6 +1003,9 @@ async def _handle_check_roll(
         await _deliver_narration_segments(db, room_id, outcome.segments)
         for notice in outcome.check_requests:
             await _broadcast_check_request(room_id, notice, db)
+        # 位置可能刚变过（分头/会合/走到图外）——把每个人自己的处境推给他
+        await _push_party_update(db, websocket, room_id)
+        await _broadcast_keeper_busy(room_id, False)
         # 这位掷完了，排在他后面的 AI 检定该轮到了（exec/21 第三层）
         await _auto_roll_ai_checks(db, websocket, room_id)
     finally:
@@ -1027,6 +1138,9 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                             bound_player_id,
                             san_roll_payload.check_request_id,
                         )
+                    elif event_type == "party.merge.confirm":
+                        PartyMergeConfirmPayload.model_validate(raw_payload)
+                        await _handle_merge_confirm(db, websocket, room_id, bound_player_id)
                     elif event_type == "room.rejoin":
                         RoomRejoinPayload.model_validate(raw_payload)
                         await _send_error(websocket, "NOT_IMPLEMENTED", "断线重连本期尚未实现")

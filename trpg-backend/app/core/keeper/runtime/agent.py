@@ -93,6 +93,7 @@ from app.core.keeper.runtime.location_state import (
     group_players,
     load_hidden_players,
     location_of,
+    resolve_location,
 )
 from app.core.keeper.runtime.location_state import (
     scene_changed as has_scene_changed,
@@ -849,8 +850,9 @@ class KeeperAgent(Narrator):
         for node_id, members in groups:
             if not open_speakers.intersection(members):
                 continue
-            node = self._module.node_by_id(node_id) if node_id else None
-            where = node.title if node is not None else (node_id or "此处")
+            # 即兴地点也解析得出名字（exec/32）——原来只查剧本节点，人在图外时
+            # 这里会把 id 或「此处」写进硬提醒，模型只能照着写"在此处"。
+            where = resolve_location(self._module, keeper_state, node_id) or (node_id or "此处")
             who = "、".join(nicknames.get(pid, pid) for pid in members)
             hint = (
                 f"\n\n【投递范围·代码硬提醒】这一段**只会送达在「{where}」的 {who}**，"

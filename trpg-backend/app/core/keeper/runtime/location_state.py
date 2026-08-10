@@ -35,6 +35,7 @@ LLM 的 `state_updates` 改不动它。
 
 from __future__ import annotations
 
+import structlog
 from sqlalchemy import select
 
 from app.core.keeper.contract.module_loader import ScenarioModule
@@ -51,12 +52,34 @@ from app.core.keeper.runtime.scene_state import (
 )
 from app.models.room import Player, Room
 
+logger = structlog.get_logger()
+
 PLAYER_LOCATION_KEY = "玩家位置"
 
 #: 潜行/躲藏中的调查员（exec/18 ②）。「在场但不可见」——他照常**听得见**这里
 #: 发生的一切（所以不把他从位置分组里摘出去），但他自己的行动不会广播给同处
 #: 的其他人。存 player_id 的逗号串。
 HIDDEN_PLAYERS_KEY = "隐匿玩家"
+
+#: 这一局即兴出来的地点（exec/32）。玩家去了剧本图外的地方——「卡比家」原文
+#: 提过但没建成节点——此前位置这块地基对它失效：`exec/31 #72` 修掉了"保留旧值
+#: 说谎"，但人到底在哪仍然没有答案，多人分头时两个人跑去两个不同的图外地方
+#: 还会被判成站在一起。
+#:
+#: 🔴 **存运行时状态，不往模组里塞节点**：模组是被加载的程序，一局里即兴出来的
+#: 地方属于这一局的世界状态，下一局同一份模组不该带着它（见 `[[engine-framing]]`）。
+#: 形态是 dict（同 `NPC_STATE_KEY`）：`{"loc-1": {"name": ..., "from": ...}}`。
+IMPROVISED_LOCATION_KEY = "即兴地点"
+
+#: 即兴地点 id 的前缀。**id 由代码分配**，模型只能从局面块里挑已有的——
+#: 让它自己起 id 就是「不要用自由文本当标识符」的又一次复发（「卡比家」
+#: 「卡比的家」「卡普顿宅」会变成三个地点）。
+IMPROVISED_ID_PREFIX = "loc-"
+
+#: 超过这个条数就打一条 warning。**膨胀本身是信号，不是要治的病**：它说明模型
+#: 在拿地点表当便签本，那时该查的是"它缺哪一类落点"，而不是给这张表加裁剪
+#: （局面块必须全量列出，藏起来的地点模型看不见，就会重建一个同名的）。
+IMPROVISED_SOFT_LIMIT = 8
 
 
 def load_player_locations(keeper_state: dict | None) -> dict[str, str]:
@@ -93,6 +116,55 @@ def load_hidden_players(keeper_state: dict | None) -> set[str]:
 
 def serialize_hidden_players(player_ids: set[str]) -> str:
     return ", ".join(sorted(player_ids))
+
+
+def load_improvised_locations(keeper_state: dict | None) -> dict[str, dict]:
+    """解析即兴地点表。形状不对的条目整条丢弃，不产生半条记录。"""
+    if not keeper_state:
+        return {}
+    raw = keeper_state.get(IMPROVISED_LOCATION_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict] = {}
+    for loc_id, payload in raw.items():
+        if not isinstance(payload, dict):
+            continue
+        name = str(payload.get("name") or "").strip()
+        if not loc_id or not name:
+            continue
+        out[str(loc_id)] = {"name": name, "from": payload.get("from") or None}
+    return out
+
+
+def next_improvised_id(table: dict[str, dict]) -> str:
+    """下一个可用 id。**只增不复用**——复用会让复盘里两个地方共用一个 id。"""
+    used = 0
+    for loc_id in table:
+        if loc_id.startswith(IMPROVISED_ID_PREFIX):
+            suffix = loc_id[len(IMPROVISED_ID_PREFIX) :]
+            if suffix.isdigit():
+                used = max(used, int(suffix))
+    return f"{IMPROVISED_ID_PREFIX}{used + 1}"
+
+
+def resolve_location(
+    module: ScenarioModule, keeper_state: dict | None, location_id: str | None
+) -> str | None:
+    """一个位置 id 叫什么名字。剧本节点 → 标题；即兴地点 → 它的名字；都不是 → None。
+
+    🔴 抽出来是因为这件事原本散在 6 处，每处都写着
+    `module.node_by_id(x) ... or "此处"`——加一类位置就要挨个改，漏一处就渲染成
+    「此处」。判据同 `exec/27`：**同一件事的两头，一头可插拔一头写死**是最坏的信号。
+    """
+    if not location_id:
+        return None
+    node = module.node_by_id(location_id)
+    if node is not None:
+        return node.title
+    improvised = load_improvised_locations(keeper_state).get(location_id)
+    if improvised is not None:
+        return improvised["name"]
+    return None
 
 
 def location_of(keeper_state: dict | None, player_id: str) -> str | None:
@@ -170,8 +242,8 @@ def format_party_locations(
     nicknames = dict(players)
     lines: list[str] = []
     for node_id, members in groups:
-        node = module.node_by_id(node_id) if node_id else None
-        where = f"{node.title}（{node_id}）" if node is not None else (node_id or "（位置未记录）")
+        title = resolve_location(module, keeper_state, node_id)
+        where = f"{title}（{node_id}）" if title is not None else (node_id or "（位置未记录）")
         who = "、".join(
             f"{nicknames.get(pid, pid)}（隐匿中）" if pid in hidden else nicknames.get(pid, pid)
             for pid in members
@@ -232,15 +304,18 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
     表达，而且两头都退化正确——全队同处时全员同行；真分头时（`moves` 挪走的那
     位）不在发言者所处的地点，自然不动。
     """
-    node = deps.module.node_by_id(node_id)
-    if node is None:
-        raise KeeperToolError(f"剧本里没有场景节点 id={node_id}")
     speakers = set(deps.turn_player_ids or (deps.player_id,))
     async with deps.write_lock, deps.session_factory() as db:
         room = await db.get(Room, deps.room_id)
         if room is None:
             raise KeeperToolError("房间不存在")
         current_state = dict(room.keeper_state or {})
+        # 白名单 = 剧本节点 ∪ 本局的即兴地点（exec/32）。校验挪进事务里，是因为
+        # 即兴地点存在 keeper_state 里，不读库就不知道有没有这个 id——
+        # **白名单不因为多了一类位置而变松**，两边都查不到仍然拒绝。
+        title = resolve_location(deps.module, current_state, node_id)
+        if title is None:
+            raise KeeperToolError(f"没有 id={node_id} 的地点（剧本节点与即兴地点里都找不到）")
         # AI 玩家算进名单（exec/21 第一层）："跟你站在一起的人跟你一起走"。
         # 不算它，AI 会被永久留在原地，下一轮就被判成分头——正是 #37 那类 bug。
         roster = list(
@@ -264,8 +339,50 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
         current_state[PLAYER_LOCATION_KEY] = serialize_player_locations(locations)
         _drop_stealth_on_move(current_state, moved_away)
         room.keeper_state = current_state
-        await record_event(db, deps, "keeper.node", {"node_id": node_id, "title": node.title})
-    return f"当前场景节点：{node.title}（{node_id}）"
+        await record_event(db, deps, "keeper.node", {"node_id": node_id, "title": title})
+    return f"当前场景节点：{title}（{node_id}）"
+
+
+async def create_improvised_location_impl(
+    deps: KeeperDeps, name: str, from_id: str | None = None
+) -> tuple[str, str]:
+    """在这一局的地点表里建一个剧本没有的地方，返回 (地点 id, 可读报告)。
+
+    **只建表，不挪人**——挪人仍然走 `set_current_node_impl`，那样"谁跟着走"
+    「离开就解除隐匿」这些语义只有一份实现。调用顺序在 `movement/executor.py`。
+
+    🔴 **重名不去重**：两个「墓地」是两条。名字是给人看的，不是标识符——
+    去重就等于拿自由文本当 key，那正是这套设计要避免的（`exec/17`）。
+    """
+    cleaned = name.strip()
+    if not cleaned:
+        raise KeeperToolError("新地点必须有名字")
+    async with deps.write_lock, deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            raise KeeperToolError("房间不存在")
+        current_state = dict(room.keeper_state or {})
+        table = load_improvised_locations(current_state)
+        # 来路只留能解析的：解析不出就丢掉这一项，**不把模型写的字符串原样存下来**
+        # （存了它就会被当成 id 用，又一次自由文本当标识符）。
+        origin = from_id if resolve_location(deps.module, current_state, from_id) else None
+        loc_id = next_improvised_id(table)
+        table[loc_id] = {"name": cleaned, "from": origin}
+        current_state[IMPROVISED_LOCATION_KEY] = table
+        room.keeper_state = current_state
+        await record_event(
+            db, deps, "keeper.location", {"location_id": loc_id, "name": cleaned, "from": origin}
+        )
+        if len(table) > IMPROVISED_SOFT_LIMIT:
+            # 观测，不是限流：条数失控说明模型在拿地点表当便签本，那时该查的是
+            # "它缺哪一类落点"（exec/31 §Ⅰ），不是给这张表加裁剪。
+            logger.warning(
+                "keeper_improvised_locations_growing",
+                room_id=deps.room_id,
+                count=len(table),
+                limit=IMPROVISED_SOFT_LIMIT,
+            )
+    return loc_id, f"新地点：{cleaned}（{loc_id}）"
 
 
 async def clear_current_node_impl(deps: KeeperDeps) -> str:
@@ -300,15 +417,15 @@ async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> 
     一次只处理一个人，是为了让"节点 id 不存在 / 找不到这个玩家"这类问题
     退化成**这一条**的 issue，而不是整批移动一起失败。
     """
-    node = deps.module.node_by_id(node_id)
-    if node is None:
-        raise KeeperToolError(f"剧本里没有场景节点 id={node_id}")
     async with deps.write_lock, deps.session_factory() as db:
         player, _character = await resolve_character(db, deps, player_name)
         room = await db.get(Room, deps.room_id)
         if room is None:
             raise KeeperToolError("房间不存在")
         current_state = dict(room.keeper_state or {})
+        title = resolve_location(deps.module, current_state, node_id)
+        if title is None:
+            raise KeeperToolError(f"没有 id={node_id} 的地点（剧本节点与即兴地点里都找不到）")
         locations = load_player_locations(current_state)
         moved_away = {player.id} if location_of(current_state, player.id) != node_id else set()
         locations[player.id] = node_id
@@ -320,9 +437,9 @@ async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> 
             db,
             deps,
             "keeper.move",
-            {"player": player.nickname, "node_id": node_id, "title": node.title},
+            {"player": player.nickname, "node_id": node_id, "title": title},
         )
-    return f"{player.nickname}单独前往：{node.title}（{node_id}）"
+    return f"{player.nickname}单独前往：{title}（{node_id}）"
 
 
 async def set_stealth_impl(deps: KeeperDeps, player_name: str, hidden: bool) -> str:

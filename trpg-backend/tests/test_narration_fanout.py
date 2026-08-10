@@ -129,7 +129,15 @@ def _stub(agent: KeeperAgent, decision: KeeperDecision) -> list[str]:
         return decision
 
     async def fake_narrate_prose(
-        situation, decision, report, issues, *, max_tokens, max_chars, extra_suffix=""
+        situation,
+        decision,
+        report,
+        issues,
+        *,
+        max_tokens,
+        max_chars,
+        extra_suffix="",
+        tape_key=None,
     ):
         suffixes.append(extra_suffix)
         return f"第{len(suffixes)}段叙事。"
@@ -147,7 +155,15 @@ def _capture_situations(agent: KeeperAgent, decision: KeeperDecision) -> list[st
         return decision
 
     async def fake_narrate_prose(
-        situation, decision, report, issues, *, max_tokens, max_chars, extra_suffix=""
+        situation,
+        decision,
+        report,
+        issues,
+        *,
+        max_tokens,
+        max_chars,
+        extra_suffix="",
+        tape_key=None,
     ):
         situations.append(situation)
         return "占位叙事。"
@@ -212,7 +228,11 @@ async def test_both_groups_act_produces_two_segments() -> None:
     assert [s.audience for s in outcome.segments] == [(a_id,), (b_id,)]
     assert [s.node_id for s in outcome.segments] == ["hall", "cellar"]
     assert len(suffixes) == 2
-    assert "门厅" in suffixes[0] and "地下室" in suffixes[1]
+    # 🔴 按内容找，不按下标：并行之后各段的**完成顺序**不再确定（也不该被
+    # 保证）。确定的是 `outcome.segments` 的顺序——`gather` 保入参序，上面
+    # 两条断言守的就是它。
+    assert any("门厅" in s for s in suffixes)
+    assert any("地下室" in s for s in suffixes)
 
 
 async def test_a_speaker_awaiting_merge_confirmation_still_gets_his_own_segment() -> None:
@@ -377,8 +397,9 @@ async def test_hidden_speaker_gets_own_segment_and_still_hears_the_room() -> Non
     )
     # 隐匿者一段（只给自己）+ 公开发言者那一组一段（受众含隐匿者本人）
     assert [s.audience for s in outcome.segments] == [(a_id,), (a_id, b_id)]
-    assert "只会送达 阿福 一个人" in suffixes[0]
-    assert "阿福正处于隐匿状态" in suffixes[1]
+    # 按内容认，不按完成顺序（并行之后那个顺序不该被保证）
+    assert any("只会送达 阿福 一个人" in s for s in suffixes)
+    assert any("阿福正处于隐匿状态" in s for s in suffixes)
 
 
 # ── 5. per-audience 上下文（P5.2d）：拿不到，才是真的说不出 ──────────
@@ -466,7 +487,11 @@ async def test_each_segment_context_excludes_the_other_groups_history() -> None:
         )
     )
     assert len(situations) == 2
-    hall, cellar = situations
+    # 同上：按内容认段，不靠完成顺序。
+    # 🔴 判别依据只能挑**按受众裁过**的东西：在场名单两段都有全部人名，
+    # 拿它认段会永远认到第一条。本轮原话才是各看各的。
+    hall = next(s for s in situations if "我看看四周" in s)
+    cellar = next(s for s in situations if s is not hall)
 
     # 历史：各看各的；分头之前那句两边都在
     assert "门厅这边我掀开了地毯" in hall
@@ -501,3 +526,174 @@ async def test_ledger_is_scoped_to_the_audience() -> None:
         assert await visible_fact_ids(db, room_id=room_id, audience=frozenset()) == set()
         # 守秘人视图不过滤
         assert await revealed_fact_ids(db, room_id=room_id) == {"f-hall", "f-cellar"}
+
+
+# ── 4. 并行 + 按段流式（exec/33 §4 与 §3.2，两者绑定） ──
+
+
+async def test_two_segments_are_generated_concurrently() -> None:
+    """🔴 §4 验收：两段叙事的生成有重叠，不是一段等另一段写完。
+
+    原来是 `for ... await`，第 N 组要等前面 N-1 段全部写完。**流式只压缩
+    「一段之内」的等待，压不掉「排在前面那几段」的等待**——分头场景的大头
+    是串行。这里让每段假叙事各睡 0.3s：串行 ≥0.6s，并行 ≈0.3s。
+    """
+    import asyncio
+    import time
+
+    agent = _keeper()
+    live = 0
+    peak = 0
+
+    async def fake_adjudicate(situation: str) -> KeeperDecision:
+        return KeeperDecision(thinking="无事", narration_guidance="继续")
+
+    async def fake_narrate_prose(
+        situation,
+        decision,
+        report,
+        issues,
+        *,
+        max_tokens,
+        max_chars,
+        extra_suffix="",
+        tape_key=None,
+    ):
+        nonlocal live, peak
+        live += 1
+        peak = max(peak, live)
+        await asyncio.sleep(0.3)
+        live -= 1
+        return "占位叙事。"
+
+    agent._adjudicate = fake_adjudicate  # ty: ignore[invalid-assignment]
+    agent._narrate_prose = fake_narrate_prose  # ty: ignore[invalid-assignment]
+
+    room_id, a_id, b_id = await _seed("FAN007", {CURRENT_NODE_KEY: "hall"})
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        room.keeper_state = {**(room.keeper_state or {}), PLAYER_LOCATION_KEY: f"{b_id}@cellar"}
+        await db.commit()
+
+    started = time.perf_counter()
+    outcome = await agent.narrate(
+        NarrationContext(
+            utterance="我看看四周",
+            player_nickname="阿福",
+            room_id=room_id,
+            player_id=a_id,
+            participant_ids=(a_id, b_id),
+        )
+    )
+    elapsed = time.perf_counter() - started
+    assert len(outcome.segments) == 2
+    assert peak == 2, "🔴 两段没有同时在跑 = 还是串行"
+    assert elapsed < 0.55, f"两段应当重叠，实测 {elapsed:.2f}s"
+
+
+async def test_each_segments_deltas_only_go_to_its_own_audience() -> None:
+    """🔴 §3.2 验收：delta 的受众与它所属段落的受众**逐一致**。
+
+    并行落地那一刻如果 sink 还是全房间广播，就是泄露落地那一刻——两组同时在
+    写字，谁的都会推到对面屏幕上，而且不会有任何东西变红。
+    """
+    agent = _keeper()
+    pushed: list[tuple[str, tuple[str, ...], str]] = []
+
+    async def fake_adjudicate(situation: str) -> KeeperDecision:
+        return KeeperDecision(thinking="无事", narration_guidance="继续")
+
+    async def fake_streamed(
+        situation, decision, report, issues, *, on_delta, tape_key=None, **kwargs
+    ):
+        await on_delta(0, "一段话。")
+        return "一段话。"
+
+    agent._adjudicate = fake_adjudicate  # ty: ignore[invalid-assignment]
+    agent._narrate_prose_streamed = fake_streamed  # ty: ignore[invalid-assignment]
+
+    room_id, a_id, b_id = await _seed("FAN008", {CURRENT_NODE_KEY: "hall"})
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        room.keeper_state = {**(room.keeper_state or {}), PLAYER_LOCATION_KEY: f"{b_id}@cellar"}
+        await db.commit()
+
+    def _factory(event_id: str, audience: tuple[str, ...]):
+        async def _sink(seq: int, text: str) -> None:
+            pushed.append((event_id, audience, text))
+
+        return _sink
+
+    outcome = await agent.narrate(
+        NarrationContext(
+            utterance="我看看四周",
+            player_nickname="阿福",
+            room_id=room_id,
+            player_id=a_id,
+            participant_ids=(a_id, b_id),
+            segment_delta_sink=_factory,
+        )
+    )
+    assert len(outcome.segments) == 2
+    # 每段的 delta 受众 == 那一段的受众，且 event_id 与段落上的那个是同一个
+    by_event = {eid: aud for eid, aud, _ in pushed}
+    for segment in outcome.segments:
+        assert segment.event_id is not None, "流式段落必须在开流前就有 id"
+        assert by_event[segment.event_id] == segment.audience
+
+
+async def test_segment_tape_keys_are_stable_and_unique() -> None:
+    """🔴 §4 拦路石 1：并行之后完成顺序不确定，磁带必须按稳定子键回放。
+
+    键由代码算（分头轮次 + 段落在列表里的位置），跟模型输出无关，所以录制与
+    回放会得到同一个键；同一轮内两段的键必须不同，否则回放会静默取错一条。
+    """
+    agent = _keeper()
+    keys: list[str | None] = []
+
+    async def fake_adjudicate(situation: str) -> KeeperDecision:
+        return KeeperDecision(thinking="无事", narration_guidance="继续")
+
+    async def fake_narrate_prose(
+        situation,
+        decision,
+        report,
+        issues,
+        *,
+        max_tokens,
+        max_chars,
+        extra_suffix="",
+        tape_key=None,
+    ):
+        keys.append(tape_key)
+        return "占位叙事。"
+
+    agent._adjudicate = fake_adjudicate  # ty: ignore[invalid-assignment]
+    agent._narrate_prose = fake_narrate_prose  # ty: ignore[invalid-assignment]
+
+    room_id, a_id, b_id = await _seed("FAN009", {CURRENT_NODE_KEY: "hall"})
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        room.keeper_state = {**(room.keeper_state or {}), PLAYER_LOCATION_KEY: f"{b_id}@cellar"}
+        await db.commit()
+
+    context = NarrationContext(
+        utterance="我看看四周",
+        player_nickname="阿福",
+        room_id=room_id,
+        player_id=a_id,
+        participant_ids=(a_id, b_id),
+    )
+    await agent.narrate(context)
+    await agent.narrate(context)
+    # 按集合断言：并行之后**完成顺序不确定**，确定的是"这一轮用了哪几个键"。
+    assert set(keys) == {
+        "narrate-seg:1:0",
+        "narrate-seg:1:1",
+        "narrate-seg:2:0",
+        "narrate-seg:2:1",
+    }, keys
+    assert len(set(keys)) == len(keys), "同一盘磁带里子键必须唯一"

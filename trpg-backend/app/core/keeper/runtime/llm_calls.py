@@ -161,6 +161,7 @@ def narrate_prose_stream(
     max_tokens: int,
     max_chars: int,
     extra_suffix: str = "",
+    tape_key: str | None = None,
 ) -> StreamCall:
     """阶段3的流式版（`exec/28`）。**不做任何裁剪**——纪律层由调用方按段施加。
 
@@ -172,6 +173,7 @@ def narrate_prose_stream(
     """
     return client.chat.completions.stream(
         tape_kind="narrate",
+        tape_key=tape_key,
         model=DEEPSEEK_MODEL,
         messages=[
             {"role": "system", "content": instructions},
@@ -204,6 +206,7 @@ async def narrate_prose(
     max_tokens: int,
     max_chars: int,
     extra_suffix: str = "",
+    tape_key: str | None = None,
 ) -> str:
     """阶段3：叙事。max_tokens 限生成；max_chars 代码硬裁（句末优先）。
 
@@ -217,6 +220,7 @@ async def narrate_prose(
     )
     response = await client.chat.completions.create(
         tape_kind="narrate",
+        tape_key=tape_key,
         model=DEEPSEEK_MODEL,
         messages=[
             {"role": "system", "content": instructions},

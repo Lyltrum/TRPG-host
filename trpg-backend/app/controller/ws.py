@@ -48,6 +48,7 @@ from app.core.narration.contract import (
     NarrationDeltaSink,
     NarrationSegment,
     PlayerUtterance,
+    SegmentDeltaSinkFactory,
     StatChangeNotice,
 )
 from app.dto.ws import (
@@ -169,6 +170,31 @@ def _narration_delta_sink(room_id: str, event_id: str) -> NarrationDeltaSink:
     return _sink
 
 
+def _segment_delta_sink_factory(room_id: str) -> SegmentDeltaSinkFactory:
+    """分头叙事的 delta 投递口（`exec/33 §3.2`）：**按段裁受众**。
+
+    🔴 这条跟 §4 的并行是**绑定的**，不许单独做任何一半。此前分头路径不产
+    delta，全房间广播那个 sink 因此"碰巧不漏"；并行化的第一步就是让两段同时
+    往外写字——那一刻如果还用 `manager.broadcast`，**并行落地那天就是泄露
+    落地那天**，而且不会有任何东西变红。
+    受众由 agent 按段传进来（它才知道这一段是写给谁的），这里只负责投递。
+    """
+
+    def _factory(event_id: str, audience: tuple[str, ...]) -> NarrationDeltaSink:
+        async def _sink(seq: int, text: str) -> None:
+            payload = NarrationDeltaPayload(event_id=event_id, seq=seq, text=text)
+            envelope = ServerEnvelope(
+                type="narration.delta", payload=payload.model_dump(by_alias=True)
+            )
+            await manager.send_to_players(
+                room_id, list(audience), envelope.model_dump(by_alias=True)
+            )
+
+        return _sink
+
+    return _factory
+
+
 async def _deliver_narration_segments(
     db: AsyncSession, room_id: str, segments: list[NarrationSegment]
 ) -> None:
@@ -181,6 +207,8 @@ async def _deliver_narration_segments(
     for segment in segments:
         if not segment.text:
             continue
+        # 流式的段落在开流之前就有 id（delta 靠它认亲），这里复用同一个；
+        # 非流式的传 None，由 record_event 分配——与 §3.2 之前逐字一致。
         event_id = await room_service.record_event(
             db,
             room_id,
@@ -191,6 +219,7 @@ async def _deliver_narration_segments(
                 "audience": list(segment.audience),
                 "nodeId": segment.node_id,
             },
+            event_id=segment.event_id,
         )
         payload = NarrationPushPayload(text=segment.text, private=segment.covert, event_id=event_id)
         envelope = ServerEnvelope(type="narration.push", payload=payload.model_dump(by_alias=True))
@@ -935,7 +964,13 @@ async def _run_turn(
         # 🔴 先分配 id 再开流：第一条 delta 就得带着它，前端才知道后续碎片拼到
         # 哪条消息上。整段写完后用**同一个** id 落库 + 广播 narration.push。
         narration_event_id = str(uuid4())
-        context = replace(context, on_delta=_narration_delta_sink(room_id, narration_event_id))
+        # 未分头走 `on_delta`（全房间一段），分头走 `segment_delta_sink`
+        # （每段各有各的受众与 id）。两条互斥，由 agent 按当轮分组选。
+        context = replace(
+            context,
+            on_delta=_narration_delta_sink(room_id, narration_event_id),
+            segment_delta_sink=_segment_delta_sink_factory(room_id),
+        )
         try:
             outcome = await narrator.narrate(context)
         except Exception as exc:  # 外部服务的失败面（网络/超时/API 错）就是宽的，故意宽捕获

@@ -112,7 +112,15 @@ async def _run(
         )
 
     async def fake_narrate_prose(
-        situation, decision, report, issues, *, max_tokens, max_chars, extra_suffix=""
+        situation,
+        decision,
+        report,
+        issues,
+        *,
+        max_tokens,
+        max_chars,
+        extra_suffix="",
+        tape_key=None,
     ):
         captured["extra_suffix"] = extra_suffix
         return "占位叙事文本。"

@@ -163,3 +163,20 @@ async def test_hp_change_still_broadcasts_when_together(sent) -> None:
     async with _session_factory() as db:
         await ws_module._broadcast_stat_change(room_id, _stat(a_id), db)
     assert sent == [("character.stat_changed", None)]
+
+
+# ── 分头叙事的 delta（exec/33 §3.2）：ws 这一头 ──
+
+
+async def test_segment_delta_sink_only_reaches_that_segments_audience(sent) -> None:
+    """🔴 agent 把受众传对只是一半，投递这一头也得真的按它发。
+
+    两头分开测是刻意的：agent 那条用例（test_narration_fanout）验的是"每段
+    的 delta 受众 == 那一段的受众"，这条验的是"拿到受众之后没有退回广播"。
+    只测一头的话，把这里改回 `manager.broadcast` 不会有任何东西变红——而那
+    正是并行叙事落地那天的泄露形态。
+    """
+    room_id, a_id, _b_id = await _room({CURRENT_NODE_KEY: "hall"})
+    sink = ws_module._segment_delta_sink_factory(room_id)("evt-1", (a_id,))
+    await sink(0, "屋后有脚印。")
+    assert sent == [("narration.delta", [a_id])]

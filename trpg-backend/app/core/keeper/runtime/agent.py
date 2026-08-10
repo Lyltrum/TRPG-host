@@ -27,7 +27,10 @@ openai-agents SDK 不再出现在这条主路径上（依赖暂保留，未来�
 
 import asyncio
 import random
+import time
+from collections.abc import Awaitable
 from dataclasses import replace
+from uuid import uuid4
 
 import structlog
 from sqlalchemy import select
@@ -123,6 +126,7 @@ from app.core.narration.contract import (
     NarrationSegment,
     Narrator,
     PlayerUtterance,
+    SegmentDeltaSinkFactory,
 )
 from app.core.narration.deepseek import DEEPSEEK_BASE_URL
 from app.dto.game import RulesetRead
@@ -149,6 +153,9 @@ class KeeperAgent(Narrator):
             api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=REQUEST_TIMEOUT_SECONDS
         )
         self._background: set[asyncio.Task] = set()
+        #: 分头轮次计数：磁带子键要靠它区分"哪一轮的第几段"。由代码递增，
+        #: 跟模型输出无关，所以录制与回放会走到同一个值。
+        self._split_turn_ordinal = 0
         self._adjudicator_instructions = build_adjudicator_instructions(module, ruleset)
         self._narrator_instructions = build_narrator_instructions(module)
 
@@ -432,6 +439,7 @@ class KeeperAgent(Narrator):
                 turn_player_ids=turn_player_ids,
                 private_player_ids=frozenset(context.private_player_ids),
                 on_delta=context.on_delta,
+                segment_delta_sink=context.segment_delta_sink,
             )
             # 可观测性，不做自动拦截：能不能判断"这段话有没有替检定预支结果"
             # 没有可靠的代码手段（跟其它 scrub 规则不同，这是语义/因果判断，
@@ -476,6 +484,7 @@ class KeeperAgent(Narrator):
             turn_player_ids=turn_player_ids,
             private_player_ids=frozenset(context.private_player_ids),
             on_delta=context.on_delta,
+            segment_delta_sink=context.segment_delta_sink,
         )
 
         # HP 变化的可见性不再靠拼进叙事正文保证——那样等于让守秘人的嘴说了句
@@ -599,6 +608,7 @@ class KeeperAgent(Narrator):
         max_tokens: int,
         max_chars: int,
         extra_suffix: str = "",
+        tape_key: str | None = None,
     ) -> str:
         """委托给 `llm_calls.narrate_prose`（接缝理由同上）。"""
         return await narrate_prose(
@@ -611,6 +621,7 @@ class KeeperAgent(Narrator):
             max_tokens=max_tokens,
             max_chars=max_chars,
             extra_suffix=extra_suffix,
+            tape_key=tape_key,
         )
 
     async def _narrate_prose_streamed(
@@ -627,6 +638,7 @@ class KeeperAgent(Narrator):
         confused: bool,
         room_id: str | None,
         on_delta: NarrationDeltaSink,
+        tape_key: str | None = None,
     ) -> str:
         """流式叙事：边写边推，返回玩家实际收到的全文（`exec/28`）。
 
@@ -649,6 +661,7 @@ class KeeperAgent(Narrator):
                 max_tokens=token_limit,
                 max_chars=char_limit,
                 extra_suffix=extra_suffix,
+                tape_key=tape_key,
             ),
             module=self._module,
             action_intent=action_intent,
@@ -696,6 +709,7 @@ class KeeperAgent(Narrator):
         turn_player_ids: tuple[str, ...],
         private_player_ids: frozenset[str],
         on_delta: NarrationDeltaSink | None = None,
+        segment_delta_sink: SegmentDeltaSinkFactory | None = None,
     ) -> tuple[str, list[NarrationSegment]]:
         """叙事阶段的投递分组（exec/14 P5.2，定稿：**一次裁决全局、只叙事分开**）。
 
@@ -797,8 +811,16 @@ class KeeperAgent(Narrator):
             # 与 service/turn_window.merge_utterances 同口径
             return said[0].nickname, "\n".join(f"{u.nickname}：{u.text}" for u in said)
 
+        self._split_turn_ordinal += 1
+        turn_ordinal = self._split_turn_ordinal
+
         async def _segment(
-            audience: tuple[str, ...], node_id: str | None, hint: str, *, covert: bool = False
+            index: int,
+            audience: tuple[str, ...],
+            node_id: str | None,
+            hint: str,
+            *,
+            covert: bool = False,
         ):
             async with self._session_factory() as db:
                 known = await visible_fact_ids(db, room_id=room_id, audience=frozenset(audience))
@@ -809,33 +831,69 @@ class KeeperAgent(Narrator):
                 nickname=nickname,
                 utterance=said,
             )
-            raw = await self._narrate_prose(
-                scoped_situation,
-                decision,
-                report,
-                issues,
-                max_tokens=token_limit,
-                max_chars=char_limit,
-                extra_suffix=extra_suffix + hint + _bystanders(audience),
-            )
-            return NarrationSegment(
-                text=self._finalize_prose(
+            suffix = extra_suffix + hint + _bystanders(audience)
+            # 🔴 磁带子键（`exec/33 §4` 拦路石 1）：并行之后这几次调用的**完成
+            # 顺序不确定**，按全局序号回放必然错位。`turn_ordinal` 由分头轮次
+            # 递增、`index` 是段落在列表里的位置，两者都由代码算、跟模型输出
+            # 无关，所以录制与回放会得到同一个键。
+            tape_key = f"narrate-seg:{turn_ordinal}:{index}"
+            if segment_delta_sink is not None:
+                event_id = str(uuid4())
+                text = await self._narrate_prose_streamed(
+                    scoped_situation,
+                    decision,
+                    report,
+                    issues,
+                    token_limit=token_limit,
+                    char_limit=char_limit,
+                    extra_suffix=suffix,
+                    action_intent=action_intent,
+                    confused=confused,
+                    room_id=room_id,
+                    on_delta=segment_delta_sink(event_id, audience),
+                    tape_key=tape_key,
+                )
+            else:
+                event_id = None
+                raw = await self._narrate_prose(
+                    scoped_situation,
+                    decision,
+                    report,
+                    issues,
+                    max_tokens=token_limit,
+                    max_chars=char_limit,
+                    extra_suffix=suffix,
+                    tape_key=tape_key,
+                )
+                text = self._finalize_prose(
                     raw,
                     action_intent=action_intent,
                     confused=confused,
                     max_chars=char_limit,
                     room_id=room_id,
-                ),
+                )
+            return NarrationSegment(
+                text=text,
                 audience=audience,
                 node_id=node_id,
                 covert=covert,
+                event_id=event_id,
             )
 
-        segments: list[NarrationSegment] = []
+        # 🔴 先把每段的协程排好，最后一起 `gather`（`exec/33 §4`）——原来是
+        # `for ... await`，第 N 组要等前面 N-1 段**全部写完**。实测量级：裁决
+        # ~5s、每段叙事 ~10s，两组串行 25s、并行 15s。**分头场景的大头是串行，
+        # 不是流式**（流式只压缩"一段之内"的等待，压不掉"排在前面那几段"）。
+        #
+        # 并行安全的理由是**它不写世界状态**：段落只读一次线索账本随即关掉
+        # session（并发只读实测无锁竞争），写库全在调用方那一侧串行做。
+        # 裁决仍然一次且串行——世界状态只有一份。
+        planned: list[Awaitable[NarrationSegment]] = []
         for pid in covert_speakers:
             who = nicknames.get(pid, pid)
-            segments.append(
-                await _segment(
+            planned.append(
+                _segment(
+                    len(planned),
                     (pid,),
                     location_of(keeper_state, pid),
                     (
@@ -866,13 +924,19 @@ class KeeperAgent(Narrator):
                     f"另外，{'、'.join(hidden_here)}正处于隐匿状态——这里的其他人"
                     "不知道他在场，正文里不要提到他。"
                 )
-            segments.append(await _segment(tuple(members), node_id, hint))
+            planned.append(_segment(len(planned), tuple(members), node_id, hint))
+
+        started = time.perf_counter()
+        segments: list[NarrationSegment] = list(await asyncio.gather(*planned))
         logger.info(
             "keeper_narration_split",
             room_id=room_id,
             groups=[(nid, len(m)) for nid, m in groups],
             covert_speakers=len(covert_speakers),
             segments=len(segments),
+            # 并行有没有真的生效，看这个数：串行是 N×单段耗时，并行接近单段。
+            elapsed_ms=round((time.perf_counter() - started) * 1000),
+            streamed=segment_delta_sink is not None,
         )
         return "", segments
 

@@ -153,4 +153,8 @@ def audit_fields(decision: BaseModel) -> Mapping[str, object]:
     return {
         "moves": [f"{m.player}→{m.node_id}" for m in getattr(decision, "moves", ())],
         "new_location": new_location.name if new_location is not None else None,
+        # `movers` 决定了"这次是全队过去还是只有几个人过去"——只记名字的话，
+        # 复盘时看不出分头有没有成立，只能靠数 keeper.move 事件反推（第一次
+        # 真机验证就是这么反推的）。加一个字段就要回来加一行。
+        "new_location_movers": list(new_location.movers) if new_location is not None else [],
     }

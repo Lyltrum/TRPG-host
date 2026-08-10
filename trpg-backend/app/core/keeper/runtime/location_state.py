@@ -386,24 +386,53 @@ async def create_improvised_location_impl(
 
 
 async def clear_current_node_impl(deps: KeeperDeps) -> str:
-    """清空场景节点指针：人在剧本节点之外的地方（exec/19 #48）。
+    """本轮发言的人走到了剧本节点之外，承认不知道他们在哪（exec/19 #48）。
 
-    房间级指针与**所有**逐人条目一起清——留着任何一条，那个人的护栏就还挂在
-    旧节点上。清空后 location_of 返回 None，护栏退化到即兴层放行
-    （filter_checks_against_module 找不到节点就全部放行），这是正确行为：
+    清空后 `location_of` 返回 None，护栏退化到即兴层放行
+    （`filter_checks_against_module` 找不到节点就全部放行），这是正确行为：
     剧本没写到的地方本来就没有"模组标注的检定点"可言。
+
+    ## 🔴 只清**这些人**的位置，不是所有人的（2026-08-10 多人实测实锤）
+
+    第一版把整张逐人表 `pop` 掉了。多人实测的证据链：阿贵一个人说「我离开客厅
+    去门厅」（门厅不是剧本节点）→ 清空 → **在地下室的阿福也丢了位置** →
+    `group_players` 判成"全都不知道在哪" = 同一组 = **不再算分头** →
+    下一段本该只发给阿福的结算叙事**广播给了全房间**（事件表里 audience 为空）。
+
+    一个人走出地图，抹掉的却是所有人的位置——**分头状态被一次清空推平**，
+    而私密性正是从位置派生的（`exec/18`：你不在场，所以你不知道）。
+    与 `set_current_node_impl` 同一套口径：**动的是发言者和此刻与他同处的人**。
     """
+    speakers = set(deps.turn_player_ids or (deps.player_id,))
     async with deps.write_lock, deps.session_factory() as db:
         room = await db.get(Room, deps.room_id)
         if room is None:
             raise KeeperToolError("房间不存在")
         current_state = dict(room.keeper_state or {})
-        if CURRENT_NODE_KEY not in current_state and not load_player_locations(current_state):
+        locations = load_player_locations(current_state)
+        if CURRENT_NODE_KEY not in current_state and not locations:
             # 本来就没指针 = 无事发生。返回空串让调用方跳过——执行报告是
             # 喂给叙事阶段的"本轮发生了什么"，塞一条无操作进去等于噪声。
             return ""
+        roster = list(
+            (await db.execute(select(Player.id).where(Player.room_id == deps.room_id))).scalars()
+        )
+        speaker_places = {location_of(current_state, pid) for pid in speakers}
+        leaving = speakers | {
+            pid for pid in roster if location_of(current_state, pid) in speaker_places
+        }
+        # 房间指针是"没被单独定位过的人在哪"的默认值，跟着走的人正是 leaving，
+        # 所以它一起清。**留在别处的人有显式条目，不受影响。**
         current_state.pop(CURRENT_NODE_KEY, None)
-        current_state.pop(PLAYER_LOCATION_KEY, None)
+        for pid in leaving:
+            locations.pop(pid, None)
+        if locations:
+            current_state[PLAYER_LOCATION_KEY] = serialize_player_locations(locations)
+        else:
+            current_state.pop(PLAYER_LOCATION_KEY, None)
+        # 离开原地点 → 解除隐匿（exec/19 #46）。清空也是"离开"，第一版漏了这一半：
+        # 实测里阿贵藏在窗帘后、说"我离开客厅去门厅"，之后 `隐匿玩家` 还挂着他。
+        _drop_stealth_on_move(current_state, leaving)
         room.keeper_state = current_state
         await record_event(db, deps, "keeper.node", {"node_id": None, "title": None})
     return "场景已离开剧本节点范围，节点指针清空"

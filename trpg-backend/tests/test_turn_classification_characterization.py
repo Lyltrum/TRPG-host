@@ -143,7 +143,11 @@ async def _observe(
             player_state=player_state,  # ty: ignore[invalid-argument-type]
             checks=[CheckRequest(skill_id="spot-hidden", reason="环顾")],
             current_node_id="cellar",
-            moves=[PlayerMove(player="凌铭辉", node_id="cellar")],
+            # 🔴 `moves` 的目标必须**跟 `current_node_id` 不同**：两个字段指向同一个
+            # 节点是"只有他去"的自相矛盾写法，执行层会消解成只跑 moves（2026-08-10
+            # 多人实测），房间指针就不动了，这一列的鉴别力会整列消失。
+            # 这里要的是"两种手段都用上"，不是"同一件事说两遍"。
+            moves=[PlayerMove(player="凌铭辉", node_id="hidden-safe")],
         )
 
     captured: dict = {}

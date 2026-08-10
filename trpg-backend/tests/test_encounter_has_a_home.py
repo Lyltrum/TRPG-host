@@ -14,9 +14,11 @@ import inspect
 
 from app.core.module_import.job_state import FAILURE_KINDS
 from scripts.module_probe.assemble import (
+    REACH_REPAIR_SYSTEM,
     STAGE1_SYSTEM,
     STAGE2_NPC_SYSTEM,
     TARGET_SCHEMA_DOC,
+    repair_dangling_encounter,
     repair_module,
 )
 from scripts.module_probe.validate_module import ENCOUNTER_KIND, ValidationReport
@@ -49,17 +51,29 @@ def test_schema_doc_documents_the_encounter_kind() -> None:
     assert ENCOUNTER_KIND in TARGET_SCHEMA_DOC
 
 
-def test_the_self_repairer_knows_how_to_fix_this_category() -> None:
-    """🔴 加了一类失败就要更新每一个「逐个列出类别」的消费方。
+def test_this_category_has_a_repair_path_and_it_is_the_narrow_one() -> None:
+    """🔴 加了一类失败就要给它配一条**走得通**的修法。
 
-    trace / numeric 两类正是这么漏过一次：门加了、自修器的清单没加，
-    于是那两类**永远修不掉，而且什么都不会变红**，只是拒绝率悄悄变高。
+    trace / numeric 两类曾经漏掉自修指示，于是**永远修不掉、什么都不会变红**，
+    只是拒绝率悄悄变高。`reach` 一开始补上了指示，但补错了地方——补进了
+    **整份重吐**，而那条路在真实体量的模组上是结构性失败。
+    2026-08-10 真机实测：两轮自修六次尝试全断在同一位置，324 秒后仍是拒绝。
+
+    所以这条用例守的不是"有没有写指示"，是**指示写在走得通的那条路上**：
+    `reach` 归 `repair_dangling_encounter`（只回一个 id，输出有界），
+    **不归** `repair_module`。
     """
-    source = inspect.getsource(repair_module)
+    whole = inspect.getsource(repair_module)
 
-    assert "reach（遭遇节点没有入边）" in source
-    # 最怕的两种"修好了"：把 kind 改掉、把节点删掉
-    assert "不是把 kind 从 encounter 改掉" in source
+    # 整份重吐那条路不该再认领它
+    assert "reach（遭遇节点没有入边）" not in whole
+    # 但要留下一句指路，否则下一个人会以为是漏了
+    assert "repair_dangling_encounter" in whole
+
+    # 窄修法必须只要一个 id（输出有界才不会被截断），且挑不出时不许硬凑
+    assert '{"from": "<节点 id>"}' in REACH_REPAIR_SYSTEM
+    assert "不要硬凑" in REACH_REPAIR_SYSTEM
+    assert repair_dangling_encounter.__doc__ is not None
 
 
 def test_the_new_category_can_cross_to_the_frontend() -> None:

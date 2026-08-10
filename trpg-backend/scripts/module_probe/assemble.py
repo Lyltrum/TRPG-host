@@ -56,6 +56,7 @@ from probe import (  # noqa: E402
     read_numbered_lines,
 )
 from validate_module import (  # noqa: E402
+    ENCOUNTER_KIND,
     ValidationReport,
     build_entity_anchors,
     count_out_of_scope,
@@ -1378,6 +1379,112 @@ def write_leaky_field(module: dict[str, Any], field: str, text: str) -> None:
         opening["script"] = text
 
 
+#: `check_encounter_reachability` 报出来那句话的形状。解析它是为了知道**接哪个节点**。
+_REACH_ERROR = re.compile(r"遭遇节点 '(?P<node>[^']+)' 没有任何入边")
+
+
+def dangling_encounter_ids(errors: list[str]) -> list[str]:
+    """把 `[reach]` 错误解析成悬空的遭遇节点 id 列表（保序去重）。"""
+    out: list[str] = []
+    for err in errors:
+        m = _REACH_ERROR.search(err)
+        if m and m.group("node") not in out:
+            out.append(m.group("node"))
+    return out
+
+
+def attach_encounter(module: dict[str, Any], parent_id: str, node_id: str) -> bool:
+    """把 `node_id` 接到 `parent_id` 的 `leads_to` 上。纯代码，不问模型。
+
+    父节点必须已存在且不能是它自己（自环接不出可达性）。返回是否真的写进去了。
+    """
+    if parent_id == node_id:
+        return False
+    for node in _walk_node_dicts(module.get("nodes") or []):
+        if node.get("id") != parent_id:
+            continue
+        leads = node.get("leads_to")
+        if not isinstance(leads, list):
+            leads = []
+            node["leads_to"] = leads
+        if node_id not in leads:
+            leads.append(node_id)
+        return True
+    return False
+
+
+REACH_REPAIR_SYSTEM = """\
+你在修一份已经组装好的 COC 模组：有一幕遭遇没有任何节点引出它，玩家永远走不到。
+
+请从【现有节点】里挑**一个**最该引出这一幕的节点——通常是玩家在剧情上紧接着
+会走到那一幕的前一处（比如上一幕遭遇，或者这一幕发生的那个地点）。
+
+只输出 JSON：{"from": "<节点 id>"}
+- id 必须**逐字**来自【现有节点】清单，不要发明新 id。
+- 不要选那一幕自己。
+- 挑不出合理的就输出 {"from": null}——**不要硬凑一个**。
+"""
+
+
+def repair_dangling_encounter(
+    client: TapedSyncClient,
+    *,
+    module: dict[str, Any],
+    node_id: str,
+    stats: CallStats,
+    label: str,
+) -> str | None:
+    """问一句「哪个节点该引出这一幕」，**只回一个 id**。
+
+    ## 🔴 为什么单独给它一条路（2026-08-10 真机拒绝后补）
+
+    `reach` 是跨实体错误（缺的边在**别的**节点上），所以它一开始被丢给了整份
+    重吐——而那条路在真实体量的模组上是结构性失败。真机实测：两轮自修
+    `repair#1`/`repair#2` 各三次尝试**全部断在同一位置**（`Unterminated string
+    ... line 629`），耗时 324 秒，最后仍是拒绝。跟 `leak` 当初一模一样的病。
+
+    但这条错误的作用域其实是**所有类别里最小的**：缺的就是**一个 id**。
+    所以照 `repair_leaky_text` 的形状给它一条窄路——输出一行，
+    **结构上不可能被截断**，然后由 `attach_encounter` 用纯代码写进图里。
+
+    ## 边界
+
+    - 模型挑不出来（`from` 为 null 或不在清单里）就**返回 None，照旧拒绝**。
+      不做「随便接到第一个节点上」之类的兜底——那会把一幕戏接到毫无关系的
+      地方，比拒绝更糟（禁止静默兜底）。
+    - 修法**只加一条边**，不动那一幕本身的任何文字。
+    """
+    nodes = _walk_node_dicts(module.get("nodes") or [])
+
+    def _line(n: dict[str, Any]) -> str:
+        mark = "·遭遇" if str(n.get("kind") or "").strip().lower() == ENCOUNTER_KIND else ""
+        return f"- {n.get('id')}（{n.get('title') or '无标题'}{mark}）"
+
+    catalog = "\n".join(_line(n) for n in nodes if n.get("id") and n.get("id") != node_id)
+    target = next((n for n in nodes if n.get("id") == node_id), {})
+    user = (
+        f"【走不到的那一幕】\n{node_id}（{target.get('title') or ''}）\n"
+        f"{str(target.get('kp_text') or '')[:400]}\n\n"
+        f"【现有节点】\n{catalog}\n\n"
+        "哪个节点应该引出这一幕？"
+    )
+    data = _chat_json(
+        client,
+        system=REACH_REPAIR_SYSTEM,
+        user=user,
+        temperature=TEMPERATURE,
+        stats=stats,
+        label=label,
+    )
+    picked = data.get("from")
+    if not isinstance(picked, str) or not picked.strip():
+        return None
+    picked = picked.strip()
+    known = {str(n.get("id")) for n in nodes if n.get("id")}
+    # 🔴 模型写的 id 一律过白名单——同「不要用自由文本当标识符」。
+    return picked if picked in known and picked != node_id else None
+
+
 def repair_leaky_text(
     client: TapedSyncClient,
     *,
@@ -1517,12 +1624,10 @@ def repair_module(
         "照【相关原文】改回去；原文里没有的数字**一律删掉，不要另编一个**。\n"
         "- trace（追不回原文）：每个实体的文字都要能对上它的出处。"
         "对不上就照【相关原文】重写那一条；**宁可写短，也不要编**。\n"
-        # 🔴 加了门就得同时告诉自修器怎么修，否则这类错误永远修不掉、只是拒绝率
-        # 悄悄变高（trace/numeric 两类已经这么漏过一次）。
-        "- reach（遭遇节点没有入边）：那一幕玩家永远走不到。**修法是接上它，"
-        "不是把 kind 从 encounter 改掉，更不是删掉这个节点**——"
-        "从触发它的那个调查点的 leads_to 里加上它的 id（例如玩家在客厅撞见伪装者，"
-        "就在客厅节点的 leads_to 里加上遭遇节点），或用 exits 接上它发生的地点。\n"
+        # 🔴 `reach` **不走这条路**（2026-08-10）：它一度被丢到整份重吐这里，
+        # 真机实测两轮六次尝试全断在同一位置、324 秒后仍是拒绝。它的作用域其实
+        # 只有一个 id，已改走 `repair_dangling_encounter` 那条窄路。这里不要再
+        # 给它写指示——写了等于把它请回这条注定失败的路上。\n
         "- 只输出一个 JSON 对象，即完整模组。\n\n" + schema_doc
     )
     excerpt_block = (
@@ -1968,8 +2073,37 @@ def run_pipeline(
             except RuntimeError as exc:
                 print(f"    · {leak_field} 改写失败：{exc}", flush=True)
 
+        # 🔴 遭遇悬空同样单独走一条：它虽然是跨实体错误（缺的边在**别的**节点上），
+        # 作用域却是所有类别里最小的——缺的就是一个 id。丢给整份重吐等于修不掉
+        # （2026-08-10 真机实测：两轮自修六次尝试全断在同一位置，324 秒后仍是拒绝）。
+        attached = 0
+        for dangling in dangling_encounter_ids(report.reach_errors):
+            try:
+                parent = repair_dangling_encounter(
+                    client,
+                    module=module,
+                    node_id=dangling,
+                    stats=stats,
+                    label=f"repair#{repair_count}.reach:{dangling}",
+                )
+            except RuntimeError as exc:
+                print(f"    · 遭遇 {dangling} 接线失败：{exc}", flush=True)
+                continue
+            if parent is None:
+                print(f"    · 遭遇 {dangling} 没挑出该由谁引出（不硬凑）", flush=True)
+                continue
+            if attach_encounter(module, parent, dangling):
+                attached += 1
+                print(f"  → 把遭遇 {dangling} 接到 {parent}.leads_to", flush=True)
+
         # 剩下的是跨实体错误（structure / facts / schema），只能整份修
-        rest = [e for e in hard if not e.startswith(_ENTITY_SCOPED) and not e.startswith("[leak]")]
+        rest = [
+            e
+            for e in hard
+            if not e.startswith(_ENTITY_SCOPED)
+            and not e.startswith("[leak]")
+            and not e.startswith("[reach]")
+        ]
         if rest:
             print(f"  → 另有 {len(rest)} 条跨实体错误，尝试整份 JSON 自修…", flush=True)
             try:
@@ -1986,9 +2120,10 @@ def run_pipeline(
                 # 🔴 不 break：分片修可能已经改好了一部分，让它走完下面的重新校验，
                 # 拿到真实的剩余错误数，而不是把这一轮的成果一起丢掉。
                 print(f"  → 整份自修失败（保留分片修的结果）：{exc}", flush=True)
-        elif not patched and not leaks:
-            # 🔴 `leaks` 也要算进来：只修了泄密字段时这里会误判成"什么都没修"
-            # 而提前 break，那一轮的成果被丢掉、还得多花一次自修额度。
+        elif not patched and not leaks and not attached:
+            # 🔴 `leaks` / `attached` 也要算进来：只修了泄密字段或只接了一条边时，
+            # 这里会误判成"什么都没修"而提前 break，那一轮的成果被丢掉、
+            # 还得多花一次自修额度。**每加一条窄修法，这个条件都要跟着加一项。**
             print("  → 没有可修的东西，停止自修", flush=True)
             break
         module["nodes"] = _ensure_node_minimums(module.get("nodes") or [])

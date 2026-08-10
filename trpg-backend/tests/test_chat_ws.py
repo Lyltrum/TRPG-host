@@ -30,6 +30,7 @@ from app.core.narration.contract import (
 from app.core.narration.fallback import FallbackNarrator
 from app.main import app
 from app.service.action_lock import RoomActionLockManager
+from tests.helpers import next_game_event
 from tests.test_ws import ROOMS_BASE, create_room, register_and_login
 
 
@@ -85,7 +86,7 @@ def test_chat_send_echoes_broadcast_with_full_payload(sync_client: TestClient) -
     with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
         _join_ws(ws, room)
         _send_chat(ws, room, "我们先去图书馆吧", "msg-1")
-        envelope = ws.receive_json()
+        envelope = next_game_event(ws)
 
     assert envelope["type"] == "chat.message"
     assert envelope["payload"]["text"] == "我们先去图书馆吧"
@@ -212,7 +213,7 @@ def test_action_submit_private_is_accepted_and_echoed_to_self(sync_client: TestC
                 "payload": {"utterance": "我偷偷摸他口袋", "visibility": "private"},
             }
         )
-        envelope = ws.receive_json()
+        envelope = next_game_event(ws)
 
     assert envelope["type"] == "action.broadcast"
     assert envelope["payload"]["utterance"] == "我偷偷摸他口袋"
@@ -302,8 +303,8 @@ def test_check_roll_broadcasts_result_and_narration(sync_client: TestClient) -> 
                 "payload": {"checkRequestId": "chk-1"},
             }
         )
-        result_envelope = ws.receive_json()
-        narration_envelope = ws.receive_json()
+        result_envelope = next_game_event(ws)
+        narration_envelope = next_game_event(ws)
 
     assert result_envelope["type"] == "check.result"
     assert result_envelope["payload"]["checkRequestId"] == "chk-1"
@@ -328,7 +329,7 @@ def test_check_roll_not_implemented_without_keeper(sync_client: TestClient) -> N
                 "payload": {"checkRequestId": "chk-1"},
             }
         )
-        envelope = ws.receive_json()
+        envelope = next_game_event(ws)
 
     assert envelope["type"] == "error"
     assert envelope["payload"]["code"] == "NOT_IMPLEMENTED"
@@ -348,7 +349,7 @@ def test_san_check_roll_unknown_id_returns_check_not_pending(sync_client: TestCl
                 "payload": {"checkRequestId": "no-such"},
             }
         )
-        envelope = ws.receive_json()
+        envelope = next_game_event(ws)
 
     assert envelope["type"] == "error"
     assert envelope["payload"]["code"] == "CHECK_NOT_PENDING"

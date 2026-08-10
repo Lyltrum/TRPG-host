@@ -309,32 +309,65 @@ def format_party_locations(
     return "\n".join(lines)
 
 
-def _record_pending_merges(
-    state: dict,
-    *,
-    arrivals: set[str],
-    node_id: str,
-    residents: set[str],
-    humans: set[str],
-) -> list[str]:
-    """到了一个**已经有别人**的地点 → 给到场的人挂上「待确认会合」。就地改 `state`。
+async def snapshot_locations(deps: KeeperDeps) -> dict[str, str | None]:
+    """回合开始时每个人在哪。会合检测要用它当基线（exec/33 §5）。"""
+    async with deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        state = room.keeper_state if room is not None else None
+        roster = list(
+            (await db.execute(select(Player.id).where(Player.room_id == deps.room_id))).scalars()
+        )
+    return {pid: location_of(state, pid) for pid in roster}
 
-    返回被挂起的人（供留痕/推送确认卡）。规则：
 
-    - 目的地没人 → 不是会合，什么都不做（分头、探索空房间都走这条）。
-    - 到场的人里只有 AI 队友 → **自动确认**：它没有独立意图，跟着谁走由代码定
-      （`exec/21` 第一层，它算进分组只是为了让"谁跟谁在一处"算对）。
-    - 真人到场 → 挂起，等他本人点确认。
+async def record_merges_since(deps: KeeperDeps, before: dict[str, str | None]) -> list[str]:
+    """跟**回合开始时不在一处**的人变成了同处 → 给真人挂上待确认会合。
+
+    🔴 **必须按回合前后比对，不能在每次写入时各判各的**（2026-08-10 验证跑当场
+    抓到）：`current_node_id` 把一批人挪过去、紧接着 `moves` 又逐个写一遍时，
+    后写的那个人会看见"目的地已经有人"——那是**同一批一起走的队友**，被判成了
+    会合，凭空弹一张确认卡。会合的定义是"**之前不在一起，现在在一起**"，
+    只有回合级的前后快照答得了这个问题。
+
+    AI 队友不挂卡：它没有独立意图，跟着谁走由代码定（`exec/21` 第一层）。
     """
-    newcomers = arrivals - residents
-    if not residents or not newcomers:
-        return []
-    pending = load_pending_merges(state)
-    asked = [pid for pid in sorted(newcomers) if pid in humans]
-    for pid in asked:
-        pending[pid] = node_id
-    if asked:
-        state[PENDING_MERGE_KEY] = serialize_player_locations(pending)
+    async with deps.write_lock, deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            return []
+        current_state = dict(room.keeper_state or {})
+        humans = set(
+            (
+                await db.execute(
+                    select(Player.id).where(Player.room_id == deps.room_id, Player.is_ai.is_(False))
+                )
+            ).scalars()
+        )
+        after = {pid: location_of(current_state, pid) for pid in before}
+        pending = load_pending_merges(current_state)
+        asked: list[str] = []
+        for pid in sorted(humans & set(before)):
+            here = after.get(pid)
+            if here is None or pid in pending:
+                continue
+            # 🔴 只问**这一轮动了的人**：他才是做了决定的那个，知道自己有没有
+            # 真的走过去。站着没动的人被别人走过来，不该额外弹一张卡——一次会合
+            # 弹两张，玩家会以为出了两件事。
+            if before.get(pid) == here:
+                continue
+            newly_together = [
+                other
+                for other, other_here in after.items()
+                if other != pid and other_here == here and before.get(other) != before.get(pid)
+            ]
+            if newly_together:
+                pending[pid] = here
+                asked.append(pid)
+        if not asked:
+            return []
+        current_state[PENDING_MERGE_KEY] = serialize_player_locations(pending)
+        room.keeper_state = current_state
+        await record_event(db, deps, "keeper.merge_pending", {"players": asked})
     return asked
 
 
@@ -435,19 +468,6 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
         # 再问，所有回落到房间指针的人都会显示成"已经在新节点"，等于没判。
         # （跟上面 speaker_places 同一个坑，写这段时又踩了一次。）
         moved_away = {pid for pid in movers if location_of(current_state, pid) != node_id}
-        # 目的地本来就有谁（不含跟着走的这批）——会合协议要用（exec/33 §5）
-        residents = {
-            pid
-            for pid in roster
-            if pid not in movers and location_of(current_state, pid) == node_id
-        }
-        humans = set(
-            (
-                await db.execute(
-                    select(Player.id).where(Player.room_id == deps.room_id, Player.is_ai.is_(False))
-                )
-            ).scalars()
-        )
 
         current_state[CURRENT_NODE_KEY] = node_id
         locations = load_player_locations(current_state)
@@ -456,19 +476,8 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
         current_state[PLAYER_LOCATION_KEY] = serialize_player_locations(locations)
         _drop_stealth_on_move(current_state, moved_away)
         _drop_stale_pending_merge(current_state, movers, node_id)
-        asked = _record_pending_merges(
-            current_state,
-            arrivals=movers,
-            node_id=node_id,
-            residents=residents,
-            humans=humans,
-        )
         room.keeper_state = current_state
         await record_event(db, deps, "keeper.node", {"node_id": node_id, "title": title})
-        if asked:
-            await record_event(
-                db, deps, "keeper.merge_pending", {"players": asked, "node_id": node_id}
-            )
     return f"当前场景节点：{title}（{node_id}）"
 
 
@@ -588,31 +597,11 @@ async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> 
             raise KeeperToolError(f"没有 id={node_id} 的地点（剧本节点与即兴地点里都找不到）")
         locations = load_player_locations(current_state)
         moved_away = {player.id} if location_of(current_state, player.id) != node_id else set()
-        roster = list(
-            (await db.execute(select(Player.id).where(Player.room_id == deps.room_id))).scalars()
-        )
-        residents = {
-            pid for pid in roster if pid != player.id and location_of(current_state, pid) == node_id
-        }
-        humans = set(
-            (
-                await db.execute(
-                    select(Player.id).where(Player.room_id == deps.room_id, Player.is_ai.is_(False))
-                )
-            ).scalars()
-        )
         locations[player.id] = node_id
         current_state[PLAYER_LOCATION_KEY] = serialize_player_locations(locations)
         # 离开原地点 → 解除隐匿（exec/19 #46），与 set_current_node_impl 同口径
         _drop_stealth_on_move(current_state, moved_away)
         _drop_stale_pending_merge(current_state, {player.id}, node_id)
-        asked = _record_pending_merges(
-            current_state,
-            arrivals={player.id},
-            node_id=node_id,
-            residents=residents,
-            humans=humans,
-        )
         room.keeper_state = current_state
         await record_event(
             db,
@@ -620,11 +609,35 @@ async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> 
             "keeper.move",
             {"player": player.nickname, "node_id": node_id, "title": title},
         )
-        if asked:
-            await record_event(
-                db, deps, "keeper.merge_pending", {"players": asked, "node_id": node_id}
-            )
     return f"{player.nickname}单独前往：{title}（{node_id}）"
+
+
+async def only_speakers_named(deps: KeeperDeps, player_names: list[str]) -> bool:
+    """`moves` 点名的这些人，是不是**全都是本轮发言的人**（exec/33 验证跑）。
+
+    区分模型两种写法的唯一依据是**谁被点名**：
+
+    - 「我一个人去 X」→ `node=X` + `moves=[发言者→X]`，点的是自己；
+    - 「全队去 X」→ `node=X` + `moves=[其他每个人→X]`，**发言者不在里面**。
+
+    只看"目标节点是否相同"分不开这两种，第一版就是那么写的——结果第二种写法
+    被判成"只有他去"，`current_node_id` 被丢掉，**发言者反而被留在原地**。
+
+    解析不出来的名字（模型编的人名）当成"不是发言者"：那时不该丢掉
+    `current_node_id`，**保守方向是照常移动大家**，而不是让发言者悬空。
+    """
+    speakers = set(deps.turn_player_ids or (deps.player_id,))
+    if not player_names:
+        return False
+    async with deps.session_factory() as db:
+        for name in player_names:
+            try:
+                player, _character = await resolve_character(db, deps, name)
+            except KeeperToolError:
+                return False
+            if player.id not in speakers:
+                return False
+    return True
 
 
 async def confirm_merge_impl(db: AsyncSession, room_id: str, player_id: str) -> bool:

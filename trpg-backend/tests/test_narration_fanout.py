@@ -215,6 +215,44 @@ async def test_both_groups_act_produces_two_segments() -> None:
     assert "门厅" in suffixes[0] and "地下室" in suffixes[1]
 
 
+async def test_a_speaker_awaiting_merge_confirmation_still_gets_his_own_segment() -> None:
+    """🔴 挂着「待确认会合」的人**发了言**，必须照样收到属于他的那一段（exec/33 §5）。
+
+    协议让他在投递上单独成组（会合没确认之前按没碰上处理）。这条验证那个隔离
+    **没有把他挤出叙事**——发了言却一个字都收不到，那不是隔离，是失联。
+    2026-08-10 的验证跑里我一度以为撞上了这个，查下来是排队延迟；但"以为"不算
+    结论，所以补一条能判定的用例把它钉死。
+    """
+    from app.core.keeper.runtime.location_state import PENDING_MERGE_KEY
+
+    agent = _keeper()
+    suffixes = _stub(agent, KeeperDecision(thinking="无事", narration_guidance="继续"))
+    room_id, a_id, b_id = await _seed("FAN006", {CURRENT_NODE_KEY: "hall"})
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        # 两人都在门厅，但阿贵是刚走过来的、还没确认会合
+        room.keeper_state = {
+            **(room.keeper_state or {}),
+            PLAYER_LOCATION_KEY: f"{b_id}@hall",
+            PENDING_MERGE_KEY: f"{b_id}@hall",
+        }
+        await db.commit()
+
+    outcome = await agent.narrate(
+        NarrationContext(
+            utterance="我看看四周",
+            player_nickname="阿贵",
+            room_id=room_id,
+            player_id=b_id,
+            participant_ids=(b_id,),
+        )
+    )
+    assert outcome.text == "", "待确认会合 = 分组存在 → 不能走全房间那条路"
+    assert [s.audience for s in outcome.segments] == [(b_id,)]
+    assert len(suffixes) == 1
+
+
 async def test_non_speaking_teammate_at_same_place_still_receives() -> None:
     """同处一地但本轮没发言的人，也该收到这段——他人在现场。"""
     agent = _keeper()

@@ -418,6 +418,26 @@ async def test_a_solo_move_to_the_same_node_does_not_drag_the_others(party) -> N
     assert is_party_split(state, [a_id, b_id]) is True
 
 
+async def test_naming_the_others_means_take_them_along_not_leave_the_speaker(party) -> None:
+    """🔴 「全队一起去」的真实写法：`node=X` + `moves=[**其他每个人**→X]`。
+
+    这条是第一版消解规则当天被反噬的实测复现：那一版只看"目标节点相同"，
+    于是这种写法被判成"只有他去"，`current_node_id` 被丢掉，**发言者反而被
+    留在原地**（位置成了 None）。两种写法的区别只在**谁被点名**。
+    """
+    deps, a_id, b_id = party
+    decision = KeeperDecision(
+        current_node_id="hall",
+        moves=[PlayerMove(player="阿贵", node_id="hall")],  # 点的是**别人**
+    )
+    _report, issues = await execute_side_effects(deps, decision)
+    assert issues == []
+    state = await _state(deps)
+    assert location_of(state, a_id) == "hall", "🔴 发言者不能被留在原地"
+    assert location_of(state, b_id) == "hall"
+    assert is_party_split(state, [a_id, b_id]) is False
+
+
 async def test_a_normal_group_move_still_takes_everyone(party) -> None:
     """退化保证：`moves` 没指向同一个节点时，#37 的"同处者跟随"照旧。"""
     deps, a_id, b_id = party

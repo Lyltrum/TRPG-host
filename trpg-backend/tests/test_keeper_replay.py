@@ -26,7 +26,7 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7.content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.contract.module_loader import load_module
-from app.core.keeper.runtime.agent import KeeperAgent
+from app.core.keeper.runtime.agent import ROLL_PENDING_NOTICE, KeeperAgent
 from app.core.llm_tape import Tape, replaying
 from app.core.narration.contract import NarrationContext
 from app.models.room import Character, Player, Room
@@ -42,7 +42,7 @@ MODULE_PATH = Path(__file__).parent / "fixtures" / "keeper_module.json"
 ROUNDS = DEFAULT_ROUNDS
 
 #: `narrate()` 在"还有待掷检定"时返回的代码固定文案（agent.py），不经过 LLM。
-_PENDING_CHECK_NOTICE = "守秘人正在等待掷骰——请先完成待掷的检定。"
+_PENDING_CHECK_NOTICE = ROLL_PENDING_NOTICE
 
 
 async def _fresh_room(tmp_path: Path):

@@ -46,7 +46,7 @@ if TYPE_CHECKING:  # pragma: no cover - 仅为类型标注，运行时不产生�
 
     from app.core.keeper.contract.module_loader import ScenarioModule
     from app.core.keeper.runtime.deps import KeeperDeps
-    from app.core.keeper.runtime.pending import PendingCheck
+    from app.core.keeper.runtime.pending import PendingDecision
     from app.core.narration.contract import CheckResultNotice
 
 
@@ -175,18 +175,18 @@ class PendingContext:
 #: 待掷钩子：把本轮裁决里属于自己的检定解析成待掷记录，返回 (待掷记录, 问题清单)。
 #: **不掷骰**——骰子由玩家在前端点确认后才服务端权威生成。
 PendingFn = Callable[
-    ["KeeperDeps", BaseModel, PendingContext], Awaitable[tuple[list["PendingCheck"], list[str]]]
+    ["KeeperDeps", BaseModel, PendingContext], Awaitable[tuple[list["PendingDecision"], list[str]]]
 ]
 
 
 #: 结算钩子：玩家点了掷骰之后，把一条待掷记录变成一次真实的掷骰结果。
 #: **服务端权威**——骰子由代码掷，模型只消费结果，改不了点数。
-SettleFn = Callable[["KeeperDeps", "PendingCheck"], Awaitable["CheckResultNotice"]]
+SettleFn = Callable[["KeeperDeps", "PendingDecision"], Awaitable["CheckResultNotice"]]
 
 
 @dataclass(frozen=True)
 class SettleHook:
-    """`kind` 是 `PendingCheck.kind`：哪一片能力认领哪一种待掷记录。
+    """`kind` 是 `PendingDecision.kind`：哪一片能力认领哪一种待掷记录。
 
     🔴 第八个钩子。此前"发起"已经注册表化（`pending` 钩子），而"结算"还是
     `agent.resolve_check` 里一条按 kind 写死的 if/else——**同一件事的两头，

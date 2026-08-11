@@ -168,7 +168,7 @@ async def test_create_pending_checks_valid_skill(deps: KeeperDeps) -> None:
     assert check.skill == "侦察"  # 同义写法归一后按技能表名展示
     assert check.player_nickname == "阿福"
     assert check.reason == "搜索书房"
-    assert check.check_request_id  # uuid4，非空
+    assert check.decision_id  # uuid4，非空
     # 不掷骰：不留 keeper.check 事件，也不进 check_results 可见性记录
     assert await _events(deps, "keeper.check") == []
     assert deps.check_results == []

@@ -1,7 +1,7 @@
 """两段式玩家掷骰：待掷检定队列（app/core/keeper/runtime/pending.py）+
 `KeeperAgent.resolve_check`（app/core/keeper/runtime/agent.py）。
 
-`PendingCheckManager` 的单测不碰数据库/LLM，纯内存结构断言。
+`PendingDecisionManager` 的单测不碰数据库/LLM，纯内存结构断言。
 `resolve_check` 的单测需要真实 DB 写入（服务端权威掷骰要落库/改角色卡），
 但不跑真实 LLM——队列还没清空的路径本来就不涉及 LLM；队列清空触发的
 "结算叙事"路径用 `_StubKeeperAgent` 桩掉 `narrate()`，只断言 resolve_check
@@ -24,9 +24,9 @@ from app.core.keeper.memory.fact_ledger import revealed_fact_ids
 from app.core.keeper.runtime.agent import KeeperAgent
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.runtime.pending import (
-    PendingCheck,
-    PendingCheckManager,
-    pending_check_manager,
+    PendingDecision,
+    PendingDecisionManager,
+    pending_decision_manager,
     to_notice,
 )
 from app.core.narration.contract import CheckResultNotice, NarrationContext, NarrationOutcome
@@ -119,14 +119,15 @@ def _stub_agent(stub_outcome: NarrationOutcome) -> _StubKeeperAgent:
     )
 
 
-# ── PendingCheckManager：纯内存结构 ──────────────────
+# ── PendingDecisionManager：纯内存结构 ──────────────────
 
 
-def _check(room_id: str = "room-1", check_request_id: str = "chk-1", **overrides) -> PendingCheck:
-    # 显式标注：overrides 里会传 reveals（tuple），不标的话 ty 会把值类型
-    # 推成 str 而报错。
+def _check(
+    room_id: str = "room-1", check_request_id: str = "chk-1", **overrides
+) -> PendingDecision:
+    # 值类型是异质的（str / tuple），`**` 展开时 ty 推不出各字段的具体类型。
     defaults: dict[str, object] = {
-        "check_request_id": check_request_id,
+        "decision_id": check_request_id,
         "kind": "skill",
         "room_id": room_id,
         "player_id": "player-1",
@@ -137,8 +138,7 @@ def _check(room_id: str = "room-1", check_request_id: str = "chk-1", **overrides
         "reason": "搜索书房",
     }
     defaults.update(overrides)
-    # 值类型是异质的（str / tuple），`**` 展开时 ty 推不出各字段的具体类型
-    return PendingCheck(**defaults)  # ty: ignore[invalid-argument-type]
+    return PendingDecision.roll(**defaults)  # ty: ignore[invalid-argument-type]
 
 
 async def _bare_room(code: str) -> tuple[str, str]:
@@ -155,7 +155,7 @@ async def _bare_room(code: str) -> tuple[str, str]:
 
 async def test_manager_add_first_has() -> None:
     room_id, player_id = await _bare_room("QUEUE1")
-    manager = PendingCheckManager()
+    manager = PendingDecisionManager()
     async with _session_factory() as db:
         assert await manager.first(db, room_id) is None
         assert await manager.has(db, room_id) is False
@@ -170,12 +170,12 @@ async def test_manager_add_first_has() -> None:
         first = await manager.first(db, room_id)
         # 先进先出：排序靠自增 seq，不是 created_at——同一轮挂起的多个检定
         # 毫秒级时间戳分不出先后
-        assert first is not None and first.check_request_id == "chk-1"
+        assert first is not None and first.decision_id == "chk-1"
 
 
 async def test_manager_add_empty_list_is_noop() -> None:
     room_id, _player_id = await _bare_room("QUEUE2")
-    manager = PendingCheckManager()
+    manager = PendingDecisionManager()
     async with _session_factory() as db:
         await manager.add(db, room_id, [])
         assert await manager.has(db, room_id) is False
@@ -184,7 +184,7 @@ async def test_manager_add_empty_list_is_noop() -> None:
 async def test_manager_pop_by_id_and_queue_isolation() -> None:
     room_a, player_a = await _bare_room("QUEUE3")
     room_b, player_b = await _bare_room("QUEUE4")
-    manager = PendingCheckManager()
+    manager = PendingDecisionManager()
     async with _session_factory() as db:
         await manager.add(
             db, room_a, [_check(room_id=room_a, player_id=player_a, check_request_id="chk-1")]
@@ -197,7 +197,7 @@ async def test_manager_pop_by_id_and_queue_isolation() -> None:
     async with _session_factory() as db:
         assert await manager.pop(db, room_a, "not-an-id") is None  # 找不到不炸
         popped = await manager.pop(db, room_a, "chk-1")
-        assert popped is not None and popped.check_request_id == "chk-1"
+        assert popped is not None and popped.decision_id == "chk-1"
         await db.commit()
 
     async with _session_factory() as db:
@@ -217,7 +217,7 @@ async def test_queue_survives_a_process_restart() -> None:
     """
     room_id, player_id = await _bare_room("QUEUE5")
     async with _session_factory() as db:
-        await PendingCheckManager().add(
+        await PendingDecisionManager().add(
             db,
             room_id,
             [_check(room_id=room_id, player_id=player_id, check_request_id="chk-survive")],
@@ -225,18 +225,18 @@ async def test_queue_survives_a_process_restart() -> None:
         await db.commit()
 
     async with _session_factory() as db:
-        survived = await PendingCheckManager().first(db, room_id)
+        survived = await PendingDecisionManager().first(db, room_id)
     assert survived is not None
-    assert survived.check_request_id == "chk-survive"
+    assert survived.decision_id == "chk-survive"
     # 结构化字段要原样活过一个来回，不能只剩个 id
     assert survived.reveals == ()
     assert survived.kind == "skill"
 
 
-async def _enqueue(room_id: str, checks: list[PendingCheck]) -> None:
+async def _enqueue(room_id: str, checks: list[PendingDecision]) -> None:
     """把检定挂进队列（队列已落库，exec/24 §8.1）。"""
     async with _session_factory() as db:
-        await pending_check_manager.add(db, room_id, checks)
+        await pending_decision_manager.add(db, room_id, checks)
         await db.commit()
 
 
@@ -262,9 +262,9 @@ async def test_resolve_check_wrong_player_raises_and_requeues() -> None:
 
     # 检定仍然待掷——错玩家掷不能让它凭空消失。
     async with _session_factory() as db:
-        still_pending = await pending_check_manager.first(db, room_id)
+        still_pending = await pending_decision_manager.first(db, room_id)
     assert still_pending is not None
-    assert still_pending.check_request_id == check_request_id
+    assert still_pending.decision_id == check_request_id
 
 
 async def test_resolve_check_queue_not_empty_only_broadcasts_result() -> None:
@@ -309,9 +309,9 @@ async def test_resolve_check_queue_not_empty_only_broadcasts_result() -> None:
 
     # 第一个已经被弹出，第二个还在队列里等着。
     async with _session_factory() as db:
-        next_pending = await pending_check_manager.first(db, room_id)
+        next_pending = await pending_decision_manager.first(db, room_id)
     assert next_pending is not None
-    assert next_pending.check_request_id == second_id
+    assert next_pending.decision_id == second_id
 
 
 async def test_resolve_check_san_result_fields() -> None:
@@ -387,7 +387,7 @@ async def test_resolve_check_queue_empty_triggers_settlement_narration() -> None
     assert len(agent.narrate_calls) == 1
     assert agent.narrate_calls[0].utterance == "（掷骰完成，请根据检定结果继续）"
     async with _session_factory() as db:
-        assert await pending_check_manager.has(db, room_id) is False
+        assert await pending_decision_manager.has(db, room_id) is False
 
 
 # ── 事实账本接线（exec/14 P4）──────────────────────────────
@@ -591,7 +591,7 @@ async def test_reconnect_resends_pending_checks() -> None:
     )
 
     async with _session_factory() as db:
-        pendings = await pending_check_manager.list_all(db, room_id)
+        pendings = await pending_decision_manager.list_all(db, room_id)
 
     notices = [to_notice(p) for p in pendings]
     # 顺序要保住：谁先掷是有意义的

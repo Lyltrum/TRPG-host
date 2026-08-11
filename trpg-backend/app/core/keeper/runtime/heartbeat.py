@@ -16,7 +16,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.keeper.runtime.pending import pending_check_manager
+from app.core.keeper.runtime.pending import pending_decision_manager
 from app.core.narration.contract import NarrationContext, Narrator
 from app.models.event import Event
 from app.models.room import Player, Room
@@ -186,7 +186,7 @@ async def maybe_fire_room(
         return False
 
     async with session_factory() as db:
-        if await pending_check_manager.first(db, room_id) is not None:
+        if await pending_decision_manager.first(db, room_id) is not None:
             return False
 
     now = _now()

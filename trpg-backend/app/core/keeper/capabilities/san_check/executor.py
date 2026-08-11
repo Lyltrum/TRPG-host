@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-import uuid
-
 import structlog
 from pydantic import BaseModel
 
@@ -28,7 +26,7 @@ from app.core.keeper.runtime.deps import (
     write_stat,
 )
 from app.core.keeper.runtime.location_state import location_of, resolve_content_node_id
-from app.core.keeper.runtime.pending import PendingCheck
+from app.core.keeper.runtime.pending import PendingDecision
 from app.core.narration.contract import CheckResultNotice
 from app.models.room import Room
 
@@ -106,13 +104,13 @@ async def san_check_impl(
 
 async def create_pending_san_checks(
     deps: KeeperDeps, decision: BaseModel, context: PendingContext
-) -> tuple[list[PendingCheck], list[str]]:
+) -> tuple[list[PendingDecision], list[str]]:
     """把裁决里的 `san_checks` 解析成待掷记录——**不掷骰**。
 
     玩家合法性预检复用 `resolve_character`（跟 `san_check_impl` 同一套解析
     逻辑，保证"能不能掷"的判断口径一致）；找不到的玩家跳过并记 issue。
     """
-    pending: list[PendingCheck] = []
+    pending: list[PendingDecision] = []
     issues: list[str] = []
     for san in getattr(decision, "san_checks", ()):
         try:
@@ -121,8 +119,7 @@ async def create_pending_san_checks(
             issues.append(f"理智检定未能发起：{exc}")
             continue
         pending.append(
-            PendingCheck(
-                check_request_id=str(uuid.uuid4()),
+            PendingDecision.roll(
                 kind="san",
                 room_id=deps.room_id,
                 player_id=player.id,
@@ -187,13 +184,13 @@ async def mark_san_points_fired(
     return [f"模组标注的理智检定点已触发：{'、'.join(newly)}"], []
 
 
-async def settle_san_check(deps: KeeperDeps, pending: PendingCheck) -> CheckResultNotice:
+async def settle_san_check(deps: KeeperDeps, pending: PendingDecision) -> CheckResultNotice:
     """玩家点了掷骰之后：掷一次理智检定并写回角色卡。"""
     _text, detail = await san_check_detail(
         deps, pending.loss_on_success, pending.loss_on_failure, pending.player_nickname
     )
     return CheckResultNotice(
-        check_request_id=pending.check_request_id,
+        check_request_id=pending.decision_id,
         kind="san",
         player_id=detail["player_id"],
         skill=None,

@@ -125,6 +125,9 @@ _MODELS: list[type[BaseModel]] = [
     ws.PartyUpdatePayload,
     ws.KeeperBusyPayload,
     ws.PartyMergeConfirmPayload,
+    # exec/34 第 4 步：骰子停下之后问一句「花幸运吗」
+    ws.LuckOfferPayload,
+    ws.LuckDecidePayload,
 ]
 
 _DEFAULT_OUT_PATH = Path(__file__).resolve().parent.parent / ".schema-export" / "models.schema.json"

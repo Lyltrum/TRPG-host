@@ -19,6 +19,7 @@ from app.core.keeper.capabilities.agenda import CAPABILITY as AGENDA
 from app.core.keeper.capabilities.closure import CAPABILITY as CLOSURE
 from app.core.keeper.capabilities.clue_reveal import CAPABILITY as CLUE_REVEAL
 from app.core.keeper.capabilities.health import CAPABILITY as HEALTH
+from app.core.keeper.capabilities.luck_spend import CAPABILITY as LUCK_SPEND
 from app.core.keeper.capabilities.movement import CAPABILITY as MOVEMENT
 from app.core.keeper.capabilities.progression import CAPABILITY as PROGRESSION
 from app.core.keeper.capabilities.san_check import CAPABILITY as SAN_CHECK
@@ -30,9 +31,10 @@ from app.core.keeper.contract.registry import (
     ExecutorHook,
     KeeperCapability,
     PendingHook,
+    PostSettleHook,
     PromptBlock,
     PromptSlot,
-    SettleFn,
+    SettleHook,
     SituationContext,
 )
 
@@ -45,6 +47,7 @@ CAPABILITIES: tuple[KeeperCapability, ...] = (
     CLUE_REVEAL,
     WORLD_STATE,
     MOVEMENT,
+    LUCK_SPEND,
     SKILL_CHECK,
     SAN_CHECK,
 )
@@ -69,18 +72,36 @@ def pendings() -> list[PendingHook]:
     return sorted((h for c in CAPABILITIES for h in c.pendings), key=lambda h: h.order)
 
 
-def settler_for(kind: str) -> SettleFn:
-    """认领这种待掷记录的结算函数。没人认领就炸——**不要有 else 兜底**。
+def settle_hook_for(kind: str) -> SettleHook:
+    """认领这种待掷记录的结算钩子（掷骰 + 生效两半）。没人认领就炸——
+    **不要有 else 兜底**。
 
     🔴 兜底就是静默走错分支：加一种新检定时，"发起"会自动接上（`pending` 钩子
     遍历全部能力），而结算若有 else，那条新检定会被当成别的类型结算掉，掷骰
     数字照样出现在玩家屏幕上，没有任何东西会红。
+
+    返回整个钩子而不是单独的 `run`：掷骰与生效是同一件事的两头，拿走一半的
+    调用方迟早会忘了另一半（`exec/34` 第 3 步）。
     """
     for capability in CAPABILITIES:
         for hook in capability.settlers:
             if hook.kind == kind:
-                return hook.run
+                return hook
     raise KeyError(f"没有能力认领 kind={kind!r} 的待掷检定结算")
+
+
+def post_settles() -> list[PostSettleHook]:
+    """全部「结算之后再等玩家一拍」的钩子，按 order 升序。"""
+    return sorted((h for c in CAPABILITIES for h in c.post_settles), key=lambda h: h.order)
+
+
+def post_settle_for(kind: str) -> PostSettleHook:
+    """认领这种「等玩家一拍」的钩子。没人认领就炸，理由同 `settle_hook_for`。"""
+    for capability in CAPABILITIES:
+        for hook in capability.post_settles:
+            if hook.kind == kind:
+                return hook
+    raise KeyError(f"没有能力认领 kind={kind!r} 的待决定项")
 
 
 def executors() -> list[ExecutorHook]:

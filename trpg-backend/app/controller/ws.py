@@ -46,6 +46,7 @@ from app.core.narration.contract import (
     CheckRequestNotice,
     CheckResultNotice,
     NarrationDeltaSink,
+    NarrationOutcome,
     NarrationSegment,
     PlayerUtterance,
     SegmentDeltaSinkFactory,
@@ -64,6 +65,8 @@ from app.dto.ws import (
     ErrorPayload,
     GameStartPayload,
     KeeperBusyPayload,
+    LuckDecidePayload,
+    LuckOfferPayload,
     NarrationDeltaPayload,
     NarrationPushPayload,
     PartyMergeConfirmPayload,
@@ -616,13 +619,56 @@ async def _resend_pending_checks(db: AsyncSession, websocket: WebSocket, room_id
     只发给**这一条刚绑定的连接**，不广播：别人手上的卡片好好的，重发一遍只会
     在他们屏幕上多出一张重复卡。
     """
-    from app.core.keeper.runtime.pending import ROLL_KINDS, pending_decision_manager, to_notice
+    from app.core.keeper.runtime.pending import (
+        LUCK_SPEND_KIND,
+        ROLL_KINDS,
+        pending_decision_manager,
+        to_notice,
+    )
 
     for pending in await pending_decision_manager.list_all(db, room_id, ROLL_KINDS):
         notice = to_notice(pending)
         payload, event_type = _check_request_envelope(notice)
         envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))
         await websocket.send_json(envelope.model_dump(by_alias=True))
+    # 幸运卡同理——它同样只在骰子停下那一刻推过一次，而且**它挂着的时候整轮
+    # 停在那儿**（`TURN_BLOCKING_KINDS`）。漏了这一半就是 `exec/23 #56` 第三次
+    # 复发：服务端记得、客户端不知道。
+    for offer in await pending_decision_manager.list_all(db, room_id, {LUCK_SPEND_KIND}):
+        envelope = ServerEnvelope(
+            type="luck.offer", payload=_luck_offer_payload(offer).model_dump(by_alias=True)
+        )
+        await websocket.send_json(envelope.model_dump(by_alias=True))
+
+
+# `offer` 是 PendingDecision——这一层不 import 它（keeper 运行时不该被控制器拖进来）。
+def _luck_offer_payload(offer) -> LuckOfferPayload:  # noqa: ANN001
+    """幸运卡 → 推送 payload。首发与重连补发共用（同 `_check_request_envelope`）。"""
+    notice = offer.payload["notice"]
+    return LuckOfferPayload(
+        decision_id=offer.decision_id,
+        player_id=offer.player_id,
+        skill=notice["skill"] or "",
+        rolled=notice["rolled"],
+        target=notice["target"],
+        cost=offer.cost,
+        luck_remaining=offer.luck_remaining,
+        opposed_opponent=notice.get("opposed_opponent"),
+    )
+
+
+async def _broadcast_luck_offer(  # noqa: ANN001
+    room_id: str, offer, db: AsyncSession | None = None
+) -> None:
+    """推一张幸运卡。受众同 `check.request`——别处的人不该看见这边在掷什么。
+
+    同处一地的队友也收得到（前端只给本人渲染按钮）：他们至少知道**桌子为什么
+    停在这儿**，这跟 `keeper.busy` 是同一个存在感问题（`exec/33 §5.4`）。
+    """
+    envelope = ServerEnvelope(
+        type="luck.offer", payload=_luck_offer_payload(offer).model_dump(by_alias=True)
+    )
+    await _send_to_colocated(db, room_id, offer.player_id, envelope.model_dump(by_alias=True))
 
 
 async def _handle_chat_send(
@@ -1104,25 +1150,95 @@ async def _handle_check_roll(
             await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
             return
 
-        for notice in outcome.check_results:
-            if notice.check_request_id in pushed:
-                continue  # 骰子落地那一刻已经推过了
-            await _broadcast_check_result(room_id, notice, db)
-        for notice in outcome.stat_changes:
-            await _broadcast_stat_change(room_id, notice, db)
-        if outcome.text:
-            await _broadcast_narration(db, room_id, player_id, outcome.text)
-        await _deliver_narration_segments(db, room_id, outcome.segments)
-        for notice in outcome.check_requests:
-            await _broadcast_check_request(room_id, notice, db)
-        # 位置可能刚变过（分头/会合/走到图外）——把每个人自己的处境推给他
-        await _push_party_update(db, websocket, room_id)
-        # 这位掷完了，排在他后面的 AI 检定该轮到了（exec/21 第三层）
-        await _auto_roll_ai_checks(db, websocket, room_id)
+        await _deliver_check_outcome(db, websocket, room_id, player_id, outcome, pushed)
     finally:
         # 🔴 只关不开是错的（2026-08-10 验证跑抓到：序列出现「开→关→关→开」）。
         # 结算叙事恰恰是最需要指示器的那十几秒——那时全房间只看得见一个骰子数字
         # 然后是十几秒静默。开在下面 try 的入口，这里配对关掉。
+        await _broadcast_keeper_busy(room_id, False)
+        action_lock_manager.release(room_id, lock_token)
+
+
+async def _deliver_check_outcome(
+    db: AsyncSession,
+    websocket: WebSocket,
+    room_id: str,
+    player_id: str,
+    outcome: NarrationOutcome,
+    pushed: set[str],
+) -> None:
+    """把一次检定结算的产物广播出去。
+
+    掷骰（`check.roll`）与幸运决定（`luck.decide`）两条入口共用——它们本来就是
+    同一条链的前后两段，各写一遍就会漏（`exec/34` 那条「一个概念被起了某个实例
+    的名字」的症状正是重复实现）。
+    """
+    for notice in outcome.check_results:
+        if notice.check_request_id in pushed:
+            continue  # 骰子落地那一刻已经推过了
+        await _broadcast_check_result(room_id, notice, db)
+    for notice in outcome.stat_changes:
+        await _broadcast_stat_change(room_id, notice, db)
+    if outcome.text:
+        await _broadcast_narration(db, room_id, player_id, outcome.text)
+    await _deliver_narration_segments(db, room_id, outcome.segments)
+    for notice in outcome.check_requests:
+        await _broadcast_check_request(room_id, notice, db)
+    for offer in outcome.player_offers:
+        await _broadcast_luck_offer(room_id, offer, db)
+    # 位置可能刚变过（分头/会合/走到图外）——把每个人自己的处境推给他
+    await _push_party_update(db, websocket, room_id)
+    # 这位掷完了，排在他后面的 AI 检定该轮到了（exec/21 第三层）
+    await _auto_roll_ai_checks(db, websocket, room_id)
+
+
+async def _handle_luck_decide(
+    db: AsyncSession,
+    websocket: WebSocket,
+    room_id: str,
+    player_id: str,
+    payload: LuckDecidePayload,
+) -> None:
+    """处理 `luck.decide`：花 / 不花（`exec/26 #66`）。
+
+    花了会**改写结果通知**（失败 → 成功，对抗还要重算胜负），所以这里照常走
+    `_deliver_check_outcome`——玩家屏幕上那个「失败」必须当场变成「成功」。
+
+    锁与 `check.roll` 同理：**拿不到是等，不是拒**。这是玩家已经点下去的按钮，
+    拒绝只能表现为"点了没反应"。
+    """
+    lock_token = await _acquire_for_small_op(room_id)
+    if lock_token is None:
+        await _send_error(websocket, "ACTION_IN_PROGRESS", "守秘人正在处理其他玩家的行动，请稍候")
+        return
+
+    await _broadcast_keeper_busy(room_id, True)
+    try:
+        narrator = websocket.app.state.narrator
+        try:
+            pushed: set[str] = set()
+
+            async def _push_result(notice: CheckResultNotice) -> None:
+                await _broadcast_check_result(room_id, notice, db)
+                pushed.add(notice.check_request_id)
+
+            outcome = await narrator.resolve_player_offer(
+                room_id, player_id, payload.decision_id, payload.accepted, _push_result
+            )
+        except NotImplementedError:
+            await _send_error(websocket, "NOT_IMPLEMENTED", "幸运消费本期尚未实现")
+            return
+        except ValueError as exc:
+            # KeeperToolError：id 不存在/已被处理/不是他的决定/幸运不够了。
+            await _send_error(websocket, "LUCK_DECISION_FAILED", str(exc))
+            return
+        except Exception as exc:  # 同 check.roll：外部服务失败面宽，故意宽捕获
+            logger.warning("resolve_luck_failed", room_id=room_id, error=str(exc))
+            await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
+            return
+
+        await _deliver_check_outcome(db, websocket, room_id, player_id, outcome, pushed)
+    finally:
         await _broadcast_keeper_busy(room_id, False)
         action_lock_manager.release(room_id, lock_token)
 
@@ -1252,6 +1368,11 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                             room_id,
                             bound_player_id,
                             san_roll_payload.check_request_id,
+                        )
+                    elif event_type == "luck.decide":
+                        luck_payload = LuckDecidePayload.model_validate(raw_payload)
+                        await _handle_luck_decide(
+                            db, websocket, room_id, bound_player_id, luck_payload
                         )
                     elif event_type == "party.merge.confirm":
                         PartyMergeConfirmPayload.model_validate(raw_payload)

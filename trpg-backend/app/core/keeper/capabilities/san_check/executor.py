@@ -15,7 +15,7 @@ from app.core.keeper.capabilities.san_check.state import (
     fired_refs_at,
     load_fired_san_points,
 )
-from app.core.keeper.contract.registry import ApplyFn, PendingContext, RolledCheck, TurnFacts
+from app.core.keeper.contract.registry import PendingContext, TurnFacts
 from app.core.keeper.primitives import dice
 from app.core.keeper.runtime.deps import (
     KeeperDeps,
@@ -45,10 +45,8 @@ async def san_check_detail(
     `san_check_only` / `settle_san_check`。这里留给守秘人直接掷的场合，
     也是现有测试注入的接缝之一，签名与行为都不动。
     """
-    text, detail, effects = await san_check_only(
-        deps, loss_on_success, loss_on_failure, player_name
-    )
-    await effects()
+    text, detail = await san_check_only(deps, loss_on_success, loss_on_failure, player_name)
+    await _apply_san_loss(deps, detail, player_name)
     return text, detail
 
 
@@ -57,10 +55,10 @@ async def san_check_only(
     loss_on_success: str,
     loss_on_failure: str,
     player_name: str | None = None,
-) -> tuple[str, dict, ApplyFn]:
-    """**只掷骰，不生效**：扣理智、记事件、给叙事的那句话都留在返回的闭包里。
+) -> tuple[str, dict]:
+    """**只掷骰，不生效**：扣理智、记事件、给叙事的那句话都在 `_apply_san_loss`。
 
-    为什么必须拆见 `RolledCheck`。SAN 检定按规则不许花幸运，但它的形状必须
+    为什么必须拆见 `SettleHook`。SAN 检定按规则不许花幸运，但它的形状必须
     跟技能检定一致——否则又是那条「同一件事的两头，一头可插拔一头写死」。
     """
     async with deps.session_factory() as db:
@@ -70,31 +68,6 @@ async def san_check_only(
     loss_expr = loss_on_success if outcome.succeeded else loss_on_failure
     loss = max(0, dice.roll_dice_expr(loss_expr, deps.rng))
     new_value = max(0, current - loss)
-
-    async def effects() -> None:
-        # write_lock：见 KeeperDeps 注释——并行工具调用下的读-改-写必须串行。
-        # 🔴 这里**重新读一次角色卡**再扣，不写掷骰那一刻算出的 new_value：
-        # 掷骰与生效之间隔着一次广播（第 4 步起还会隔着玩家的决定），期间
-        # 别处改过 SAN 的话，照旧值写回去就是把那次改动吞掉。
-        async with deps.write_lock, deps.session_factory() as db:
-            player_now, character_now = await resolve_character(db, deps, player_name)
-            written = max(0, current_stat(character_now, "SAN") - loss)
-            write_stat(character_now, "SAN", written)
-            await record_event(
-                db,
-                deps,
-                "keeper.san",
-                {
-                    "player": player_now.nickname,
-                    "rolled": outcome.rolled,
-                    "target": current,
-                    "succeeded": outcome.succeeded,
-                    "loss": loss,
-                    "san": written,
-                },
-            )
-        deps.check_results.append(summary)
-
     result = "成功" if outcome.succeeded else "失败"
     warnings = []
     if loss >= 5:
@@ -102,10 +75,6 @@ async def san_check_only(
     if new_value == 0:
         warnings.append("理智归零，角色永久疯狂")
     suffix = "；".join(warnings)
-    summary = (
-        f"{player.nickname} · 理智检定：{outcome.rolled}/{current} → {result}，"
-        f"San {current} → {new_value}（-{loss}）"
-    )
     text = (
         f"{player.nickname} 理智检定：d100={outcome.rolled}/{current} → {result}，"
         f"损失 {loss} 点（{loss_expr}），San {current} → {new_value}"
@@ -120,7 +89,39 @@ async def san_check_only(
         "loss": loss,
         "san": new_value,
     }
-    return text, detail, effects
+    return text, detail
+
+
+async def _apply_san_loss(deps: KeeperDeps, detail: dict, player_name: str | None) -> None:
+    """生效：扣理智 + 记事件 + 给叙事留一句话。**只吃 detail**，理由见 `SettleHook`。"""
+    loss = int(detail["loss"])
+    current = int(detail["target"])
+    result = "成功" if detail["succeeded"] else "失败"
+    # write_lock：见 KeeperDeps 注释——并行工具调用下的读-改-写必须串行。
+    # 🔴 这里**重新读一次角色卡**再扣，不写掷骰那一刻算出的 `san`：掷骰与生效
+    # 之间隔着一次广播（幸运消费还隔着玩家的决定），期间别处改过 SAN 的话，
+    # 照旧值写回去就是把那次改动吞掉。
+    async with deps.write_lock, deps.session_factory() as db:
+        player, character = await resolve_character(db, deps, player_name)
+        written = max(0, current_stat(character, "SAN") - loss)
+        write_stat(character, "SAN", written)
+        await record_event(
+            db,
+            deps,
+            "keeper.san",
+            {
+                "player": player.nickname,
+                "rolled": detail["rolled"],
+                "target": current,
+                "succeeded": detail["succeeded"],
+                "loss": loss,
+                "san": written,
+            },
+        )
+    deps.check_results.append(
+        f"{detail['player']} · 理智检定：{detail['rolled']}/{current} → {result}，"
+        f"San {current} → {written}（-{loss}）"
+    )
 
 
 async def san_check_impl(
@@ -215,22 +216,37 @@ async def mark_san_points_fired(
     return [f"模组标注的理智检定点已触发：{'、'.join(newly)}"], []
 
 
-async def settle_san_check(deps: KeeperDeps, pending: PendingDecision) -> RolledCheck:
-    """玩家点了掷骰之后：掷一次理智检定。扣卡与记账留在 `apply` 里。"""
-    _text, detail, apply = await san_check_only(
+async def settle_san_check(deps: KeeperDeps, pending: PendingDecision) -> CheckResultNotice:
+    """玩家点了掷骰之后：掷一次理智检定。扣卡与记账在 `apply_san_check` 里。"""
+    _text, detail = await san_check_only(
         deps, pending.loss_on_success, pending.loss_on_failure, pending.player_nickname
     )
-    return RolledCheck(
-        notice=CheckResultNotice(
-            check_request_id=pending.decision_id,
-            kind="san",
-            player_id=detail["player_id"],
-            skill=None,
-            rolled=detail["rolled"],
-            target=detail["target"],
-            level="成功" if detail["succeeded"] else "失败",
-            san_loss=detail["loss"],
-            san_remaining=detail["san"],
-        ),
-        apply=apply,
+    return CheckResultNotice(
+        check_request_id=pending.decision_id,
+        kind="san",
+        player_id=detail["player_id"],
+        skill=None,
+        rolled=detail["rolled"],
+        target=detail["target"],
+        level="成功" if detail["succeeded"] else "失败",
+        san_loss=detail["loss"],
+        san_remaining=detail["san"],
+    )
+
+
+async def apply_san_check(
+    deps: KeeperDeps, pending: PendingDecision, notice: CheckResultNotice
+) -> None:
+    """把理智检定的结果落到角色卡上。输入只有落过库的那两样（见 `SettleHook`）。"""
+    assert notice.san_loss is not None
+    await _apply_san_loss(
+        deps,
+        {
+            "player": pending.player_nickname,
+            "rolled": notice.rolled,
+            "target": notice.target,
+            "succeeded": notice.level == "成功",
+            "loss": notice.san_loss,
+        },
+        pending.player_nickname,
     )

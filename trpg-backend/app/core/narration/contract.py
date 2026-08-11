@@ -14,6 +14,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +162,34 @@ class NarrationSegment:
 SegmentDeltaSinkFactory = Callable[[str, tuple[str, ...]], "NarrationDeltaSink"]
 
 
+class PlayerOffer(Protocol):
+    """「等某个玩家答一句」的待决定项——**契约层只需要知道这几件事**。
+
+    🔴 写成 Protocol 而不是 import `PendingDecision`：本模块是叶子，
+    `keeper.runtime.pending` 反过来要 import 它。**`TYPE_CHECKING` 下的 import
+    也算依赖边**——架构测试是 AST 扫的，它当场抓到了这条环（这正是那条判据说的
+    「架构约束必须有测试守护」）。结构化子类型让运行时那个 dataclass 自动满足它，
+    两边都不用认识对方。
+
+    kind 专属的数据（幸运卡的花费/余额）在 `payload` 里，投递层自己解。
+    """
+
+    @property
+    def decision_id(self) -> str: ...
+
+    @property
+    def kind(self) -> str: ...
+
+    @property
+    def player_id(self) -> str: ...
+
+    @property
+    def player_nickname(self) -> str: ...
+
+    @property
+    def payload(self) -> dict[str, Any]: ...
+
+
 #: 「骰子已经掷出来了」的即时回调（见 `Narrator.resolve_check`）。
 CheckResultCallback = Callable[["CheckResultNotice"], Awaitable[None]]
 
@@ -184,6 +213,11 @@ class NarrationOutcome:
     #: 既有全房间叙事又有分组叙事，否则两边内容会重复。未分头时它恒为空，
     #: 调用方走的还是原来那条 `text` 广播路径。
     segments: list[NarrationSegment] = field(default_factory=list)
+    #: 「结算之后还要等某个玩家答一句」的待决定项（`exec/34` 第 4 步，现在只有
+    #: 幸运消费）。调用方（WS 层）负责渲染成卡片。
+    #:
+    #: 形状见 `PlayerOffer`——契约层不认识 `PendingDecision`（它是叶子）。
+    player_offers: list[PlayerOffer] = field(default_factory=list)
 
 
 class Narrator(ABC):
@@ -213,5 +247,22 @@ class Narrator(ABC):
         默认不支持：单轮叙事实现（Fallback/DeepSeek）没有"待掷检定"的概念，
         WS 层收到 check.roll/san.check.roll 时应把 NotImplementedError 转成
         NOT_IMPLEMENTED 错误事件，而不是让它把整条连接炸掉。
+        """
+        raise NotImplementedError
+
+    async def resolve_player_offer(
+        self,
+        room_id: str,
+        player_id: str,
+        decision_id: str,
+        accepted: bool,
+        on_result: CheckResultCallback | None = None,
+    ) -> NarrationOutcome:
+        """玩家答完「结算之后那一拍」（`exec/34` 第 4 步，现在只有幸运消费）。
+
+        骰子已经停下、结果还没生效的那个窗口里问出去的问题，答完才继续走生效
+        与结算叙事。`accepted=False` = 不花，原样放行。
+
+        默认不支持，理由同 `resolve_check`。
         """
         raise NotImplementedError

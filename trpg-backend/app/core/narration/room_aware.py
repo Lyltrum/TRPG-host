@@ -107,3 +107,16 @@ class RoomAwareKeeperNarrator(Narrator):
         return await self._agent_for(resolved).resolve_check(
             room_id, player_id, check_request_id, on_result
         )
+
+    async def resolve_player_offer(
+        self,
+        room_id: str,
+        player_id: str,
+        decision_id: str,
+        accepted: bool,
+        on_result: CheckResultCallback | None = None,
+    ) -> NarrationOutcome:
+        resolved = await self._resolve(room_id)
+        return await self._agent_for(resolved).resolve_player_offer(
+            room_id, player_id, decision_id, accepted, on_result
+        )

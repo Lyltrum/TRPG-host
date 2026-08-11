@@ -189,6 +189,41 @@ class PartyMergeConfirmPayload(CamelModel):
     """
 
 
+class LuckOfferPayload(CamelModel):
+    """`luck.offer` 推送：骰子已经停下，问他要不要花幸运把失败推成成功
+    （`exec/26 #66`）。
+
+    **卡片本身就是教学位**——新手根本不知道有这条规则，只有主持人知道。所以
+    差几点、花多少、剩多少全都写出来，而不是只给一个「消耗幸运」按钮。
+    """
+
+    #: 原样带回（`luck.decide` 的 `decisionId`）。
+    decision_id: str
+    player_id: str
+    #: 掷的是什么技能——玩家要认得出这是刚才那一次。
+    skill: str
+    rolled: int
+    target: int
+    #: 花多少点（= 出目 − 成功率，线性无折扣，规则书明文）。
+    cost: int
+    #: 现在有多少点。花完剩 `luck_remaining - cost`。
+    luck_remaining: int
+    #: 对抗检定：**花了也可能还是输**（胜负要重算）。前端据此多说一句，
+    #: 否则玩家花掉十几点却没赢，只会认为是 bug。
+    opposed_opponent: str | None = None
+
+
+class LuckDecidePayload(CamelModel):
+    """`luck.decide` 客户端事件：花，或者不花。
+
+    🔴 跟会合确认不同，这里**有"不花"这个动作**：会合不点就是维持分离（安全
+    方向就是默认），而这里不答一句，那次检定的结果就一直悬着——整轮停在那儿。
+    """
+
+    decision_id: str = Field(..., min_length=1)
+    accepted: bool
+
+
 class KeeperBusyPayload(CamelModel):
     """`keeper.busy` 推送：守秘人正在别处忙（`exec/33 §5.4`）。
 

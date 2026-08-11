@@ -102,6 +102,9 @@ export type {
   // 分组变更协议与空间处境（exec/33 §5）
   PartyUpdatePayload,
   KeeperBusyPayload,
+  // 幸运消费（exec/26 #66，exec/34 第 4 步）
+  LuckOfferPayload,
+  LuckDecidePayload,
 } from './generated/dto';
 
 /** GET /api/v1/me/rooms 返回项。 */
@@ -140,6 +143,7 @@ import type {
   ErrorPayload,
   GameEndedPayload,
   KeeperBusyPayload,
+  LuckOfferPayload,
   NarrationDeltaPayload,
   NarrationPushPayload,
   PartyUpdatePayload,
@@ -195,4 +199,7 @@ export type ServerToClientEvent =
   | { type: 'party.update'; payload: PartyUpdatePayload }
   // exec/33 §5.4：守秘人正在别处忙（分头时叙事逐组生成，没轮到的那组此前是黑屏）
   | { type: 'keeper.busy'; payload: KeeperBusyPayload }
+  // exec/34 第 4 步：骰子已经停下、结果还没生效——问他要不要花幸运推成成功。
+  // 同处一地的队友也收得到（前端只给本人渲染按钮）：他们至少知道桌子为什么停着。
+  | { type: 'luck.offer'; payload: LuckOfferPayload }
   | { type: 'error'; payload: ErrorPayload };

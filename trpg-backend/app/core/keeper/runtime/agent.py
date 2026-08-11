@@ -40,8 +40,10 @@ from app.core.keeper.access.leak_guard import log_leak_hits, scrub_meta_leaks
 from app.core.keeper.access.subject import KEEPER
 from app.core.keeper.capabilities import (
     audit_fields,
+    post_settle_for,
+    post_settles,
     reserved_state_keys,
-    settler_for,
+    settle_hook_for,
 )
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import ScenarioModule
@@ -104,8 +106,11 @@ from app.core.keeper.runtime.location_state import (
 )
 from app.core.keeper.runtime.narration_stream import NarrationStream
 from app.core.keeper.runtime.pending import (
+    LUCK_SPEND_KIND,
     MERGE_CONFIRM_KIND,
     ROLL_KINDS,
+    TURN_BLOCKING_KINDS,
+    PendingDecision,
     pending_decision_manager,
     to_notice,
 )
@@ -126,6 +131,7 @@ from app.core.keeper.runtime.turn_policy import (
 from app.core.llm_tape import build_llm_client
 from app.core.narration.contract import (
     CheckResultCallback,
+    CheckResultNotice,
     NarrationContext,
     NarrationDeltaSink,
     NarrationOutcome,
@@ -179,7 +185,7 @@ class KeeperAgent(Narrator):
         # 骰子掷完。重发同一个请求（而不是静默不回应），防前端刷新丢卡片。
         # 主动心跳 / 开场仪式：有待掷时直接放弃（开场不该卡在旧检定上）。
         async with self._session_factory() as db:
-            pending = await pending_decision_manager.first(db, room_id, ROLL_KINDS)
+            pending = await pending_decision_manager.first(db, room_id, TURN_BLOCKING_KINDS)
         if pending is not None:
             if is_heartbeat or is_opening_ceremony:
                 return NarrationOutcome(text="")
@@ -187,7 +193,16 @@ class KeeperAgent(Narrator):
                 "keeper_narrate_pending_guard",
                 room_id=room_id,
                 check_request_id=pending.decision_id,
+                kind=pending.kind,
             )
+            # 🔴 重发的是**那一项本来的形状**：幸运卡不能当成检定请求重发，
+            # 否则玩家收到一张点了会报「没有这个待掷的检定」的卡片
+            # （同族于「加一种 kind 就要检查每个逐个列出类别的消费方」）。
+            if pending.kind == LUCK_SPEND_KIND:
+                return NarrationOutcome(
+                    text="守秘人正在等一个决定——要不要消耗幸运。",
+                    player_offers=[pending],
+                )
             return NarrationOutcome(
                 text="守秘人正在等待掷骰——请先完成待掷的检定。",
                 check_requests=[to_notice(pending)],
@@ -535,10 +550,9 @@ class KeeperAgent(Narrator):
         # 🔴 结算走注册表（exec/27 阶段 4·第八个钩子）：哪一片能力认领哪一种
         # 待掷记录由它自己声明。此前这里是一条按 kind 写死的 if/else——而"发起"
         # 那一半早就注册表化了，**同一件事的两头一头可插拔一头写死**。
-        # `settler_for` 找不到认领者时直接抛，没有 else 兜底：兜底就是静默走错
-        # 分支，掷骰数字照样出现在玩家屏幕上而没有任何东西会红。
-        rolled = await settler_for(pending.kind)(deps, pending)
-        notice = rolled.notice
+        # `settle_hook_for` 找不到认领者时直接抛，没有 else 兜底：兜底就是静默
+        # 走错分支，掷骰数字照样出现在玩家屏幕上而没有任何东西会红。
+        notice = await settle_hook_for(pending.kind).run(deps, pending)
 
         # 🔴 骰子已经落地了——立刻告诉调用方，不要等下面那些副作用和结算叙事。
         # 掷骰是纯代码毫秒级，结算叙事是 10 秒级的 LLM 往返；两件事一起等完
@@ -548,10 +562,77 @@ class KeeperAgent(Narrator):
         if on_result is not None:
             await on_result(notice)
 
-        # 🔴 生效在广播之后（exec/34 第 3 步）：幸运消费会插在这两者之间——
-        # 玩家看见骰子停下，才决定要不要花。副作用因此必须一个都不落在掷骰
-        # 那一步里，否则花完幸运就得逐个回滚（见 `RolledCheck`）。
-        await rolled.apply()
+        # 🔴 第九个钩子（exec/34 第 4 步）：结算之后还要不要再等玩家一拍。
+        # 幸运消费就挂在这里——骰子已经停下、结果还没生效的那个窗口。
+        # **生效必须留到决定之后**，否则花完幸运就得逐个回滚副作用。
+        for hook in post_settles():
+            offer = await hook.offer(deps, pending, notice)
+            if offer is None:
+                continue
+            async with self._session_factory() as db:
+                await pending_decision_manager.add(db, room_id, [offer])
+                await db.commit()
+            logger.info(
+                "keeper_post_settle_offered",
+                room_id=room_id,
+                kind=offer.kind,
+                player=offer.player_nickname,
+            )
+            return NarrationOutcome(text="", check_results=[notice], player_offers=[offer])
+
+        return await self._after_check(room_id, player_id, deps, pending, notice)
+
+    async def resolve_player_offer(
+        self,
+        room_id: str,
+        player_id: str,
+        decision_id: str,
+        accepted: bool,
+        on_result: CheckResultCallback | None = None,
+    ) -> NarrationOutcome:
+        """玩家答完了「结算之后那一拍」（现在只有幸运消费）。
+
+        答完才继续走生效 → 事实账本 → 结算叙事，跟 `resolve_check` 共用同一条
+        尾巴。**改写过的结果通知会再广播一次**：玩家花掉幸运之后，屏幕上那个
+        「失败」必须当场变成「成功」。
+        """
+        async with self._session_factory() as db:
+            offer = await pending_decision_manager.pop(db, room_id, decision_id)
+            if offer is None:
+                raise KeeperToolError("没有这个待决定项（可能已被处理）")
+            if offer.player_id != player_id:
+                await db.rollback()
+                raise KeeperToolError(f"这个决定应由 {offer.player_nickname} 来做")
+            await db.commit()
+
+        deps = KeeperDeps(
+            room_id=room_id,
+            player_id=offer.player_id,
+            session_factory=self._session_factory,
+            module=self._module,
+            ruleset=self._ruleset,
+            reserved_state_keys=reserved_state_keys(),
+            rng=self._rng,
+        )
+        pending, notice = await post_settle_for(offer.kind).resolve(deps, offer, accepted)
+        if on_result is not None:
+            await on_result(notice)
+        return await self._after_check(room_id, player_id, deps, pending, notice)
+
+    async def _after_check(
+        self,
+        room_id: str,
+        player_id: str,
+        deps: KeeperDeps,
+        pending: PendingDecision,
+        notice: CheckResultNotice,
+    ) -> NarrationOutcome:
+        """一次检定**生效之后**的公共尾巴：记账 → 事实账本 → 下一张卡或结算叙事。
+
+        两个入口共用（直接结算 / 答完幸运那一拍），所以**改写过的 notice 会
+        一路带下去**——事实账本按它判成败，结算叙事看到的也是它。
+        """
+        await settle_hook_for(pending.kind).apply(deps, pending, notice)
 
         # 事实账本 L1（exec/14 P4）：检定成功 → 把这次揭开的线索**用代码**记进
         # 账本。不靠 LLM 自觉写 keeper_state，也不放进会滑出 200 条窗口的历史里
@@ -575,7 +656,7 @@ class KeeperAgent(Narrator):
         logger.info(
             "keeper_check_resolved",
             room_id=room_id,
-            check_request_id=check_request_id,
+            check_request_id=notice.check_request_id,
             kind=pending.kind,
             player=pending.player_nickname,
         )

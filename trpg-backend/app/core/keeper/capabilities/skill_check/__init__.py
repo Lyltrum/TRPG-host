@@ -13,6 +13,7 @@
 """
 
 from app.core.keeper.capabilities.skill_check.executor import (
+    apply_skill_check,
     create_pending_skill_checks,
     settle_skill_check,
 )
@@ -32,6 +33,6 @@ CAPABILITY = KeeperCapability(
     # 排在 san_check 之前：待掷队列的顺序就是玩家看到卡片的顺序，与切分前
     # create_pending_checks 里"先 checks 后 san_checks"一致。
     pendings=(PendingHook(order=10, run=create_pending_skill_checks),),
-    settlers=(SettleHook(kind="skill", run=settle_skill_check),),
+    settlers=(SettleHook(kind="skill", run=settle_skill_check, apply=apply_skill_check),),
     audit=audit_fields,
 )

@@ -70,7 +70,8 @@ keeper/
 | `audit` | 本轮做没做事，进日志与 `keeper.decision` 事件 | 这片能力在排查时**隐身** |
 | `reserved_state_keys` | 你在 `keeper_state` 里占哪些键 | 模型一条 `state_updates` 就能覆盖你的记账 |
 | `pendings` | 两段式掷骰·**发起** | — |
-| `settlers` | 两段式掷骰·**结算** | 找不到认领者会抛（**故意不兜底**） |
+| `settlers` | 两段式掷骰·**结算**（掷骰与生效两半写在同一行注册里） | 找不到认领者会抛（**故意不兜底**） |
+| `post_settles` | 结算之后**还要再等玩家一拍**（幸运消费） | 那一拍只能写死在骨架里 |
 
 ⚠️ **唯一需要手写第二处的是 `schema`**：还要在 `contract/decision.py` 的基类
 列表里继承一次。漏了会被 `tests/test_capability_registry.py` 当场抓住——不会

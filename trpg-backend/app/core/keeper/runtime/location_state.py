@@ -727,6 +727,36 @@ async def confirm_merge_impl(db: AsyncSession, room_id: str, player_id: str) -> 
     return True
 
 
+async def reveal_hidden_player_impl(deps: KeeperDeps, player_id: str, nickname: str) -> bool:
+    """把一名调查员从隐匿里拿出来——**代码强制**，不经过模型（exec/19 #46）。
+
+    与 `set_stealth_impl` 的差别有两处，都是因为调用者是检定结算而不是裁决：
+    按 **player_id** 走（结算手上有 id，不必再拿名字去解析一遍），且**只在他
+    确实在隐匿中时才动作**——不隐匿的人潜行输了没有"被发现"可言，无条件写
+    一遍会凭空造出一条 `keeper.stealth` 事件和一句给叙事的废话。
+
+    返回值是"这次真的解除了吗"，调用方据此决定要不要告诉叙事。
+    """
+    async with deps.write_lock, deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            raise KeeperToolError("房间不存在")
+        current_state = dict(room.keeper_state or {})
+        hidden_ids = load_hidden_players(current_state)
+        if player_id not in hidden_ids:
+            return False
+        hidden_ids.discard(player_id)
+        current_state[HIDDEN_PLAYERS_KEY] = serialize_hidden_players(hidden_ids)
+        room.keeper_state = current_state
+        await record_event(
+            db,
+            deps,
+            "keeper.stealth",
+            {"player": nickname, "hidden": False, "reason": "opposed_stealth_lost"},
+        )
+    return True
+
+
 async def set_stealth_impl(deps: KeeperDeps, player_name: str, hidden: bool) -> str:
     """把一名调查员置入 / 移出隐匿状态（exec/18 ②「在场但不可见」）。
 

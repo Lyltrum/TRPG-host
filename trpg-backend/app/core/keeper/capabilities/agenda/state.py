@@ -10,23 +10,15 @@ from __future__ import annotations
 
 from app.core.keeper.contract.module_loader import ScenarioModule
 from app.core.keeper.contract.registry import SituationContext
+from app.core.keeper.runtime.progress_state import AGENDA_FIRED_KEY, load_fired_agenda
 
-AGENDA_FIRED_KEY = "已触发议程"
-
-
-def load_fired_agenda(keeper_state: dict | None) -> list[str]:
-    """从状态笔记里解析已触发的议程 id（纯函数，无 IO）。
-
-    存储形态是逗号分隔字符串——keeper_state 的值一律是 str（update_state_impl
-    的契约），不为一个列表破例。None / 缺 key / 空串 / 尾逗号都要稳健解析。
-    """
-    if not keeper_state:
-        return []
-    raw = keeper_state.get(AGENDA_FIRED_KEY)
-    if raw is None or raw == "":
-        return []
-    # 去空白、去空项、保序（一旦写入顺序就是触发顺序，审计用得上）。
-    return [part.strip() for part in str(raw).split(",") if part.strip()]
+# 键与解析已下沉到 `runtime/progress_state.py`（理由同 `clue_reveal/pairs.py`）。
+__all__ = [
+    "AGENDA_FIRED_KEY",
+    "format_agenda_status",
+    "load_fired_agenda",
+    "render_agenda_status",
+]
 
 
 def format_agenda_status(module: ScenarioModule, fired_ids: list[str]) -> str:

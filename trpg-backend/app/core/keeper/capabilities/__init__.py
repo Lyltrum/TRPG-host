@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from pydantic import BaseModel
 
 from app.core.keeper.capabilities.agenda import CAPABILITY as AGENDA
+from app.core.keeper.capabilities.closure import CAPABILITY as CLOSURE
 from app.core.keeper.capabilities.clue_reveal import CAPABILITY as CLUE_REVEAL
 from app.core.keeper.capabilities.health import CAPABILITY as HEALTH
 from app.core.keeper.capabilities.movement import CAPABILITY as MOVEMENT
@@ -40,6 +41,7 @@ CAPABILITIES: tuple[KeeperCapability, ...] = (
     HEALTH,
     AGENDA,
     PROGRESSION,
+    CLOSURE,
     CLUE_REVEAL,
     WORLD_STATE,
     MOVEMENT,

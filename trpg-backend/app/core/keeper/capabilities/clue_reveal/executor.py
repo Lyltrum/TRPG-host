@@ -67,7 +67,7 @@ async def mark_clues_revealed_impl(
 
 
 async def execute_clues_revealed(
-    deps: KeeperDeps, decision: BaseModel, _facts: TurnFacts
+    deps: KeeperDeps, decision: BaseModel, facts: TurnFacts
 ) -> tuple[list[str], list[str]]:
     """先校验 pair id 合法性，再交给 `mark_clues_revealed_impl`。
 
@@ -88,6 +88,9 @@ async def execute_clues_revealed(
     if valid_pairs:
         try:
             report.append(await mark_clues_revealed_impl(deps, valid_pairs))
+            # 发布给 closure（order=85）：还在往外掏线索的那一轮不许收尾。
+            # 只有**真的**揭开了才发布——编造的 id 已经在上面被跳过了。
+            facts.clues_revealed_this_turn = True
         except KeeperToolError as exc:
             issues.append(f"密级揭开未执行：{exc}")
     return report, issues

@@ -356,7 +356,9 @@ async def test_execute_side_effects_valid_node_id_updates_state(deps: KeeperDeps
     decision = KeeperDecision(current_node_id="hall")
     report, issues = await execute_side_effects(deps, decision)
     assert issues == []
-    assert len(report) == 1 and "hall" in report[0]
+    # 按内容认，不按条数：每加一片能力都可能往报告里多写一行
+    # （`closure` 就多了「去过的地方新增」），按下标断言会被无关能力弄红。
+    assert any("hall" in line for line in report)
     async with _session_factory() as db:
         room = await db.get(Room, deps.room_id)
         assert room is not None

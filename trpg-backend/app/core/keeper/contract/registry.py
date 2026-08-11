@@ -226,6 +226,12 @@ class TurnFacts:
     #: `movement` 读。没声明就是 None。
     scene_name_declared: str | None = None
 
+    #: 本轮真的揭开了新线索。`clue_reveal`（order=70）写，`closure`（order=85）读
+    #: ——**还在往外掏线索的那一轮不许收尾**。
+    #: 注意是"真的揭开了"而不是"裁决里写了"：编造的 pair id 会被 clue_reveal 跳过，
+    #: 那种轮次不该算内容还在推进（同族于「写了 ≠ 变了」）。
+    clues_revealed_this_turn: bool = False
+
 
 #: 执行钩子：拿到本轮裁决，做完自己那部分副作用，返回 (执行报告, 问题清单)。
 #: 报告喂给叙事阶段（叙事必须知道"发生了什么"），问题清单是"裁决里不合法的项"

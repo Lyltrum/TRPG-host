@@ -26,51 +26,26 @@ from __future__ import annotations
 
 from app.core.keeper.contract.module_loader import ScenarioModule
 from app.core.keeper.contract.registry import SituationContext
+from app.core.keeper.runtime.progress_state import (
+    CLUES_REVEALED_KEY,
+    ROOM_WIDE_OBSERVER,
+    is_pair_revealed,
+    load_revealed_clues,
+    serialize_revealed_clues,
+)
 
-CLUES_REVEALED_KEY = "已揭开配对"
-ROOM_WIDE_OBSERVER = "*"
-
-
-def load_revealed_clues(keeper_state: dict | None) -> list[tuple[str, str]]:
-    """解析 (pair_id, observer) 列表；保序、去空。"""
-    if not keeper_state:
-        return []
-    raw = keeper_state.get(CLUES_REVEALED_KEY)
-    if raw is None or raw == "":
-        return []
-    out: list[tuple[str, str]] = []
-    for part in str(raw).split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if "@" in part:
-            pair_id, observer = part.split("@", 1)
-            pair_id, observer = pair_id.strip(), observer.strip() or ROOM_WIDE_OBSERVER
-        else:
-            pair_id, observer = part, ROOM_WIDE_OBSERVER
-        if pair_id:
-            out.append((pair_id, observer))
-    return out
-
-
-def serialize_revealed_clues(entries: list[tuple[str, str]]) -> str:
-    return ", ".join(f"{pid}@{obs}" for pid, obs in entries)
-
-
-def is_pair_revealed(
-    entries: list[tuple[str, str]],
-    pair_id: str,
-    observer_id: str | None = None,
-) -> bool:
-    """房间级揭开，或对指定 observer 揭开，都算已揭开。"""
-    for pid, obs in entries:
-        if pid != pair_id:
-            continue
-        if obs == ROOM_WIDE_OBSERVER:
-            return True
-        if observer_id is not None and obs == observer_id:
-            return True
-    return False
+# 🔴 键与解析已下沉到 `runtime/progress_state.py`（`closure` 也要读它们，而
+# 能力之间不许互相 import）。这里重新导出，让既有调用点与写入侧不必改写法；
+# 留在本文件的是**这片能力怎么把状态说给模型听**，那是它自己的表达。
+__all__ = [
+    "CLUES_REVEALED_KEY",
+    "ROOM_WIDE_OBSERVER",
+    "format_clue_status",
+    "is_pair_revealed",
+    "load_revealed_clues",
+    "render_clue_status",
+    "serialize_revealed_clues",
+]
 
 
 def format_clue_status(

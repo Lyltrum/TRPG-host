@@ -15,6 +15,7 @@
 """
 
 from app.core.keeper.capabilities.san_check.executor import (
+    apply_san_check,
     create_pending_san_checks,
     mark_san_points_fired,
     settle_san_check,
@@ -42,7 +43,7 @@ CAPABILITY = KeeperCapability(
     # 排在 skill_check 之后：待掷队列的顺序就是玩家看到卡片的顺序，
     # 与切分前 create_pending_checks 里"先 checks 后 san_checks"一致。
     pendings=(PendingHook(order=20, run=create_pending_san_checks),),
-    settlers=(SettleHook(kind="san", run=settle_san_check),),
+    settlers=(SettleHook(kind="san", run=settle_san_check, apply=apply_san_check),),
     # 排在 movement（30）之后：记账要用本轮移动完成后的位置。
     executors=(ExecutorHook(order=40, run=mark_san_points_fired),),
     situations=(SituationBlock(order=45, heading="理智检定点", render=render_san_points),),

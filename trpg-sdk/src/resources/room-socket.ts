@@ -2,6 +2,7 @@ import type {
   ActionSubmitPayload,
   ChatSendPayload,
   CheckRollPayload,
+  LuckDecidePayload,
   PlayerReadyPayload,
   RoomJoinPayload,
   RoomRejoinPayload,
@@ -81,6 +82,13 @@ const PAYLOAD_VALIDATORS: {
     'locationId' in p &&
     'locationName' in p &&
     'mergePendingAt' in p,
+  // exec/34 第 4 步。decisionId 必填（没有它玩家没法答"就这一个"）；
+  // cost/luckRemaining 必填——卡片本身就是教学位，缺一个数字这张卡就没意义了。
+  'luck.offer': (p) =>
+    typeof p.decisionId === 'string' &&
+    typeof p.playerId === 'string' &&
+    typeof p.cost === 'number' &&
+    typeof p.luckRemaining === 'number',
   'keeper.busy': (p) => typeof p.busy === 'boolean',
   error: (p) => typeof p.code === 'string' && typeof p.message === 'string',
 };
@@ -227,6 +235,15 @@ export class RoomSocket {
    * 安全方向。走到别人所在的地点时后端会在 `party.update` 里给 `mergePendingAt`。 */
   confirmMerge(playerId: string): void {
     this.send('party.merge.confirm', playerId, {});
+  }
+
+  /** luck.decide —— 花，或者不花（exec/26 #66）。
+   *
+   * 跟 confirmMerge 不同，这里**有"不花"这个动作**：会合不点就是维持分离
+   * （安全方向就是默认），而这里不答一句，那次检定的结果就一直悬着——整轮
+   * 停在那儿。所以卡片上两个按钮都要给。 */
+  decideLuck(playerId: string, payload: LuckDecidePayload): void {
+    this.send('luck.decide', playerId, payload);
   }
 
   /** room.rejoin —— 断线重连（issue #77 仅铺协议，后端本期回 NOT_IMPLEMENTED）。 */

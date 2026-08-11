@@ -183,34 +183,18 @@ PendingFn = Callable[
 ]
 
 
-#: 「生效」：把这次检定的结果真正落到世界上（写角色卡 / 记事件 / 给叙事的
-#: 那句文本 / 解除隐匿……）。由 `RolledCheck` 带出来，骨架在**广播结果之后**调它。
-ApplyFn = Callable[[], Awaitable[None]]
-
-
-@dataclass(frozen=True)
-class RolledCheck:
-    """结算钩子的产物：**掷完了，但还没生效**。
-
-    🔴 掷骰与生效必须分成两步（`exec/34` 第 3 步，起因是 `exec/26 #66`）：
-    幸运消费能把失败推成成功，而它发生在**广播结果之后**——玩家看见骰子停下，
-    才决定要不要花。若副作用留在掷骰那一步里，花完幸运就得**逐个回滚**
-    （记账、解隐匿、写给叙事的文本……），那是打地鼠：下一个副作用照样漏，
-    而且不会有任何东西变红（`#46` 加解隐匿时就没人回来更新 `#66` 的时序图）。
-    拆成两步之后副作用天然全落在决定之后，一个都不用回滚。
-
-    ⚠️ 因此 `RolledCheck.notice` 之外**不许有任何写**：掷骰那一步只读库、
-    只掷骰。这条约束由 `tests/test_roll_before_apply.py` 守着——它是靠推理
-    得出的作用域，没有测试守就一定退化。
-    """
-
-    notice: CheckResultNotice
-    apply: ApplyFn
-
-
-#: 结算钩子：玩家点了掷骰之后，把一条待掷记录变成一次真实的掷骰结果。
+#: 结算钩子的前一半：把一条待掷记录变成一次真实的掷骰结果。
 #: **服务端权威**——骰子由代码掷，模型只消费结果，改不了点数。
-SettleFn = Callable[["KeeperDeps", "PendingDecision"], Awaitable[RolledCheck]]
+#: 🔴 **只读库、只掷骰**，一个字都不许写（见 `SettleHook`）。
+SettleFn = Callable[["KeeperDeps", "PendingDecision"], Awaitable["CheckResultNotice"]]
+
+#: 结算钩子的后一半：把这次结果真正落到世界上（写角色卡 / 记事件 / 给叙事的
+#: 那句文本 / 解除隐匿……）。骨架在**广播结果之后**调它。
+#:
+#: 🔴 它的输入只有「待决定项 + 结果通知」，**两样都是能落库的**：幸运消费要
+#: 等玩家隔着一次 WS 往返（乃至一次进程重启）才决定，那期间只有数据库活着。
+#: 第一版把生效做成掷骰时捕获的闭包，形状上就跨不过这个等待。
+ApplyFn = Callable[["KeeperDeps", "PendingDecision", "CheckResultNotice"], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -221,16 +205,59 @@ class SettleHook:
     `agent.resolve_check` 里一条按 kind 写死的 if/else——**同一件事的两头，
     一头可插拔一头写死**。加一种新检定时前一半能自动接上、后一半会静默走进
     else 分支（当成 SAN 检定结算）。
+
+    🔴 **掷骰（`run`）与生效（`apply`）是两步**（`exec/34` 第 3 步，起因是
+    `exec/26 #66`）：幸运消费能把失败推成成功，而它发生在**广播结果之后**
+    ——玩家看见骰子停下，才决定要不要花。若副作用留在掷骰那一步里，花完幸运
+    就得**逐个回滚**（记账、解隐匿、写给叙事的文本……），那是打地鼠：下一个
+    副作用照样漏，而且不会有任何东西变红（`#46` 加解隐匿时就没人回来更新
+    `#66` 的时序图）。拆成两步之后副作用天然全落在决定之后，一个都不用回滚。
+
+    两半写在同一行注册里，是因为它们正是那条判据说的「同一件事的两头」——
+    分开注册就会有人只加一半。约束由 `tests/test_roll_before_apply.py` 守着。
     """
 
     kind: str
     run: SettleFn
+    apply: ApplyFn
 
 
 @dataclass(frozen=True)
 class PendingHook:
     order: float
     run: PendingFn
+
+
+#: 结算之后要不要再等玩家一拍：返回一项新的待决定项，或 None（不打扰）。
+OfferFn = Callable[
+    ["KeeperDeps", "PendingDecision", "CheckResultNotice"], Awaitable["PendingDecision | None"]
+]
+
+#: 玩家答完那一拍：返回 (它挂着的那条掷骰记录, 可能被改写过的结果通知)。
+#: 改写是这个钩子存在的理由——花掉幸运会把「失败」推成「成功」，而后面每一步
+#: （生效、事实账本、结算叙事）都必须看到改写后的那一份。
+ResolveOfferFn = Callable[
+    ["KeeperDeps", "PendingDecision", bool],
+    Awaitable[tuple["PendingDecision", "CheckResultNotice"]],
+]
+
+
+@dataclass(frozen=True)
+class PostSettleHook:
+    """**第九个钩子**：结算之后还要再等玩家一拍（`exec/26 #66` 预言的那个）。
+
+    🔴 前八个钩子覆盖两种形状——"裁决→执行"和"发起→结算"。幸运消费是第三种：
+    骰子已经停下、结果还没生效，这中间要问玩家一句。`PendingFn` 的输入是**裁决**，
+    从签名上就接不住它（它的输入是骰子结果）；`SettleHook` 方向相反（把待掷记录
+    消费掉，不产出新的等待）。
+
+    `kind` 是它产出的待决定项的 kind——`resolve` 按它反查回来。
+    """
+
+    kind: str
+    order: float
+    offer: OfferFn
+    resolve: ResolveOfferFn
 
 
 @dataclass
@@ -299,6 +326,8 @@ class KeeperCapability:
     pendings: Sequence[PendingHook] = ()
     #: 两段式玩家掷骰·结算：玩家点了之后怎么掷、怎么组装结果。
     settlers: Sequence[SettleHook] = ()
+    #: 结算之后再等玩家一拍（第九个钩子，见 `PostSettleHook`）。
+    post_settles: Sequence[PostSettleHook] = ()
     #: 这个能力在 `keeper_state` 里占的键。声明出来同时管两件事：
     #: **`state_updates` 不许写**，且**不原样喂给模型**（模型看到的是 situation
     #: 钩子渲染好的那一块）。

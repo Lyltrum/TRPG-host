@@ -45,6 +45,20 @@ interface PendingCheck {
   rolling: boolean
 }
 
+// 幸运消费（exec/26 #66）：骰子已经停下、结果还没生效的那个窗口里，问一句
+// 「要不要花幸运把这次失败推成成功」。**新手根本不知道有这条规则**，所以卡片
+// 本身就是教学位——差几点、花多少、剩多少全写出来。
+interface LuckOffer {
+  id: string
+  skill: string
+  rolled: number
+  target: number
+  cost: number
+  luckRemaining: number
+  opposedOpponent: string | null
+  deciding: boolean
+}
+
 // 地图结构化数据未接线：不展示假地点，避免砸信任（设计评测 P1）
 
 const DICE_OPTIONS = [
@@ -623,6 +637,7 @@ export default function RoomPage() {
   const [skillsTab, setSkillsTab] = useState<'occupation' | 'interest'>('occupation')
   const [showDice, setShowDice] = useState(false)
   const [pendingCheck, setPendingCheck] = useState<PendingCheck | null>(null)
+  const [luckOffer, setLuckOffer] = useState<LuckOffer | null>(null)
   // 首次待掷检定教学（session 内一次）
   // 🔴 血条的分母由**后端权威给出**（`CharacterRead.hpMax`，exec/26 #67）：
   // `derived.hp` 在被守秘人扣过血之后是当前值，拿它当分母会让带伤进房的
@@ -905,6 +920,29 @@ export default function RoomPage() {
           content: isSelf ? '守秘人请求你进行理智检定' : `等待 ${nicknameFor(envelope.payload.playerId)} 进行理智检定`,
           time: now,
         }])
+      } else if (envelope.type === 'luck.offer') {
+        // 骰子停下、结果还没生效。球在这个人手上，守秘人这一拍写完了。
+        setTyping(false)
+        const isSelf = envelope.payload.playerId === playerId
+        if (isSelf) {
+          setLuckOffer({
+            id: envelope.payload.decisionId,
+            skill: envelope.payload.skill,
+            rolled: envelope.payload.rolled,
+            target: envelope.payload.target,
+            cost: envelope.payload.cost,
+            luckRemaining: envelope.payload.luckRemaining,
+            opposedOpponent: envelope.payload.opposedOpponent ?? null,
+            deciding: false,
+          })
+        }
+        setMessages(prev => [...prev, {
+          type: 'system',
+          content: isSelf
+            ? `就差 ${envelope.payload.cost} 点——可以消耗幸运把这次${envelope.payload.skill}检定推成成功`
+            : `等待 ${nicknameFor(envelope.payload.playerId)} 决定要不要消耗幸运`,
+          time: now,
+        }])
       } else if (envelope.type === 'check.result') {
         const { playerId: rollerId, skill, rollValue, targetValue, result, checkRequestId } = envelope.payload
         // 对抗检定（exec/19 #38）：对手侧也由服务端掷骰，一起显示——玩家要
@@ -926,6 +964,9 @@ export default function RoomPage() {
         if (checkRequestId) {
           setPendingCheck(prev => (prev && prev.id === checkRequestId ? null : prev))
         }
+        // 幸运卡收起：答完之后服务端会把（可能改写过的）结果再推一次，
+        // 那就是"这次检定已经定了"的信号。
+        setLuckOffer(prev => (prev && rollerId === playerId ? null : prev))
       } else if (envelope.type === 'san.check.result') {
         const { playerId: rollerId, rollValue, sanLoss, result, checkRequestId, sanRemaining } = envelope.payload
         setMessages(prev => [...prev, {
@@ -1089,6 +1130,17 @@ export default function RoomPage() {
     } else {
       sdk.roomSocket.rollCheck(playerId, { checkRequestId: pendingCheck.id })
     }
+  }
+
+  // 幸运消费（exec/26 #66）：花，或者不花。
+  // 🔴 **两个按钮都要给**——跟会合确认不同，那边不点就是维持分离（安全方向
+  // 就是默认），这边不答一句，那次检定的结果就一直悬着、整轮停在那儿。
+  // 卡片在结果广播回来时收起（花了会重推一条改写过的 check.result）。
+  const handleLuckDecide = (accepted: boolean) => {
+    if (!luckOffer || !playerId || luckOffer.deciding) return
+    setLuckOffer(prev => (prev ? { ...prev, deciding: true } : prev))
+    setTyping(true)
+    sdk.roomSocket.decideLuck(playerId, { decisionId: luckOffer.id, accepted })
   }
 
   // 会合确认（exec/33 §5.2）：走到别人所在的地方时，系统**先按没碰上处理**，
@@ -1489,6 +1541,44 @@ export default function RoomPage() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 幸运消费卡（exec/26 #66）：骰子已经停下、结果还没生效。
+          卡片本身就是教学位——新手根本不知道有这条规则，只有主持人知道。 */}
+      {channel === 'dm' && luckOffer && (
+        <div className="relative z-[1] px-3 pt-2 flex-shrink-0">
+          <div className="paper-grain relative bg-dossier text-ink border-l-4 border-double border-brass px-3 py-2.5 shadow-[0_2px_0_rgba(0,0,0,.4),0_8px_16px_rgba(0,0,0,.42)]">
+            <div className="text-[12.5px] font-semibold">
+              {luckOffer.skill} {luckOffer.rolled}/{luckOffer.target} —— 就差 {luckOffer.cost} 点
+            </div>
+            <div className="typed text-[10.5px] leading-[1.7] text-ink-soft mt-1">
+              消耗 {luckOffer.cost} 点幸运可以把它推成普通成功，
+              你还有 {luckOffer.luckRemaining} 点，花完剩 {luckOffer.luckRemaining - luckOffer.cost} 点。
+              幸运很难恢复。
+              {luckOffer.opposedOpponent !== null && (
+                <span className="block text-rust">
+                  这是跟{luckOffer.opposedOpponent}的对抗——推成成功之后胜负要重算，花了也可能还是输。
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={() => handleLuckDecide(true)}
+                disabled={luckOffer.deciding}
+                className="typed flex-1 px-3.5 py-2 bg-ink text-book text-[10px] active:bg-rust disabled:opacity-50 transition-colors"
+              >
+                {luckOffer.deciding ? '结算中…' : `消耗 ${luckOffer.cost} 点幸运`}
+              </button>
+              <button
+                onClick={() => handleLuckDecide(false)}
+                disabled={luckOffer.deciding}
+                className="typed flex-1 px-3.5 py-2 border border-black/55 text-[10px] active:border-rust disabled:opacity-50 transition-colors"
+              >
+                不花
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -24,7 +24,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.coc7.content import build_coc7_ruleset
 from app.core.db import Base
-from app.core.keeper.capabilities import reserved_state_keys, settler_for
+from app.core.keeper.capabilities import reserved_state_keys, settle_hook_for
 from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.runtime.deps import KeeperDeps
 from app.core.keeper.runtime.pending import PendingDecision
@@ -153,13 +153,15 @@ async def test_rolling_a_skill_check_changes_nothing_until_apply() -> None:
     room_id, player_id = await _seed("RA100")
     deps = _deps(room_id, player_id)
 
-    rolled = await settler_for("skill")(deps, _skill_pending(room_id, player_id))
+    hook = settle_hook_for("skill")
+    pending = _skill_pending(room_id, player_id)
+    notice = await hook.run(deps, pending)
 
-    assert rolled.notice.rolled > 0, "骰子该掷了——不然下面的断言只是在验一个没发生的动作"
+    assert notice.rolled > 0, "骰子该掷了——不然下面的断言只是在验一个没发生的动作"
     assert await _event_count(room_id) == 0, "🔴 掷骰那一步写了 events"
     assert deps.check_results == [], "🔴 掷骰那一步就把结果写给叙事了"
 
-    await rolled.apply()
+    await hook.apply(deps, pending, notice)
 
     assert await _event_count(room_id) == 1
     assert len(deps.check_results) == 1
@@ -169,18 +171,20 @@ async def test_rolling_a_san_check_does_not_touch_the_character_until_apply() ->
     room_id, player_id = await _seed("RA200")
     deps = _deps(room_id, player_id)
 
-    rolled = await settler_for("san")(deps, _san_pending(room_id, player_id))
+    hook = settle_hook_for("san")
+    pending = _san_pending(room_id, player_id)
+    notice = await hook.run(deps, pending)
 
-    assert rolled.notice.san_loss is not None and rolled.notice.san_loss > 0, (
+    assert notice.san_loss is not None and notice.san_loss > 0, (
         "这条用例需要一次真的有损失的理智检定"
     )
     assert await _san(room_id) == _STARTING_SAN, "🔴 掷骰那一步就把理智扣了"
     assert await _event_count(room_id) == 0, "🔴 掷骰那一步写了 events"
     assert deps.check_results == []
 
-    await rolled.apply()
+    await hook.apply(deps, pending, notice)
 
-    assert await _san(room_id) == _STARTING_SAN - rolled.notice.san_loss
+    assert await _san(room_id) == _STARTING_SAN - notice.san_loss
     assert await _event_count(room_id) == 1
     assert len(deps.check_results) == 1
 

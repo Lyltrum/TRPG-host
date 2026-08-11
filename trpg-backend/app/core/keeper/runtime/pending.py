@@ -54,8 +54,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.narration.contract import CheckRequestNotice
 from app.models.event import PendingDecisionRow
 
-#: 掷骰类的 kind。`settler_for(kind)` 按 kind 分发，两者是同一个值域。
+#: 掷骰类的 kind。`settle_hook_for(kind)` 按 kind 分发，两者是同一个值域。
 ROLL_KINDS = frozenset({"skill", "san"})
+
+#: 「要不要花幸运把这次失败推成成功」（`exec/26 #66`，`exec/34` 第 4 步）。
+#:
+#: 它挂在**骰子已经停下、但结果还没生效**的那个窗口里：掷骰 → 广播 → **这张卡**
+#: → 生效 → 结算叙事。所以它跟掷骰一样，**没决定之前这一轮不能往下走**。
+#:
+#: 🔴 **没有超时**。`#66` 的初稿写着"超时按不花继续"，落地时改成不设，理由是
+#: 一致性：掷骰本身就没有超时（玩家不点「投掷」，这一轮同样停在那儿），而幸运
+#: 决定是同一个窗口里的同一件事。给它单独造一套定时器，等于**为一个用户造一个
+#: 框架**，而且会让"两种等待、两种超时语义"成为下一个人要维护的分叉。
+LUCK_SPEND_KIND = "luck_spend"
+
+#: 「这一轮还能不能往下走」的判据——**守秘人叙事的守卫用它**，不是 `ROLL_KINDS`。
+#:
+#: 🔴 加一种 kind 就要回来看这里一眼：会合确认**故意不在**里面（那张卡按设计
+#: 可以一直挂着，算进来整桌就说不了话），而幸运卡**必须在**里面（它挂着的时候
+#: 有一次检定的结果悬而未决，放行就等于让世界跑在一个还没定的结果前面）。
+
+TURN_BLOCKING_KINDS = ROLL_KINDS | {LUCK_SPEND_KIND}
 
 #: 「你跟他们碰上了吗」——分组变更协议里那张要当事人点头的卡（`exec/33 §5`）。
 #:
@@ -157,6 +176,67 @@ class PendingDecision:
             player_nickname=player_nickname,
             reason=reason,
         )
+
+    @classmethod
+    def luck_spend(
+        cls,
+        *,
+        room_id: str,
+        player_id: str,
+        player_nickname: str,
+        reason: str,
+        roll: PendingDecision,
+        notice_payload: dict[str, Any],
+        cost: int,
+        luck_remaining: int,
+        decision_id: str | None = None,
+    ) -> PendingDecision:
+        """造一张幸运消费卡。
+
+        🔴 它把**原来那条掷骰记录和已经掷出的结果一起收进 payload**：玩家的
+        决定隔着一次 WS 往返，期间进程可能重启，那时只有数据库活着。生效那一步
+        （`SettleHook.apply`）的输入因此被设计成"待决定项 + 结果通知"两样落库的
+        东西——闭包跨不过这个等待。
+        """
+        return cls(
+            decision_id=decision_id or str(uuid.uuid4()),
+            kind=LUCK_SPEND_KIND,
+            room_id=room_id,
+            player_id=player_id,
+            player_nickname=player_nickname,
+            reason=reason,
+            payload={
+                "roll_kind": roll.kind,
+                "roll_decision_id": roll.decision_id,
+                "roll_reason": roll.reason,
+                "roll_payload": dict(roll.payload),
+                "notice": dict(notice_payload),
+                "cost": cost,
+                "luck_remaining": luck_remaining,
+            },
+        )
+
+    def restore_roll(self) -> PendingDecision:
+        """幸运卡 → 它挂着的那条掷骰记录（生效那一步要拿它当输入）。"""
+        return PendingDecision(
+            decision_id=str(self.payload["roll_decision_id"]),
+            kind=str(self.payload["roll_kind"]),
+            room_id=self.room_id,
+            player_id=self.player_id,
+            player_nickname=self.player_nickname,
+            reason=str(self.payload.get("roll_reason") or ""),
+            payload=dict(self.payload.get("roll_payload") or {}),
+        )
+
+    @property
+    def cost(self) -> int:
+        """花掉幸运把这次失败推成普通成功要付几点（= 出目 − 成功率）。"""
+        return int(self.payload["cost"])
+
+    @property
+    def luck_remaining(self) -> int:
+        """发这张卡时他手上还有多少幸运。"""
+        return int(self.payload["luck_remaining"])
 
     # ── 掷骰类的只读视图 ────────────────────────────
 

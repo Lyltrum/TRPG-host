@@ -565,6 +565,35 @@ export interface LoginBody {
 }
 
 /**
+ * `luck.decide` 客户端事件：花，或者不花。
+ *
+ * 🔴 跟会合确认不同，这里**有"不花"这个动作**：会合不点就是维持分离（安全
+ * 方向就是默认），而这里不答一句，那次检定的结果就一直悬着——整轮停在那儿。
+ */
+export interface LuckDecidePayload {
+  decisionId: string;
+  accepted: boolean;
+}
+
+/**
+ * `luck.offer` 推送：骰子已经停下，问他要不要花幸运把失败推成成功
+ * （`exec/26 #66`）。
+ *
+ * **卡片本身就是教学位**——新手根本不知道有这条规则，只有主持人知道。所以
+ * 差几点、花多少、剩多少全都写出来，而不是只给一个「消耗幸运」按钮。
+ */
+export interface LuckOfferPayload {
+  decisionId: string;
+  playerId: string;
+  skill: string;
+  rolled: number;
+  target: number;
+  cost: number;
+  luckRemaining: number;
+  opposedOpponent?: string | null;
+}
+
+/**
  * GET /PATCH /api/v1/auth/me 返回
  */
 export interface MeRead {

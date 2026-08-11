@@ -15,7 +15,7 @@ from app.core.keeper.capabilities.skill_check.guard import (
     filter_checks_against_module,
     find_node_for_scene,
 )
-from app.core.keeper.contract.registry import ApplyFn, PendingContext, RolledCheck
+from app.core.keeper.contract.registry import PendingContext
 from app.core.keeper.primitives import dice
 from app.core.keeper.primitives.skills import canonical_skill_name, resolve_skill_id
 from app.core.keeper.runtime.deps import (
@@ -119,14 +119,14 @@ async def roll_check_detail(
     `roll_check_only` / `settle_skill_check`。这个函数留给守秘人直接掷的场合
     （`roll_check_impl`），并且是现有测试注入的接缝之一，签名与行为都不动。
     """
-    text, detail, effects = await roll_check_only(
+    text, detail = await roll_check_only(
         deps,
         skill_name,
         player_name,
         opposed_opponent=opposed_opponent,
         opposed_value=opposed_value,
     )
-    await effects()
+    await _record_check(deps, detail)
     return text, detail
 
 
@@ -137,11 +137,12 @@ async def roll_check_only(
     *,
     opposed_opponent: str | None = None,
     opposed_value: int | None = None,
-) -> tuple[str, dict, ApplyFn]:
-    """**只掷骰，不生效**：返回文本、明细，以及一个「把它落到世界上」的闭包。
+) -> tuple[str, dict]:
+    """**只掷骰，不生效**：返回文本与结构化明细，一个字都不写。
 
-    掷骰这一步只读库（查角色卡拿技能值）——记事件、给叙事的那句文本都留在
-    闭包里，由调用方在广播结果之后再调。为什么必须这样拆见 `RolledCheck`。
+    掷骰这一步只读库（查角色卡拿技能值）；记事件、给叙事的那句文本在
+    `_record_check` 里，由调用方在广播结果之后再调。为什么必须这样拆见
+    `SettleHook`。
 
     传了 `opposed_*` 就是**对抗检定**（exec/19 #38）：对手侧同样由服务端掷骰
     （d100 对 `opposed_value`），胜负按 `dice.resolve_opposed`。
@@ -157,30 +158,8 @@ async def roll_check_only(
         else None
     )
     won = dice.resolve_opposed(outcome, opponent_outcome) if opponent_outcome is not None else None
-    record: dict = {
-        "player": player.nickname,
-        "skill": display_name,
-        "rolled": outcome.rolled,
-        "target": outcome.target,
-        "level": outcome.level,
-    }
-    if opponent_outcome is not None:
-        record["opposed"] = {
-            "opponent": opposed_opponent,
-            "rolled": opponent_outcome.rolled,
-            "target": opponent_outcome.target,
-            "level": opponent_outcome.level,
-            "won": won,
-        }
-
     if opponent_outcome is not None:
         verdict = "胜" if won else "负"
-        summary = (
-            f"{player.nickname} · {display_name}对抗{opposed_opponent}："
-            f"{outcome.rolled}/{outcome.target}（{outcome.level}） vs "
-            f"{opponent_outcome.rolled}/{opponent_outcome.target}"
-            f"（{opponent_outcome.level}） → {verdict}"
-        )
         text = (
             f"{player.nickname} 的{display_name}对抗检定（对手：{opposed_opponent}）："
             f"d100={outcome.rolled}/{outcome.target} → {outcome.level}；"
@@ -188,10 +167,6 @@ async def roll_check_only(
             f" → {opponent_outcome.level}。{player.nickname}{verdict}。"
         )
     else:
-        summary = (
-            f"{player.nickname} · {display_name}检定："
-            f"{outcome.rolled}/{outcome.target} → {outcome.level}"
-        )
         text = (
             f"{player.nickname} 的{display_name}检定：d100={outcome.rolled}，"
             f"目标值 {outcome.target}（困难 {outcome.target // 2}/极难 {outcome.target // 5}）"
@@ -211,13 +186,65 @@ async def roll_check_only(
         detail["opposed_target"] = opponent_outcome.target
         detail["opposed_level"] = opponent_outcome.level
         detail["opposed_won"] = won
+    return text, detail
 
-    async def effects() -> None:
-        async with deps.session_factory() as db:
-            await record_event(db, deps, "keeper.check", record)
-        deps.check_results.append(summary)
 
-    return text, detail, effects
+def _detail_of(pending: PendingDecision, notice: CheckResultNotice) -> dict:
+    """（待决定项 + 结果通知）→ 明细。**幸运消费之后重放生效那一步靠它**：
+    两样都是落过库的，而掷骰时那些局部变量早没了（`exec/34` 第 4 步）。"""
+    detail: dict = {
+        "player_id": notice.player_id,
+        "player": pending.player_nickname,
+        "skill": notice.skill,
+        "rolled": notice.rolled,
+        "target": notice.target,
+        "level": notice.level,
+    }
+    if notice.opposed_opponent is not None:
+        detail["opposed_opponent"] = notice.opposed_opponent
+        detail["opposed_rolled"] = notice.opposed_rolled
+        detail["opposed_target"] = notice.opposed_target
+        detail["opposed_level"] = notice.opposed_level
+        detail["opposed_won"] = notice.opposed_won
+    return detail
+
+
+async def _record_check(deps: KeeperDeps, detail: dict) -> None:
+    """生效的公共那一半：写 events + 给叙事留一句话。
+
+    **只吃 detail**，不吃掷骰时的局部变量——这样它既服务于"掷完立刻生效"
+    （`roll_check_detail`），也服务于"隔着玩家一个决定再生效"（幸运消费）。
+    """
+    record: dict = {
+        "player": detail["player"],
+        "skill": detail["skill"],
+        "rolled": detail["rolled"],
+        "target": detail["target"],
+        "level": detail["level"],
+    }
+    if detail.get("opposed_opponent") is not None:
+        record["opposed"] = {
+            "opponent": detail["opposed_opponent"],
+            "rolled": detail["opposed_rolled"],
+            "target": detail["opposed_target"],
+            "level": detail["opposed_level"],
+            "won": detail["opposed_won"],
+        }
+        verdict = "胜" if detail["opposed_won"] else "负"
+        summary = (
+            f"{detail['player']} · {detail['skill']}对抗{detail['opposed_opponent']}："
+            f"{detail['rolled']}/{detail['target']}（{detail['level']}） vs "
+            f"{detail['opposed_rolled']}/{detail['opposed_target']}"
+            f"（{detail['opposed_level']}） → {verdict}"
+        )
+    else:
+        summary = (
+            f"{detail['player']} · {detail['skill']}检定："
+            f"{detail['rolled']}/{detail['target']} → {detail['level']}"
+        )
+    async with deps.session_factory() as db:
+        await record_event(db, deps, "keeper.check", record)
+    deps.check_results.append(summary)
 
 
 async def roll_check_impl(deps: KeeperDeps, skill_name: str, player_name: str | None = None) -> str:
@@ -322,20 +349,41 @@ async def create_pending_skill_checks(
     return pending, issues
 
 
-async def settle_skill_check(deps: KeeperDeps, pending: PendingDecision) -> RolledCheck:
+async def settle_skill_check(deps: KeeperDeps, pending: PendingDecision) -> CheckResultNotice:
     """玩家点了掷骰之后：**服务端权威**掷一次，组装成给前端的结果通知。
 
     骰子由 `primitives/dice` 掷，模型只消费结果、改不了点数——这是两段式玩家
-    掷骰的全部意义。副作用一律留在返回的 `apply` 里（见 `RolledCheck`）。
+    掷骰的全部意义。副作用一律在 `apply_skill_check` 里（见 `SettleHook`）。
     """
     assert pending.skill is not None
-    _text, detail, effects = await roll_check_only(
+    _text, detail = await roll_check_only(
         deps,
         pending.skill,
         pending.player_nickname,
         opposed_opponent=pending.opposed_opponent,
         opposed_value=pending.opposed_value,
     )
+    return CheckResultNotice(
+        check_request_id=pending.decision_id,
+        kind="skill",
+        player_id=detail["player_id"],
+        skill=detail["skill"],
+        rolled=detail["rolled"],
+        target=detail["target"],
+        level=detail["level"],
+        opposed_opponent=detail.get("opposed_opponent"),
+        opposed_rolled=detail.get("opposed_rolled"),
+        opposed_target=detail.get("opposed_target"),
+        opposed_level=detail.get("opposed_level"),
+        opposed_won=detail.get("opposed_won"),
+    )
+
+
+async def apply_skill_check(
+    deps: KeeperDeps, pending: PendingDecision, notice: CheckResultNotice
+) -> None:
+    """把掷出来的结果落到世界上。**输入只有落过库的那两样**，理由见 `SettleHook`。"""
+    await _record_check(deps, _detail_of(pending, notice))
     # 🔴 exec/19 #46 的另一半：「被发现 → 解除隐匿」此前只在 prompt 里请模型
     # 自觉写回 `hidden: false`（离开地点那一半早已代码硬化）。潜行**对抗**输掉
     # 是代码判得了的——判定权就不该留在模型手里（exec/20 §2.7 给的硬化方向）。
@@ -343,37 +391,14 @@ async def settle_skill_check(deps: KeeperDeps, pending: PendingDecision) -> Roll
     # 只认"隐匿者本人掷潜行对抗"这一种写法：反过来写（搜索者掷侦察、把隐匿者
     # 写进 `opposed.opponent`）时，对手侧只有一个自由文本的名字，拿它去匹配
     # 玩家就是同义词打地鼠。裁决规则 4c 因此明确教了该发哪一种。
-    lost_stealth = (
-        pending.opposed_value is not None
-        and detail.get("opposed_won") is False
+    #
+    # 判据用的是 `notice.opposed_won`（不是掷骰当时算的那个）：花掉幸运会**重算
+    # 胜负**，赢回来的人就不该被掀开隐匿。
+    if (
+        notice.opposed_won is False
+        and pending.opposed_value is not None
         and _is_stealth_check(deps, pending.skill)
-    )
-
-    async def apply() -> None:
-        await effects()
-        if lost_stealth:
-            revealed = await reveal_hidden_player_impl(
-                deps, pending.player_id, pending.player_nickname
-            )
-            if revealed:
-                deps.check_results.append(
-                    f"{pending.player_nickname} 潜行对抗失败 → 被发现，不再隐匿"
-                )
-
-    return RolledCheck(
-        notice=CheckResultNotice(
-            check_request_id=pending.decision_id,
-            kind="skill",
-            player_id=detail["player_id"],
-            skill=detail["skill"],
-            rolled=detail["rolled"],
-            target=detail["target"],
-            level=detail["level"],
-            opposed_opponent=detail.get("opposed_opponent"),
-            opposed_rolled=detail.get("opposed_rolled"),
-            opposed_target=detail.get("opposed_target"),
-            opposed_level=detail.get("opposed_level"),
-            opposed_won=detail.get("opposed_won"),
-        ),
-        apply=apply,
-    )
+    ):
+        revealed = await reveal_hidden_player_impl(deps, pending.player_id, pending.player_nickname)
+        if revealed:
+            deps.check_results.append(f"{pending.player_nickname} 潜行对抗失败 → 被发现，不再隐匿")

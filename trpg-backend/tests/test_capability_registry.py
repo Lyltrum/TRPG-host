@@ -164,4 +164,4 @@ def test_an_unclaimed_kind_raises_instead_of_falling_through() -> None:
     import pytest
 
     with pytest.raises(KeyError):
-        registry_pkg.settler_for("no-such-kind")
+        registry_pkg.settle_hook_for("no-such-kind")

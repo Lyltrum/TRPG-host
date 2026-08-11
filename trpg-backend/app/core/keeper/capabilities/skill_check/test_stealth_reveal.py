@@ -24,7 +24,10 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7.content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
-from app.core.keeper.capabilities.skill_check.executor import settle_skill_check
+from app.core.keeper.capabilities.skill_check.executor import (
+    apply_skill_check,
+    settle_skill_check,
+)
 from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.runtime.deps import KeeperDeps
 from app.core.keeper.runtime.location_state import HIDDEN_PLAYERS_KEY, load_hidden_players
@@ -128,9 +131,9 @@ def _pending(
 async def _settle(deps: KeeperDeps, pending: PendingDecision) -> CheckResultNotice:
     """掷骰 + 生效。两步之间在生产路径上隔着一次广播（exec/34 第 3 步），
     这里不关心那一拍，只要"两步都走完"之后的结果。"""
-    rolled = await settle_skill_check(deps, pending)
-    await rolled.apply()
-    return rolled.notice
+    notice = await settle_skill_check(deps, pending)
+    await apply_skill_check(deps, pending, notice)
+    return notice
 
 
 async def _hidden_ids(room_id: str) -> set[str]:

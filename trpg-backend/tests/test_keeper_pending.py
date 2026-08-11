@@ -24,6 +24,7 @@ from app.core.keeper.memory.fact_ledger import revealed_fact_ids
 from app.core.keeper.runtime.agent import KeeperAgent
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.runtime.pending import (
+    LUCK_SPEND_KIND,
     ROLL_KINDS,
     PendingDecision,
     PendingDecisionManager,
@@ -101,12 +102,21 @@ async def _seed_room() -> tuple[str, str, str]:
         return room.id, player.id, player.nickname
 
 
-def _agent() -> KeeperAgent:
+#: 🔴 掷骰种子必须钉死（`exec/34` 第 4 步之后）：`spot-hidden` 总值 70，掷出
+#: 71–80 就会停下来问「花幸运吗」——而这个文件里大多数用例的前提是"结算一路走到
+#: 底"。用随机 rng 的话它们会**约 10% 的运行里失败，且失败长得像被测对象的问题**。
+#: 这个种子的前几掷是 50/98/54，都不在那个区间里。要验幸运那一拍的用例自己传
+#: `_NEAR_MISS_SEED`。同族于「测试必须钉死所有参与选择逻辑的环境字段」。
+_NO_OFFER_SEED = 0
+
+
+def _agent(rng: random.Random | None = None) -> KeeperAgent:
     return KeeperAgent(
         api_key="fake-key",
         module=load_module(_FIXTURE_MODULE),
         ruleset=build_coc7_ruleset(),
         session_factory=_session_factory,
+        rng=rng if rng is not None else random.Random(_NO_OFFER_SEED),
     )
 
 
@@ -116,6 +126,7 @@ def _stub_agent(stub_outcome: NarrationOutcome) -> _StubKeeperAgent:
         module=load_module(_FIXTURE_MODULE),
         ruleset=build_coc7_ruleset(),
         session_factory=_session_factory,
+        rng=random.Random(_NO_OFFER_SEED),
         stub_outcome=stub_outcome,
     )
 
@@ -601,3 +612,125 @@ async def test_reconnect_resends_pending_checks() -> None:
     assert notices[0].kind == "skill" and notices[0].skill == "侦察"
     assert notices[1].kind == "san" and notices[1].skill is None
     assert all(n.player_nickname == "阿福" for n in notices)
+
+
+# ── 幸运消费那一拍（exec/34 第 4 步） ──────────────────
+
+
+#: `spot-hidden` 总值 70，这个种子第一掷是 80 → 失败、差 10 点，正好落在阈值上。
+_NEAR_MISS_SEED = 5
+
+
+async def test_a_near_miss_pauses_before_the_effects_land() -> None:
+    """🔴 这是拆掷骰与生效的**全部理由**：卡片挂着的时候，这次检定还**没有生效**。
+
+    断言的是"世界上什么都没变"（events 为空），不是某个函数被调用过——
+    副作用要是提前落地了，玩家花完幸运就得逐个回滚。
+    """
+    room_id, player_id, nickname = await _seed_room()
+    await _enqueue(
+        room_id,
+        [
+            _check(
+                room_id=room_id,
+                check_request_id="chk-luck",
+                player_id=player_id,
+                player_nickname=nickname,
+                skill="侦察",
+            )
+        ],
+    )
+
+    outcome = await _agent(random.Random(_NEAR_MISS_SEED)).resolve_check(
+        room_id, player_id, "chk-luck"
+    )
+
+    assert outcome.text == ""
+    assert len(outcome.player_offers) == 1, "差 10 点、幸运 55，该问一句"
+    assert outcome.player_offers[0].kind == "luck_spend"
+    # 卡片要**真的落库**了才算数：玩家可能刷新页面，重连补发靠的是队列里那一行。
+    async with _session_factory() as db:
+        queued = await pending_decision_manager.first(db, room_id, {LUCK_SPEND_KIND})
+    assert queued is not None and queued.cost == 10
+    assert outcome.check_results[0].level == "失败", "骰子照常先广播——它已经停下了"
+
+    async with _session_factory() as db:
+        from sqlalchemy import func, select
+
+        from app.models.event import Event
+
+        events = (
+            await db.execute(select(func.count()).select_from(Event).filter_by(room_id=room_id))
+        ).scalar_one()
+    assert events == 0, "🔴 卡片还挂着，这次检定就已经记进历史了"
+
+
+async def test_answering_the_card_lets_the_turn_continue() -> None:
+    """答完（这里选不花）才走生效 → 结算叙事，跟直接结算走的是同一条尾巴。"""
+    room_id, player_id, nickname = await _seed_room()
+    await _enqueue(
+        room_id,
+        [
+            _check(
+                room_id=room_id,
+                check_request_id="chk-luck2",
+                player_id=player_id,
+                player_nickname=nickname,
+                skill="侦察",
+            )
+        ],
+    )
+    agent = _stub_agent(NarrationOutcome(text="他直起身，一无所获。"))
+    agent._rng = random.Random(_NEAR_MISS_SEED)
+    offer = (await agent.resolve_check(room_id, player_id, "chk-luck2")).player_offers[0]
+
+    outcome = await agent.resolve_player_offer(room_id, player_id, offer.decision_id, False)
+
+    assert outcome.text == "他直起身，一无所获。"
+    assert outcome.check_results[0].level == "失败"
+    async with _session_factory() as db:
+        from sqlalchemy import func, select
+
+        from app.models.event import Event
+
+        events = (
+            await db.execute(select(func.count()).select_from(Event).filter_by(room_id=room_id))
+        ).scalar_one()
+    assert events == 1, "答完之后才该落库"
+
+
+async def test_the_card_blocks_a_new_turn_the_same_way_a_dice_roll_does() -> None:
+    """🔴 幸运卡必须进 `TURN_BLOCKING_KINDS`：它挂着的时候有一次检定的结果悬而
+    未决，放行就等于让世界跑在一个还没定的结果前面。
+
+    重发的是**卡片本身**，不是 `check.request`——后者点下去会报「没有这个待掷的
+    检定」（同族于「加一种 kind 就要检查每个逐个列出类别的消费方」）。
+    """
+    room_id, player_id, nickname = await _seed_room()
+    await _enqueue(
+        room_id,
+        [
+            _check(
+                room_id=room_id,
+                check_request_id="chk-luck3",
+                player_id=player_id,
+                player_nickname=nickname,
+                skill="侦察",
+            )
+        ],
+    )
+    agent = _agent(random.Random(_NEAR_MISS_SEED))
+    await agent.resolve_check(room_id, player_id, "chk-luck3")
+
+    blocked = await agent.narrate(
+        NarrationContext(
+            utterance="我再翻一遍抽屉",
+            player_nickname=nickname,
+            room_id=room_id,
+            player_id=player_id,
+        )
+    )
+
+    assert blocked.check_requests == []
+    assert len(blocked.player_offers) == 1
+    assert blocked.player_offers[0].kind == "luck_spend"

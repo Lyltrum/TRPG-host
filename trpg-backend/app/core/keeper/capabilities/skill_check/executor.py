@@ -26,12 +26,28 @@ from app.core.keeper.runtime.deps import (
     record_event,
     resolve_character,
 )
-from app.core.keeper.runtime.location_state import location_of
+from app.core.keeper.runtime.location_state import location_of, reveal_hidden_player_impl
 from app.core.keeper.runtime.pending import PendingCheck
 from app.core.narration.contract import CheckResultNotice
 from app.models.room import Character
 
 logger = structlog.get_logger()
+
+#: 潜行技能在规则表里的 id。
+#:
+#: 判"这次掷的是不是潜行"只能按 id 认：`PendingCheck.skill` 存的是展示名，
+#: 而展示名是 `resolve_skill_target` 从 `ruleset` 里取出来的 `spec.name`，
+#: 所以"用 id 反查出展示名再比较"是**闭环内**的比较，两侧都来自规则表。
+#: 拿模型写的字符串直接比"潜行"才是自由文本当标识符（exec/17）。
+_STEALTH_SKILL_ID = "stealth"
+
+
+def _is_stealth_check(deps: KeeperDeps, display_name: str | None) -> bool:
+    if display_name is None:
+        return False
+    return any(
+        spec.id == _STEALTH_SKILL_ID and spec.name == display_name for spec in deps.ruleset.skills
+    )
 
 
 def resolve_skill_target(
@@ -297,6 +313,22 @@ async def settle_skill_check(deps: KeeperDeps, pending: PendingCheck) -> CheckRe
         opposed_opponent=pending.opposed_opponent,
         opposed_value=pending.opposed_value,
     )
+    # 🔴 exec/19 #46 的另一半：「被发现 → 解除隐匿」此前只在 prompt 里请模型
+    # 自觉写回 `hidden: false`（离开地点那一半早已代码硬化）。潜行**对抗**输掉
+    # 是代码判得了的——判定权就不该留在模型手里（exec/20 §2.7 给的硬化方向）。
+    #
+    # 只认"隐匿者本人掷潜行对抗"这一种写法：反过来写（搜索者掷侦察、把隐匿者
+    # 写进 `opposed.opponent`）时，对手侧只有一个自由文本的名字，拿它去匹配
+    # 玩家就是同义词打地鼠。裁决规则 4c 因此明确教了该发哪一种。
+    if (
+        pending.opposed_value is not None
+        and detail.get("opposed_won") is False
+        and _is_stealth_check(deps, pending.skill)
+    ):
+        revealed = await reveal_hidden_player_impl(deps, pending.player_id, pending.player_nickname)
+        if revealed:
+            deps.check_results.append(f"{pending.player_nickname} 潜行对抗失败 → 被发现，不再隐匿")
+
     return CheckResultNotice(
         check_request_id=pending.check_request_id,
         kind="skill",

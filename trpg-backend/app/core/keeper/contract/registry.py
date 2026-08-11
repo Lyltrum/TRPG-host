@@ -141,11 +141,19 @@ class SituationBlock:
     什么样，否则下一轮裁决只能从上一段散文里猜（`exec/19 #39` 的原始症状）。
 
     `render` 返回空串 = 本轮没有内容，整块连标题一起不渲染。
+
+    🔴 `keeper_only=True` = **这块只给裁决器看，不进叙事器的上下文**
+    （`exec/23 #77`）。局面块两阶段共用，而有些块整段都是**写给裁决器的指令**
+    ——「理智检定点」那块连"必须在 `san_checks` 里发起、数值照抄下面"都写在
+    里面，于是叙事器也读到了 `0/1D6`，真机上直接念给了玩家听。
+    **保密靠拿不到，不是请它别说**：这类块的正解是不喂，不是在叙事 prompt 里
+    再加一条"别念机制"。默认 `False`（现有块行为逐字不变）。
     """
 
     order: float
     heading: str
     render: Callable[[SituationContext], str]
+    keeper_only: bool = False
 
 
 #: 审计钩子：从本轮裁决里挑出该进 `keeper_decision` 结构化日志的字段。

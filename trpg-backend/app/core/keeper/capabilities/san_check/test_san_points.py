@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import random
+import re
 import tempfile
 from pathlib import Path
 
@@ -113,6 +114,24 @@ def test_registered_as_a_situation_block_and_a_reserved_key() -> None:
     assert any("理智检定点" in body for _order, body in blocks)
     # 记账键是代码写的，state_updates 碰不到
     assert SAN_POINTS_FIRED_KEY in reserved_state_keys()
+
+
+def test_the_narrator_never_sees_the_loss_dice() -> None:
+    """🔴 `exec/23 #77`：叙事器读到这块，就把 `0/1D6` 念给了玩家听。
+
+    这块整段都是**写给裁决器的指令**（"必须在 `san_checks` 里发起、损失表达式
+    照抄下面的数值"），而局面块两阶段共用。**保密靠拿不到**——正解是不喂给
+    叙事器，不是在叙事 prompt 里再加一条"别念机制"（那是 v1 已被推翻的做法）。
+    """
+    state = _state(node="shrine")
+    keeper = situation_blocks(_MODULE, state)
+    narrator = situation_blocks(_MODULE, state, keeper_view=False)
+
+    assert any("理智检定点" in body for _order, body in keeper), "裁决器仍然必须看得见"
+    assert not any("理智检定点" in body for _order, body in narrator)
+    # 对照：光断言标题没了不够——损失骰本身一个字都不能出现在叙事器那份里
+    narrator_text = "".join(body for _order, body in narrator)
+    assert not re.search(r"\d*[dD]\d+", narrator_text), narrator_text
 
 
 # ── 记账（走真实执行链）────────────────────────────

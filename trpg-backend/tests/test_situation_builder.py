@@ -48,6 +48,7 @@ def _builder() -> SituationBuilder:
             Chapter(_PRIVATE_CHAPTER, frozenset({"p1"})),
         ],
         capability_blocks=[],
+        narrator_capability_blocks=[],
         is_heartbeat=False,
         is_opening_ceremony=False,
     )

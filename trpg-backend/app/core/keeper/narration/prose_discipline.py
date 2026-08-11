@@ -375,6 +375,19 @@ _FAKE_STAT_LOG_LEAK = re.compile(
 )
 
 
+# 损失骰表达式（`exec/23 #77`）。真人实测原文：「你该掷一个理智检定了——目击
+# 这张脸的**代价是 0/1d6**。」真人 KP 不会把损失骰报给玩家，卡片本身已经说明
+# 要掷什么，叙事再念一遍既多余又出戏。
+#
+# 🔴 这是**第二条通路**：第一条（局面块「理智检定点」）已经由 `keeper_only`
+# 堵住，但 `narration_guidance` 是裁决器写的自由文本，它见过那些数字——那条路
+# 拦不住，只能在出口删。作用域 = 一句，所以流式下逐段施加与全量等价。
+#
+# 判据只要「骰子表达式」本身，不附加"必须同时提到检定"这类条件：叙事正文里
+# **任何** `NdM` 都是越权（伤害、损失、时长一律如此），而年份/门牌号不带 d。
+_LOSS_DICE_LEAK = re.compile(r"\d*\s*[dD]\d+")
+
+
 def _strip_mechanic_announce(sentence: str) -> str:
     """砍掉句子里泄露的机制播报，返回处理后的句子（未命中则原样返回）。
 
@@ -449,6 +462,8 @@ def scrub_sentence_scoped(
                 continue
             if _FAKE_STAT_LOG_LEAK.search(s):
                 continue
+            if _LOSS_DICE_LEAK.search(s):
+                continue
             stripped = _strip_mechanic_announce(s)
             if not stripped:
                 continue
@@ -474,6 +489,8 @@ def scrub_sentence_scoped(
         if re.search(r"你可以[：:]|你可以选择|选项[：:]", s):
             continue
         if _FAKE_STAT_LOG_LEAK.search(s):
+            continue
+        if _LOSS_DICE_LEAK.search(s):
             continue
         stripped = _strip_mechanic_announce(s)
         if not stripped:

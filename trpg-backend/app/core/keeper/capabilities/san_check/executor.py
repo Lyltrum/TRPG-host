@@ -15,7 +15,7 @@ from app.core.keeper.capabilities.san_check.state import (
     fired_refs_at,
     load_fired_san_points,
 )
-from app.core.keeper.contract.registry import PendingContext, TurnFacts
+from app.core.keeper.contract.registry import ApplyFn, PendingContext, RolledCheck, TurnFacts
 from app.core.keeper.primitives import dice
 from app.core.keeper.runtime.deps import (
     KeeperDeps,
@@ -39,31 +39,62 @@ async def san_check_detail(
     loss_on_failure: str,
     player_name: str | None = None,
 ) -> tuple[str, dict]:
-    """理智检定的完整实现，额外返回结构化明细（同 `roll_check_detail`，供
-    两段式玩家掷骰的 `san.check.result` 事件使用）。`san_check_impl` 是它的
-    薄包装，保持旧签名不破坏现有调用方/测试。"""
-    # write_lock：见 KeeperDeps 注释——并行工具调用下的读-改-写必须串行。
-    async with deps.write_lock, deps.session_factory() as db:
+    """理智检定的完整实现（掷骰 + 立刻生效），额外返回结构化明细。
+
+    两段式玩家掷骰那条路**不走这里**（要的是「掷完先广播、再生效」），见
+    `san_check_only` / `settle_san_check`。这里留给守秘人直接掷的场合，
+    也是现有测试注入的接缝之一，签名与行为都不动。
+    """
+    text, detail, effects = await san_check_only(
+        deps, loss_on_success, loss_on_failure, player_name
+    )
+    await effects()
+    return text, detail
+
+
+async def san_check_only(
+    deps: KeeperDeps,
+    loss_on_success: str,
+    loss_on_failure: str,
+    player_name: str | None = None,
+) -> tuple[str, dict, ApplyFn]:
+    """**只掷骰，不生效**：扣理智、记事件、给叙事的那句话都留在返回的闭包里。
+
+    为什么必须拆见 `RolledCheck`。SAN 检定按规则不许花幸运，但它的形状必须
+    跟技能检定一致——否则又是那条「同一件事的两头，一头可插拔一头写死」。
+    """
+    async with deps.session_factory() as db:
         player, character = await resolve_character(db, deps, player_name)
         current = current_stat(character, "SAN")
-        outcome = dice.evaluate_check(dice.roll_d100(deps.rng), current)
-        loss_expr = loss_on_success if outcome.succeeded else loss_on_failure
-        loss = max(0, dice.roll_dice_expr(loss_expr, deps.rng))
-        new_value = max(0, current - loss)
-        write_stat(character, "SAN", new_value)
-        await record_event(
-            db,
-            deps,
-            "keeper.san",
-            {
-                "player": player.nickname,
-                "rolled": outcome.rolled,
-                "target": current,
-                "succeeded": outcome.succeeded,
-                "loss": loss,
-                "san": new_value,
-            },
-        )
+    outcome = dice.evaluate_check(dice.roll_d100(deps.rng), current)
+    loss_expr = loss_on_success if outcome.succeeded else loss_on_failure
+    loss = max(0, dice.roll_dice_expr(loss_expr, deps.rng))
+    new_value = max(0, current - loss)
+
+    async def effects() -> None:
+        # write_lock：见 KeeperDeps 注释——并行工具调用下的读-改-写必须串行。
+        # 🔴 这里**重新读一次角色卡**再扣，不写掷骰那一刻算出的 new_value：
+        # 掷骰与生效之间隔着一次广播（第 4 步起还会隔着玩家的决定），期间
+        # 别处改过 SAN 的话，照旧值写回去就是把那次改动吞掉。
+        async with deps.write_lock, deps.session_factory() as db:
+            player_now, character_now = await resolve_character(db, deps, player_name)
+            written = max(0, current_stat(character_now, "SAN") - loss)
+            write_stat(character_now, "SAN", written)
+            await record_event(
+                db,
+                deps,
+                "keeper.san",
+                {
+                    "player": player_now.nickname,
+                    "rolled": outcome.rolled,
+                    "target": current,
+                    "succeeded": outcome.succeeded,
+                    "loss": loss,
+                    "san": written,
+                },
+            )
+        deps.check_results.append(summary)
+
     result = "成功" if outcome.succeeded else "失败"
     warnings = []
     if loss >= 5:
@@ -71,7 +102,7 @@ async def san_check_detail(
     if new_value == 0:
         warnings.append("理智归零，角色永久疯狂")
     suffix = "；".join(warnings)
-    deps.check_results.append(
+    summary = (
         f"{player.nickname} · 理智检定：{outcome.rolled}/{current} → {result}，"
         f"San {current} → {new_value}（-{loss}）"
     )
@@ -89,7 +120,7 @@ async def san_check_detail(
         "loss": loss,
         "san": new_value,
     }
-    return text, detail
+    return text, detail, effects
 
 
 async def san_check_impl(
@@ -184,19 +215,22 @@ async def mark_san_points_fired(
     return [f"模组标注的理智检定点已触发：{'、'.join(newly)}"], []
 
 
-async def settle_san_check(deps: KeeperDeps, pending: PendingDecision) -> CheckResultNotice:
-    """玩家点了掷骰之后：掷一次理智检定并写回角色卡。"""
-    _text, detail = await san_check_detail(
+async def settle_san_check(deps: KeeperDeps, pending: PendingDecision) -> RolledCheck:
+    """玩家点了掷骰之后：掷一次理智检定。扣卡与记账留在 `apply` 里。"""
+    _text, detail, apply = await san_check_only(
         deps, pending.loss_on_success, pending.loss_on_failure, pending.player_nickname
     )
-    return CheckResultNotice(
-        check_request_id=pending.decision_id,
-        kind="san",
-        player_id=detail["player_id"],
-        skill=None,
-        rolled=detail["rolled"],
-        target=detail["target"],
-        level="成功" if detail["succeeded"] else "失败",
-        san_loss=detail["loss"],
-        san_remaining=detail["san"],
+    return RolledCheck(
+        notice=CheckResultNotice(
+            check_request_id=pending.decision_id,
+            kind="san",
+            player_id=detail["player_id"],
+            skill=None,
+            rolled=detail["rolled"],
+            target=detail["target"],
+            level="成功" if detail["succeeded"] else "失败",
+            san_loss=detail["loss"],
+            san_remaining=detail["san"],
+        ),
+        apply=apply,
     )

@@ -29,6 +29,7 @@ from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.runtime.deps import KeeperDeps
 from app.core.keeper.runtime.location_state import HIDDEN_PLAYERS_KEY, load_hidden_players
 from app.core.keeper.runtime.pending import PendingDecision
+from app.core.narration.contract import CheckResultNotice
 from app.models.room import Character, Player, Room
 
 _TESTS_DIR = next(p for p in Path(__file__).resolve().parents if p.name == "trpg-backend") / "tests"
@@ -124,6 +125,14 @@ def _pending(
     )
 
 
+async def _settle(deps: KeeperDeps, pending: PendingDecision) -> CheckResultNotice:
+    """掷骰 + 生效。两步之间在生产路径上隔着一次广播（exec/34 第 3 步），
+    这里不关心那一拍，只要"两步都走完"之后的结果。"""
+    rolled = await settle_skill_check(deps, pending)
+    await rolled.apply()
+    return rolled.notice
+
+
 async def _hidden_ids(room_id: str) -> set[str]:
     async with _session_factory() as db:
         room = await db.get(Room, room_id)
@@ -143,9 +152,7 @@ async def test_losing_a_stealth_contest_reveals_the_player() -> None:
     room_id, player_id = await _seed("STL100", hidden=True)
     deps = _deps(room_id, player_id, seed=_LOSING_SEED)
 
-    notice = await settle_skill_check(
-        deps, _pending(room_id, player_id, skill="潜行", opposed_value=90)
-    )
+    notice = await _settle(deps, _pending(room_id, player_id, skill="潜行", opposed_value=90))
 
     assert notice.opposed_won is False, "种子选错了：这条用例需要主动方输"
     assert await _hidden_ids(room_id) == set(), "🔴 潜行对抗输了，人还挂在隐匿里"
@@ -157,9 +164,7 @@ async def test_winning_a_stealth_contest_keeps_the_player_hidden() -> None:
     room_id, player_id = await _seed("STL200", hidden=True)
     deps = _deps(room_id, player_id, seed=_WINNING_SEED)
 
-    notice = await settle_skill_check(
-        deps, _pending(room_id, player_id, skill="潜行", opposed_value=5)
-    )
+    notice = await _settle(deps, _pending(room_id, player_id, skill="潜行", opposed_value=5))
 
     assert notice.opposed_won is True, "种子选错了：这条用例需要主动方赢"
     assert await _hidden_ids(room_id) == {player_id}
@@ -171,7 +176,7 @@ async def test_a_plain_stealth_check_does_not_reveal_anyone() -> None:
     room_id, player_id = await _seed("STL300", hidden=True)
     deps = _deps(room_id, player_id, seed=_LOSING_SEED)
 
-    await settle_skill_check(deps, _pending(room_id, player_id, skill="潜行", opposed_value=None))
+    await _settle(deps, _pending(room_id, player_id, skill="潜行", opposed_value=None))
 
     assert await _hidden_ids(room_id) == {player_id}
 
@@ -181,9 +186,7 @@ async def test_losing_a_non_stealth_contest_does_not_reveal_anyone() -> None:
     room_id, player_id = await _seed("STL400", hidden=True)
     deps = _deps(room_id, player_id, seed=_CON_LOSING_SEED)
 
-    notice = await settle_skill_check(
-        deps, _pending(room_id, player_id, skill="体质", opposed_value=90)
-    )
+    notice = await _settle(deps, _pending(room_id, player_id, skill="体质", opposed_value=90))
 
     assert notice.opposed_won is False
     assert await _hidden_ids(room_id) == {player_id}
@@ -198,7 +201,7 @@ async def test_a_player_who_was_not_hiding_produces_no_noise() -> None:
     room_id, player_id = await _seed("STL500", hidden=False)
     deps = _deps(room_id, player_id, seed=_LOSING_SEED)
 
-    await settle_skill_check(deps, _pending(room_id, player_id, skill="潜行", opposed_value=90))
+    await _settle(deps, _pending(room_id, player_id, skill="潜行", opposed_value=90))
 
     assert await _hidden_ids(room_id) == set()
     assert not any("被发现" in line for line in deps.check_results)

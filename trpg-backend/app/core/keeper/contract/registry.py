@@ -183,9 +183,34 @@ PendingFn = Callable[
 ]
 
 
+#: 「生效」：把这次检定的结果真正落到世界上（写角色卡 / 记事件 / 给叙事的
+#: 那句文本 / 解除隐匿……）。由 `RolledCheck` 带出来，骨架在**广播结果之后**调它。
+ApplyFn = Callable[[], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class RolledCheck:
+    """结算钩子的产物：**掷完了，但还没生效**。
+
+    🔴 掷骰与生效必须分成两步（`exec/34` 第 3 步，起因是 `exec/26 #66`）：
+    幸运消费能把失败推成成功，而它发生在**广播结果之后**——玩家看见骰子停下，
+    才决定要不要花。若副作用留在掷骰那一步里，花完幸运就得**逐个回滚**
+    （记账、解隐匿、写给叙事的文本……），那是打地鼠：下一个副作用照样漏，
+    而且不会有任何东西变红（`#46` 加解隐匿时就没人回来更新 `#66` 的时序图）。
+    拆成两步之后副作用天然全落在决定之后，一个都不用回滚。
+
+    ⚠️ 因此 `RolledCheck.notice` 之外**不许有任何写**：掷骰那一步只读库、
+    只掷骰。这条约束由 `tests/test_roll_before_apply.py` 守着——它是靠推理
+    得出的作用域，没有测试守就一定退化。
+    """
+
+    notice: CheckResultNotice
+    apply: ApplyFn
+
+
 #: 结算钩子：玩家点了掷骰之后，把一条待掷记录变成一次真实的掷骰结果。
 #: **服务端权威**——骰子由代码掷，模型只消费结果，改不了点数。
-SettleFn = Callable[["KeeperDeps", "PendingDecision"], Awaitable["CheckResultNotice"]]
+SettleFn = Callable[["KeeperDeps", "PendingDecision"], Awaitable[RolledCheck]]
 
 
 @dataclass(frozen=True)

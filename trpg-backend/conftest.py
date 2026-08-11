@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import create_engine, delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -56,6 +57,19 @@ app.dependency_overrides[get_db] = override_get_db
 # 去空的真实库里查 player，必然查不到而关连接。
 ws_controller.async_session_factory = TestSessionLocal  # type: ignore[assignment]
 
+# 表只建一次。此前 `_prepare_database` 每条用例都跑一遍 create_all/drop_all，
+# 实测单次 57ms + 43ms，乘以 1561 条 = **全套 314s 里的 156s**，而绝大多数用例
+# 根本不碰数据库（比如 760 条只查注释里的路径存不存在的参数化用例）。
+# 建表用同步引擎在导入期做，跟上面的依赖覆盖同一时机——pytest-asyncio 的事件
+# 循环是函数级的，session 级的异步 fixture 会跨循环，那正是本文件两段注释里
+# 反复踩过的坑。
+_sync_engine = create_engine(f"sqlite:///{_TEST_DB_PATH}")
+Base.metadata.create_all(_sync_engine)
+_sync_engine.dispose()
+
+# 清表按外键依赖的**反序**（sorted_tables 是「被依赖的在前」）。
+_TABLES_IN_DELETE_ORDER = tuple(reversed(Base.metadata.sorted_tables))
+
 
 @pytest.fixture(autouse=True)
 def _no_background_writer() -> Generator[None, None, None]:
@@ -77,19 +91,21 @@ def _no_background_writer() -> Generator[None, None, None]:
 
 @pytest.fixture(autouse=True)
 async def _prepare_database() -> AsyncGenerator[None, None]:
-    """每个测试函数跑之前建表、跑完之后清表，保证测试之间互不影响
-    （不用手动在每个测试里管理数据库状态）。autouse=True 表示不需要在测试
-    函数参数里显式声明这个 fixture，pytest 会自动应用到每个测试上。"""
+    """每个测试函数跑之前把库清空重灌，保证测试之间互不影响（不用手动在每个
+    测试里管理数据库状态）。autouse=True 表示不需要在测试函数参数里显式声明
+    这个 fixture，pytest 会自动应用到每个测试上。
+
+    表在导入期就建好了（见上），这里只清行——**语义跟 create_all/drop_all
+    那版一致**（每条用例都从一个只有种子数据的空库开始），但不用每次重做 DDL。
+    """
     async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        for table in _TABLES_IN_DELETE_ORDER:
+            await conn.execute(delete(table))
     # 灌内置模组种子数据：生产环境靠 main.py lifespan 的 ensure_seed_content，
     # 但 ASGITransport 测试客户端不触发 lifespan，所以这里手动灌一次——否则
     # 依赖内置模组的用例（建房选模组、GET /modules 等）会因为库里没有模组而失败。
     async with TestSessionLocal() as session:
         await ensure_seed_content(session)
-    yield
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
 
 
 @pytest.fixture

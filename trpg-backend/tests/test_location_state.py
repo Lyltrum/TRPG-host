@@ -202,6 +202,55 @@ async def test_current_node_does_not_drag_along_someone_who_split_off(party) -> 
     assert is_party_split(state, [a_id, b_id]) is True
 
 
+async def test_the_room_pointer_cannot_walk_someone_into_the_other_group(party) -> None:
+    """🔴 exec/33 §10 #79，双人真机最强复现（2026-08-11）。
+
+    实况：阿贵原话「我在门廊上待着不动，就看着正门」，而裁决器写下
+    `current_node_id = basement-laboratory`——**阿福**所在的地下室。裁决器是把
+    这个字段当"这一幕的镜头在哪"写的，执行侧却当"把发言者搬过去"。于是
+    `玩家位置` 里两个人都进了地下室。
+
+    那不是移动，**那是会合**，而会合只能由当事人确认（§5.2）。协议当时确实
+    挂了卡、投递也没漏，但位置已经写进去了——护栏、局面块「各自所在」、下一轮
+    叙事读的都是错的地方。
+    """
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    await execute_side_effects(
+        deps, KeeperDecision(moves=[PlayerMove(player="阿福", node_id="cellar")])
+    )
+    before = load_player_locations(await _state(deps))
+    assert before == {a_id: "cellar", b_id: "hall"}
+
+    # 阿贵这一轮发言（他在门厅、明说不动），裁决器却把镜头写成了阿福那边。
+    deps.turn_player_ids = (b_id,)
+    deps.player_id = b_id
+    report, issues = await execute_side_effects(deps, KeeperDecision(current_node_id="cellar"))
+
+    state = await _state(deps)
+    assert load_player_locations(state) == before
+    # 连房间指针也不动：`location_of` 会回落到它，只改指针照样能隔空并组。
+    assert state[CURRENT_NODE_KEY] == "hall"
+    assert is_party_split(state, [a_id, b_id]) is True
+    # 拒绝要说出口，不是静默跳过。
+    assert any("会合" in line for line in report)
+    assert issues == []
+
+
+async def test_the_room_pointer_still_moves_the_speaker_into_an_empty_place(party) -> None:
+    """上一条不许伤到正常那一半：目标没别人时，分头中的人照常跟着指针走。
+
+    真机里阿福正是这么一路 `loc-1 → basement-laboratory` 走进去的。
+    """
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    await execute_side_effects(
+        deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="cellar")])
+    )
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hidden-safe"))
+    assert load_player_locations(await _state(deps)) == {a_id: "hidden-safe", b_id: "cellar"}
+
+
 async def test_moves_override_current_node(party) -> None:
     """分头：大家进地下室，阿贵单独留在门厅。顺序必须是 current_node → moves。"""
     deps, a_id, b_id = party

@@ -55,6 +55,8 @@ class SituationBuilder:
     #: 出现在门厅那一段的上下文里，而摘要常驻上下文，泄得比历史还久。
     chapters: list[Chapter]
     capability_blocks: list[tuple[float, str]]
+    #: 叙事器那份能力块——声明了 `keeper_only` 的不在里面（`exec/23 #77`）。
+    narrator_capability_blocks: list[tuple[float, str]]
     is_heartbeat: bool
     is_opening_ceremony: bool
 
@@ -65,11 +67,16 @@ class SituationBuilder:
         ledger: str,
         nickname: str,
         utterance: str,
+        keeper_view: bool = False,
     ) -> str:
         """按受众组装局面块（exec/14 P5.2d）。
 
         `audience=None` = 守秘人视图（裁决阶段用）：历史与账本全给。
         分组叙事时传该组的受众，历史/账本/原话三处一起裁。
+
+        🔴 受众裁的是「谁看得见」，`keeper_view` 裁的是「哪一拍看得见」——
+        两件事正交，所以是两个参数而不是一个。`audience=None` 恰好只在裁决
+        那一拍出现，拿它兼职判断会在下一个"守秘人视角的叙事"上悄悄失效。
         """
         return format_turn_input(
             self.visible_state,
@@ -80,7 +87,9 @@ class SituationBuilder:
             phase_status=self.phase_status,
             ledger_status=ledger,
             chapters_status=render_chapters(visible_chapters(self.chapters, audience)),
-            capability_blocks=self.capability_blocks,
+            capability_blocks=(
+                self.capability_blocks if keeper_view else self.narrator_capability_blocks
+            ),
             is_heartbeat=self.is_heartbeat,
             is_opening_ceremony=self.is_opening_ceremony,
             phase=self.phase,
@@ -89,7 +98,11 @@ class SituationBuilder:
     def for_keeper(self, *, nickname: str, utterance: str) -> str:
         """守秘人自己的那份（裁决阶段用）。"""
         return self.render(
-            audience=None, ledger=self.ledger_status, nickname=nickname, utterance=utterance
+            audience=None,
+            ledger=self.ledger_status,
+            nickname=nickname,
+            utterance=utterance,
+            keeper_view=True,
         )
 
 
@@ -138,6 +151,14 @@ async def build_situation(
             observer_id=observer_id,
             players=tuple(players),
             merge_pending=merge_pending,
+        ),
+        narrator_capability_blocks=situation_blocks(
+            module,
+            keeper_state,
+            observer_id=observer_id,
+            players=tuple(players),
+            merge_pending=merge_pending,
+            keeper_view=False,
         ),
         is_heartbeat=is_heartbeat,
         is_opening_ceremony=is_opening_ceremony,

@@ -46,7 +46,12 @@ CAPABILITY = KeeperCapability(
     settlers=(SettleHook(kind="san", run=settle_san_check, apply=apply_san_check),),
     # 排在 movement（30）之后：记账要用本轮移动完成后的位置。
     executors=(ExecutorHook(order=40, run=mark_san_points_fired),),
-    situations=(SituationBlock(order=45, heading="理智检定点", render=render_san_points),),
+    # 🔴 `keeper_only`：这块整段都是**写给裁决器的指令**（"必须在 `san_checks`
+    # 里发起、损失表达式照抄下面的数值"），叙事器读到它就等于把 `0/1D6` 摆在
+    # 它眼前——真机上它直接念给了玩家听（`exec/23 #77`）。
+    situations=(
+        SituationBlock(order=45, heading="理智检定点", render=render_san_points, keeper_only=True),
+    ),
     audit=audit_fields,
     reserved_state_keys=(SAN_POINTS_FIRED_KEY,),
 )

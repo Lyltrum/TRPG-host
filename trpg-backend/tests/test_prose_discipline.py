@@ -179,6 +179,31 @@ def test_scrub_drops_fabricated_stat_change_leak() -> None:
     assert "当前 HP" not in out2
 
 
+def test_scrub_drops_the_loss_dice() -> None:
+    """🔴 `exec/23 #77`：真机原话「你该掷一个理智检定了——目击这张脸的代价是
+    0/1d6。」真人 KP 不会把损失骰报给玩家。
+
+    这是**第二条通路**：局面块那条已经由 `keeper_only` 堵住，但
+    `narration_guidance` 是裁决器写的自由文本、它见过那些数字，拦不住，
+    只能在出口删。作用域 = 一句，所以流式逐段施加与全量等价。
+    """
+    text = "那张脸从水里浮上来。你该掷一个理智检定了——目击这张脸的代价是 0/1d6。"
+    out = scrub_kp_anti_patterns(text, action_intent=True)
+    assert "1d6" not in out and "代价" not in out
+    assert "那张脸从水里浮上来" in out
+
+    # 大写、无前导数字、伤害骰——都是同一类越权
+    # ⚠️ 每条都得配一句正常描写：整段被滤空时 `degrade_when_scrubbed_empty`
+    # 会把原文退回来（空叙事比越权更糟，那是有意的），单句样本测不出这条规则。
+    for leaked in ("这一下是 1D8 伤害。", "你昏迷了 D10 轮。"):
+        out = scrub_kp_anti_patterns("他抡起铁棍。" + leaked, action_intent=True)
+        assert "D" not in out and out.startswith("他抡起铁棍。")
+
+    # 对照：不带骰子的年份/门牌号不许被误伤
+    kept = "1920 年的雨夜，你停在 42 号门前。"
+    assert scrub_kp_anti_patterns(kept, action_intent=True) == kept
+
+
 def test_scrub_keeps_legit_dialogue_mentioning_check() -> None:
     """不能按「检定」关键词粗暴整句砍——NPC 台词/氛围描写合理提到调查/检定
     时必须保留，只有「该/请/需要+掷/进行+…+了/检定」这种赤裸机制播报才砍。"""

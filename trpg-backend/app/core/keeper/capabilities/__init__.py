@@ -116,11 +116,15 @@ def situation_blocks(
     observer_id: str | None = None,
     players: tuple[tuple[str, str], ...] = (),
     merge_pending: frozenset[str] = frozenset(),
+    keeper_view: bool = True,
 ) -> list[tuple[float, str]]:
     """渲染各能力要摆在模型眼前的状态，返回 (order, 成品文本块)。
 
     `render` 返回空串 = 本轮没有内容，整块连标题一起不渲染——没记过账的对局
     局面块与切分前逐字一致。
+
+    `keeper_view=False` = 叙事器那份：声明了 `keeper_only` 的块不给它
+    （`exec/23 #77`，见 `SituationBlock` 的说明）。
     """
     context = SituationContext(
         module=module,
@@ -132,6 +136,8 @@ def situation_blocks(
     rendered: list[tuple[float, str]] = []
     for capability in CAPABILITIES:
         for block in capability.situations:
+            if block.keeper_only and not keeper_view:
+                continue
             body = block.render(context)
             if body:
                 rendered.append((block.order, f"## {block.heading}\n{body}\n\n"))

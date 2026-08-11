@@ -24,6 +24,7 @@ from app.core.keeper.memory.fact_ledger import revealed_fact_ids
 from app.core.keeper.runtime.agent import KeeperAgent
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.runtime.pending import (
+    ROLL_KINDS,
     PendingDecision,
     PendingDecisionManager,
     pending_decision_manager,
@@ -157,8 +158,8 @@ async def test_manager_add_first_has() -> None:
     room_id, player_id = await _bare_room("QUEUE1")
     manager = PendingDecisionManager()
     async with _session_factory() as db:
-        assert await manager.first(db, room_id) is None
-        assert await manager.has(db, room_id) is False
+        assert await manager.first(db, room_id, ROLL_KINDS) is None
+        assert await manager.has(db, room_id, ROLL_KINDS) is False
 
         c1 = _check(room_id=room_id, player_id=player_id, check_request_id="chk-1")
         c2 = _check(room_id=room_id, player_id=player_id, check_request_id="chk-2")
@@ -166,8 +167,8 @@ async def test_manager_add_first_has() -> None:
         await db.commit()
 
     async with _session_factory() as db:
-        assert await manager.has(db, room_id) is True
-        first = await manager.first(db, room_id)
+        assert await manager.has(db, room_id, ROLL_KINDS) is True
+        first = await manager.first(db, room_id, ROLL_KINDS)
         # 先进先出：排序靠自增 seq，不是 created_at——同一轮挂起的多个检定
         # 毫秒级时间戳分不出先后
         assert first is not None and first.decision_id == "chk-1"
@@ -178,7 +179,7 @@ async def test_manager_add_empty_list_is_noop() -> None:
     manager = PendingDecisionManager()
     async with _session_factory() as db:
         await manager.add(db, room_id, [])
-        assert await manager.has(db, room_id) is False
+        assert await manager.has(db, room_id, ROLL_KINDS) is False
 
 
 async def test_manager_pop_by_id_and_queue_isolation() -> None:
@@ -201,8 +202,8 @@ async def test_manager_pop_by_id_and_queue_isolation() -> None:
         await db.commit()
 
     async with _session_factory() as db:
-        assert await manager.has(db, room_a) is False
-        assert await manager.has(db, room_b) is True  # 不影响其它房间
+        assert await manager.has(db, room_a, ROLL_KINDS) is False
+        assert await manager.has(db, room_b, ROLL_KINDS) is True  # 不影响其它房间
 
 
 async def test_queue_survives_a_process_restart() -> None:
@@ -225,7 +226,7 @@ async def test_queue_survives_a_process_restart() -> None:
         await db.commit()
 
     async with _session_factory() as db:
-        survived = await PendingDecisionManager().first(db, room_id)
+        survived = await PendingDecisionManager().first(db, room_id, ROLL_KINDS)
     assert survived is not None
     assert survived.decision_id == "chk-survive"
     # 结构化字段要原样活过一个来回，不能只剩个 id
@@ -262,7 +263,7 @@ async def test_resolve_check_wrong_player_raises_and_requeues() -> None:
 
     # 检定仍然待掷——错玩家掷不能让它凭空消失。
     async with _session_factory() as db:
-        still_pending = await pending_decision_manager.first(db, room_id)
+        still_pending = await pending_decision_manager.first(db, room_id, ROLL_KINDS)
     assert still_pending is not None
     assert still_pending.decision_id == check_request_id
 
@@ -309,7 +310,7 @@ async def test_resolve_check_queue_not_empty_only_broadcasts_result() -> None:
 
     # 第一个已经被弹出，第二个还在队列里等着。
     async with _session_factory() as db:
-        next_pending = await pending_decision_manager.first(db, room_id)
+        next_pending = await pending_decision_manager.first(db, room_id, ROLL_KINDS)
     assert next_pending is not None
     assert next_pending.decision_id == second_id
 
@@ -387,7 +388,7 @@ async def test_resolve_check_queue_empty_triggers_settlement_narration() -> None
     assert len(agent.narrate_calls) == 1
     assert agent.narrate_calls[0].utterance == "（掷骰完成，请根据检定结果继续）"
     async with _session_factory() as db:
-        assert await pending_decision_manager.has(db, room_id) is False
+        assert await pending_decision_manager.has(db, room_id, ROLL_KINDS) is False
 
 
 # ── 事实账本接线（exec/14 P4）──────────────────────────────

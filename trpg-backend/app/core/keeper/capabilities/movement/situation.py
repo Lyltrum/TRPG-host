@@ -15,7 +15,9 @@ def render_party_locations(context: SituationContext) -> str:
 
     单人局与未分头的多人局 prompt 与 P5.2 之前逐字一致（退化保证）。
     """
-    return format_party_locations(context.module, context.keeper_state, list(context.players))
+    return format_party_locations(
+        context.module, context.keeper_state, list(context.players), context.merge_pending
+    )
 
 
 def render_improvised_locations(context: SituationContext) -> str:

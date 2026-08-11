@@ -30,6 +30,7 @@ import {
   legalCharacterPayload,
   registerPlayer,
   seedKeeperState,
+  seedMergeConfirm,
 } from './helpers.ts'
 
 const LEGAL_ATTRIBUTES = {
@@ -40,7 +41,6 @@ const LEGAL_ATTRIBUTES = {
 /** keeper_state 里的键名——**必须与后端逐字一致**，写错了这条网会静默失效。 */
 const CURRENT_NODE_KEY = '当前场景节点'
 const PLAYER_LOCATION_KEY = '玩家位置'
-const PENDING_MERGE_KEY = '待确认会合'
 const PHASE_KEY = '对局阶段'
 
 interface Recorder {
@@ -104,7 +104,7 @@ async function twoPlayersInGame(prefix: string) {
   guest.sdk.roomSocket.joinRoom(joined.playerId, { reconnectToken: joined.reconnectToken })
   await waitForEvent(guest.sdk, (e) => e.type === 'session.bound')
 
-  return { room, guest, guestPlayerId: joined.playerId }
+  return { room, guest, guestPlayerId: joined.playerId, guestReconnectToken: joined.reconnectToken }
 }
 
 const settle = (ms = 1_500) => new Promise((r) => setTimeout(r, ms))
@@ -163,8 +163,8 @@ test('会合确认之前各自成组，确认之后才并成一组', async () =>
       [PHASE_KEY]: 'investigation',
       [CURRENT_NODE_KEY]: 'hall',
       [PLAYER_LOCATION_KEY]: `${room.hostPlayerId}@hall, ${guestPlayerId}@hall`,
-      [PENDING_MERGE_KEY]: guestPlayerId,
     })
+    seedMergeConfirm(room.roomId, guestPlayerId, '访客')
 
     // 确认之前：房主的原话不该到访客那边（他还挂着待确认，自己一组）
     const before = record(guest.sdk)
@@ -194,6 +194,42 @@ test('会合确认之前各自成组，确认之后才并成一组', async () =>
     )
     room.host.sdk.roomSocket.submitAction(room.hostPlayerId, { utterance: '确认后这句话' })
     await after
+  } finally {
+    room.host.sdk.roomSocket.disconnect()
+    guest.sdk.roomSocket.disconnect()
+  }
+})
+
+test('待确认会合的人断线重连之后，仍然看得到那张确认卡', async () => {
+  const { room, guest, guestPlayerId, guestReconnectToken } = await twoPlayersInGame('remerge')
+  try {
+    seedKeeperState(room.roomId, {
+      [PHASE_KEY]: 'investigation',
+      [CURRENT_NODE_KEY]: 'hall',
+      [PLAYER_LOCATION_KEY]: `${room.hostPlayerId}@hall, ${guestPlayerId}@hall`,
+    })
+    seedMergeConfirm(room.roomId, guestPlayerId, '访客')
+
+    // 断线：他手上那张「已会合」卡片随着连接一起没了
+    guest.sdk.roomSocket.disconnect()
+    await settle(300)
+
+    // 重连并绑定
+    const socket = guest.sdk.roomSocket.connect(room.roomId, guest.token)
+    await guest.sdk.roomSocket.waitForOpen(socket)
+    const back = record(guest.sdk)
+    guest.sdk.roomSocket.joinRoom(guestPlayerId, { reconnectToken: guestReconnectToken })
+    await waitForEvent(guest.sdk, (e) => e.type === 'session.bound')
+    await settle()
+    back.stop()
+
+    // 🔴 服务端还记着他挂在「待确认会合」上（keeper_state 里就是），但只有
+    // 他点了确认才能并组——按钮不回来，这两组就一直分着，而他不知道为什么。
+    // 待掷检定卡片早就有重连补发（exec/23 #56），会合确认另起炉灶时漏了这一半。
+    const revived = back.events.filter(
+      (e) => e.type === 'party.update' && (e.payload as { mergePendingAt?: string | null })?.mergePendingAt
+    )
+    assert.ok(revived.length > 0, '🔴 重连之后没有补发待确认会合，按钮再也不出现')
   } finally {
     room.host.sdk.roomSocket.disconnect()
     guest.sdk.roomSocket.disconnect()

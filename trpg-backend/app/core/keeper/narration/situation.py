@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.keeper.capabilities import situation_blocks, visible_keeper_state
 from app.core.keeper.contract.module_loader import ScenarioModule
-from app.core.keeper.memory.chapter import load_chapters, render_chapters
+from app.core.keeper.memory.chapter import Chapter, load_chapters, render_chapters, visible_chapters
 from app.core.keeper.memory.fact_ledger import render_ledger, revealed_fact_ids
 from app.core.keeper.memory.history import HistoryLine, visible_history
 from app.core.keeper.narration.prompts import format_turn_input
@@ -49,7 +49,10 @@ class SituationBuilder:
     phase_status: str
     #: 守秘人视图的完整事实账本（分组叙事时调用方会传各组自己的那份）。
     ledger_status: str
-    chapters_status: str
+    #: 全部分段摘要 **带受众**——`render()` 按受众裁（与 `history_lines` 同理）。
+    #: 曾经是一段拼好的字符串，那时它对所有受众是同一份：分头期间地下室那段会
+    #: 出现在门厅那一段的上下文里，而摘要常驻上下文，泄得比历史还久。
+    chapters: list[Chapter]
     capability_blocks: list[tuple[float, str]]
     is_heartbeat: bool
     is_opening_ceremony: bool
@@ -75,7 +78,7 @@ class SituationBuilder:
             utterance,
             phase_status=self.phase_status,
             ledger_status=ledger,
-            chapters_status=self.chapters_status,
+            chapters_status=render_chapters(visible_chapters(self.chapters, audience)),
             capability_blocks=self.capability_blocks,
             is_heartbeat=self.is_heartbeat,
             is_opening_ceremony=self.is_opening_ceremony,
@@ -118,7 +121,7 @@ async def build_situation(
         phase=phase,
         phase_status=format_phase_status(phase, ending_id),
         ledger_status=render_ledger(module, known_facts),
-        chapters_status=render_chapters(chapters),
+        chapters=chapters,
         # 已经垂直切出去的能力要摆在模型眼前的状态（exec/27 阶段 2）：能力不只
         # 要能改世界，还得让模型**看见**自己改成了什么样，否则下一轮只能从上
         # 一段散文里猜。

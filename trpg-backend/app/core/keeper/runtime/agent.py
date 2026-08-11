@@ -49,6 +49,7 @@ from app.core.keeper.contract.registry import Capability
 from app.core.keeper.memory.chapter import (
     record_chapter,
     should_summarize,
+    split_history_for_chapters,
     turns_since_last_chapter,
 )
 from app.core.keeper.memory.fact_ledger import (
@@ -370,13 +371,11 @@ class KeeperAgent(Narrator):
         # 分段摘要 L2（exec/14 P4.2）：场景切换 = 天然的章节边界。**后台**整理，
         # 玩家等的是叙事，不该为"整理笔记"多等几秒；失败只记日志不影响这轮。
         if scene_changed and not is_heartbeat and not is_opening_ceremony:
-            # 🔴 只喂**公开**历史行：L2 摘要本身不带受众，全房间共用一份，
-            # 拿分头期间只有一边知道的剧情去压摘要，等于绕过 P5.2d 的裁剪从
-            # 前情提要漏出去。代价是分头那段剧情进不了摘要（已在
-            # `_narrate_per_audience` 的 docstring 里记为残留缺口）。
-            self._spawn_chapter_summary(
-                room_id, [line.text for line in history_lines if line.audience is None]
-            )
+            # 摘要**按受众分段**（2026-08-11 补上 P5.2d 的残留缺口）：公开的一段
+            # + 分头那几组各自一段，落库时带受众，注入时按受众裁。
+            # 此前是"只喂公开行"——安全但把分头期间的剧情整段丢掉，分头越久
+            # 记忆里那段越空。
+            self._spawn_chapter_summary(room_id, history_lines)
             decision = decision.model_copy(
                 update={
                     "narration_guidance": inject_scene_transition_guidance(
@@ -940,26 +939,32 @@ class KeeperAgent(Narrator):
         )
         return "", segments
 
-    def _spawn_chapter_summary(self, room_id: str, history_lines: list[str]) -> None:
+    def _spawn_chapter_summary(self, room_id: str, history_lines: list[HistoryLine]) -> None:
         """把摘要生成丢到后台。刻意不 await——它不在玩家等待路径上。"""
         task = asyncio.create_task(self._summarize_chapter(room_id, history_lines))
         # 存一份引用防止任务被 GC 提前回收（asyncio 只持弱引用）
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
-    async def _summarize_chapter(self, room_id: str, history_lines: list[str]) -> None:
-        """整理一段梗概。任何失败都只记日志——它是记忆的锦上添花，不是主路径。"""
+    async def _summarize_chapter(self, room_id: str, history_lines: list[HistoryLine]) -> None:
+        """整理一段梗概。任何失败都只记日志——它是记忆的锦上添花，不是主路径。
+
+        分头时**每组各摘一段**（`split_history_for_chapters`），落库带受众。
+        未分头时就是一段公开的，与本功能上线前一致。多组时串行摘——它在后台，
+        没有人在等，而串行不会让并发写 keeper 的库雪上加霜。
+        """
         try:
             async with self._session_factory() as db:
                 turns = await turns_since_last_chapter(db, room_id=room_id)
             if not should_summarize(scene_changed=True, turns_since_last=turns):
                 return
-            if not history_lines:
-                return
-            text = await summarize_chapter(self._client, history_lines)
-            async with self._session_factory() as db:
-                await record_chapter(db, room_id=room_id, text=text)
-                await db.commit()
+            for audience, lines in split_history_for_chapters(history_lines):
+                if not lines:
+                    continue
+                text = await summarize_chapter(self._client, lines)
+                async with self._session_factory() as db:
+                    await record_chapter(db, room_id=room_id, text=text, audience=audience)
+                    await db.commit()
         except Exception:
             logger.warning("keeper_chapter_summary_failed", room_id=room_id, exc_info=True)
 

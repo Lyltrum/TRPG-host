@@ -30,10 +30,13 @@ L1 保证"事实不丢"，但一场戏里还有大量**不是线索**却影响�
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.keeper.memory.history import HistoryLine, is_visible_to, visible_history
 from app.models.event import Event
 
 logger = structlog.get_logger()
@@ -68,30 +71,111 @@ async def turns_since_last_chapter(db: AsyncSession, *, room_id: str) -> int:
     return len(rows.all())
 
 
-async def record_chapter(db: AsyncSession, *, room_id: str, text: str) -> None:
-    """落一段摘要。调用方负责 commit。"""
+async def record_chapter(
+    db: AsyncSession, *, room_id: str, text: str, audience: frozenset[str] | None = None
+) -> None:
+    """落一段摘要。调用方负责 commit。
+
+    `audience=None` = 公开段，全房间都经历过。分头期间那几组各有自己的一段，
+    受众就是那组人（与历史行的 `audience` 同一口径）。
+    """
     clean = text.strip()
     if not clean:
         return
+    payload: dict = {"text": clean[:CHAPTER_MAX_CHARS]}
+    if audience:
+        payload["audience"] = sorted(audience)
     db.add(
         Event(
             room_id=room_id,
             player_id=None,
             event_type=EVENT_TYPE,
-            payload={"text": clean[:CHAPTER_MAX_CHARS]},
+            payload=payload,
         )
     )
-    logger.info("keeper_chapter_recorded", room_id=room_id, length=len(clean))
+    logger.info(
+        "keeper_chapter_recorded",
+        room_id=room_id,
+        length=len(clean),
+        audience=len(audience) if audience else 0,
+    )
 
 
-async def load_chapters(db: AsyncSession, *, room_id: str) -> list[str]:
-    """全部摘要，按发生顺序。**不设 limit**——与 L1 同理，必须活过 L3 的窗口。"""
+@dataclass(frozen=True, slots=True)
+class Chapter:
+    """一段摘要 + 它的受众。形状与 `HistoryLine` 刻意一致——同一件事。"""
+
+    text: str
+    audience: frozenset[str] | None = None
+
+
+async def load_chapters(db: AsyncSession, *, room_id: str) -> list[Chapter]:
+    """全部摘要，按发生顺序。**不设 limit**——与 L1 同理，必须活过 L3 的窗口。
+
+    🔴 **不在这里按受众过滤**：一次查库要供这一轮的**所有**受众用（裁决一次、
+    分组叙事每组一次），过滤是 `render` 那一层的事。在查询里裁就得每组查一次库。
+    """
     rows = await db.execute(
         select(Event.payload)
         .where(Event.room_id == room_id, Event.event_type == EVENT_TYPE)
         .order_by(Event.created_at, Event.id)
     )
-    return [str((p or {}).get("text", "")).strip() for (p,) in rows if (p or {}).get("text")]
+    chapters: list[Chapter] = []
+    for (payload,) in rows:
+        data = payload or {}
+        text = str(data.get("text", "")).strip()
+        if not text:
+            continue
+        raw = data.get("audience")
+        chapters.append(Chapter(text, frozenset(str(x) for x in raw) if raw else None))
+    return chapters
+
+
+def visible_chapters(chapters: list[Chapter], audience: frozenset[str] | None) -> list[str]:
+    """这组人看得见的那几段（exec/14 P5.2d 的残留缺口，2026-08-11 补上）。
+
+    判据与历史行**共用** `is_visible_to`，含"空受众只给公开段"那条特例——
+    分头期间地下室那段摘要不该出现在门厅那一段的上下文里，否则前情提要就成了
+    绕过按受众裁剪的旁路（而它常驻上下文，泄得比历史还久）。
+    """
+    if audience is not None and not audience:
+        return [c.text for c in chapters if c.audience is None]
+    return [c.text for c in chapters if is_visible_to(c.audience, audience)]
+
+
+#: 一组人自己那段剧情至少要有这么多行，才值得单独摘一段。
+#:
+#: 防的是调用次数爆炸：受众集合是按"谁在场"算的，隐匿/单人分头会造出很多只有
+#: 一两行的小集合，每个都摘一次等于为一句话开一次模型调用。低于门槛的那几行
+#: **不会凭空消失**——它们仍在 L3 窗口里，只是不进长期摘要。
+MIN_LINES_PER_CHAPTER = 3
+
+
+def split_history_for_chapters(
+    lines: list[HistoryLine],
+) -> list[tuple[frozenset[str] | None, list[str]]]:
+    """把一段历史按受众拆成「每组各摘一段」的输入。
+
+    公开段拿公开行；每个分头受众拿**他们看得见的全部**（含公开行）——只喂私密
+    行的话模型会摘出一段没有上下文的怪话。代价是公开内容在两段里重复出现，
+    读起来啰嗦；**但那是文字冗余，不是泄密**，而泄密不可逆。
+
+    未分头时返回的就是一条公开段，与本功能上线前逐字一致（退化保证）。
+    """
+    public = [line.text for line in lines if line.audience is None]
+    out: list[tuple[frozenset[str] | None, list[str]]] = []
+    if public:
+        out.append((None, public))
+    seen: set[frozenset[str]] = set()
+    for line in lines:
+        if line.audience is None or line.audience in seen:
+            continue
+        seen.add(line.audience)
+        private_count = sum(1 for other in lines if other.audience == line.audience)
+        if private_count < MIN_LINES_PER_CHAPTER:
+            continue
+        out.append((line.audience, visible_history(lines, line.audience)))
+    return out
 
 
 def render_chapters(chapters: list[str]) -> str:

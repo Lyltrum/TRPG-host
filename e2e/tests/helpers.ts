@@ -139,7 +139,12 @@ function openE2eDb(): DatabaseSync {
   const file = process.env.E2E_DB_FILE
   if (!file) throw new Error('E2E_DB_FILE 没有传进来——请检查 run-e2e.ts 的 env')
   // node:sqlite 是内置模块，不为一句 UPDATE 引第三方依赖（e2e 的依赖越少越好）。
-  return new DatabaseSync(file)
+  const db = new DatabaseSync(file)
+  // 🔴 后端此刻正连着同一个库，建卡那几笔写还可能压在事务里——不等锁就是
+  // `database is locked` 当场炸（第一版没这句，三条里第一条稳定红）。
+  // SQLite 的默认 busy_timeout 是 0，**"不等"才是默认值**。
+  db.exec('PRAGMA busy_timeout = 5000')
+  return db
 }
 
 /** API 给的是带连字符的 UUID，而 `Uuid(as_uuid=False)` 在 SQLite 里存成

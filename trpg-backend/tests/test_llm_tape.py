@@ -173,12 +173,26 @@ async def test_replay_raises_when_code_calls_model_more_times(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+def _assert_no_tape_params_leaked(client) -> None:  # noqa: ANN001
+    """磁带自己的参数一个都不许传给真实客户端。
+
+    🔴 写成"前缀扫描"而不是逐个列出（`assert "tape_kind" not in ...`）：
+    2026-08-11 真机实测，`tape_key` 就是这么漏下去的——`TapedClient.stream`
+    没有声明它，于是它落进 `**kwargs` 被原样转发，真机每一轮叙事都炸
+    `AsyncCompletions.create() got an unexpected keyword argument 'tape_key'`，
+    而全套测试是绿的（没有一条用例走过"真客户端包装层 + 流式"这个组合）。
+    逐个列出的断言，加一个参数就漏一个；扫前缀的话下一个自动被盖住。
+    """
+    for call in _inner_calls(client):
+        leaked = [k for k in call if k.startswith("tape_")]
+        assert leaked == [], f"磁带参数漏进了真实请求：{leaked}"
+
+
 async def test_no_tape_active_is_pure_passthrough() -> None:
     client = _client(["直接返回"])
     got = await client.chat.completions.create(tape_kind="narrate", model="m", messages=[])
     assert got.choices[0].message.content == "直接返回"
-    # tape_kind 不能泄漏到真实请求里
-    assert "tape_kind" not in _inner_calls(client)[0]
+    _assert_no_tape_params_leaked(client)
 
 
 # ── 流式（exec/28）───────────────────────────────────────────
@@ -243,7 +257,7 @@ async def test_live_stream_yields_pieces_and_keeps_full_text() -> None:
     assert "".join(pieces) == "书桌抽屉里空空如也。"
     assert call.text == "书桌抽屉里空空如也。"
     assert call.finish_reason == "stop"
-    assert "tape_kind" not in _inner_calls(client)[0]
+    _assert_no_tape_params_leaked(client)
 
 
 @pytest.mark.asyncio
@@ -309,3 +323,29 @@ def test_committed_tapes_only_use_original_scenarios() -> None:
         assert tape.scenario in COMMITTABLE_SCENARIOS, (
             f"{tape_path.name} 录的是 {tape.scenario}，不在可提交白名单里"
         )
+
+
+async def test_stream_passes_tape_key_without_leaking_it(tmp_path: Path) -> None:
+    """🔴 流式也要认稳定子键（`exec/33 §4`：并行之后完成顺序不确定）。
+
+    这条是那次真机故障的直接回归：`stream()` 当时根本没有 `tape_key` 参数。
+    两头都验——键要真的进磁带（能按键回放），也不许漏给真实客户端。
+    """
+    path = tmp_path / "tape.json"
+    client = _streaming_client(["屋后只有几丛踩乱的杂草。"])
+    with recording(path, scenario="tests/fixtures/keeper_module.json"):
+        call = client.chat.completions.stream(
+            tape_kind="narrate", tape_key="narrate-seg:1:0", model="m", messages=[]
+        )
+        _ = [d async for d in call]
+    _assert_no_tape_params_leaked(client)
+    assert json.loads(path.read_text())["entries"][0]["key"] == "narrate-seg:1:0"
+
+    # 按键回放：拿得回同一条，且**不动顺序游标**
+    offline = _streaming_client([])
+    with replaying(path):
+        replayed = offline.chat.completions.stream(
+            tape_kind="narrate", tape_key="narrate-seg:1:0", model="m", messages=[]
+        )
+        assert "".join([d async for d in replayed]) == "屋后只有几丛踩乱的杂草。"
+    assert _inner_calls(offline) == []

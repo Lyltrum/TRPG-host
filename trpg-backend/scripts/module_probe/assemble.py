@@ -48,6 +48,7 @@ _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
+from migrate_facts import migrate as apply_fact_addressing  # noqa: E402
 from parallel import run_parallel  # noqa: E402
 from probe import (  # noqa: E402
     DEEPSEEK_BASE_URL,
@@ -2143,6 +2144,25 @@ def run_pipeline(
         )
         print(report.summary_text(), flush=True)
 
+    # ── 事实寻址（exec/14 P1.3）：facts / reveals / knows ──
+    #
+    # 🔴 导入进来的模组此前**根本不产 facts**（那一步只活在 `migrate_facts.py`
+    # 的 CLI 里，内置模组是人工跑一遍的）。症状不是报错而是**恒空**：线索账本
+    # 一条不显示、`check.reveals` 全空、"还有多少没揭开"永远是 0。
+    #
+    # 放在校验与自修**之后**、写文件之前，两个理由：
+    # ① facts 由纯机械代码从 `on_success` / `kp_notes` / `key_facts` 重建，
+    #    闭合性由构造保证——门是用来抓模型的，不必去校一份代码自己生成的东西；
+    # ② 它会把产物撑大一两成，而「整份重吐」在真实体量上是结构性失败，
+    #    不该让自修的输入白白变长。
+    module, fact_stats = apply_fact_addressing(module)
+    print(
+        f"\n事实寻址：facts {fact_stats['facts_total']} 条"
+        f"（检定产出 {fact_stats['on_success']} 处引用、合并 {fact_stats['deduped']} 处；"
+        f"NPC 知情 {fact_stats['npc_knowledge']}；真相层 {fact_stats['key_facts']}）",
+        flush=True,
+    )
+
     elapsed_all = time.perf_counter() - t_all
     cost = stats.estimate_cost_cny()
 
@@ -2172,6 +2192,9 @@ def run_pipeline(
         "endings": len(module.get("endings") or []),
         "agenda": len(module.get("agenda") or []),
         "checks": check_count,
+        # 线索账本的地基。0 ≠ "还没做"，看上面那行「事实寻址」的分解。
+        "facts": fact_stats["facts_total"],
+        "facts_from_checks": fact_stats["on_success"],
         "kp_guidance_keys": len(module.get("kp_guidance") or {}),
         "key_facts": len((module.get("kp_truth") or {}).get("key_facts") or []),
         "player_intro_items": thin_counts.get("player_intro", 0),

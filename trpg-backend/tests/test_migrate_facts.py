@@ -165,3 +165,62 @@ def test_migration_is_idempotent_and_does_not_lose_custom_fields() -> None:
     assert once["nodes"][0]["自定义字段"] == "必须保留"
     # 输入不被就地修改
     assert "facts" not in raw
+
+
+# ── 接在导入管线上（2026-08-11）─────────────────────────
+
+
+def test_the_import_pipeline_actually_calls_the_migration() -> None:
+    """🔴 这一步此前只活在 CLI 里，**导入进来的模组根本不产 facts**。
+
+    症状不是报错而是**恒空**：线索账本一条不显示、`check.reveals` 全空、
+    "还有多少没揭开"永远是 0——而 0 跟"这份模组确实没有线索"长得一模一样。
+
+    ⚠️ 这条守的是**接线**，不是行为：`run_pipeline` 整条要真模型（五步里三步
+    是 LLM 调用），跑不进 CI。行为由本文件其余用例守。
+    """
+    import inspect
+
+    from scripts.module_probe import assemble
+
+    body = inspect.getsource(assemble.run_pipeline)
+    assert "apply_fact_addressing(module)" in body
+    # 必须在写产物**之前**——写完再迁移等于没迁移
+    assert body.index("apply_fact_addressing(module)") < body.index("out_structured.write_text")
+
+
+def test_the_migrated_shape_survives_the_runtime_contract() -> None:
+    """产物要能被 `ScenarioModule` 吃下——两边 schema 漂了这里会红。
+
+    `migrate` 直接在 raw dict 上操作（刻意绕开 pydantic 以免丢自定义字段），
+    所以"它产出的形状合不合法"没有任何一层会自动检查。
+    """
+    from app.core.keeper.contract.module_loader import ScenarioModule
+
+    out, _stats = migrate(
+        _raw(
+            nodes=[
+                {
+                    "id": "hall",
+                    "title": "门厅",
+                    "kp_text": "材料",
+                    "checks": [
+                        {"skill": "侦察", "skill_ids": ["spot-hidden"], "on_success": "泥脚印"}
+                    ],
+                }
+            ],
+            npcs=[{"id": "butler", "name": "管家", "kp_notes": "他昨晚在花园里。"}],
+        )
+    )
+    module = ScenarioModule.model_validate(out)
+
+    fact_ids = {f.id for f in module.facts}
+    assert fact_ids, "迁移完却一条事实都没有"
+    # 引用闭合：reveals / knows 指到的都在事实表里
+    for node in module.nodes:
+        for check in node.checks:
+            assert set(check.reveals) <= fact_ids
+    assert set(module.npcs[0].knows) <= fact_ids
+    # 元层（真相）不该被 reveals 指到——它不可挣得
+    meta_ids = {f.id for f in module.facts if f.tier == "meta"}
+    assert meta_ids and not any(set(c.reveals) & meta_ids for n in module.nodes for c in n.checks)

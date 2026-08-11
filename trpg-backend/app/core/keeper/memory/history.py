@@ -47,6 +47,27 @@ class HistoryLine:
     audience: frozenset[str] | None = None
 
 
+def is_visible_to(recorded: frozenset[str] | None, viewer: frozenset[str] | None) -> bool:
+    """这条**当时受众是 `recorded`** 的东西，`viewer` 这组人看不看得见。
+
+    抽出来是因为 L2 分段摘要（`memory/chapter.py`）要用**同一条**判据：
+    同一条规则写两遍，迟早一边认得另一边不认得，而不一致的方向一定是
+    "有人看到了不该看到的"（保密只会朝松的方向坏）。
+
+    - `viewer is None` = 守秘人视图，全给。
+    - `recorded is None` = 公开，谁都看得见。
+    - 否则要求 `viewer ⊆ recorded`：**viewer 里每个人当时都在场**才算看得见。
+
+    空 `viewer`（"谁都不是"）由调用方显式挡在前面——`frozenset() <= x` 恒为真，
+    在这里放行就等于把私密行发给"没有人"，见 `visible_history` 里那段注释。
+    """
+    if viewer is None:
+        return True
+    if recorded is None:
+        return True
+    return bool(viewer) and viewer <= recorded
+
+
 def visible_history(lines: list[HistoryLine], audience: frozenset[str] | None) -> list[str]:
     """裁剪出这组观察者**共同经历过**的历史（exec/14 P5.2d）。
 
@@ -69,7 +90,7 @@ def visible_history(lines: list[HistoryLine], audience: frozenset[str] | None) -
         # 性质，不是本函数的保证。发现于 exec/27 阶段 4 的变异检验：那个变异体
         # 本身是无效的（改成空集不改行为），**恰恰因为不改行为才暴露了这里**。
         return [line.text for line in lines if line.audience is None]
-    return [line.text for line in lines if line.audience is None or audience <= line.audience]
+    return [line.text for line in lines if is_visible_to(line.audience, audience)]
 
 
 def history_lines_from_events(events: list[Event], nicknames: dict[str, str]) -> list[HistoryLine]:

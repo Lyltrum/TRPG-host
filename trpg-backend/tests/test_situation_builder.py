@@ -22,11 +22,14 @@
 
 from __future__ import annotations
 
+from app.core.keeper.memory.chapter import Chapter
 from app.core.keeper.memory.history import HistoryLine
 from app.core.keeper.narration.situation import SituationBuilder
 
 _PUBLIC = "门厅里积着灰"
 _PRIVATE = "地下室的铁柜上刻着一个名字"
+_PUBLIC_CHAPTER = "上半场大家在门厅碰头"
+_PRIVATE_CHAPTER = "他一个人撬开了地下室的木箱"
 
 
 def _builder() -> SituationBuilder:
@@ -40,7 +43,10 @@ def _builder() -> SituationBuilder:
         phase="investigation",
         phase_status="调查阶段",
         ledger_status="（无）",
-        chapters_status="",
+        chapters=[
+            Chapter(_PUBLIC_CHAPTER),
+            Chapter(_PRIVATE_CHAPTER, frozenset({"p1"})),
+        ],
         capability_blocks=[],
         is_heartbeat=False,
         is_opening_ceremony=False,
@@ -89,6 +95,26 @@ def test_the_ledger_is_supplied_per_call_not_taken_from_the_field() -> None:
     assert "（无）" not in text.split("## 游戏历史")[0].split("## 已确认的线索")[-1]
 
 
+def test_the_prologue_block_is_cut_by_audience_too() -> None:
+    """🔴 前情提要曾经对所有受众是同一份字符串——历史裁了、摘要没裁等于白裁。
+
+    而摘要比历史更该裁：它**常驻上下文**（不设 limit、活过 L3 的 200 条窗口），
+    漏一次就一直漏。
+    """
+    builder = _builder()
+    for_p1 = builder.render(
+        audience=frozenset({"p1"}), ledger="（无）", nickname="张家豪", utterance="我翻抽屉"
+    )
+    for_p2 = builder.render(
+        audience=frozenset({"p2"}), ledger="（无）", nickname="凌铭辉", utterance="我看窗外"
+    )
+    assert _PRIVATE_CHAPTER in for_p1
+    assert _PRIVATE_CHAPTER not in for_p2
+    assert _PUBLIC_CHAPTER in for_p1 and _PUBLIC_CHAPTER in for_p2
+    # 守秘人照旧全给
+    assert _PRIVATE_CHAPTER in builder.for_keeper(nickname="张家豪", utterance="我翻抽屉")
+
+
 def test_an_empty_audience_sees_only_public_lines() -> None:
     """🔴 空受众 = 没有人，只给公开行。
 
@@ -109,3 +135,5 @@ def test_an_empty_audience_sees_only_public_lines() -> None:
     )
     assert _PUBLIC in text
     assert _PRIVATE not in text
+    assert _PUBLIC_CHAPTER in text
+    assert _PRIVATE_CHAPTER not in text

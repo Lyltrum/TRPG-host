@@ -240,16 +240,28 @@ async def _broadcast_keeper_busy(room_id: str, busy: bool) -> None:
     await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
 
 
-async def _push_party_update(db: AsyncSession, websocket: WebSocket, room_id: str) -> None:
+async def _push_party_update(
+    db: AsyncSession,
+    websocket: WebSocket,
+    room_id: str,
+    *,
+    only_player_id: str | None = None,
+) -> None:
     """把每个人**自己的**空间处境推给他（`exec/33 §5.4`）。
 
     🔴 逐人裁过再发：别处那一组在哪、有谁，对你的角色不该知道（他们可能正在
     潜行）。所以只给「我在哪 · 谁跟我在一处 · 另有几组人在别处」。
     这只眼睛存在的理由是——系统把位置认错时，此前**没有任何人会发现**。
+
+    `only_player_id`：**重连补发**用（`exec/34`）。这时只给刚回来的那条连接发
+    他自己那一组——别人手上的状态好好的，广播一遍会插进他们的消息序列里
+    （`test_reconnect_sends_nothing_extra_when_the_queue_is_empty` 当场抓到）。
+    判据同 `_resend_pending_checks` 那句"只发给这一条刚绑定的连接，不广播"。
     """
     from sqlalchemy import select
 
-    from app.core.keeper.runtime.location_state import group_players, load_pending_merges
+    from app.core.keeper.runtime.location_state import group_players
+    from app.core.keeper.runtime.pending import MERGE_CONFIRM_KIND, pending_decision_manager
     from app.models.room import Player, Room
 
     room = await db.get(Room, room_id)
@@ -274,10 +286,12 @@ async def _push_party_update(db: AsyncSession, websocket: WebSocket, room_id: st
             return location_id
         return await resolver(room_id, keeper_state, location_id)
 
-    groups = group_players(keeper_state, [pid for pid, _ in roster])
-    pending = load_pending_merges(keeper_state)
+    pending = await pending_decision_manager.player_ids_of_kind(db, room_id, MERGE_CONFIRM_KIND)
+    groups = group_players(keeper_state, [pid for pid, _ in roster], pending)
     nicknames: dict[str, str] = dict(roster)
     for location_id, members in groups:
+        if only_player_id is not None and only_player_id not in members:
+            continue
         # 待确认的人自己一组（group_players 保证），所以那一组的位置就是"他站在
         # 哪里等确认"。**不从待确认记录里读位置**——那份拷贝已经删了，位置只有一份。
         merge_at = location_id if any(pid in pending for pid in members) else None
@@ -336,6 +350,7 @@ async def _audience_at_speaker_location(
     from sqlalchemy import select
 
     from app.core.keeper.runtime.location_state import group_players, load_hidden_players
+    from app.core.keeper.runtime.pending import MERGE_CONFIRM_KIND, pending_decision_manager
     from app.models.room import Player, Room
 
     room = await db.get(Room, room_id)
@@ -346,7 +361,11 @@ async def _audience_at_speaker_location(
     # 下面 `send_to_players` 按 player_id 找连接，AI 没有连接自然发不到，
     # 那是对的——算上它是为了让"谁跟谁在一处"算对，不是为了给它发字节。
     rows = await db.execute(select(Player.id).where(Player.room_id == room_id))
-    groups = group_players(keeper_state, list(rows.scalars()))
+    groups = group_players(
+        keeper_state,
+        list(rows.scalars()),
+        await pending_decision_manager.player_ids_of_kind(db, room_id, MERGE_CONFIRM_KIND),
+    )
     if len(groups) <= 1:
         return None
     for _node_id, members in groups:
@@ -562,12 +581,25 @@ async def _handle_room_join(
         return False
     assert player_id is not None  # 上面能走到这里，player_id 必然非空（见 get_player 调用）
     # 连接登记必须带上玩家身份：per-observer 投递（P5.2）要能回答"这条连接是谁"。
+    from app.core.keeper.runtime.pending import MERGE_CONFIRM_KIND, pending_decision_manager
+
     manager.add(room_id, websocket, player_id)
     await room_service.set_player_connected(db, player_id, True)
     payload = SessionBoundPayload(room_id=room_id, player_id=player_id)
     envelope = ServerEnvelope(type="session.bound", payload=payload.model_dump(by_alias=True))
     await websocket.send_json(envelope.model_dump(by_alias=True))
     await _resend_pending_checks(db, websocket, room_id)
+    # 🔴 会合确认卡也要补发（exec/34 §2.1）：它跟待掷检定是同一件事——"等某个
+    # 玩家做决定"——却因为当初各写了一套，只有掷骰那半有重连补发。症状是断线
+    # 重连之后「已会合」按钮消失，而服务端还记着他挂在那儿，两组就一直分着。
+    #
+    # 🔴 **只在他真的挂着卡时才发，且只发给这一条连接**：握手在没有任何待决定
+    # 项时必须**逐字不变**（`test_reconnect_sends_nothing_extra_when_the_queue_is_empty`
+    # 守着这条，我加第一版时当场被它抓到）。同 `_resend_pending_checks` 的规矩。
+    if player_id in await pending_decision_manager.player_ids_of_kind(
+        db, room_id, MERGE_CONFIRM_KIND
+    ):
+        await _push_party_update(db, websocket, room_id, only_player_id=player_id)
     return True
 
 
@@ -584,9 +616,9 @@ async def _resend_pending_checks(db: AsyncSession, websocket: WebSocket, room_id
     只发给**这一条刚绑定的连接**，不广播：别人手上的卡片好好的，重发一遍只会
     在他们屏幕上多出一张重复卡。
     """
-    from app.core.keeper.runtime.pending import pending_decision_manager, to_notice
+    from app.core.keeper.runtime.pending import ROLL_KINDS, pending_decision_manager, to_notice
 
-    for pending in await pending_decision_manager.list_all(db, room_id):
+    for pending in await pending_decision_manager.list_all(db, room_id, ROLL_KINDS):
         notice = to_notice(pending)
         payload, event_type = _check_request_envelope(notice)
         envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))
@@ -842,10 +874,10 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
     """
     from sqlalchemy import select
 
-    from app.core.keeper.runtime.pending import pending_decision_manager
+    from app.core.keeper.runtime.pending import ROLL_KINDS, pending_decision_manager
     from app.models.room import Player
 
-    if not await pending_decision_manager.has(db, room_id):
+    if not await pending_decision_manager.has(db, room_id, ROLL_KINDS):
         return
     rows = await db.execute(
         select(Player.id).where(Player.room_id == room_id, Player.is_ai.is_(True))
@@ -867,7 +899,7 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
             rolled.add(notice.check_request_id)
 
         for _ in range(_AI_AUTO_ROLL_LIMIT):
-            pending = await pending_decision_manager.first(db, room_id)
+            pending = await pending_decision_manager.first(db, room_id, ROLL_KINDS)
             if pending is None or pending.player_id not in ai_ids:
                 return
             try:

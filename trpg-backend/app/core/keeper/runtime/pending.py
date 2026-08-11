@@ -57,6 +57,30 @@ from app.models.event import PendingDecisionRow
 #: 掷骰类的 kind。`settler_for(kind)` 按 kind 分发，两者是同一个值域。
 ROLL_KINDS = frozenset({"skill", "san"})
 
+#: 「你跟他们碰上了吗」——分组变更协议里那张要当事人点头的卡（`exec/33 §5`）。
+#:
+#: ## 🔴 为什么需要它：分组此前是概率性的
+#:
+#: 「谁跟谁在一处」由裁决器**每轮重写**的位置派生，于是**每轮都有一次写错分组的
+#: 机会**。2026-08-10 多人实测实证：它把 `current_node_id` 与 `moves` 写矛盾，
+#: 被明确留下的队友被拖进地下室 → 系统认为没分头 → 全房间广播是**完全正确的
+#: 执行**，只是建立在错的位置上。投递层再结构化也没用——**保证等于最弱的那一环**。
+#:
+#: ## 🔴 协议是不对称的，因为两个方向的错误代价不同
+#:
+#: - **分开**判错 → 多隔离了一个人：困惑、可恢复、**不泄露** → 乐观执行，不打断。
+#: - **会合**判错 → 两组信息当场合并：**泄露、不可撤回** → 必须由**当事人**确认。
+#:
+#: 这是「受众算错必须朝保密方向失败，绝不退化成广播」的直接应用。确认之所以
+#: 合法，是因为问的是当事人自己知道的事（"你走回客厅跟大家会合了吗"）——
+#: 跟被否掉的「房主确认结局」正相反，那次是问一个按设计就不该有信息的人。
+#:
+#: **位置照常写**（它仍是唯一地基，不新增第二份真相）；这张卡只让 `group_players`
+#: 在**投递侧**保守一点：没确认之前，这个人自己一组。
+#:
+#: **没有超时自动确认**：超时自动 = 静默泄露。也没有"否认"动作，不点就是维持分离。
+MERGE_CONFIRM_KIND = "merge_confirm"
+
 
 @dataclass
 class PendingDecision:
@@ -107,6 +131,31 @@ class PendingDecision:
                 "opposed_opponent": opposed_opponent,
                 "opposed_value": opposed_value,
             },
+        )
+
+    @classmethod
+    def merge_confirm(
+        cls,
+        *,
+        room_id: str,
+        player_id: str,
+        player_nickname: str,
+        reason: str = "",
+        decision_id: str | None = None,
+    ) -> PendingDecision:
+        """造一张会合确认卡。
+
+        它**不带位置**：位置只有一份真相（`玩家位置`），在卡里再存一份拷贝的
+        那一版实测出过 bug——全组一起换场景时人还在一起，卡却被判过期丢弃，
+        于是**没人点头就合并了**（`exec/33 §5`）。
+        """
+        return cls(
+            decision_id=decision_id or str(uuid.uuid4()),
+            kind=MERGE_CONFIRM_KIND,
+            room_id=room_id,
+            player_id=player_id,
+            player_nickname=player_nickname,
+            reason=reason,
         )
 
     # ── 掷骰类的只读视图 ────────────────────────────
@@ -199,10 +248,19 @@ class PendingDecisionManager:
             db.add(_to_row(decision))
         await db.flush()
 
-    async def first(self, db: AsyncSession, room_id: str) -> PendingDecision | None:
+    async def first(
+        self, db: AsyncSession, room_id: str, kinds: frozenset[str] | set[str]
+    ) -> PendingDecision | None:
+        """队首那一项。
+
+        🔴 `kinds` **必填**（exec/34）：队列里现在不止骰子。守秘人的待掷守卫
+        问的是"还有没有骰子没掷"，如果连会合确认卡也算进去，那张卡一挂上，
+        **整桌就说不了话了**——而它按设计可以一直挂着（没有超时自动确认）。
+        加一种 kind 时，每个"逐个列出类别"的消费方都要回来看一眼。
+        """
         row = await db.scalar(
             select(PendingDecisionRow)
-            .where(PendingDecisionRow.room_id == room_id)
+            .where(PendingDecisionRow.room_id == room_id, PendingDecisionRow.kind.in_(kinds))
             .order_by(PendingDecisionRow.seq)
             .limit(1)
         )
@@ -223,21 +281,39 @@ class PendingDecisionManager:
         await db.flush()
         return decision
 
-    async def list_all(self, db: AsyncSession, room_id: str) -> list[PendingDecision]:
+    async def list_all(
+        self, db: AsyncSession, room_id: str, kinds: frozenset[str] | set[str] | None = None
+    ) -> list[PendingDecision]:
         """队列里全部待决定项，按顺序。断线重连要靠它补发卡片——请求只在裁决
         那一刻推过一次，重连的人不补就永远看不到。"""
-        rows = await db.scalars(
-            select(PendingDecisionRow)
-            .where(PendingDecisionRow.room_id == room_id)
-            .order_by(PendingDecisionRow.seq)
-        )
+        stmt = select(PendingDecisionRow).where(PendingDecisionRow.room_id == room_id)
+        if kinds is not None:
+            stmt = stmt.where(PendingDecisionRow.kind.in_(kinds))
+        rows = await db.scalars(stmt.order_by(PendingDecisionRow.seq))
         return [_to_decision(row) for row in rows]
 
-    async def has(self, db: AsyncSession, room_id: str) -> bool:
+    async def has(self, db: AsyncSession, room_id: str, kinds: frozenset[str] | set[str]) -> bool:
+        """`kinds` 必填，理由同 `first`。"""
         row = await db.scalar(
-            select(PendingDecisionRow.seq).where(PendingDecisionRow.room_id == room_id).limit(1)
+            select(PendingDecisionRow.seq)
+            .where(PendingDecisionRow.room_id == room_id, PendingDecisionRow.kind.in_(kinds))
+            .limit(1)
         )
         return row is not None
+
+    async def player_ids_of_kind(self, db: AsyncSession, room_id: str, kind: str) -> set[str]:
+        """这个房间里，正挂着某一种决定的是哪些人。
+
+        🔴 分组（`group_players`）每轮都要问「谁在等确认会合」——那是投递隔离的
+        地基。`exec/34` 定的是**队列作唯一真相**，宁可多查一次库，也不在
+        `keeper_state` 里留一份镜像：镜像必须随权威源重建，一处漏改就长期不一致。
+        """
+        rows = await db.scalars(
+            select(PendingDecisionRow.player_id).where(
+                PendingDecisionRow.room_id == room_id, PendingDecisionRow.kind == kind
+            )
+        )
+        return set(rows)
 
     async def clear_room(self, db: AsyncSession, room_id: str) -> None:
         """清空一个房间的队列（对局结束/测试隔离用）。"""

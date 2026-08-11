@@ -31,12 +31,11 @@ from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.runtime.deps import KeeperDeps
 from app.core.keeper.runtime.location_state import (
-    PENDING_MERGE_KEY,
     confirm_merge_impl,
     group_players,
     is_party_split,
-    load_pending_merges,
 )
+from app.core.keeper.runtime.pending import MERGE_CONFIRM_KIND, pending_decision_manager
 from app.core.keeper.runtime.turn_executor import execute_side_effects
 from app.models.room import Character, Player, Room
 
@@ -109,6 +108,16 @@ async def party() -> tuple[KeeperDeps, str, str]:
     return deps, a_id, b_id
 
 
+async def _merge_pending(room_id: str) -> set[str]:
+    """谁正挂着「你跟他们碰上了吗」。
+
+    🔴 `exec/34` 之后这件事的真相在**待决定队列**里，不再是 `keeper_state`
+    的一个自由键——待掷检定早就有的落库/重连补发，会合确认从此共用同一套。
+    """
+    async with _session_factory() as db:
+        return await pending_decision_manager.player_ids_of_kind(db, room_id, MERGE_CONFIRM_KIND)
+
+
 async def _state(deps: KeeperDeps) -> dict:
     async with _session_factory() as db:
         room = await db.get(Room, deps.room_id)
@@ -132,7 +141,7 @@ async def test_splitting_apart_needs_no_confirmation(party) -> None:
     deps, a_id, b_id = party
     await _split(deps)
     state = await _state(deps)
-    assert load_pending_merges(state) == set()
+    assert await _merge_pending(deps.room_id) == set()
     assert is_party_split(state, [a_id, b_id]) is True
 
 
@@ -143,7 +152,7 @@ async def test_moving_to_an_empty_place_is_not_a_merge(party) -> None:
     await execute_side_effects(
         deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="hidden-safe")])
     )
-    assert load_pending_merges(await _state(deps)) == set()
+    assert await _merge_pending(deps.room_id) == set()
 
 
 # ── 会合：挂起，等当事人确认 ────────────────────────
@@ -158,12 +167,16 @@ async def test_walking_into_someone_holds_them_apart_until_confirmed(party) -> N
         deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="hall")])
     )
     state = await _state(deps)
-    assert load_pending_merges(state) == {b_id}
+    assert await _merge_pending(deps.room_id) == {b_id}
     # 位置确实写了（位置是唯一地基，不新增第二份真相）
     assert state["玩家位置"].count("hall") == 2
     # 但投递上还是两组——判错的方向必须朝保密
-    assert [members for _loc, members in group_players(state, [a_id, b_id])] == [[a_id], [b_id]]
-    assert is_party_split(state, [a_id, b_id]) is True
+    pending = await _merge_pending(deps.room_id)
+    grouped = group_players(state, [a_id, b_id], pending)
+    assert [members for _loc, members in grouped] == [[a_id], [b_id]]
+    # 🔴 必须把待确认集合传进去才看得见这次分头：默认空集会让它答"没分头"——
+    # 那正是 `group_players` 不给默认值的理由（漏传朝泄露方向失败）。
+    assert is_party_split(state, [a_id, b_id], pending) is True
 
 
 async def test_confirming_merges_them(party) -> None:
@@ -175,7 +188,7 @@ async def test_confirming_merges_them(party) -> None:
     async with _session_factory() as db:
         assert await confirm_merge_impl(db, deps.room_id, b_id) is True
     state = await _state(deps)
-    assert load_pending_merges(state) == set()
+    assert await _merge_pending(deps.room_id) == set()
     assert is_party_split(state, [a_id, b_id]) is False
 
 
@@ -203,11 +216,11 @@ async def test_leaving_again_cancels_the_card(party) -> None:
     await execute_side_effects(
         deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="hall")])
     )
-    assert load_pending_merges(await _state(deps)) == {b_id}
+    assert await _merge_pending(deps.room_id) == {b_id}
     await execute_side_effects(
         deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="cellar")])
     )
-    assert load_pending_merges(await _state(deps)) == set()
+    assert await _merge_pending(deps.room_id) == set()
 
 
 async def test_the_card_survives_the_whole_group_changing_scene(party) -> None:
@@ -222,17 +235,20 @@ async def test_the_card_survives_the_whole_group_changing_scene(party) -> None:
     await execute_side_effects(
         deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="hall")])
     )
-    assert load_pending_merges(await _state(deps)) == {b_id}
+    assert await _merge_pending(deps.room_id) == {b_id}
     # 两个人一起挪到暗格（谁都没走散）
     await execute_side_effects(deps, KeeperDecision(current_node_id="hidden-safe"))
     state = await _state(deps)
-    assert load_pending_merges(state) == {b_id}, "🔴 没确认就被合并了"
-    assert [members for _loc, members in group_players(state, [a_id, b_id])] == [[a_id], [b_id]]
+    assert await _merge_pending(deps.room_id) == {b_id}, "🔴 没确认就被合并了"
+    grouped = group_players(state, [a_id, b_id], await _merge_pending(deps.room_id))
+    assert [members for _loc, members in grouped] == [[a_id], [b_id]]
 
 
 async def test_the_key_is_reserved_from_state_updates(party) -> None:
     """记账键是代码写的，`state_updates` 碰不到。"""
-    assert PENDING_MERGE_KEY in reserved_state_keys()
+    assert MERGE_CONFIRM_KIND not in reserved_state_keys(), (
+        "🔴 它不再是 keeper_state 的键了（exec/34）——真相在待决定队列里，留一份镜像就是两份真相"
+    )
 
 
 # ── 退化保证 ────────────────────────────────────────
@@ -244,5 +260,5 @@ async def test_a_party_that_never_splits_never_sees_the_protocol(party) -> None:
     await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
     await execute_side_effects(deps, KeeperDecision(current_node_id="cellar"))
     state = await _state(deps)
-    assert load_pending_merges(state) == set()
+    assert await _merge_pending(deps.room_id) == set()
     assert is_party_split(state, [a_id, b_id]) is False

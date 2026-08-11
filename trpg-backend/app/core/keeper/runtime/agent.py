@@ -103,7 +103,12 @@ from app.core.keeper.runtime.location_state import (
     scene_changed as has_scene_changed,
 )
 from app.core.keeper.runtime.narration_stream import NarrationStream
-from app.core.keeper.runtime.pending import pending_decision_manager, to_notice
+from app.core.keeper.runtime.pending import (
+    MERGE_CONFIRM_KIND,
+    ROLL_KINDS,
+    pending_decision_manager,
+    to_notice,
+)
 from app.core.keeper.runtime.phase import (
     PHASE_FINISHED,
     PHASE_KEY,
@@ -174,7 +179,7 @@ class KeeperAgent(Narrator):
         # 骰子掷完。重发同一个请求（而不是静默不回应），防前端刷新丢卡片。
         # 主动心跳 / 开场仪式：有待掷时直接放弃（开场不该卡在旧检定上）。
         async with self._session_factory() as db:
-            pending = await pending_decision_manager.first(db, room_id)
+            pending = await pending_decision_manager.first(db, room_id, ROLL_KINDS)
         if pending is not None:
             if is_heartbeat or is_opening_ceremony:
                 return NarrationOutcome(text="")
@@ -570,7 +575,7 @@ class KeeperAgent(Narrator):
             await on_result(notice)
 
         async with self._session_factory() as db:
-            next_pending = await pending_decision_manager.first(db, room_id)
+            next_pending = await pending_decision_manager.first(db, room_id, ROLL_KINDS)
         if next_pending is not None:
             return NarrationOutcome(
                 text="",
@@ -736,7 +741,14 @@ class KeeperAgent(Narrator):
         `_spawn_chapter_summary` 的调用点），代价是分头期间的剧情不进摘要。
         """
         all_ids = [pid for pid, _ in players]
-        groups = group_players(keeper_state, all_ids)
+        # 🔴 分组要知道谁在等确认会合（`exec/34` 定的"多查一次库"）：确认之前
+        # 那个人自己一组，这是投递隔离的地基。真相在待决定队列里，不在
+        # keeper_state——所以这里查一次，而不是留一份镜像。
+        async with self._session_factory() as db:
+            merge_pending = await pending_decision_manager.player_ids_of_kind(
+                db, room_id, MERGE_CONFIRM_KIND
+            )
+        groups = group_players(keeper_state, all_ids, merge_pending)
         # ②潜行是**常驻状态**（写在 keeper_state 里，直到被发现/现身）；
         # ⑥私密是**这一轮的一次性标记**（玩家自己在提交时勾的）。两者对投递的
         # 影响一样，但只有前者该在别人那段里被提"他藏着"。
@@ -1010,7 +1022,10 @@ class KeeperAgent(Narrator):
             # 那是对的，不需要在这里特判。
             rows = await db.execute(select(Player.id).where(Player.room_id == room_id))
             ids = list(rows.scalars())
-        groups = group_players(keeper_state, ids)
+            merge_pending = await pending_decision_manager.player_ids_of_kind(
+                db, room_id, MERGE_CONFIRM_KIND
+            )
+        groups = group_players(keeper_state, ids, merge_pending)
         if len(groups) <= 1:
             return None
         for _node_id, members in groups:

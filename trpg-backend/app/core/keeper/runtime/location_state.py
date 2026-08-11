@@ -46,6 +46,11 @@ from app.core.keeper.runtime.deps import (
     record_event,
     resolve_character,
 )
+from app.core.keeper.runtime.pending import (
+    MERGE_CONFIRM_KIND,
+    PendingDecision,
+    pending_decision_manager,
+)
 from app.core.keeper.runtime.scene_state import (
     CURRENT_NODE_KEY,
     SCENE_NAME_KEY,
@@ -62,35 +67,6 @@ PLAYER_LOCATION_KEY = "玩家位置"
 #: 发生的一切（所以不把他从位置分组里摘出去），但他自己的行动不会广播给同处
 #: 的其他人。存 player_id 的逗号串。
 HIDDEN_PLAYERS_KEY = "隐匿玩家"
-
-#: 走到了别人所在的地点、但**还没被本人确认**是不是真的会合了（exec/33 §5）。
-#: 存 player_id 的逗号串（同 `HIDDEN_PLAYERS_KEY`），理由见本段末尾。
-#:
-#: ## 🔴 为什么需要它：分组此前是概率性的
-#:
-#: 「谁跟谁在一处」由裁决器**每轮重写**的位置派生，于是**每轮都有一次写错分组的
-#: 机会**。2026-08-10 多人实测实证：它把 `current_node_id` 与 `moves` 写矛盾，
-#: 被明确留下的队友被拖进地下室 → 系统认为没分头 → 全房间广播是**完全正确的
-#: 执行**，只是建立在错的位置上。投递层再结构化也没用——**保证等于最弱的那一环**。
-#:
-#: ## 🔴 协议是不对称的，因为两个方向的错误代价不同
-#:
-#: - **分开**判错 → 多隔离了一个人：困惑、可恢复、**不泄露** → 乐观执行，不打断。
-#: - **会合**判错 → 两组信息当场合并：**泄露、不可撤回** → 必须由**当事人**确认。
-#:
-#: 这是「受众算错必须朝保密方向失败，绝不退化成广播」的直接应用。确认之所以
-#: 合法，是因为问的是当事人自己知道的事（"你走回客厅跟大家会合了吗"）——
-#: 跟被否掉的「房主确认结局」正相反，那次是问一个按设计就不该有信息的人。
-#:
-#: **位置照常写**（它仍是唯一地基，不新增第二份真相）；这个键只让 `group_players`
-#: 在**投递侧**保守一点：没确认之前，这个人自己一组。
-#:
-#: 🔴 存的是**一串 player_id**，不是 `id@地点`。第一版存了地点，于是"这张卡还
-#: 算不算数"被写成 `pending[pid] != node_id`——**位置有了第二份拷贝**，而它跟
-#: 真位置一变就对不上：全组一起换场景时那张卡被判成过期丢掉，人却还在一起，
-#: 结果就是**没人点头就合并了**（2026-08-10 多人验证跑实锤）。他在哪问
-#: `location_of` 就够了。
-PENDING_MERGE_KEY = "待确认会合"
 
 #: 这一局即兴出来的地点（exec/32）。玩家去了剧本图外的地方——「卡比家」原文
 #: 提过但没建成节点——此前位置这块地基对它失效：`exec/31 #72` 修掉了"保留旧值
@@ -249,29 +225,10 @@ def location_of(keeper_state: dict | None, player_id: str) -> str | None:
     return load_current_node_id(keeper_state)
 
 
-def load_pending_merges(keeper_state: dict | None) -> set[str]:
-    """待确认会合的人。逗号分隔的 player_id，见 `PENDING_MERGE_KEY`。"""
-    if not keeper_state:
-        return set()
-    raw = keeper_state.get(PENDING_MERGE_KEY)
-    if raw is None or raw == "":
-        return set()
-    out: set[str] = set()
-    for part in str(raw).split(","):
-        # 老格式 `id@地点` 也认：只取 id，地点那半本来就是多出来的一份拷贝。
-        player_id = part.split("@", 1)[0].strip()
-        if player_id:
-            out.add(player_id)
-    return out
-
-
-def serialize_pending_merges(player_ids: set[str]) -> str:
-    """`load_pending_merges` 的逆。排序是为了写库结果可断言。"""
-    return ",".join(sorted(player_ids))
-
-
 def group_players(
-    keeper_state: dict | None, player_ids: list[str]
+    keeper_state: dict | None,
+    player_ids: list[str],
+    merge_pending: set[str] | frozenset[str],
 ) -> list[tuple[str | None, list[str]]]:
     """把一组玩家按位置分组，返回 [(node_id, [player_id, ...]), ...]。
 
@@ -282,8 +239,12 @@ def group_players(
     🔴 **待确认会合的人单独成组**（exec/33 §5）：他的位置已经写进去了，但"是不是
     真的跟那边的人碰上了"还没被他本人确认。在确认之前按**没碰上**处理——
     这个方向判错只是多隔离一个人，反过来判错就是不可撤回的泄露。
+
+    🔴 `merge_pending` **故意没有默认值**（exec/34）：它现在的真相在待决定队列里，
+    要查一次库。给默认空集的话，漏传的调用点会静默退化成"没有人在等确认"——
+    而那正是**朝泄露方向**失败。同 `KeeperDeps.reserved_state_keys` 的处理。
     """
-    pending = load_pending_merges(keeper_state)
+    pending = merge_pending
     out: list[tuple[str | None, list[str]]] = []
     index: dict[str | None, int] = {}
     for pid in player_ids:
@@ -299,9 +260,17 @@ def group_players(
     return out
 
 
-def is_party_split(keeper_state: dict | None, player_ids: list[str]) -> bool:
-    """全队是否已分头。单人局恒为 False（退化保证：一个人分不了头）。"""
-    return len(group_players(keeper_state, player_ids)) > 1
+def is_party_split(
+    keeper_state: dict | None,
+    player_ids: list[str],
+    merge_pending: set[str] | frozenset[str] = frozenset(),
+) -> bool:
+    """全队是否已分头。单人局恒为 False（退化保证：一个人分不了头）。
+
+    ⚠️ 这个函数**生产代码里没有调用方**（只有测试用），所以这里允许默认值；
+    `group_players` 那个不允许——判据是"漏传会不会朝泄露方向失败"。
+    """
+    return len(group_players(keeper_state, player_ids, merge_pending)) > 1
 
 
 def scene_changed(
@@ -336,6 +305,7 @@ def format_party_locations(
     module: ScenarioModule,
     keeper_state: dict | None,
     players: list[tuple[str, str]],
+    merge_pending: set[str] | frozenset[str] = frozenset(),
 ) -> str:
     """注入局面块的「各自所在」。
 
@@ -344,7 +314,7 @@ def format_party_locations(
     裁决器才需要知道谁在哪、谁看不见谁。
     """
     ids = [pid for pid, _ in players]
-    groups = group_players(keeper_state, ids)
+    groups = group_players(keeper_state, ids, merge_pending)
     hidden = load_hidden_players(keeper_state)
     if len(groups) <= 1 and not hidden.intersection(ids):
         return ""
@@ -404,7 +374,9 @@ async def record_merges_since(deps: KeeperDeps, before: dict[str, str | None]) -
             ).scalars()
         )
         after = {pid: location_of(current_state, pid) for pid in before}
-        pending = load_pending_merges(current_state)
+        pending = await pending_decision_manager.player_ids_of_kind(
+            db, deps.room_id, MERGE_CONFIRM_KIND
+        )
         before_pending = set(pending)
 
         def _has_company(pid: str) -> bool:
@@ -432,12 +404,32 @@ async def record_merges_since(deps: KeeperDeps, before: dict[str, str | None]) -
                 asked.append(pid)
         if pending == before_pending:
             return asked
-        if pending:
-            current_state[PENDING_MERGE_KEY] = serialize_pending_merges(pending)
-        else:
-            current_state.pop(PENDING_MERGE_KEY, None)
-        room.keeper_state = current_state
+        # 作废：身边一个人都没有了的那些卡，从队列里删掉。
+        gone = before_pending - pending
+        if gone:
+            for card in await pending_decision_manager.list_all(
+                db, deps.room_id, {MERGE_CONFIRM_KIND}
+            ):
+                if card.player_id in gone:
+                    await pending_decision_manager.pop(db, deps.room_id, card.decision_id)
         if asked:
+            rows = (
+                await db.execute(select(Player.id, Player.nickname).where(Player.id.in_(asked)))
+            ).all()
+            nicknames: dict[str, str] = {str(pid): str(name) for pid, name in rows}
+            await pending_decision_manager.add(
+                db,
+                deps.room_id,
+                [
+                    PendingDecision.merge_confirm(
+                        room_id=deps.room_id,
+                        player_id=pid,
+                        player_nickname=nicknames.get(pid, pid),
+                        reason="你走到了他们那里——跟他们碰上了吗？",
+                    )
+                    for pid in asked
+                ],
+            )
             await record_event(db, deps, "keeper.merge_pending", {"players": asked})
         else:
             # 只作废、没新挂起 → 没有 record_event 顺带 commit，得自己提交。
@@ -705,16 +697,18 @@ async def confirm_merge_impl(db: AsyncSession, room_id: str, player_id: str) -> 
     if room is None:
         raise KeeperToolError("房间不存在")
     current_state = dict(room.keeper_state or {})
-    pending = load_pending_merges(current_state)
-    if player_id not in pending:
+    card = next(
+        (
+            d
+            for d in await pending_decision_manager.list_all(db, room_id)
+            if d.kind == MERGE_CONFIRM_KIND and d.player_id == player_id
+        ),
+        None,
+    )
+    if card is None:
         return False
     node_id = location_of(current_state, player_id)
-    pending.discard(player_id)
-    if pending:
-        current_state[PENDING_MERGE_KEY] = serialize_pending_merges(pending)
-    else:
-        current_state.pop(PENDING_MERGE_KEY, None)
-    room.keeper_state = current_state
+    await pending_decision_manager.pop(db, room_id, card.decision_id)
     db.add(
         Event(
             room_id=room_id,

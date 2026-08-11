@@ -243,7 +243,7 @@ async def test_a_speaker_awaiting_merge_confirmation_still_gets_his_own_segment(
     2026-08-10 的验证跑里我一度以为撞上了这个，查下来是排队延迟；但"以为"不算
     结论，所以补一条能判定的用例把它钉死。
     """
-    from app.core.keeper.runtime.location_state import PENDING_MERGE_KEY
+    from app.core.keeper.runtime.pending import PendingDecision, pending_decision_manager
 
     agent = _keeper()
     suffixes = _stub(agent, KeeperDecision(thinking="无事", narration_guidance="继续"))
@@ -255,8 +255,17 @@ async def test_a_speaker_awaiting_merge_confirmation_still_gets_his_own_segment(
         room.keeper_state = {
             **(room.keeper_state or {}),
             PLAYER_LOCATION_KEY: f"{b_id}@hall",
-            PENDING_MERGE_KEY: b_id,
         }
+        # 待确认会合现在是队列里的一项（exec/34），不再是 keeper_state 的键
+        await pending_decision_manager.add(
+            db,
+            room_id,
+            [
+                PendingDecision.merge_confirm(
+                    room_id=room_id, player_id=b_id, player_nickname="阿贵"
+                )
+            ],
+        )
         await db.commit()
 
     outcome = await agent.narrate(

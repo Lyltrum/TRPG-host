@@ -141,9 +141,12 @@ def test_location_falls_back_to_room_pointer() -> None:
 
 def test_group_players_keeps_input_order_and_isolates_unknown() -> None:
     state = {CURRENT_NODE_KEY: "hall", PLAYER_LOCATION_KEY: "p2@cellar"}
-    assert group_players(state, ["p1", "p2", "p3"]) == [("hall", ["p1", "p3"]), ("cellar", ["p2"])]
+    assert group_players(state, ["p1", "p2", "p3"], frozenset()) == [
+        ("hall", ["p1", "p3"]),
+        ("cellar", ["p2"]),
+    ]
     # 位置全未知时是一组，不是三组
-    assert group_players({}, ["p1", "p2"]) == [(None, ["p1", "p2"])]
+    assert group_players({}, ["p1", "p2"], frozenset()) == [(None, ["p1", "p2"])]
     assert is_party_split(state, ["p1", "p2"]) is True
     assert is_party_split({CURRENT_NODE_KEY: "hall"}, ["p1", "p2"]) is False
 
@@ -352,7 +355,7 @@ async def test_two_people_at_two_off_map_places_are_not_one_group(party) -> None
         deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="loc-2")])
     )
     state = await _state(deps)
-    assert group_players(state, [a_id, b_id]) == [("loc-1", [a_id]), ("loc-2", [b_id])]
+    assert group_players(state, [a_id, b_id], frozenset()) == [("loc-1", [a_id]), ("loc-2", [b_id])]
     # 「各自所在」要写得出名字，不能是「（位置未记录）」
     text = format_party_locations(deps.module, state, [(a_id, "阿福"), (b_id, "阿贵")])
     assert "卡比家" in text and "墓地" in text

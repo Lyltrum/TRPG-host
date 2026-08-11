@@ -94,6 +94,7 @@ def situation_blocks(
     *,
     observer_id: str | None = None,
     players: tuple[tuple[str, str], ...] = (),
+    merge_pending: frozenset[str] = frozenset(),
 ) -> list[tuple[float, str]]:
     """渲染各能力要摆在模型眼前的状态，返回 (order, 成品文本块)。
 
@@ -101,7 +102,11 @@ def situation_blocks(
     局面块与切分前逐字一致。
     """
     context = SituationContext(
-        module=module, keeper_state=keeper_state, observer_id=observer_id, players=players
+        module=module,
+        keeper_state=keeper_state,
+        observer_id=observer_id,
+        players=players,
+        merge_pending=merge_pending,
     )
     rendered: list[tuple[float, str]] = []
     for capability in CAPABILITIES:

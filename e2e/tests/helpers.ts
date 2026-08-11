@@ -152,3 +152,35 @@ function openE2eDb(): DatabaseSync {
 function storedId(id: string): string {
   return id.replace(/-/g, '')
 }
+
+/**
+ * 往**待玩家决定队列**里插一张会合确认卡（`exec/34`）。
+ *
+ * 它此前是 `keeper_state["待确认会合"]` 里的一个自由键，跟待掷检定各写了一套
+ * （落库/推送/重连补发全都重来一遍）。收进同一个队列之后，摆前置状态也跟着
+ * 换到这里——`seedKeeperState` 再也摆不出它了。
+ */
+export function seedMergeConfirm(roomId: string, playerId: string, nickname: string): void {
+  const db = openE2eDb()
+  try {
+    const result = db
+      .prepare(
+        `INSERT INTO pending_decisions
+           (decision_id, room_id, kind, player_id, player_nickname, reason, payload, created_at)
+         VALUES (?, ?, 'merge_confirm', ?, ?, ?, '{}', datetime('now'))`
+      )
+      .run(
+        `e2e-merge-${Date.now()}`,
+        storedId(roomId),
+        storedId(playerId),
+        nickname,
+        '你走到了他们那里——跟他们碰上了吗？'
+      )
+    // 🔴 同 seedKeeperState：改了 0 行必须炸，否则是在验一个不存在的前置。
+    if (Number(result.changes) !== 1) {
+      throw new Error(`seedMergeConfirm 没有插进去（changes=${result.changes}）`)
+    }
+  } finally {
+    db.close()
+  }
+}

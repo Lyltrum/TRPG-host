@@ -126,6 +126,10 @@ class SituationContext:
     #: 这是本对象**第二次**因为新一片能力而加字段——正好印证了当初不给 render
     #: 加位置参数的选择：加字段不必回去改任何已有能力的签名。
     players: tuple[tuple[str, str], ...] = ()
+    #: 正挂着「你跟他们碰上了吗」的人（`exec/34`）。分组要用它，而它的真相在
+    #: 待决定队列里、**要查库**——渲染钩子拿不到 db，所以由 `build_situation`
+    #: 查好带进来。这是第三次因为新需求加字段，同一个理由。
+    merge_pending: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)

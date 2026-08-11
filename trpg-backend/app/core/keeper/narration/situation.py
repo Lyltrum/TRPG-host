@@ -34,6 +34,7 @@ from app.core.keeper.memory.chapter import Chapter, load_chapters, render_chapte
 from app.core.keeper.memory.fact_ledger import render_ledger, revealed_fact_ids
 from app.core.keeper.memory.history import HistoryLine, visible_history
 from app.core.keeper.narration.prompts import format_turn_input
+from app.core.keeper.runtime.pending import MERGE_CONFIRM_KIND, pending_decision_manager
 from app.core.keeper.runtime.phase import format_phase_status
 
 
@@ -113,6 +114,12 @@ async def build_situation(
     async with session_factory() as db:
         known_facts = await revealed_fact_ids(db, room_id=room_id)
         chapters = await load_chapters(db, room_id=room_id)
+        # 🔴 exec/34 定的「多查一次库」就落在这里：分组要知道谁在等确认会合，
+        # 而那件事的唯一真相在待决定队列里。宁可多一次查询，也不在 keeper_state
+        # 留一份镜像——镜像必须随权威源重建，一处漏改就长期不一致。
+        merge_pending = frozenset(
+            await pending_decision_manager.player_ids_of_kind(db, room_id, MERGE_CONFIRM_KIND)
+        )
     return SituationBuilder(
         # 代码记账的键一律不原样喂给模型，判据与"state_updates 不许写"同源。
         visible_state=visible_keeper_state(keeper_state),
@@ -126,7 +133,11 @@ async def build_situation(
         # 要能改世界，还得让模型**看见**自己改成了什么样，否则下一轮只能从上
         # 一段散文里猜。
         capability_blocks=situation_blocks(
-            module, keeper_state, observer_id=observer_id, players=tuple(players)
+            module,
+            keeper_state,
+            observer_id=observer_id,
+            players=tuple(players),
+            merge_pending=merge_pending,
         ),
         is_heartbeat=is_heartbeat,
         is_opening_ceremony=is_opening_ceremony,

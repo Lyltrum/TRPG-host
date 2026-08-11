@@ -24,7 +24,7 @@ from app.core.coc7.content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import load_module
-from app.core.keeper.narration.narration_hints import build_bystander_hint
+from app.core.keeper.narration.narration_hints import build_bystander_hint, build_person_hint
 from app.core.keeper.runtime.agent import KeeperAgent
 from app.core.keeper.runtime.location_state import PLAYER_LOCATION_KEY
 from app.core.keeper.runtime.phase import PHASE_INVESTIGATION, PHASE_KEY
@@ -192,3 +192,54 @@ async def test_split_party_hint_never_names_the_other_group() -> None:
     assert len(suffixes) == 1
     assert "张家豪" not in suffixes[0]
     assert "这一轮什么都没说" not in suffixes[0]
+
+
+# ── 人称按受众（exec/33 §10 #80）────────────────────
+
+
+def test_person_hint_is_second_person_for_an_audience_of_one() -> None:
+    """🔴 双人真机：叙事整个掉进全景第三人称小说体，而 prompt 一个字都没规定人称。
+
+    单人局模型自己会用「你」；多人局「你」指代不明，它就选了网文的默认视角，
+    顺带写起 PC 的内心与注意力。修法按受众定：这一段只发给一个人 ⇒ 用「你」。
+    """
+    hint = build_person_hint(["阿福"])
+    assert "阿福" in hint and "第二人称" in hint
+    # 内心戏是这条的另一半：GM 不替 PC 决定想什么、感觉什么
+    assert "内心" in hint
+
+
+def test_person_hint_uses_names_when_more_than_one_will_read_it() -> None:
+    hint = build_person_hint(["阿福", "阿贵"])
+    assert "阿福" in hint and "阿贵" in hint
+    assert "第二人称" not in hint
+    assert "内心" in hint
+
+
+def test_person_hint_degrades_to_nothing() -> None:
+    """没有受众 = 不加这一段（同 `build_bystander_hint` 的空名单退化）。"""
+    assert build_person_hint([]) == ""
+
+
+async def test_split_segment_gets_the_second_person_hint() -> None:
+    """分头那一段的受众只有一个人 ⇒ 走「你」那一支，且不带别组的名字。"""
+    agent = _keeper()
+    suffixes = _stub(agent)
+    room_id, a_id, b_id = await _seed("BYS004", {CURRENT_NODE_KEY: "hall"})
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        room.keeper_state = {**(room.keeper_state or {}), PLAYER_LOCATION_KEY: f"{b_id}@cellar"}
+        await db.commit()
+
+    await agent.narrate(
+        NarrationContext(
+            utterance="我看看四周",
+            player_nickname="凌铭辉",
+            room_id=room_id,
+            player_id=a_id,
+        )
+    )
+    assert len(suffixes) == 1
+    assert "第二人称" in suffixes[0]
+    assert "凌铭辉" in suffixes[0] and "张家豪" not in suffixes[0]

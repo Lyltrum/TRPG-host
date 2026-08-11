@@ -136,7 +136,7 @@ async function main(): Promise<number> {
     const tests = spawn(
       'npx',
       ['tsx', '--test', '--test-reporter=spec', process.env.E2E_ONLY ?? 'tests/*.e2e.ts'],
-      { cwd: resolve(HERE, '..'), env: { ...process.env, E2E_BASE_URL: BASE_URL }, stdio: 'inherit' }
+      { cwd: resolve(HERE, '..'), env: { ...process.env, E2E_BASE_URL: BASE_URL, E2E_DB_FILE: DB_FILE }, stdio: 'inherit' }
     )
     tests.on('exit', (code) => resolvePromise(code ?? 1))
   })

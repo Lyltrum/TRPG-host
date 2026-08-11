@@ -425,7 +425,7 @@ class _TapedCompletions:
         )
         return response
 
-    def stream(self, *, tape_kind: str, **kwargs: Any) -> StreamCall:
+    def stream(self, *, tape_kind: str, tape_key: str | None = None, **kwargs: Any) -> StreamCall:
         """流式版 `create`。返回 `StreamCall`，见它的 docstring。
 
         🔴 `stream=True` **不进 params**，所以 `request_digest` 与非流式一致，
@@ -439,7 +439,7 @@ class _TapedCompletions:
 
         if session is not None and session.mode == "replay":
             entry = session.next_entry(
-                kind=tape_kind, model=model, messages=messages, params=params
+                kind=tape_kind, key=tape_key, model=model, messages=messages, params=params
             )
             return _ReplayStreamCall(entry.response_text, entry.finish_reason)
 
@@ -448,6 +448,7 @@ class _TapedCompletions:
             kwargs,
             session=session,
             tape_kind=tape_kind,
+            tape_key=tape_key,
             model=model,
             messages=messages,
             params=params,
@@ -511,6 +512,7 @@ class _LiveStreamCall(StreamCall):
         *,
         session: TapeSession | None,
         tape_kind: str,
+        tape_key: str | None = None,
         model: str,
         messages: list[Any],
         params: dict[str, Any],
@@ -520,6 +522,7 @@ class _LiveStreamCall(StreamCall):
         self._kwargs = kwargs
         self._session = session
         self._tape_kind = tape_kind
+        self._tape_key = tape_key
         self._model = model
         self._messages = messages
         self._params = params
@@ -540,6 +543,7 @@ class _LiveStreamCall(StreamCall):
         if self._session is not None and self._session.mode == "record":
             self._session.record(
                 kind=self._tape_kind,
+                key=self._tape_key,
                 model=self._model,
                 messages=self._messages,
                 params=self._params,

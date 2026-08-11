@@ -68,6 +68,12 @@ async def execute_movement(
     node_id = getattr(decision, "current_node_id", None)
     new_location = getattr(decision, "new_location", None)
     moves = list(getattr(decision, "moves", ()))
+    # 「这一轮的落点已经安排好了」——下面那条「走出剧本图 → 清空」的兜底只在
+    # 它为假时才该跑。🔴 它是**逐个列出情况**的地方（现在三种：消解交给 moves /
+    # movers 逐人指定 / 房间指针设成功），加一种落点就要回来加一条，否则兜底
+    # 会把刚安排好的位置抹掉。`movers` 第一版就漏了，真机当场把留在原地的
+    # 队友清成 None、两组并回一组（2026-08-11）。
+    landing_handled = False
     if new_location is not None:
         try:
             created_id, line = await create_improvised_location_impl(
@@ -81,6 +87,7 @@ async def execute_movement(
                 moves = moves + [
                     _Move(player=name, node_id=created_id) for name in new_location.movers
                 ]
+                landing_handled = True
             else:
                 # 建了却没说谁去 = 全队一起去。裁决器显式写了别的落点时不覆盖它
                 # （它可能是"我打发 NPC 去卡比家"这种，人并没有过去）。
@@ -107,10 +114,11 @@ async def execute_movement(
         report.append(f"场景定位交给 moves 执行（{node_id} 已被逐人指定）")
         node_id = None
         handed_to_moves = True
+        landing_handled = True
     else:
         handed_to_moves = False
 
-    located = handed_to_moves
+    located = landing_handled
     if node_id:
         # node_id 存在性由 set_current_node_impl 校验（module.node_by_id）——
         # 非法 id 不写入、记为 issue，不炸整轮。

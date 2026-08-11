@@ -18,6 +18,7 @@ from app.core.keeper.capabilities import reserved_state_keys, situation_blocks
 from app.core.keeper.capabilities.movement.schema import HidingChange, NewLocation, PlayerMove
 from app.core.keeper.capabilities.movement.situation import render_improvised_locations
 from app.core.keeper.capabilities.world_state.executor import update_state_impl
+from app.core.keeper.capabilities.world_state.schema import StateUpdate
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.contract.registry import SituationContext
@@ -522,6 +523,30 @@ async def test_only_the_named_go_to_the_new_place(party) -> None:
     state = await _state(deps)
     assert location_of(state, a_id) == "loc-1"
     assert location_of(state, b_id) == "hall", "🔴 没被点名的人不该跟着走"
+    assert is_party_split(state, [a_id, b_id]) is True
+
+
+async def test_movers_do_not_trigger_the_left_the_map_fallback(party) -> None:
+    """🔴 用了 `movers` 就是"落点已经安排好了"，兜底不该再把别人清空（2026-08-11 真机）。
+
+    真机原样：裁决器写 `new_location=科比特家屋后 + movers=[阿福]`（它做对了），
+    同一轮还声明了新「当前场景」→ 兜底判成"走出剧本图" → **把留在原地的队友
+    清成 None**；而 None 是个吸收态（`group_players` 判成同一组），两组当场并回
+    一组，下一轮两人同时发言只产出一段，分头与并行一起失效。
+
+    同族于消解那一支：**「落点已安排」是个逐个列出情况的地方，加一种就要加一条。**
+    """
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    decision = KeeperDecision(
+        new_location=NewLocation(name="屋后", from_id="hall", movers=["阿福"]),
+        state_updates=[StateUpdate(key="当前场景", value="屋后")],  # 触发兜底的那个信号
+    )
+    _report, issues = await execute_side_effects(deps, decision)
+    assert issues == []
+    state = await _state(deps)
+    assert location_of(state, a_id) == "loc-1"
+    assert location_of(state, b_id) == "hall", "🔴 留在原地的人被兜底清空了"
     assert is_party_split(state, [a_id, b_id]) is True
 
 

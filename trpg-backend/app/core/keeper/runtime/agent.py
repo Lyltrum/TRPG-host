@@ -70,6 +70,7 @@ from app.core.keeper.narration.narration_hints import (
     UNRESOLVED_CONFLICT_HINT,
     build_bystander_hint,
     build_check_boundary_hint,
+    build_person_hint,
 )
 from app.core.keeper.narration.prompts import (
     build_adjudicator_instructions,
@@ -147,6 +148,31 @@ from app.models.room import Character, Player, Room
 
 logger = structlog.get_logger()
 
+#: 待决定守卫命中时守秘人说的话（`exec/23 #76`）。
+#:
+#: 🔴 **这一刻正是零基础玩家第一次看见「检定」「幸运」这些词的时刻**，而原文
+#: 是一句机器提示（「守秘人正在等待掷骰——请先完成待掷的检定」）。真机一局里
+#: 同一根因复现两次：问「这卡片什么意思／掷不好是不是就什么都找不到了」
+#: 「幸运是啥、花掉还能长回来吗」，都被这句话顶回来。
+#:
+#: 修法是**让守卫自己把这张卡讲清楚**，不调模型：分类"这句话是不是在问规则"
+#: 得跑一次模型往返，而守卫存在的理由之一正是"别在等骰子的时候再开一轮"。
+#: 代价是它只答得了这张卡的事，答不了别的——那正好是新手在这一刻会问的。
+#:
+#: 🔴 **不许带技能名、理由、点数**：这两句走 `_broadcast_narration`，是**全房间**
+#: 的。那些字段本来就在卡片上，而卡片是按受众发的——写进这里就是把刚修好的
+#: `exec/33 #78` 又开一个口子（"加兜底前先问它会不会跟已有规则组成闭环"）。
+ROLL_PENDING_NOTICE = (
+    "先把手上那张检定卡掷了——点一下卡片，骰子由我来掷，"
+    "掷出来是多少就是多少。掷不好也不会把线索卡死，只是这条路会更慢、"
+    "或者要付点别的代价。掷完我们接着说。"
+)
+LUCK_PENDING_NOTICE = (
+    "先回答手上那张卡：要不要花幸运把这次检定改成成功。"
+    "幸运是你角色的一项属性，花掉就少掉那么多、不会自己长回来，"
+    "所以留着还是现在用，你自己定。选完我们接着说。"
+)
+
 
 class KeeperAgent(Narrator):
     def __init__(
@@ -200,11 +226,11 @@ class KeeperAgent(Narrator):
             # （同族于「加一种 kind 就要检查每个逐个列出类别的消费方」）。
             if pending.kind == LUCK_SPEND_KIND:
                 return NarrationOutcome(
-                    text="守秘人正在等一个决定——要不要消耗幸运。",
+                    text=LUCK_PENDING_NOTICE,
                     player_offers=[pending],
                 )
             return NarrationOutcome(
-                text="守秘人正在等待掷骰——请先完成待掷的检定。",
+                text=ROLL_PENDING_NOTICE,
                 check_requests=[to_notice(pending)],
             )
 
@@ -855,8 +881,12 @@ class KeeperAgent(Narrator):
                 ]
             )
 
+        def _person(audience: tuple[str, ...]) -> str:
+            """这一段用第几人称（`exec/33 §10 #80`）。受众只有一个人 ⇒ 用「你」。"""
+            return build_person_hint([nicknames[pid] for pid in audience if pid in nicknames])
+
         if len(groups) <= 1 and not covert_speakers:
-            suffix = extra_suffix + _bystanders(tuple(all_ids))
+            suffix = extra_suffix + _person(tuple(all_ids)) + _bystanders(tuple(all_ids))
             # 🔴 流式只走这条**全房间**路径（`exec/28` 第 3 步）。分头那条暂时
             # 保持非流式：它的延迟大头是**多段串行生成**（第 N 组要等前面 N-1 段
             # 全部写完），流式压不掉那部分——见 exec/28 的 3.4。
@@ -929,7 +959,7 @@ class KeeperAgent(Narrator):
                 nickname=nickname,
                 utterance=said,
             )
-            suffix = extra_suffix + hint + _bystanders(audience)
+            suffix = extra_suffix + hint + _person(audience) + _bystanders(audience)
             # 🔴 磁带子键（`exec/33 §4` 拦路石 1）：并行之后这几次调用的**完成
             # 顺序不确定**，按全局序号回放必然错位。`turn_ordinal` 由分头轮次
             # 递增、`index` 是段落在列表里的位置，两者都由代码算、跟模型输出

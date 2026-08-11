@@ -427,7 +427,12 @@ async def _run_opening_ceremony(
         text = ""
 
     # 权威顺序：narrate 结果 > structured 脚本 > 中性兜底（全模组只推一段）
-    if text and not text.startswith("守秘人正在等待掷骰"):
+    # 🔴 认常量不认字面量（`exec/23 #76` 改文案时撞见）：写死那半句的话，文案
+    # 一改它就**静默停止匹配**，开场那条路会把守卫提示当成真叙事推出去。
+    # 顺带补上漏掉的那一种——原来只认掷骰那条，幸运卡那条从来没在这里出现过。
+    from app.core.keeper.runtime.agent import LUCK_PENDING_NOTICE, ROLL_PENDING_NOTICE
+
+    if text and text not in (ROLL_PENDING_NOTICE, LUCK_PENDING_NOTICE):
         used_llm = True
     elif script:
         text = script

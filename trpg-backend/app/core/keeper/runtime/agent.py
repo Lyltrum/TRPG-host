@@ -537,7 +537,21 @@ class KeeperAgent(Narrator):
         # 那一半早就注册表化了，**同一件事的两头一头可插拔一头写死**。
         # `settler_for` 找不到认领者时直接抛，没有 else 兜底：兜底就是静默走错
         # 分支，掷骰数字照样出现在玩家屏幕上而没有任何东西会红。
-        notice = await settler_for(pending.kind)(deps, pending)
+        rolled = await settler_for(pending.kind)(deps, pending)
+        notice = rolled.notice
+
+        # 🔴 骰子已经落地了——立刻告诉调用方，不要等下面那些副作用和结算叙事。
+        # 掷骰是纯代码毫秒级，结算叙事是 10 秒级的 LLM 往返；两件事一起等完
+        # 再广播，玩家点完「投掷」得盯着屏幕十几秒才看得到自己掷了多少
+        # （真人实测反馈：「反馈太慢」）。真人桌上骰子是**当场**停下的，
+        # KP 想怎么描述是他自己的事。
+        if on_result is not None:
+            await on_result(notice)
+
+        # 🔴 生效在广播之后（exec/34 第 3 步）：幸运消费会插在这两者之间——
+        # 玩家看见骰子停下，才决定要不要花。副作用因此必须一个都不落在掷骰
+        # 那一步里，否则花完幸运就得逐个回滚（见 `RolledCheck`）。
+        await rolled.apply()
 
         # 事实账本 L1（exec/14 P4）：检定成功 → 把这次揭开的线索**用代码**记进
         # 账本。不靠 LLM 自觉写 keeper_state，也不放进会滑出 200 条窗口的历史里
@@ -565,14 +579,6 @@ class KeeperAgent(Narrator):
             kind=pending.kind,
             player=pending.player_nickname,
         )
-
-        # 🔴 骰子已经落地了——立刻告诉调用方，不要等下面那次结算叙事。
-        # 掷骰是纯代码毫秒级，结算叙事是 10 秒级的 LLM 往返；两件事一起等完
-        # 再广播，玩家点完「投掷」得盯着屏幕十几秒才看得到自己掷了多少
-        # （真人实测反馈：「反馈太慢」）。真人桌上骰子是**当场**停下的，
-        # KP 想怎么描述是他自己的事。
-        if on_result is not None:
-            await on_result(notice)
 
         async with self._session_factory() as db:
             next_pending = await pending_decision_manager.first(db, room_id, ROLL_KINDS)

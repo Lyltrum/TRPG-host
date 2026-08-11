@@ -28,7 +28,7 @@ from app.core.keeper.capabilities.skill_check.executor import settle_skill_check
 from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.runtime.deps import KeeperDeps
 from app.core.keeper.runtime.location_state import HIDDEN_PLAYERS_KEY, load_hidden_players
-from app.core.keeper.runtime.pending import PendingCheck
+from app.core.keeper.runtime.pending import PendingDecision
 from app.models.room import Character, Player, Room
 
 _TESTS_DIR = next(p for p in Path(__file__).resolve().parents if p.name == "trpg-backend") / "tests"
@@ -108,9 +108,9 @@ def _deps(room_id: str, player_id: str, seed: int) -> KeeperDeps:
 
 def _pending(
     room_id: str, player_id: str, *, skill: str, opposed_value: int | None
-) -> PendingCheck:
-    return PendingCheck(
-        check_request_id="req-1",
+) -> PendingDecision:
+    return PendingDecision.roll(
+        decision_id="req-1",
         kind="skill",
         room_id=room_id,
         player_id=player_id,

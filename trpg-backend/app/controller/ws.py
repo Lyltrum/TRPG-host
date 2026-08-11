@@ -584,9 +584,9 @@ async def _resend_pending_checks(db: AsyncSession, websocket: WebSocket, room_id
     只发给**这一条刚绑定的连接**，不广播：别人手上的卡片好好的，重发一遍只会
     在他们屏幕上多出一张重复卡。
     """
-    from app.core.keeper.runtime.pending import pending_check_manager, to_notice
+    from app.core.keeper.runtime.pending import pending_decision_manager, to_notice
 
-    for pending in await pending_check_manager.list_all(db, room_id):
+    for pending in await pending_decision_manager.list_all(db, room_id):
         notice = to_notice(pending)
         payload, event_type = _check_request_envelope(notice)
         envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))
@@ -842,10 +842,10 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
     """
     from sqlalchemy import select
 
-    from app.core.keeper.runtime.pending import pending_check_manager
+    from app.core.keeper.runtime.pending import pending_decision_manager
     from app.models.room import Player
 
-    if not await pending_check_manager.has(db, room_id):
+    if not await pending_decision_manager.has(db, room_id):
         return
     rows = await db.execute(
         select(Player.id).where(Player.room_id == room_id, Player.is_ai.is_(True))
@@ -867,13 +867,13 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
             rolled.add(notice.check_request_id)
 
         for _ in range(_AI_AUTO_ROLL_LIMIT):
-            pending = await pending_check_manager.first(db, room_id)
+            pending = await pending_decision_manager.first(db, room_id)
             if pending is None or pending.player_id not in ai_ids:
                 return
             try:
                 # AI 的骰子同样先落地再等叙事——真人在旁边看着，没理由让他多等
                 outcome = await narrator.resolve_check(
-                    room_id, pending.player_id, pending.check_request_id, _push
+                    room_id, pending.player_id, pending.decision_id, _push
                 )
             except Exception:  # noqa: BLE001 — 失败就让它留在队列里，真人可见地卡住好过静默丢骰
                 logger.warning(

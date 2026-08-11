@@ -29,7 +29,7 @@ from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.narration.narration_hints import build_check_boundary_hint
 from app.core.keeper.runtime.agent import KeeperAgent
-from app.core.keeper.runtime.pending import PendingCheck
+from app.core.keeper.runtime.pending import PendingDecision
 from app.core.keeper.runtime.phase import PHASE_INVESTIGATION, PHASE_KEY
 from app.core.narration.contract import NarrationContext
 from app.models.room import Character, Player, Room
@@ -64,8 +64,8 @@ def _keeper() -> KeeperAgent:
 
 def test_check_boundary_hint_covers_both_information_and_action_dimensions() -> None:
     pending = [
-        PendingCheck(
-            check_request_id="req1",
+        PendingDecision.roll(
+            decision_id="req1",
             kind="skill",
             room_id="room1",
             player_id="p1",
@@ -90,8 +90,8 @@ def test_check_boundary_hint_covers_both_information_and_action_dimensions() -> 
 
 def test_check_boundary_hint_lists_san_check_without_skill_name() -> None:
     pending = [
-        PendingCheck(
-            check_request_id="req2",
+        PendingDecision.roll(
+            decision_id="req2",
             kind="san",
             room_id="room1",
             player_id="p1",

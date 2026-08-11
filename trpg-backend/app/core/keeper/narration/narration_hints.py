@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
-from app.core.keeper.runtime.pending import PendingCheck
+from app.core.keeper.runtime.pending import PendingDecision
 
 
-def build_check_boundary_hint(pending_checks: list[PendingCheck]) -> str:
+def build_check_boundary_hint(pending_checks: list[PendingDecision]) -> str:
     """检定边界硬提醒（真人实测 2026-07-29：恐吓/追踪/潜行三个真实案例）。
 
     旧版指引只禁止"提前描写检定才能获得的信息"（信息维度），真人实测

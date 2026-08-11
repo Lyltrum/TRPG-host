@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-import uuid
-
 import structlog
 from pydantic import BaseModel
 
@@ -27,7 +25,7 @@ from app.core.keeper.runtime.deps import (
     resolve_character,
 )
 from app.core.keeper.runtime.location_state import location_of, reveal_hidden_player_impl
-from app.core.keeper.runtime.pending import PendingCheck
+from app.core.keeper.runtime.pending import PendingDecision
 from app.core.narration.contract import CheckResultNotice
 from app.models.room import Character
 
@@ -35,7 +33,7 @@ logger = structlog.get_logger()
 
 #: 潜行技能在规则表里的 id。
 #:
-#: 判"这次掷的是不是潜行"只能按 id 认：`PendingCheck.skill` 存的是展示名，
+#: 判"这次掷的是不是潜行"只能按 id 认：`PendingDecision.skill` 存的是展示名，
 #: 而展示名是 `resolve_skill_target` 从 `ruleset` 里取出来的 `spec.name`，
 #: 所以"用 id 反查出展示名再比较"是**闭环内**的比较，两侧都来自规则表。
 #: 拿模型写的字符串直接比"潜行"才是自由文本当标识符（exec/17）。
@@ -203,13 +201,13 @@ async def roll_check_impl(deps: KeeperDeps, skill_name: str, player_name: str | 
 
 async def create_pending_skill_checks(
     deps: KeeperDeps, decision: BaseModel, context: PendingContext
-) -> tuple[list[PendingCheck], list[str]]:
+) -> tuple[list[PendingDecision], list[str]]:
     """把裁决里的 `checks` 解析成待掷记录——**不掷骰**。
 
     另：设计 02——当前场景节点若标注了 checks[]，只允许其中的 skill 进入
     check.request（第一层模组护栏，见同目录 `guard.py`）。
     """
-    pending: list[PendingCheck] = []
+    pending: list[PendingDecision] = []
     issues: list[str] = []
     physical_conflict = getattr(decision, "player_state", None) == "physical_conflict"
 
@@ -281,8 +279,7 @@ async def create_pending_skill_checks(
             opposed_opponent = check.opposed.opponent
             opposed_value = check.opposed.value
         pending.append(
-            PendingCheck(
-                check_request_id=str(uuid.uuid4()),
+            PendingDecision.roll(
                 kind="skill",
                 room_id=deps.room_id,
                 player_id=player.id,
@@ -299,7 +296,7 @@ async def create_pending_skill_checks(
     return pending, issues
 
 
-async def settle_skill_check(deps: KeeperDeps, pending: PendingCheck) -> CheckResultNotice:
+async def settle_skill_check(deps: KeeperDeps, pending: PendingDecision) -> CheckResultNotice:
     """玩家点了掷骰之后：**服务端权威**掷一次，组装成给前端的结果通知。
 
     骰子由 `primitives/dice` 掷，模型只消费结果、改不了点数——这是两段式玩家
@@ -330,7 +327,7 @@ async def settle_skill_check(deps: KeeperDeps, pending: PendingCheck) -> CheckRe
             deps.check_results.append(f"{pending.player_nickname} 潜行对抗失败 → 被发现，不再隐匿")
 
     return CheckResultNotice(
-        check_request_id=pending.check_request_id,
+        check_request_id=pending.decision_id,
         kind="skill",
         player_id=detail["player_id"],
         skill=detail["skill"],

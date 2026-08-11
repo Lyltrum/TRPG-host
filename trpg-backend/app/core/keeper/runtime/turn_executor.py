@@ -7,7 +7,7 @@
   骰子也改不了账）；
 - `create_pending_checks`：checks/san_checks **不再在这里掷骰**——两段式
   玩家掷骰下，骰子由玩家在前端点击确认后才服务端权威生成，这里只把裁决
-  产出的检定请求解析成待掷记录（`pending.PendingCheck`），真正的掷骰在
+  产出的检定请求解析成待掷记录（`pending.PendingDecision`），真正的掷骰在
   `KeeperAgent.resolve_check` 里发生（见 agent.py）。
 """
 
@@ -18,7 +18,7 @@ from app.core.keeper.capabilities import executors, pendings
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.registry import PendingContext, TurnFacts
 from app.core.keeper.runtime.deps import KeeperDeps
-from app.core.keeper.runtime.pending import PendingCheck
+from app.core.keeper.runtime.pending import PendingDecision
 
 logger = structlog.get_logger()
 
@@ -73,7 +73,7 @@ async def execute_side_effects(
 
 async def create_pending_checks(
     deps: KeeperDeps, decision: KeeperDecision, *, subject: Subject = KEEPER
-) -> tuple[list[PendingCheck], list[str]]:
+) -> tuple[list[PendingDecision], list[str]]:
     """把裁决里的检定解析成待掷记录——**本函数不掷骰**。
 
     两段式玩家掷骰下，骰子由玩家在前端点确认后才由服务端权威生成（见
@@ -87,7 +87,7 @@ async def create_pending_checks(
     """
     from app.models.room import Room
 
-    pending: list[PendingCheck] = []
+    pending: list[PendingDecision] = []
     issues: list[str] = []
 
     # 发起检定同样是受权限管辖的动作（exec/14 P2）。无 REQUEST_CHECK /

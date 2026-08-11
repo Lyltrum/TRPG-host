@@ -103,7 +103,7 @@ from app.core.keeper.runtime.location_state import (
     scene_changed as has_scene_changed,
 )
 from app.core.keeper.runtime.narration_stream import NarrationStream
-from app.core.keeper.runtime.pending import pending_check_manager, to_notice
+from app.core.keeper.runtime.pending import pending_decision_manager, to_notice
 from app.core.keeper.runtime.phase import (
     PHASE_FINISHED,
     PHASE_KEY,
@@ -174,14 +174,14 @@ class KeeperAgent(Narrator):
         # 骰子掷完。重发同一个请求（而不是静默不回应），防前端刷新丢卡片。
         # 主动心跳 / 开场仪式：有待掷时直接放弃（开场不该卡在旧检定上）。
         async with self._session_factory() as db:
-            pending = await pending_check_manager.first(db, room_id)
+            pending = await pending_decision_manager.first(db, room_id)
         if pending is not None:
             if is_heartbeat or is_opening_ceremony:
                 return NarrationOutcome(text="")
             logger.info(
                 "keeper_narrate_pending_guard",
                 room_id=room_id,
-                check_request_id=pending.check_request_id,
+                check_request_id=pending.decision_id,
             )
             return NarrationOutcome(
                 text="守秘人正在等待掷骰——请先完成待掷的检定。",
@@ -406,7 +406,7 @@ class KeeperAgent(Narrator):
 
         if pending_checks:
             async with self._session_factory() as db:
-                await pending_check_manager.add(db, room_id, pending_checks)
+                await pending_decision_manager.add(db, room_id, pending_checks)
                 await db.commit()
             # 🔴 真人实测 2026-07-29：检定发起前的铺垫文字，不止会提前泄露
             # 检定结果（"东北角矮墓碑"这类招供内容），还会提前把检定对应的
@@ -510,7 +510,7 @@ class KeeperAgent(Narrator):
         # 🔴 pop 与"掷错人时放回队首"必须在**同一个事务**里：中间那次判断如果
         # 跨了事务，pop 已经提交而 requeue 失败就会把一次待掷检定凭空吃掉。
         async with self._session_factory() as db:
-            pending = await pending_check_manager.pop(db, room_id, check_request_id)
+            pending = await pending_decision_manager.pop(db, room_id, check_request_id)
             if pending is None:
                 raise KeeperToolError("没有这个待掷的检定（可能已被结算）")
             if pending.player_id != player_id:
@@ -570,7 +570,7 @@ class KeeperAgent(Narrator):
             await on_result(notice)
 
         async with self._session_factory() as db:
-            next_pending = await pending_check_manager.first(db, room_id)
+            next_pending = await pending_decision_manager.first(db, room_id)
         if next_pending is not None:
             return NarrationOutcome(
                 text="",

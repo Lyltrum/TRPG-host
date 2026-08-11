@@ -460,7 +460,7 @@ def test_reconnect_resends_the_pending_check_card(sync_client: TestClient) -> No
     import asyncio
 
     from app.controller import ws as ws_controller
-    from app.core.keeper.runtime.pending import PendingCheck, pending_check_manager
+    from app.core.keeper.runtime.pending import PendingDecision, pending_decision_manager
 
     # 🔴 **不要** `from tests.conftest import TestSessionLocal`——conftest 顶部
     # 明文警告过：那会把 conftest 当成另一个模块再导入一次、连带新建一个引擎，
@@ -473,12 +473,12 @@ def test_reconnect_resends_the_pending_check_card(sync_client: TestClient) -> No
 
     async def _seed() -> None:
         async with session_factory() as db:
-            await pending_check_manager.add(
+            await pending_decision_manager.add(
                 db,
                 room["roomId"],
                 [
-                    PendingCheck(
-                        check_request_id="chk-survived",
+                    PendingDecision.roll(
+                        decision_id="chk-survived",
                         kind="skill",
                         room_id=room["roomId"],
                         player_id=room["playerId"],

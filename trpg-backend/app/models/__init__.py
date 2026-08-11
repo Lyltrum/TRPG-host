@@ -16,7 +16,7 @@ from app.models.content import (
     ScenarioScene,
     World,
 )
-from app.models.event import CheckResult, Event, PendingCheckRow
+from app.models.event import CheckResult, Event, PendingDecisionRow
 from app.models.replay import ModuleImportJob, RoomSession, RoomSummary
 from app.models.room import Character, Note, Player, Room
 from app.models.user import User, UserCharacterTemplate, UserSession
@@ -36,7 +36,7 @@ __all__ = [
     "ModuleSanTrigger",
     "ModuleWinCondition",
     "Note",
-    "PendingCheckRow",
+    "PendingDecisionRow",
     "Player",
     "Room",
     "RoomSession",

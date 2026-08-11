@@ -512,6 +512,29 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
         movers = speakers | {
             pid for pid in roster if location_of(current_state, pid) in speaker_places
         }
+        # 🔴 房间指针不许把人搬进**另一组已经占着的地方**（exec/33 §10 #79，
+        # 双人真机最强复现：阿贵原话「我在门廊上待着不动」，位置照样被挪进了
+        # 阿福所在的地下室）。根因是**一个字段扮两个角色**：裁决器把
+        # `current_node_id` 当"这一幕的镜头在哪"写（分头时它写的往往是另一组
+        # 那边），而这里把它当"把发言者和同处的人搬过去"执行。
+        #
+        # 那不是移动，**那是会合**——而会合必须由当事人确认（§5.2），不能由
+        # 房间指针隐式完成。协议当时确实挂了卡、投递也没漏，但**位置已经写
+        # 进去了**：护栏、局面块「各自所在」、下一轮叙事读的都是错的地方。
+        #
+        # 判错方向是有意的（同 §5.2 的不对称）：拒绝执行只是"他这一轮没过去"，
+        # 玩家再说一遍就是了；反过来判错是不可撤回的隐式并组。
+        # ⚠️ 已知代价：分头的人**主动**过去会合、而裁决器只写了 `current_node_id`
+        # 时，这里也会拒。那条路要走 `moves` 逐人点名（点名是"我要去"的表达）。
+        occupied_by_others = {
+            pid
+            for pid in roster
+            if pid not in movers and location_of(current_state, pid) == node_id
+        }
+        if occupied_by_others and any(location_of(current_state, pid) != node_id for pid in movers):
+            # 一步都不做（连房间指针也不写）：`location_of` 会回落到房间指针，
+            # 只改指针照样能把没有显式条目的人隔空并过去。
+            return f"没有移动：{title}（{node_id}）那里已经有别人了，会合要由当事人确认"
         # ⚠️ 谁"真的换了地方"也必须在改指针**之前**算——写完 CURRENT_NODE_KEY
         # 再问，所有回落到房间指针的人都会显示成"已经在新节点"，等于没判。
         # （跟上面 speaker_places 同一个坑，写这段时又踩了一次。）

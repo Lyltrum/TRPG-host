@@ -25,25 +25,70 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import random
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # 真类型只给检查器看：运行时导入 `app.*` 会绕开下面那段 sys.path
+    from app.core.keeper.runtime.agent import KeeperAgent
+    from app.core.narration.contract import NarrationContext
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 from sqlalchemy.pool import NullPool  # noqa: E402
 
-from scripts.module_probe.probe import load_api_key  # noqa: E402
-
-#: 默认轮次：覆盖「隐式搜查（该触发检定）」「直接对话」「元问题（该给引导）」
+#: 默认轮次：覆盖「隐式搜查（该触发检定）」「元问题（该给引导）」
+#: 🔴 **回放测试直接 import 这个常量**，不再各存一份——两边漂了的症状是
+#: 请求指纹对不上，而那时人会以为是 prompt 变了，去重录一盘同样对不上的磁带。
 DEFAULT_ROUNDS = [
     "我仔细查看四周，有什么不对劲的地方吗？",
     "我现在该做什么？",
 ]
 
+#: 掷骰种子。**录制与回放必须用同一个**：结算叙事的 prompt 里带着掷出的点数，
+#: 骰子不一样，请求指纹就对不上。骰子本身不走模型，磁带录不到它。
+TAPE_RNG_SEED = 20260811
+
+
+async def play_round(keeper: KeeperAgent, context: NarrationContext) -> list[str]:
+    """跑一轮，**并把这一轮发起的待掷检定全部结算掉**，返回每次拿到的正文。
+
+    🔴 为什么要结算：不结算的话，只要裁决器在第一轮发起了检定，第二轮就会撞上
+    `narrate()` 的待掷守卫——直接返回一句代码固定文案、**不调模型**。磁带于是
+    少录一半，而"这一轮会不会发检定"是模型当下的输出，**覆盖形状因此靠运气**
+    （同一份 prompt 连录三次是 2 条、改之前是 4 条）。
+
+    结算之后还顺带覆盖了**结算叙事**那一拍——真实对局里最常见的一种回合，
+    此前磁带一次都没录到过。
+
+    类型标注走 `TYPE_CHECKING`：本模块不能在导入期拉起 `app.*`（脚本入口在
+    `_run` 里才 import），但签名该说清楚它要什么。
+    """
+    # `NarrationContext.room_id` 在契约上可为 None（心跳那条路没有房间），
+    # 而这里必然在一个真实房间里跑——显式失败，不给它静默滑过去的机会。
+    assert context.room_id is not None, "play_round 要在一个真实房间里跑"
+    texts: list[str] = []
+    outcome = await keeper.narrate(context)
+    texts.append(outcome.text)
+    # 逐个结算：队列清空的那一次，`resolve_check` 内部会复用 `narrate()`
+    # 触发结算叙事，所以这里拿到的可能是一段真正的叙事。
+    for request in list(outcome.check_requests):
+        settled = await keeper.resolve_check(
+            context.room_id,
+            request.player_id,
+            request.check_request_id,
+        )
+        texts.append(settled.text)
+    return texts
+
 
 async def _run(module_path: Path, out_path: Path, rounds: list[str]) -> int:
+    # 🔴 都在函数里导入：本模块被 `tests/test_keeper_replay.py` import（两边
+    # 共用轮次与跑法），而 `module_probe.probe` 要求它自己的目录先进 sys.path，
+    # 放在模块顶层会让那条测试在收集阶段就炸。
     from app.core.coc7.content import build_coc7_ruleset
     from app.core.db import Base
     from app.core.keeper.contract.module_loader import load_module
@@ -51,6 +96,7 @@ async def _run(module_path: Path, out_path: Path, rounds: list[str]) -> int:
     from app.core.llm_tape import recording
     from app.core.narration.contract import NarrationContext
     from app.models.room import Character, Player, Room
+    from scripts.module_probe.probe import load_api_key
 
     module = load_module(module_path)
     ruleset = build_coc7_ruleset()
@@ -117,6 +163,7 @@ async def _run(module_path: Path, out_path: Path, rounds: list[str]) -> int:
         module=module,
         ruleset=ruleset,
         session_factory=session_factory,
+        rng=random.Random(TAPE_RNG_SEED),
     )
 
     # 磁带里的 scenario 就是模组路径——版权守卫据此判断能不能进 git。
@@ -124,20 +171,16 @@ async def _run(module_path: Path, out_path: Path, rounds: list[str]) -> int:
     with recording(out_path, scenario=scenario) as session:
         for i, utterance in enumerate(rounds, start=1):
             print(f"\n===== 轮次 {i} =====\n玩家：{utterance}", flush=True)
-            outcome = await keeper.narrate(
+            for text in await play_round(
+                keeper,
                 NarrationContext(
                     utterance=utterance,
                     player_nickname=nickname,
                     room_id=room_id,
                     player_id=player_id,
-                )
-            )
-            print(f"守秘人：{outcome.text}", flush=True)
-            if outcome.check_requests:
-                print(
-                    "  检定请求：" + ", ".join(c.skill or c.kind for c in outcome.check_requests),
-                    flush=True,
-                )
+                ),
+            ):
+                print(f"守秘人：{text}", flush=True)
 
     print(
         f"\n磁带已写入 {out_path}：{len(session.tape.entries)} 次调用 "

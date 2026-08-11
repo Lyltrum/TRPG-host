@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 import pytest
@@ -29,16 +30,16 @@ from app.core.keeper.runtime.agent import KeeperAgent
 from app.core.llm_tape import Tape, replaying
 from app.core.narration.contract import NarrationContext
 from app.models.room import Character, Player, Room
+from scripts.record_keeper_tape import DEFAULT_ROUNDS, TAPE_RNG_SEED, play_round
 
 TAPE_PATH = Path(__file__).parent / "tapes" / "keeper_minimal.json"
 MODULE_PATH = Path(__file__).parent / "fixtures" / "keeper_module.json"
 
-#: 与录制时（scripts/record_keeper_tape.py 的 DEFAULT_ROUNDS）严格一致，
-#: 否则请求指纹对不上（会被 drift 断言抓到）。
-ROUNDS = [
-    "我仔细查看四周，有什么不对劲的地方吗？",
-    "我现在该做什么？",
-]
+#: 🔴 直接 import 录制脚本的常量与跑法，**不再各存一份**。
+#: 两边漂了的症状是请求指纹对不上，而那时人的第一反应是"prompt 变了"，
+#: 于是去重录一盘同样对不上的磁带——「两处必须一致」的声明过时了比普通注释
+#: 过时更坏，它会让人以为约束还在。
+ROUNDS = DEFAULT_ROUNDS
 
 #: `narrate()` 在"还有待掷检定"时返回的代码固定文案（agent.py），不经过 LLM。
 _PENDING_CHECK_NOTICE = "守秘人正在等待掷骰——请先完成待掷的检定。"
@@ -113,20 +114,25 @@ async def _play(tmp_path: Path) -> tuple[list[str], dict, list]:
         module=load_module(MODULE_PATH),
         ruleset=build_coc7_ruleset(),
         session_factory=session_factory,
+        # 🔴 与录制同一个种子：结算叙事的 prompt 里带着掷出的点数，骰子不一样
+        # 请求指纹就对不上（骰子本身不走模型，磁带录不到它）。
+        rng=random.Random(TAPE_RNG_SEED),
     )
 
     texts: list[str] = []
     with replaying(TAPE_PATH) as session:
         for utterance in ROUNDS:
-            outcome = await keeper.narrate(
-                NarrationContext(
-                    utterance=utterance,
-                    player_nickname=nickname,
-                    room_id=room_id,
-                    player_id=player_id,
+            texts.extend(
+                await play_round(
+                    keeper,
+                    NarrationContext(
+                        utterance=utterance,
+                        player_nickname=nickname,
+                        room_id=room_id,
+                        player_id=player_id,
+                    ),
                 )
             )
-            texts.append(outcome.text)
 
     async with session_factory() as db:
         room = await db.get(Room, room_id)
@@ -184,3 +190,21 @@ async def test_state_updates_are_persisted(tmp_path: Path) -> None:
     _, keeper_state, _ = await _play(tmp_path)
     assert keeper_state, "整局跑完 keeper_state 仍为空——记账链路断了"
     assert "当前场景" in keeper_state
+
+
+@pytest.mark.asyncio
+async def test_the_tape_covers_a_settlement_turn(tmp_path: Path) -> None:
+    """🔴 磁带必须录到「玩家掷完骰之后那一拍」——**覆盖不许再靠运气**。
+
+    此前 `_play` 只发言、不结算：裁决器哪一轮发起了检定，下一轮就撞上
+    `narrate()` 的待掷守卫，直接返回代码固定文案、不调模型。于是同一份 prompt
+    连录三次是 2 次调用、改动前那次是 4 次——**录到哪条路径取决于模型当下的
+    输出**，而没有任何东西会告诉你覆盖变薄了。
+
+    现在每轮的待掷检定都会被结算掉（`play_round`），结算叙事因此进了磁带；
+    这条断言就是防它悄悄退回去的那道闸。
+    """
+    texts, _, _ = await _play(tmp_path)
+    assert len(texts) > len(ROUNDS), "磁带没覆盖到结算叙事那一拍（回合数 == 发言数）"
+    # 待掷守卫那句固定文案不该再出现：检定都在本轮结算掉了
+    assert _PENDING_CHECK_NOTICE not in texts

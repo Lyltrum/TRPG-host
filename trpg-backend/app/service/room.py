@@ -723,8 +723,22 @@ async def get_replay(
 
     先校验发起者是这个房间的成员（复盘是"只有参与者能看"的内容），再查事件。
     审计类事件按 `_REPLAY_HIDDEN_EVENT_TYPES` 排除。
+
+    ## 🔴 对局中按受众裁，散场之后全开（exec/33 §10 #78 的另一半）
+
+    分头叙事每段落库时都写了 `payload.audience`（当初为审计留的），**却一直
+    没有消费方**——而前端进房/刷新正是靠这个接口重建时间线，于是刷新一次就把
+    另一组的叙事全拿到了。这跟待掷卡片补发是同一个病：**同一件事的两头，
+    一头做了一头没做**；只是这一头宽得多（整局的分段叙事，不只是一张卡）。
+
+    `phase == "Completed"` 之后不再裁：分头的保密前提是「你不在场」，散场之后
+    大家本来就会互相讲，而复盘的价值恰恰是看见别人那半边（用户 2026-08-11 裁定）。
+
+    判据是**声明式**的：只裁"自己声明了受众"的那些行，没声明的照旧。加一类
+    带受众的事件时，它自动被裁——不必回来改这里（对比上面那个黑名单）。
     """
-    await require_room_member(db, room_id, reconnect_token)
+    player = await require_room_member(db, room_id, reconnect_token)
+    room = await find_room_by_id(db, room_id)
     result = await db.scalars(
         select(Event)
         .where(
@@ -733,7 +747,22 @@ async def get_replay(
         )
         .order_by(Event.created_at)
     )
-    return [ReplayEventRead.model_validate(e) for e in result]
+    events = list(result)
+    if room.phase != "Completed":
+        events = [e for e in events if _replay_visible_to(e, player.id)]
+    return [ReplayEventRead.model_validate(e) for e in events]
+
+
+def _replay_visible_to(event: Event, player_id: str) -> bool:
+    """这一行事件该不该出现在这个人的回放里。
+
+    没有 `audience` 字段 = 没有声明受众 = 公开，照旧可见（P5.2 之前的全部
+    事件、以及所有未分头的轮次都走这一支，行为逐字不变）。
+    """
+    audience = (event.payload or {}).get("audience")
+    if audience is None:
+        return True
+    return player_id in audience
 
 
 async def get_summary(db: AsyncSession, room_id: str) -> RoomSummaryRead:

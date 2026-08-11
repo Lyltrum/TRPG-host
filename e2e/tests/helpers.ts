@@ -1,3 +1,5 @@
+import { DatabaseSync } from 'node:sqlite'
+
 import { createTrpgSdk, type TrpgSdk } from 'trpg-sdk'
 
 const BASE_URL = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8000'
@@ -92,4 +94,56 @@ export function legalCharacterPayload(attributes: Record<string, number>) {
     background: '',
     notes: '',
   }
+}
+
+/**
+ * 直接把 `keeper_state` 写进 e2e 库——**多人分头这条线唯一测得动的办法**。
+ *
+ * 「谁跟谁在一处」由守秘人裁决派生，而 e2e 刻意不带 API key（跑真实大模型
+ * 会让结果取决于外部服务、还烧钱）。于是分头状态没有任何一条**确定性**路径
+ * 造得出来。投递按位置分组，位置造不出来 = 分头相关的投递一条都测不到。
+ *
+ * 🔴 只用来**摆状态**，不用来断言：断言仍然只看客户端各自收到了什么字节。
+ */
+export function seedKeeperState(roomId: string, state: Record<string, unknown>): void {
+  const db = openE2eDb()
+  try {
+    const result = db
+      .prepare('UPDATE rooms SET keeper_state = ? WHERE id = ?')
+      .run(JSON.stringify(state), storedId(roomId))
+    // 🔴 改了 0 行必须炸。第一版没有这一句，UUID 形态对不上、UPDATE 静默改了
+    // 0 行，于是"分头"从来没被摆起来过——而用例照样跑得通，只是**在验一个
+    // 不存在的前置**。同族于「一个动作设了但什么都没发生，跟没设看起来一样」。
+    if (Number(result.changes) !== 1) {
+      throw new Error(`seedKeeperState 没有改到那一行（changes=${result.changes}，roomId=${roomId}）`)
+    }
+  } finally {
+    db.close()
+  }
+}
+
+/** 读回 keeper_state——调试用。 */
+export function readKeeperState(roomId: string): unknown {
+  const db = openE2eDb()
+  try {
+    const row = db.prepare('SELECT keeper_state FROM rooms WHERE id = ?').get(storedId(roomId)) as
+      | { keeper_state: string | null }
+      | undefined
+    return row?.keeper_state ? JSON.parse(row.keeper_state) : null
+  } finally {
+    db.close()
+  }
+}
+
+function openE2eDb(): DatabaseSync {
+  const file = process.env.E2E_DB_FILE
+  if (!file) throw new Error('E2E_DB_FILE 没有传进来——请检查 run-e2e.ts 的 env')
+  // node:sqlite 是内置模块，不为一句 UPDATE 引第三方依赖（e2e 的依赖越少越好）。
+  return new DatabaseSync(file)
+}
+
+/** API 给的是带连字符的 UUID，而 `Uuid(as_uuid=False)` 在 SQLite 里存成
+ *  **不带连字符**的 32 位。直接拿 API 那个值查库会一行都匹配不到。 */
+function storedId(id: string): string {
+  return id.replace(/-/g, '')
 }

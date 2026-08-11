@@ -517,6 +517,153 @@ def test_reconnect_resends_the_pending_check_card(sync_client: TestClient) -> No
     assert second["payload"]["skill"] == "格斗：斗殴"
 
 
+def test_reconnect_does_not_resend_the_other_groups_card(sync_client: TestClient) -> None:
+    """🔴 exec/33 §10 #78：**补发不按受众裁 = 泄露**，双人真机一局复现两次。
+
+    阿福在屋后掷潜行，阿贵**刷新一下页面**就连那张卡带理由文本一起收到了。
+    首发是裁过的（`_send_to_colocated`），补发这一半却把房间里所有卡片原样
+    推给刚绑定的连接——同一件事的两头，一头做了一头没做。
+
+    ⚠️ 断言"没收到"必须让功能回退时**变红而不是挂住**：握手后立刻发一条必然
+    有回复的消息，断言下一条就是那个回执（中间挤进卡片就是顺序不对）。
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.controller import ws as ws_controller
+    from app.core.keeper.runtime.location_state import PLAYER_LOCATION_KEY
+    from app.core.keeper.runtime.pending import PendingDecision, pending_decision_manager
+    from app.models.room import Room
+
+    session_factory = ws_controller.async_session_factory
+
+    host_token = register_and_login(sync_client, "leak_host")
+    room = create_room(sync_client, host_token)
+    guest_token = register_and_login(sync_client, "leak_guest")
+    guest = sync_client.post(
+        f"{ROOMS_BASE}/{room['roomCode']}/join",
+        json={"nickname": "阿贵"},
+        headers={"Authorization": f"Bearer {guest_token}"},
+    ).json()["data"]
+    assert guest["playerId"] != room["playerId"]
+
+    async def _seed() -> None:
+        async with session_factory() as db:
+            db_room = await db.scalar(select(Room).where(Room.id == room["roomId"]))
+            assert db_room is not None, "摆前置状态必须真的摆上：查不到就该当场炸"
+            db_room.keeper_state = {
+                PLAYER_LOCATION_KEY: (
+                    f"{room['playerId']}@backyard, {guest['playerId']}@front-porch"
+                )
+            }
+            await pending_decision_manager.add(
+                db,
+                room["roomId"],
+                [
+                    PendingDecision.roll(
+                        decision_id="chk-not-yours",
+                        kind="skill",
+                        room_id=room["roomId"],
+                        player_id=room["playerId"],
+                        player_nickname="阿福",
+                        skill="潜行",
+                        loss_on_success="0",
+                        loss_on_failure="0",
+                        reason="避免被科比特或邻居发现",
+                    )
+                ],
+            )
+            await db.commit()
+
+    asyncio.run(_seed())
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={guest_token}") as ws:
+        ws.send_json(
+            {
+                "type": "room.join",
+                "playerId": guest["playerId"],
+                "payload": {"reconnectToken": guest["reconnectToken"]},
+            }
+        )
+        _send_chat(ws, guest, "在吗", "cid-leak")
+        first = ws.receive_json()
+        second = ws.receive_json()
+
+    assert first["type"] == "session.bound"
+    assert second["type"] == "chat.message", f"另一组的检定卡片漏给了阿贵：{second}"
+    assert "科比特" not in str(second)
+
+
+def test_reconnect_still_resends_your_own_card_while_split(sync_client: TestClient) -> None:
+    """上一条不许把功能整个关掉：**自己那张**卡分头时照样要补发（#56 仍然成立）。"""
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.controller import ws as ws_controller
+    from app.core.keeper.runtime.location_state import PLAYER_LOCATION_KEY
+    from app.core.keeper.runtime.pending import PendingDecision, pending_decision_manager
+    from app.models.room import Room
+
+    session_factory = ws_controller.async_session_factory
+
+    host_token = register_and_login(sync_client, "split_host")
+    room = create_room(sync_client, host_token)
+    guest_token = register_and_login(sync_client, "split_guest")
+    guest = sync_client.post(
+        f"{ROOMS_BASE}/{room['roomCode']}/join",
+        json={"nickname": "阿贵"},
+        headers={"Authorization": f"Bearer {guest_token}"},
+    ).json()["data"]
+
+    async def _seed() -> None:
+        async with session_factory() as db:
+            db_room = await db.scalar(select(Room).where(Room.id == room["roomId"]))
+            assert db_room is not None
+            db_room.keeper_state = {
+                PLAYER_LOCATION_KEY: (
+                    f"{room['playerId']}@backyard, {guest['playerId']}@front-porch"
+                )
+            }
+            await pending_decision_manager.add(
+                db,
+                room["roomId"],
+                [
+                    PendingDecision.roll(
+                        decision_id="chk-mine",
+                        kind="skill",
+                        room_id=room["roomId"],
+                        player_id=room["playerId"],
+                        player_nickname="阿福",
+                        skill="潜行",
+                        loss_on_success="0",
+                        loss_on_failure="0",
+                        reason="避免被科比特或邻居发现",
+                    )
+                ],
+            )
+            await db.commit()
+
+    asyncio.run(_seed())
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={host_token}") as ws:
+        ws.send_json(
+            {
+                "type": "room.join",
+                "playerId": room["playerId"],
+                "payload": {"reconnectToken": room["reconnectToken"]},
+            }
+        )
+        _send_chat(ws, room, "在吗", "cid-mine")
+        first = ws.receive_json()
+        second = ws.receive_json()
+
+    assert first["type"] == "session.bound"
+    assert second["type"] == "check.request", f"分头时自己的卡片没补发：{second}"
+    assert second["payload"]["checkRequestId"] == "chk-mine"
+
+
 def test_reconnect_sends_nothing_extra_when_the_queue_is_empty(
     sync_client: TestClient,
 ) -> None:

@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.event import Event
-from app.models.room import Player
+from app.models.room import Player, Room
 from tests.helpers import ROOMS_BASE, bearer, create_room, join_room, reconnect, register
 
 
@@ -380,6 +380,65 @@ async def test_replay_requires_room_member_token(client: AsyncClient) -> None:
     )
     assert ok.status_code == 200
     assert ok.json()["data"] == []
+
+
+async def _split_room_with_two_narrations(
+    client: AsyncClient, db_session: AsyncSession
+) -> tuple[dict, dict]:
+    """造一间两人房，两段各自只发给一个人的分头叙事。返回 (房主, 队友)。"""
+    host = await create_room(client, max_players=4)
+    guest_account = await register(client)
+    guest = await join_room(client, host["roomCode"], guest_account, nickname="阿贵")
+    for owner, text in ((host, "地下室的味道很冲。"), (guest, "门廊上只有风声。")):
+        db_session.add(
+            Event(
+                room_id=host["roomId"],
+                player_id=None,
+                event_type="narration.push",
+                payload={"text": text, "audience": [owner["playerId"]]},
+            )
+        )
+    await db_session.commit()
+    return host, guest
+
+
+async def test_replay_is_cut_by_audience_while_the_game_is_running(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """🔴 exec/33 §10 #78 的另一半：**刷新一次就把另一组的叙事全拿到了**。
+
+    分头叙事落库时早就写了 `payload.audience`，但这个接口一直原样全返回——
+    而前端进房/刷新正是靠它重建时间线。「加了字段没有消费方」。
+    """
+    host, guest = await _split_room_with_two_narrations(client, db_session)
+
+    mine = await client.get(
+        f"{ROOMS_BASE}/{host['roomId']}/replay", headers=reconnect(host["reconnectToken"])
+    )
+    assert [e["payload"]["text"] for e in mine.json()["data"]] == ["地下室的味道很冲。"]
+    assert "门廊" not in mine.text
+
+    theirs = await client.get(
+        f"{ROOMS_BASE}/{host['roomId']}/replay", headers=reconnect(guest["reconnectToken"])
+    )
+    assert [e["payload"]["text"] for e in theirs.json()["data"]] == ["门廊上只有风声。"]
+    assert "地下室" not in theirs.text
+
+
+async def test_replay_opens_up_once_the_game_is_over(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """散场之后复盘全开：分头的保密前提是「你不在场」，而复盘的价值正是看见另一半。"""
+    host, _guest = await _split_room_with_two_narrations(client, db_session)
+    room = await db_session.get(Room, host["roomId"])
+    assert room is not None
+    room.phase = "Completed"
+    await db_session.commit()
+
+    response = await client.get(
+        f"{ROOMS_BASE}/{host['roomId']}/replay", headers=reconnect(host["reconnectToken"])
+    )
+    assert len(response.json()["data"]) == 2
 
 
 async def test_replay_never_leaks_the_keeper_decision_audit(

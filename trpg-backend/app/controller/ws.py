@@ -591,7 +591,7 @@ async def _handle_room_join(
     payload = SessionBoundPayload(room_id=room_id, player_id=player_id)
     envelope = ServerEnvelope(type="session.bound", payload=payload.model_dump(by_alias=True))
     await websocket.send_json(envelope.model_dump(by_alias=True))
-    await _resend_pending_checks(db, websocket, room_id)
+    await _resend_pending_checks(db, websocket, room_id, player_id)
     # 🔴 会合确认卡也要补发（exec/34 §2.1）：它跟待掷检定是同一件事——"等某个
     # 玩家做决定"——却因为当初各写了一套，只有掷骰那半有重连补发。症状是断线
     # 重连之后「已会合」按钮消失，而服务端还记着他挂在那儿，两组就一直分着。
@@ -606,7 +606,9 @@ async def _handle_room_join(
     return True
 
 
-async def _resend_pending_checks(db: AsyncSession, websocket: WebSocket, room_id: str) -> None:
+async def _resend_pending_checks(
+    db: AsyncSession, websocket: WebSocket, room_id: str, viewer_id: str
+) -> None:
     """重连后补发还没掷的检定卡片（真人实测 exec/23 #56）。
 
     `check.request` 只在裁决那一刻**实时推过一次**。刷新页面或断线重连的人
@@ -618,6 +620,13 @@ async def _resend_pending_checks(db: AsyncSession, websocket: WebSocket, room_id
 
     只发给**这一条刚绑定的连接**，不广播：别人手上的卡片好好的，重发一遍只会
     在他们屏幕上多出一张重复卡。
+
+    🔴 **要按受众裁**（exec/33 §10 #78，双人真机一局复现两次）：首发是裁过的
+    （`_broadcast_check_request` → `_send_to_colocated`），补发这一半却把房间里
+    **所有**卡片原样推给刚绑定的连接——阿福在屋后掷潜行，阿贵刷新一下页面就
+    连那张卡带理由文本一起收到了。又是**同一件事的两头，一头做了一头没做**。
+    判据只能有一份：这里复用首发那个 `_audience_at_speaker_location`，
+    不另写一套。
     """
     from app.core.keeper.runtime.pending import (
         LUCK_SPEND_KIND,
@@ -626,7 +635,13 @@ async def _resend_pending_checks(db: AsyncSession, websocket: WebSocket, room_id
         to_notice,
     )
 
+    async def _may_see(owner_id: str) -> bool:
+        audience = await _audience_at_speaker_location(db, room_id, owner_id)
+        return audience is None or viewer_id in audience
+
     for pending in await pending_decision_manager.list_all(db, room_id, ROLL_KINDS):
+        if not await _may_see(pending.player_id):
+            continue
         notice = to_notice(pending)
         payload, event_type = _check_request_envelope(notice)
         envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))
@@ -635,6 +650,8 @@ async def _resend_pending_checks(db: AsyncSession, websocket: WebSocket, room_id
     # 停在那儿**（`TURN_BLOCKING_KINDS`）。漏了这一半就是 `exec/23 #56` 第三次
     # 复发：服务端记得、客户端不知道。
     for offer in await pending_decision_manager.list_all(db, room_id, {LUCK_SPEND_KIND}):
+        if not await _may_see(offer.player_id):
+            continue
         envelope = ServerEnvelope(
             type="luck.offer", payload=_luck_offer_payload(offer).model_dump(by_alias=True)
         )

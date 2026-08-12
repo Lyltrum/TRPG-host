@@ -72,6 +72,13 @@ class Room(Base):
     # 其内容——这是 agent 的自由笔记本，形状由 agent 自己决定。
     keeper_state: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
 
+    # 玩家纠错通道（`exec/35`）的回滚点：上一轮**开始之前**的世界指针 +
+    # 那一轮的原话。形状 `{"keeper_state": {...}, "utterances": [...]}`。
+    #
+    # 🔴 只存指针，不存 HP/线索/骰子。纠错的语义是「你把我的话理解错了」，
+    # 不是「我要改结果」——能撤骰子就等于能刷骰子。
+    last_turn_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

@@ -244,6 +244,17 @@ export class RoomSocket {
    *
    * 只有确认这一个动作，**没有否认**：不确认就是维持分离，那本来就是默认与
    * 安全方向。走到别人所在的地点时后端会在 `party.update` 里给 `mergePendingAt`。 */
+  /** turn.clarify —— 「你把我的话理解错了」（`exec/35`）。
+   *
+   * 服务端会把世界指针回滚到上一轮之前、清掉还没掷的待决定项，然后带着这句
+   * 澄清重裁那一轮。**已经发生的事不回滚**（掷过的骰子、扣掉的 HP/SAN、
+   * 揭开的线索）——能撤骰子就等于能刷。
+   *
+   * 只能纠**最新**那一轮，没有"纠哪一轮"这个参数。 */
+  clarifyTurn(playerId: string, clarification: string): void {
+    this.send('turn.clarify', playerId, { clarification });
+  }
+
   confirmMerge(playerId: string): void {
     this.send('party.merge.confirm', playerId, {});
   }

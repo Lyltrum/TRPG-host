@@ -66,6 +66,12 @@ class NarrationContext:
     # 本轮各人的原话，逐条。空 = 只有 `utterance` 这一句（心跳/开场/掷骰结算
     # 路径）。分组叙事时按受众裁剪，见 KeeperAgent._narrate_per_audience。
     utterances: tuple[PlayerUtterance, ...] = ()
+    # 玩家纠错（`exec/35`）：非空 = 这一轮是**重裁上一轮**，`utterance` /
+    # `utterances` 是上一轮的原话，这里是玩家补的那句「你理解错了：……」。
+    #
+    # 🔴 它是**代码判的**（玩家点了按钮），不是模型分类出来的——「这句话是不是
+    # 在纠错」交给模型判就又多一层概率，而纠错本身正是用来兜模型判错的。
+    clarification: str | None = None
     # 世界心跳主动轮（路线 6）：裁决/叙事走克制模式，不发起检定。
     is_heartbeat: bool = False
     # 开场仪式轮（设计 05）：game.start 后自动跑的第一轮，不发起高风险检定。

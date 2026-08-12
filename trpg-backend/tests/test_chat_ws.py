@@ -682,3 +682,157 @@ def test_reconnect_sends_nothing_extra_when_the_queue_is_empty(
             }
         )
         assert ws.receive_json()["type"] == "session.bound"
+
+
+# ── 玩家纠错（exec/35） ───────────────────────────────
+
+
+class _RecordingNarrator(Narrator):
+    """记下每次 narrate 收到的上下文——纠错要验的正是"重跑的是哪一轮的原话"。"""
+
+    def __init__(self) -> None:
+        self.contexts: list[NarrationContext] = []
+
+    async def narrate(self, context: NarrationContext) -> NarrationOutcome:
+        self.contexts.append(context)
+        return NarrationOutcome(text="占位叙事。")
+
+
+def _clarify(ws, player: dict, text: str) -> None:
+    ws.send_json(
+        {
+            "type": "turn.clarify",
+            "playerId": player["playerId"],
+            "payload": {"clarification": text},
+        }
+    )
+
+
+def test_clarify_without_a_previous_turn_is_refused(sync_client: TestClient) -> None:
+    """🔴 没有可纠正的回合时必须显式失败。
+
+    凭空纠错不该退化成"跑一轮空的"——那会让守秘人对着没人说过的话讲一段。
+    """
+    token = register_and_login(sync_client, "clr_empty")
+    room = create_room(sync_client, token)
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+        _clarify(ws, room, "你理解错了")
+        err = ws.receive_json()
+
+    assert err["type"] == "error"
+    assert err["payload"]["code"] == "CONFLICT"
+
+
+def test_clarify_reruns_the_previous_turn_with_the_clarification(
+    sync_client: TestClient,
+) -> None:
+    """纠错重跑的是**上一轮的原话**，并带上澄清。
+
+    🔴 断言的是"重跑那一轮用的是什么输入"，不是"数据库里存了什么"——
+    存对了但没喂给裁决器，玩家看到的还是同一段错误理解。
+    """
+    narrator = _RecordingNarrator()
+    app.state.narrator = narrator
+
+    token = register_and_login(sync_client, "clr_rerun")
+    room = create_room(sync_client, token)
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+        _submit_action(ws, room, "我绕到屋后看看")
+        for _ in range(5):  # broadcast / busy / narration / busy / party
+            ws.receive_json()
+
+        _clarify(ws, room, "我说的是绕到屋后，不是进屋")
+        echo = ws.receive_json()
+        # 重跑那一轮是在同一条消息的处理里 await 的——不把它的推送收完就退出
+        # with 块，连接会在服务端还在跑的时候关掉。
+        rerun_events = [ws.receive_json() for _ in range(4)]
+
+    # 澄清本身也是玩家说的话：落库 + 广播，跟别的发言一条路
+    assert echo["type"] == "action.broadcast"
+    assert echo["payload"]["utterance"] == "我说的是绕到屋后，不是进屋"
+    assert [e["type"] for e in rerun_events] == [
+        "keeper.busy",
+        "narration.push",
+        "keeper.busy",
+        "party.update",
+    ]
+
+    assert len(narrator.contexts) == 2
+    rerun = narrator.contexts[1]
+    assert rerun.clarification == "我说的是绕到屋后，不是进屋"
+    # 重跑的是上一轮的原话，不是澄清本身
+    assert rerun.utterance == "我绕到屋后看看"
+    assert [u.text for u in rerun.utterances] == ["我绕到屋后看看"]
+    # 第一轮不带 clarification（退化保证）
+    assert narrator.contexts[0].clarification is None
+
+
+def test_clarify_rolls_the_world_pointer_back(sync_client: TestClient) -> None:
+    """🔴 纠错回滚的是**世界指针**：重跑那一轮之前，位置/场景必须回到上一轮之前。
+
+    这条是整个功能的地基——不回滚的话，"重讲一遍"讲的还是站在错误位置上的
+    那一幕（真机实测的误解几乎都表现为位置被写错）。
+
+    摆前置状态直连测试库（同步引擎，跟 conftest 建表同一条路），
+    但**验的是回滚这个动作本身**：先把指针改成错的，纠错之后它必须没了。
+    """
+    import json
+    import sqlite3
+
+    from conftest import _TEST_DB_PATH
+
+    narrator = _RecordingNarrator()
+    app.state.narrator = narrator
+
+    token = register_and_login(sync_client, "clr_rollback")
+    room = create_room(sync_client, token)
+
+    # 🔴 UUID 在库里**不带连字符**（`exec/33` 摆状态那条教训里踩过一次）
+    room_key = room["roomId"].replace("-", "")
+
+    def _set_scene(scene: str) -> None:
+        conn = sqlite3.connect(_TEST_DB_PATH)
+        try:
+            changed = conn.execute(
+                "UPDATE rooms SET keeper_state = ? WHERE id = ?",
+                (json.dumps({"当前场景": scene}), room_key),
+            ).rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        # 🔴 摆状态的 helper 改了 0 行必须炸：不然用例照样"跑得通"，
+        # 只是在验一个不存在的前置（`exec/33` 那条教训）。
+        assert changed == 1, "前置没摆上——UPDATE 改了 0 行"
+
+    def _read_scene() -> str | None:
+        conn = sqlite3.connect(_TEST_DB_PATH)
+        try:
+            row = conn.execute(
+                "SELECT keeper_state FROM rooms WHERE id = ?", (room_key,)
+            ).fetchone()
+        finally:
+            conn.close()
+        state = json.loads(row[0]) if row and row[0] else {}
+        return (state or {}).get("当前场景")
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+        _submit_action(ws, room, "我绕到屋后看看")
+        for _ in range(5):
+            ws.receive_json()
+
+        # 这一轮之后世界指针被写错了（模拟裁决器把人挪进屋里）
+        _set_scene("屋内")
+        assert _read_scene() == "屋内"
+
+        _clarify(ws, room, "我说的是绕到屋后，不是进屋")
+        for _ in range(5):  # 澄清回显 + 重跑那一轮的四条
+            ws.receive_json()
+
+    # 快照是在第一轮开始之前存的，那时还没有「当前场景」这一键 ⇒ 回滚之后
+    # 它应该**消失**，而不是留着那个错的值（「保留旧值 = 静默说谎」）。
+    assert _read_scene() is None

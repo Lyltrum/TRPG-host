@@ -79,6 +79,7 @@ from app.dto.ws import (
     SanCheckRollPayload,
     ServerEnvelope,
     SessionBoundPayload,
+    TurnClarifyPayload,
 )
 from app.service import auth as auth_service
 from app.service import chat as chat_service
@@ -784,6 +785,102 @@ async def _ingest_utterance(
     )
 
 
+async def _handle_clarify(
+    db: AsyncSession,
+    websocket: WebSocket,
+    room_id: str,
+    player_id: str,
+    clarification: str,
+) -> None:
+    """玩家纠错（`exec/35`）：「你把我的话理解错了」→ 回滚指针 → 重裁上一轮。
+
+    ## 为什么需要它
+
+    真人 KP 桌上最高频的交互就是纠错。我们此前一次都没做——玩家唯一的手段是
+    再说一句话，指望模型自己发现。真机实测多次出现位置被写错（`exec/31 #72`、
+    `exec/33 #79`），每一次都只能靠改代码修，**玩家在桌上没有出路**。
+
+    ## 边界：回滚指针，不回滚事实
+
+    - **回滚**：`keeper_state`（谁在哪、当前场景、分组、常驻状态）—— 一次赋值。
+    - **回滚**：还没掷的待决定项。它们是**基于误解**发起的，留着既没意义又会
+      挡住新一轮（待掷守卫）。
+    - **不回滚**：HP/SAN 变化、已揭开的线索、**掷出的骰子**。它们是既成事实；
+      骰子尤其不能撤——能撤就等于能刷。
+
+    ## 谁能按
+
+    任何人。被误解的不一定是发言的人——真机那次是「阿福说话、阿贵被挪走」。
+    """
+    # 函数内 import：keeper 那半边反过来依赖 controller 会成环（同本文件
+    # 其余几处待决定队列的用法）。
+    from app.core.keeper.runtime.pending import pending_decision_manager
+
+    if not clarification:
+        return
+    room = await room_service.find_room_by_id(db, room_id)
+    snapshot = (room.last_turn_snapshot or {}) if room is not None else {}
+    saved_utterances = snapshot.get("utterances") or []
+    if not saved_utterances:
+        await _send_error(websocket, "CONFLICT", "现在没有可以纠正的回合")
+        return
+
+    # 🔴 等锁，不当场拒绝：这是**按钮**，没有缓冲区（同 `_acquire_for_small_op`
+    # 的理由）。而且纠错最可能被按下的时刻，正是上一轮刚讲完、锁刚放开那一拍。
+    lock_token = await _acquire_for_small_op(room_id)
+    if lock_token is None:
+        await _send_error(websocket, "CONFLICT", "守秘人正忙，稍后再试")
+        return
+    try:
+        player = await room_service.get_player(db, player_id)
+        nickname = player.nickname if player is not None else "调查员"
+        # 澄清本身是玩家说的话：落库 + 按受众广播，跟别的发言一条路
+        # （历史、replay、per-audience 裁剪因此天然成立）。
+        # ⚠️ 不并入收集窗口——它不开新的一轮，它重跑旧的那一轮。
+        audience = await _audience_at_speaker_location(db, room_id, player_id)
+        event_payload: dict = {"utterance": clarification, "clarification": True}
+        if audience is not None:
+            event_payload["audience"] = audience
+        event_id = await room_service.record_event(
+            db, room_id, player_id, "action.submit", event_payload
+        )
+        envelope = ServerEnvelope(
+            type="action.broadcast",
+            payload=ActionBroadcastPayload(
+                player_id=player_id,
+                nickname=nickname,
+                utterance=clarification,
+                event_id=event_id,
+            ).model_dump(by_alias=True),
+        ).model_dump(by_alias=True)
+        if audience is None:
+            await manager.broadcast(room_id, envelope)
+        else:
+            await manager.send_to_players(room_id, audience, envelope)
+
+        # 回滚指针 + 清掉基于误解发起的待决定项
+        if room is not None:
+            room.keeper_state = snapshot.get("keeper_state")
+            await pending_decision_manager.clear_room(db, room_id)
+            await db.commit()
+
+        submissions = [
+            Submission(
+                player_id=str(u.get("player_id") or ""),
+                nickname=str(u.get("nickname") or "调查员"),
+                utterance=str(u.get("text") or ""),
+            )
+            for u in saved_utterances
+            if u.get("text")
+        ]
+        if not submissions:
+            await _send_error(websocket, "CONFLICT", "现在没有可以纠正的回合")
+            return
+        await _run_turn(db, websocket, room_id, submissions, clarification=clarification)
+    finally:
+        action_lock_manager.release(room_id, lock_token)
+
+
 async def _handle_action_submit(
     db: AsyncSession,
     websocket: WebSocket,
@@ -1037,12 +1134,36 @@ async def _run_turn(
     websocket: WebSocket,
     room_id: str,
     submissions: list[Submission],
+    *,
+    clarification: str | None = None,
 ) -> None:
-    """跑一轮：合并宣告 → 一次裁决 → 执行 → 叙事 → 投递。调用方持有房间锁。"""
+    """跑一轮：合并宣告 → 一次裁决 → 执行 → 叙事 → 投递。调用方持有房间锁。
+
+    `clarification` 非空 = 这是一次**玩家纠错**（`exec/35`）：`submissions`
+    是上一轮的原话（从快照重建），世界指针已经由调用方回滚过了。
+    """
     # 合并成一段给裁决器看；单条时返回原话本身，单人局的 prompt 因此与
     # 收集窗口上线前逐字一致（merge_utterances 的退化保证）。
     utterance = merge_utterances(submissions)
     initiator_id = submissions[0].player_id
+
+    # 🔴 纠错的回滚点（`exec/35`）：存下**这一轮开始之前**的世界指针与原话。
+    #
+    # 放在编排层而不是 KeeperAgent 里：快照是"这一轮的输入"，跟哪个 narrator
+    # 在跑无关。第一版写在 agent 内部，于是 fallback narrator 的房间根本没有
+    # 快照、纠错一按就报错——同族于「同一件事的两头，一头可插拔一头写死」。
+    #
+    # 纠错轮本身不覆盖快照：否则连点两次，第二次会回滚到第一次纠错**之后**，
+    # 等于纠错只能用一次（「保留旧值 = 静默说谎」）。
+    if clarification is None:
+        await room_service.save_turn_snapshot(
+            db,
+            room_id,
+            [
+                {"player_id": s.player_id, "nickname": s.nickname, "text": s.utterance}
+                for s in submissions
+            ],
+        )
 
     # ⚠️ 先组叙事上下文、后写事件：build_narration_context 靠"当前这条
     # 还没入库"来保证历史里不含它（见该函数 docstring 的时序约定）。
@@ -1055,6 +1176,7 @@ async def _run_turn(
         private_player_ids=tuple(dict.fromkeys(s.player_id for s in submissions if s.private)),
         # 逐条原话：分组叙事时门厅那段的上下文里不能出现地下室那位说了
         # 什么，合并成一段就裁不开了（P5.2d）。
+        clarification=clarification,
         utterances=tuple(
             PlayerUtterance(player_id=s.player_id, nickname=s.nickname, text=s.utterance)
             for s in submissions
@@ -1417,6 +1539,15 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                         luck_payload = LuckDecidePayload.model_validate(raw_payload)
                         await _handle_luck_decide(
                             db, websocket, room_id, bound_player_id, luck_payload
+                        )
+                    elif event_type == "turn.clarify":
+                        clarify_payload = TurnClarifyPayload.model_validate(raw_payload)
+                        await _handle_clarify(
+                            db,
+                            websocket,
+                            room_id,
+                            bound_player_id,
+                            clarify_payload.clarification.strip(),
                         )
                     elif event_type == "party.merge.confirm":
                         PartyMergeConfirmPayload.model_validate(raw_payload)

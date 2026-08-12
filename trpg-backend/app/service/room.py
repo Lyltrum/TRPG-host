@@ -339,6 +339,24 @@ async def start_story(db: AsyncSession, room_id: str, reconnect_token: str | Non
     await db.commit()
 
 
+async def save_turn_snapshot(db: AsyncSession, room_id: str, utterances: list[dict]) -> None:
+    """存下「这一轮开始之前」的世界指针与原话，供玩家纠错回滚（`exec/35`）。
+
+    🔴 只存指针（`keeper_state`），不存 HP/线索/骰子——那些是已经发生的事实，
+    纠错不撤销它们（能撤骰子就等于能刷）。
+
+    存不上只意味着这一轮纠不了错，不该打断对局。
+    """
+    room = await db.get(Room, room_id)
+    if room is None:
+        return
+    room.last_turn_snapshot = {
+        "keeper_state": room.keeper_state,
+        "utterances": utterances,
+    }
+    await db.commit()
+
+
 async def get_player(db: AsyncSession, player_id: str) -> Player | None:
     """按 player_id 直接查玩家（WS 层用客户端声明的 playerId 校验绑定用）。"""
     return await db.get(Player, player_id)

@@ -17,7 +17,11 @@ export default function PhoneLayout({ children }: PhoneLayoutProps) {
     mainRef.current?.scrollTo(0, 0)
   }, [pathname])
 
+  // overscroll-contain：这层照常滚，但滚到底/滚到顶时**不把滚动传给页面**
+  // （iOS Safari 真机：不加这条，滑到底再往上拽会把整个页面带起来）。
+  // 用 contain 而不是 none —— none 会连它自己的橡皮筋一起关掉，那是这层唯一
+  // 该保留的手感。页面级的 none 在 styles.css 的 html/body 上。
   return (
-      <main ref={mainRef} className="animate-screen-in h-full overflow-y-auto overflow-x-hidden">{children}</main>
+      <main ref={mainRef} className="animate-screen-in h-full overflow-y-auto overflow-x-hidden overscroll-contain">{children}</main>
   )
 }

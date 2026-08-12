@@ -509,6 +509,18 @@ async def set_current_node_impl(deps: KeeperDeps, node_id: str) -> str:
         # 用改动**之前**的状态判断"谁跟发言者站在一起"——先写指针再判断会把
         # 所有回落到房间指针的人都算成同处，等于没判。
         speaker_places = {location_of(current_state, pid) for pid in speakers}
+        # 🔴 **本轮发言者本来就不在一处 ⇒「发言者的默认落点」这个概念不成立**
+        # （2026-08-11 双人真机第二次实测抓到，前一版修复没盖住这一支）：
+        # 阿福在屋后、阿贵在门廊，两人**同一轮发言**，裁决器写 `current_node_id=loc-1`
+        # （阿福那边），于是 `movers` 把明说「我在门廊上待着不动」的阿贵也算了进去。
+        #
+        # 下面那道「目标被别人占着」的门挡不住它——**占着 loc-1 的阿福自己就是
+        # 发言者**，他在 `movers` 里，所以不算"别人"。两道门守的是同一条判据的
+        # 两半：一个字段答不了"多组人各自去哪"，那就一个人都别用它挪。
+        # 分头时移动要走 `moves` / `new_location.movers` 逐人点名（判错方向同 §5.2：
+        # 拒绝只是这一轮没动，玩家再说一遍就行）。
+        if len(speaker_places) > 1:
+            return f"没有移动：本轮发言的人不在同一处，{title}（{node_id}）只当场景指针"
         movers = speakers | {
             pid for pid in roster if location_of(current_state, pid) in speaker_places
         }

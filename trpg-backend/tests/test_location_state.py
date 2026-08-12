@@ -237,6 +237,33 @@ async def test_the_room_pointer_cannot_walk_someone_into_the_other_group(party) 
     assert issues == []
 
 
+async def test_speakers_standing_apart_are_not_lumped_onto_one_node(party) -> None:
+    """🔴 双人真机第二次实测（2026-08-11）：上一版修复**没盖住这一支**。
+
+    阿福在屋后、阿贵在门廊，两人**同一轮发言**（收集窗口合并），裁决器写
+    `current_node_id = 阿福那边`——于是明说「我在门廊上待着不动」的阿贵又被
+    挪了过去。上面那道「目标被别人占着」的门挡不住：**占着那儿的阿福自己就是
+    发言者**，他在 `movers` 里，所以不算"别人"。
+
+    判据同族：一个字段答不了"多组人各自去哪"，那就一个人都别用它挪。
+    """
+    deps, a_id, b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    await execute_side_effects(
+        deps, KeeperDecision(moves=[PlayerMove(player="阿福", node_id="cellar")])
+    )
+    before = load_player_locations(await _state(deps))
+    assert before == {a_id: "cellar", b_id: "hall"}
+
+    # 两个人同一轮发言，裁决器把镜头写成阿福那边
+    deps.turn_player_ids = (a_id, b_id)
+    report, issues = await execute_side_effects(deps, KeeperDecision(current_node_id="cellar"))
+
+    assert load_player_locations(await _state(deps)) == before
+    assert any("不在同一处" in line for line in report)
+    assert issues == []
+
+
 async def test_the_room_pointer_still_moves_the_speaker_into_an_empty_place(party) -> None:
     """上一条不许伤到正常那一半：目标没别人时，分头中的人照常跟着指针走。
 

@@ -149,9 +149,15 @@ async def execute_movement(
         except KeeperToolError as exc:
             issues.append(f"场景指针清空未执行：{exc}")
 
+    # 🔴 被**逐人点名**挪动的人（`moves` / `new_location.movers` 都归到这里）。
+    # 会合确认要靠它区分「他自己说要过去」和「他被推断过去」——见
+    # `record_merges_since` 的 `self_declared`。
+    named_movers: set[str] = set()
     for move in moves:
         try:
-            report.append(await move_player_impl(deps, move.player, move.node_id))
+            moved_id, line = await move_player_impl(deps, move.player, move.node_id)
+            named_movers.add(moved_id)
+            report.append(line)
         except KeeperToolError as exc:
             issues.append(f"分头移动未执行：{exc}")
 
@@ -163,7 +169,7 @@ async def execute_movement(
 
     # 谁跟"回合开始时不在一处的人"碰上了 → 挂起，等他本人确认（exec/33 §5.2）。
     # 分开是安全方向、乐观执行；会合是危险方向、必须有人点头。
-    if await record_merges_since(deps, before_locations):
+    if await record_merges_since(deps, before_locations, self_declared=named_movers):
         report.append("有人走到了别人所在的地方，等本人确认是否会合")
 
     # 🔴 保险丝：消解分支说明裁决器**点名让发言者单独去某处**（= 它想分头），

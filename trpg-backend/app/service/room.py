@@ -10,11 +10,11 @@ import secrets
 import string
 from datetime import UTC, datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import not_implemented
+from app.core.keeper.capabilities.presence import state as presence_state
 from app.core.narration.contract import NarrationContext
 from app.dto.game import GameRead, GameSystemRead, RulesetRead
 from app.dto.module import ModuleDetailRead
@@ -34,6 +34,7 @@ from app.models.event import Event
 from app.models.room import Character, Player, Room
 from app.models.user import User
 from app.service import chat as chat_service
+from app.service import recap as recap_service
 
 
 class RoomNotFoundError(ValueError):
@@ -250,10 +251,16 @@ async def join_room(
     if existing is not None:
         return await _room_identity(db, room, existing)
 
-    # 到这里说明是新人。新人只能在大厅阶段加入：游戏已经开始/结束之后再放人
-    # 进来，等于中途加入，本期不做。
-    if room.phase != "Lobby":
-        raise RoomConflictError("游戏已开始，无法加入房间")
+    # 到这里说明是新人。
+    #
+    # 🔴 **中途加入是允许的**（2026-08-12 放开）。聚会的物理现实是有人晚到，
+    # 而在此之前他连房间都进不来——只能干等一局结束。放开之后他照常走建卡
+    # （`quick_build_character` 填个名字就有一张完整的卡），入场怎么在剧情里
+    # 交代由 `keeper/capabilities/presence` 负责。
+    #
+    # 仍然拒绝的只有**已经结束**的房间：那时没有"加入"可言，回放才是他要的。
+    if room.phase == "Completed":
+        raise RoomConflictError("这局已经结束了")
 
     count_result = await db.scalars(select(Player).where(Player.room_id == room.id))
     player_count = len(list(count_result))
@@ -487,6 +494,150 @@ async def end_game(db: AsyncSession, room_id: str, reconnect_token: str | None) 
     await _require_host(db, room, reconnect_token)
     if room.phase != "InGame":
         raise RoomConflictError("只有进行中的游戏可以结束")
+    room.phase = "Completed"
+    room.ended_at = datetime.now(UTC)
+    await chat_service.clear_room_chat(db, room.id)
+    await db.commit()
+
+
+# ── 房间成员管理（踢人 / 转让房主 / 改人数 / 解散）──────────────
+#
+# 🔴 **踢人只在大厅阶段。** 对局中踢人要连带处理他的位置、待掷队列里挂着的
+# 骰子、分组、正在等他确认的会合、已揭线索的归属——工作量是大厅版的三四倍，
+# 而"开局之后想把人赶走"本来就是社交问题，不是软件问题。
+
+
+async def _require_member(db: AsyncSession, room: Room, player_id: str) -> Player:
+    """目标必须是这个房间的成员。跨房间操作一律拒绝——`player_id` 来自客户端。"""
+    target = await db.get(Player, player_id)
+    if target is None or target.room_id != room.id:
+        raise RoomNotFoundError("这个玩家不在本房间")
+    return target
+
+
+async def kick_player(
+    db: AsyncSession, room_id: str, target_player_id: str, reconnect_token: str | None
+) -> None:
+    """房主在大厅把某个人移出房间。"""
+    room = await find_room_by_id(db, room_id)
+    await _require_host(db, room, reconnect_token)
+    if room.phase != "Lobby":
+        raise RoomConflictError("只有大厅阶段可以移出玩家")
+    target = await _require_member(db, room, target_player_id)
+    if target.id == room.host_player_id:
+        # 房主要走人得先转让，否则房间会剩下一堆没有房主的人：所有需要
+        # `_require_host` 的操作（选模组、开局、解散）从此全部做不了。
+        raise RoomConflictError("房主不能把自己移出房间，请先转让房主")
+    # 角色卡跟着人走：大厅阶段的卡还没进过对局，留着只会让下次统计人数时
+    # 出现一张没有主人的卡。
+    await db.execute(delete(Character).where(Character.player_id == target.id))
+    await db.delete(target)
+    await db.commit()
+
+
+async def transfer_host(
+    db: AsyncSession, room_id: str, target_player_id: str, reconnect_token: str | None
+) -> None:
+    """把房主交给同房间的另一个真人。
+
+    不限阶段：真实场景恰恰是**开局之后**房主要先走（`is_host` 与
+    `host_player_id` 两处都要改，否则前端看到的房主和后端认的房主会分叉）。
+    """
+    room = await find_room_by_id(db, room_id)
+    current = await _require_host(db, room, reconnect_token)
+    target = await _require_member(db, room, target_player_id)
+    if target.id == current.id:
+        raise RoomConflictError("你已经是房主了")
+    if target.is_ai:
+        # AI 拿不到 reconnect_token，也永远不会去点"开始游戏"——把房主给它
+        # 等于让这个房间从此没有房主。
+        raise RoomConflictError("不能把房主转让给 AI 队友")
+    current.is_host = False
+    target.is_host = True
+    room.host_player_id = target.id
+    room.host_user_id = target.user_id
+    await db.commit()
+
+
+async def update_room_settings(
+    db: AsyncSession, room_id: str, max_players: int, reconnect_token: str | None
+) -> None:
+    """改人数上限。
+
+    不限阶段：中途加入（放开之后）最常撞上的就是"位置不够了"，而那时候房间
+    已经在 InGame。**下界是当前人数**，不是 1——调到比在座的人还少，等于让
+    已经在玩的人凭空变成"超员"，而代码里没有任何地方会去踢掉多出来的人。
+    """
+    room = await find_room_by_id(db, room_id)
+    await _require_host(db, room, reconnect_token)
+    current = len(list(await db.scalars(select(Player).where(Player.room_id == room.id))))
+    if max_players < current:
+        raise RoomConflictError(f"房间里已经有 {current} 个人，人数上限不能小于它")
+    room.max_players = max_players
+    await db.commit()
+
+
+async def set_player_away(
+    db: AsyncSession, room_id: str, player_id: str, away: bool, reconnect_token: str | None
+) -> None:
+    """中途离开 / 回来。
+
+    **本人或房主都能按**：要走的人自己按是常态，但也有"他人已经走了、手机
+    还揣兜里"的情况，那时得有人替他按。同 `exec/35` 的休息（任何人能按）——
+    自用场景不需要权限模型，但这条比休息重一点（它改的是别人的角色），
+    所以收窄到本人 + 房主。
+
+    🔴 **离场要留下待交代记录**（`presence` 能力）：暂离的人下一轮就不在守秘人
+    的在场名单里了，那时再想渲染"阿福离场"已经拿不到他的名字。所以在这里、
+    在他还看得见的时候，把 `id@昵称` 写进 `keeper_state`。
+
+    回来则相反：把他从待交代名单里删掉。**没交代过的离场不该在他回来之后
+    还被交代一次**——那会是"阿福走了……阿福回来了"两句挤在同一段里。
+    """
+    room = await find_room_by_id(db, room_id)
+    actor = await get_player_by_reconnect_token(db, reconnect_token)
+    if actor.room_id != room.id:
+        raise RoomAuthorizationError("你不是这个房间的成员")
+    target = await _require_member(db, room, player_id)
+    if actor.id != target.id and actor.id != room.host_player_id:
+        raise RoomAuthorizationError("只能操作自己，或由房主代劳")
+    if room.phase == "Completed":
+        raise RoomConflictError("这局已经结束了")
+    if target.away == away:
+        return
+
+    target.away = away
+    state = dict(room.keeper_state or {})
+    pending = presence_state.load_pending_departures(state)
+    announced = presence_state.load_announced_arrivals(state)
+    if away:
+        pending.append((target.id, target.nickname))
+    else:
+        pending = [row for row in pending if row[0] != target.id]
+        # 🔴 回来也要重新交代一次登场。`已交代登场` 是累积集合，不把他摘出去的话
+        # 他永远算"已经介绍过"——于是他从故事里消失又出现，守秘人一个字都不会提。
+        # 测试第一版是手动改 state 才过的，那正是"实现少了一步"的信号。
+        announced = [pid for pid in announced if pid != target.id]
+    state[presence_state.PENDING_DEPARTURES_KEY] = presence_state.serialize_departures(pending)
+    state[presence_state.ANNOUNCED_ARRIVALS_KEY] = ", ".join(announced)
+    room.keeper_state = state
+    await db.commit()
+
+
+async def disband_room(db: AsyncSession, room_id: str, reconnect_token: str | None) -> None:
+    """房主解散房间。
+
+    🔴 **标记成 Completed，不删数据**：解散跟"玩完了"在数据上是同一件事——
+    房间不再活着，但事件流还在，复盘/回放照常打得开。真删的话，
+    `GET /rooms/{id}/replay` 会对一屋子人变成 404，而他们刚刚才玩过。
+
+    与 `end_game` 的区别只有阶段条件：那条要求 InGame（"把这局收掉"），
+    这条允许任何还没结束的阶段（"人没凑齐，散了"）。
+    """
+    room = await find_room_by_id(db, room_id)
+    await _require_host(db, room, reconnect_token)
+    if room.phase == "Completed":
+        raise RoomConflictError("这个房间已经结束了")
     room.phase = "Completed"
     room.ended_at = datetime.now(UTC)
     await chat_service.clear_room_chat(db, room.id)
@@ -786,7 +937,11 @@ def _replay_visible_to(event: Event, player_id: str) -> bool:
 async def get_summary(db: AsyncSession, room_id: str) -> RoomSummaryRead:
     """GET /api/v1/rooms/{roomId}/summary —— 复盘摘要。
 
-    复盘内容依赖 AI 编排生成（归 #48/#68），本期没有任何写入路径会真的填充
-    `room_summaries` 表，直接走 NOT_IMPLEMENTED（issue 决策 7）。
+    实现在 `service/recap.py`：上半是代码算的数字，下半是模型写的一段回顾。
+    这里只做转发，是因为复盘要读整条事件流、还要打一次网络，跟房间的 CRUD
+    不是一类事。
     """
-    raise not_implemented("复盘摘要依赖 AI 编排生成，本期尚未实现")
+    try:
+        return await recap_service.build_summary(db, room_id)
+    except LookupError as exc:
+        raise RoomNotFoundError(str(exc)) from exc

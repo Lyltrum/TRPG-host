@@ -129,6 +129,78 @@ export class RoomsResource {
     return this.client.get<MyRoomSummary[]>('/me/rooms', this.accountAuth(token));
   }
 
+  /**
+   * DELETE /api/v1/rooms/{roomId}/players/{playerId} — 房主把某个人移出房间
+   *
+   * 🔴 **只在大厅阶段**。对局中踢人要连带处理他的位置、待掷队列里挂着的骰子、
+   * 分组、正在等他确认的会合——而"开局之后想把人赶走"是社交问题，不是软件问题。
+   */
+  kickPlayer(roomId: string, playerId: string, reconnectToken: string): Promise<null> {
+    return this.client.delete<null>(
+      `/rooms/${roomId}/players/${playerId}`,
+      this.roomAuth(reconnectToken)
+    );
+  }
+
+  /**
+   * POST /api/v1/rooms/{roomId}/host — 转让房主
+   *
+   * 不限阶段：真实场景恰恰是**开局之后**房主要先走。不能转给 AI 队友
+   * （它拿不到重连凭证，也永远不会去点开始游戏）。
+   */
+  transferHost(roomId: string, playerId: string, reconnectToken: string): Promise<null> {
+    return this.client.post<null>(
+      `/rooms/${roomId}/host`,
+      { playerId },
+      this.roomAuth(reconnectToken)
+    );
+  }
+
+  /**
+   * PATCH /api/v1/rooms/{roomId} — 改人数上限
+   *
+   * 下界是**当前人数**，不是 1：调到比在座的人还少，等于让已经在玩的人凭空
+   * 超员，而没有任何地方会去踢掉多出来的。
+   */
+  updateSettings(roomId: string, maxPlayers: number, reconnectToken: string): Promise<null> {
+    return this.client.patch<null>(
+      `/rooms/${roomId}`,
+      { maxPlayers },
+      this.roomAuth(reconnectToken)
+    );
+  }
+
+  /**
+   * POST /api/v1/rooms/{roomId}/disband — 房主解散房间
+   *
+   * 跟 `endGame` 的区别只有阶段条件：那条要求进行中（"把这局收掉"），
+   * 这条允许任何还没结束的阶段（"人没凑齐，散了"）。**都不删数据**，
+   * 回放照常打得开。
+   */
+  disband(roomId: string, reconnectToken: string): Promise<null> {
+    return this.client.post<null>(`/rooms/${roomId}/disband`, null, this.roomAuth(reconnectToken));
+  }
+
+  /**
+   * POST /api/v1/rooms/{roomId}/players/{playerId}/away — 中途离开 / 回来
+   *
+   * `away=true` 让这个角色暂时退出剧情：他**不进守秘人的在场名单**（那一半是
+   * 硬的），守秘人下一段会给一个说得通的理由把他送出这一幕（那一半是概率的）。
+   * 本人或房主可操作。
+   */
+  setPlayerAway(
+    roomId: string,
+    playerId: string,
+    away: boolean,
+    reconnectToken: string
+  ): Promise<null> {
+    return this.client.post<null>(
+      `/rooms/${roomId}/players/${playerId}/away`,
+      { away },
+      this.roomAuth(reconnectToken)
+    );
+  }
+
   /** POST /api/v1/rooms/{roomId}/end — 房主结束游戏 */
   endGame(roomId: string, reconnectToken: string): Promise<null> {
     return this.client.post<null>(
@@ -138,7 +210,13 @@ export class RoomsResource {
     );
   }
 
-  /** GET /api/v1/rooms/{roomId}/summary — 复盘摘要（issue #77 新增，本期未实现） */
+  /**
+   * GET /api/v1/rooms/{roomId}/summary — 复盘摘要
+   *
+   * 上半 `highlights` 是代码算的数字（时长/掷骰成败/SAN/线索），下半
+   * `summaryText` 是模型写的一段回顾——**没配 key 时它是 null**，那是如实的
+   * 降级，不是失败。
+   */
   getSummary(roomId: string, reconnectToken: string): Promise<RoomSummary> {
     return this.client.get<RoomSummary>(
       `/rooms/${roomId}/summary`,

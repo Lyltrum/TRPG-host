@@ -834,6 +834,16 @@ export interface PartyUpdatePayload {
 }
 
 /**
+ * POST /api/v1/rooms/{roomId}/players/{playerId}/away 请求体。
+ *
+ * 显式的 `away` 而不是两个动词端点（`/away` 与 `/back`）：**这是一个开关，
+ * 不是两件事**，两个端点会让"他到底在不在"多出一处需要同步的判断。
+ */
+export interface PlayerAwayBody {
+  away: boolean;
+}
+
+/**
  * player.joined 推送 payload（issue #77 新增，同上，本期不会真的发出）。
  */
 export interface PlayerJoinedPayload {
@@ -1031,6 +1041,18 @@ export interface RoomRejoinPayload {
 }
 
 /**
+ * PATCH /api/v1/rooms/{roomId} 请求体。
+ *
+ * 只有人数上限一项。房间名不在这里：改名是纯展示需求，而这条接口的存在
+ * 理由是"位置不够了"这个会卡住桌子的问题——两件事没必要绑在一起。
+ * 区间跟建房时一致（`RoomCreate.max_players`），下界由服务层再按当前人数
+ * 收紧一次（不能调到比在座的人还少）。
+ */
+export interface RoomSettingsBody {
+  maxPlayers: number;
+}
+
+/**
  * room.state 推送 payload（issue #77 新增，替代 HTTP 轮询伪广播）。
  *
  * 本期协议槽位已留好（信封类型/校验器/SDK 方法齐全），但 ws.py 里没有任何
@@ -1185,6 +1207,13 @@ export interface SuccessTierSpec {
   id: string;
   label: string;
   divisor: number;
+}
+
+/**
+ * POST /api/v1/rooms/{roomId}/host 请求体——把房主交给谁。
+ */
+export interface TransferHostBody {
+  playerId: string;
 }
 
 /**

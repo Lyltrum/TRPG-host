@@ -29,12 +29,22 @@ function assertNotImplemented(hint: string) {
   }
 }
 
-test('复盘摘要仍是 NOT_IMPLEMENTED（依赖 AI 编排）', async () => {
-  const room = await createRoomWithModule('stub')
-  await assert.rejects(
-    () => room.host.sdk.rooms.getSummary(room.roomId, room.reconnectToken),
-    assertNotImplemented('这条变红说明复盘摘要已经实现（或者坏了），该去看客户端要不要接')
+test('🔴 复盘摘要已经实现：数字一定有，那段回顾没 key 时是 null', async () => {
+  // 这条原本是 NOT_IMPLEMENTED 的守卫，它自己写着「变红说明复盘已经实现，
+  // 该去看客户端要不要接」——2026-08-12 正是那一天。
+  const room = await createRoomWithModule('recap')
+  await room.host.sdk.rooms.disband(room.roomId, room.reconnectToken)
+
+  const summary = await room.host.sdk.rooms.getSummary(room.roomId, room.reconnectToken)
+
+  assert.equal(summary.roomId, room.roomId)
+  assert.ok(Array.isArray(summary.highlights), '数字那一半是代码算的，一定在')
+  assert.ok(
+    summary.highlights!.some((line) => line.includes('这一局跑了')),
+    '结束了的房间至少要有时长'
   )
+  // 🔴 e2e 不配 DEEPSEEK_API_KEY ⇒ 那段回顾如实为 null，**不伪造**。
+  assert.equal(summary.summaryText, null)
 })
 
 test('常用角色卡库仍是 NOT_IMPLEMENTED', async () => {

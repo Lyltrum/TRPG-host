@@ -1246,9 +1246,17 @@ class KeeperAgent(Narrator):
             room = await db.get(Room, room_id)
             keeper_state = room.keeper_state if room is not None else None
 
-            player_rows = list(
-                (await db.execute(select(Player).where(Player.room_id == room_id))).scalars()
-            )
+            # 🔴 暂离的人**不进在场名单**（`capabilities/presence`）。这一步是
+            # 结构性的那一半：名单同时是"叙事里有几个人"和位置分组的来源，
+            # 靠 prompt 请它"别提阿福"是纪律性的，而这里是他**根本不在输入里**。
+            # 他还在 `players` 表里（回来就恢复），只是这一轮不在场。
+            player_rows = [
+                p
+                for p in (
+                    await db.execute(select(Player).where(Player.room_id == room_id))
+                ).scalars()
+                if not p.away
+            ]
             character_rows = list(
                 (await db.execute(select(Character).where(Character.room_id == room_id))).scalars()
             )

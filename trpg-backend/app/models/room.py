@@ -143,6 +143,12 @@ class Player(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
     left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 中途离开（暂离）。他的角色暂时退出剧情：不进守秘人的在场名单、不算受众。
+    #
+    # 🔴 **跟上面那个 `left_at` 不是一回事，别合并**：`left_at` 由 WS 断开写，
+    # 而**掉线不等于离场**——网卡抖一下角色就从剧情里消失就完蛋了。这是「一份
+    # 数据扮演两个角色必出结构性 bug」的又一处，所以宁可多一列。
+    away: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     room: Mapped["Room"] = relationship(back_populates="players")
 

@@ -57,6 +57,7 @@ class NarrationStream:
         module: ScenarioModule,
         action_intent: bool,
         confused: bool,
+        vocatives: frozenset[str] = frozenset(),
         max_chars: int,
         room_id: str | None = None,
     ) -> None:
@@ -64,7 +65,9 @@ class NarrationStream:
         self._module = module
         self._max_chars = max_chars
         self._room_id = room_id
-        self._streamer = ProseStreamer(action_intent=action_intent, confused=confused)
+        self._streamer = ProseStreamer(
+            action_intent=action_intent, confused=confused, vocatives=vocatives
+        )
         self._pieces: list[str] = []
         self._hits: list[LeakHit] = []
         self._truncated = False

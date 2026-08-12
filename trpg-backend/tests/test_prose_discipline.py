@@ -269,3 +269,53 @@ def test_ordinary_parentheses_are_not_touched() -> None:
     assert scrub_kp_anti_patterns(keep, action_intent=True) == keep
     talk = "管家低声说：“警察明天会来做检定的。”"
     assert scrub_kp_anti_patterns(talk, action_intent=True) == talk
+
+
+def test_scrub_drops_mechanic_announce_that_is_not_at_the_end() -> None:
+    """🔴 `exec/33 #83`（2026-08-12 双人真机复现）：播报**不在句尾**就漏过去了。
+
+    真机原话「该掷潜行检定了——点一下卡片，看看脚下有没有惊动什么。」整句一字
+    未删——老实现只拿**最后一个**分隔符之后的那段去比对，而播报是第一段。
+    连带把 UI 指令（"点一下卡片"）也念给了玩家。
+
+    同族于 `exec/28`：「作用域」是可以被证伪的断言，别默认它总在句尾。
+    """
+    text = "你压低重心，准备摸到窗台下。该掷潜行检定了——点一下卡片，看看脚下有没有惊动什么。"
+    out = scrub_kp_anti_patterns(text, action_intent=True)
+    assert out == "你压低重心，准备摸到窗台下。"
+
+    # 播报在中间：它之后的分句是同一次越界的延续，一起砍
+    mid = "你贴住墙根。该掷潜行了，然后我们看结果。"
+    assert scrub_kp_anti_patterns(mid, action_intent=True) == "你贴住墙根。"
+
+
+def test_scrub_drops_the_sentence_when_only_a_vocative_would_remain() -> None:
+    """🔴 `exec/33 #82`（同一局）：砍完要问一句「剩下的还是不是一句话」。
+
+    真机第 1 轮叙事结尾是孤零零一句「阿福。」——head 只是个呼语。
+
+    判据是**跟在场者昵称精确相等**，不是长度阈值：同样 4 个字的「他愣住了」
+    是真描写，必须留下（下面第二段就是这条对照）。
+    """
+    text = "科比特猛地将包裹搂进怀里，快步消失在门廊里。阿福，该你掷侦察了。"
+    out = scrub_kp_anti_patterns(text, action_intent=False, vocatives=frozenset({"阿福", "阿贵"}))
+    assert out == "科比特猛地将包裹搂进怀里，快步消失在门廊里。"
+
+    # 多个呼语连写也算
+    two = "街上空了。阿福、阿贵，你们该掷侦察了。"
+    assert (
+        scrub_kp_anti_patterns(two, action_intent=False, vocatives=frozenset({"阿福", "阿贵"}))
+        == "街上空了。"
+    )
+
+    # 🔴 对照：head 是真描写就得留着，只砍播报那段
+    keep = "他愣住了，该掷侦察了。"
+    assert (
+        scrub_kp_anti_patterns(keep, action_intent=True, vocatives=frozenset({"阿福"}))
+        == "他愣住了。"
+    )
+
+    # 拿不到在场者名单时（默认空集）退回原行为：保留 head，不猜
+    assert scrub_kp_anti_patterns("街上空了。阿福，该你掷侦察了。", action_intent=False) == (
+        "街上空了。阿福。"
+    )

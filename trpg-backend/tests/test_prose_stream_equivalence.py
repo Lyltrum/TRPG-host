@@ -68,7 +68,17 @@ MECHANIC_SENTENCE = [
     "那就该掷侦察了。",
     "现在距离近了，你该掷斗殴检定了。",
     "他的手朝你伸过来——该掷躲闪了。",
+    # `exec/33 #83`：播报**不在句尾**，后面还跟着两个分句（真机原话形态）
+    "你压低重心，准备摸到窗台下。该掷潜行检定了——点一下卡片，看看脚下有没有惊动什么。",
+    # `exec/33 #82`：砍掉尾段后 head 只剩一个呼语，整句该丢
+    "科比特消失在门廊里。阿福，该你掷侦察了。",
+    # 对照：head 是真描写（同样 4 字），不许被当成呼语丢掉
+    "他愣住了，该掷侦察了。",
 ]
+
+#: 在场者昵称。等价性两边必须拿**同一份**——流式漏传的话，同一段文本
+#: 两条路会给出不同结果，而那正是这条测试要抓的（`exec/33 #82`）。
+VOCATIVES = frozenset({"阿福", "阿贵"})
 
 TRICKY = [
     # 括号跨句：闭合前不许切
@@ -107,7 +117,7 @@ MODES = [
 
 
 def _stream(text: str, *, action_intent: bool, confused: bool, chunks: list[str]) -> str:
-    s = ProseStreamer(action_intent=action_intent, confused=confused)
+    s = ProseStreamer(action_intent=action_intent, confused=confused, vocatives=VOCATIVES)
     out = []
     for c in chunks:
         out.append(s.feed(c))
@@ -141,7 +151,9 @@ def _all_chunkings(text: str, rng: random.Random) -> list[tuple[str, list[str]]]
 def _assert_equivalent(
     text: str, *, action_intent: bool, confused: bool, rng: random.Random
 ) -> None:
-    expected = scrub_kp_anti_patterns(text, action_intent=action_intent, confused=confused)
+    expected = scrub_kp_anti_patterns(
+        text, action_intent=action_intent, confused=confused, vocatives=VOCATIVES
+    )
     for name, chunks in _all_chunkings(text, rng):
         got = _stream(text, action_intent=action_intent, confused=confused, chunks=chunks)
         assert got == expected, (

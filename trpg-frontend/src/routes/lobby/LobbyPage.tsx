@@ -1,6 +1,9 @@
 import { useNavigate } from 'react-router-dom'
-import { useEffect, useState, useRef } from 'react'
-import { UserPlus, ArrowLeft, Bot, Plus } from 'lucide-react'
+import { useEffect, useState, useRef, lazy, Suspense } from 'react'
+import { UserPlus, ArrowLeft, Bot, Plus, Share2 } from 'lucide-react'
+// 🔴 懒加载：二维码库有 28KB，而大厅**每次进房都要加载**、邀请只点一次。
+// 不拆的话所有人每次都为一个偶尔用的功能付这份流量。
+const InviteSheet = lazy(() => import('@/shared/components/InviteSheet'))
 import { useRoomStore } from '@/stores/room-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { connectWebSocket, sdk, onWsMessage, waitForWsOpen, disconnectWebSocket, friendlyErrorMessage } from '@/services/api-client'
@@ -20,6 +23,7 @@ export default function LobbyPage() {
   const playerId = useRoomStore((s) => s.playerId)
   const reconnectToken = useRoomStore((s) => s.reconnectToken)
   const nickname = useAuthStore((s) => s.nickname)
+  const [inviting, setInviting] = useState(false)
   const [ready, setReady] = useState(false)
   const [joined, setJoined] = useState(false)
   const [error, setError] = useState('')
@@ -169,6 +173,24 @@ export default function LobbyPage() {
           {roomCode || '------'}
         </span>
       </div>
+      {/* 🔴 邀请入口挂在房间号旁边：房间号就是"怎么让别人进来"这个问题的
+          旧答案，新答案该长在同一个位置上，而不是另开一屏。 */}
+      <div className="flex justify-center mt-2.5 relative z-10">
+        <button
+          type="button"
+          onClick={() => setInviting(true)}
+          disabled={!roomCode}
+          className="cut-corner flex items-center gap-1.5 px-3.5 py-1.5 bg-brass-dark text-book text-[12px] font-semibold disabled:opacity-50 active:scale-[0.97]"
+        >
+          <Share2 className="w-3.5 h-3.5" strokeWidth={2} />
+          邀请朋友
+        </button>
+      </div>
+      {inviting && roomCode && (
+        <Suspense fallback={null}>
+          <InviteSheet roomCode={roomCode} onClose={() => setInviting(false)} />
+        </Suspense>
+      )}
       <p className="text-center text-[11.5px] text-text-body leading-relaxed mt-2 mb-4 relative z-10">
         {joined ? '等待大厅 · 已连接' : '等待大厅 · 连接中…'}
         {info && (

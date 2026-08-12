@@ -72,7 +72,7 @@ async def play_round(keeper: KeeperAgent, context: NarrationContext) -> list[str
     assert context.room_id is not None, "play_round 要在一个真实房间里跑"
     texts: list[str] = []
     outcome = await keeper.narrate(context)
-    texts.append(outcome.text)
+    texts.extend(_outcome_texts(outcome))
     # 逐个结算：队列清空的那一次，`resolve_check` 内部会复用 `narrate()`
     # 触发结算叙事，所以这里拿到的可能是一段真正的叙事。
     for request in list(outcome.check_requests):
@@ -81,8 +81,20 @@ async def play_round(keeper: KeeperAgent, context: NarrationContext) -> list[str
             request.player_id,
             request.check_request_id,
         )
-        texts.append(settled.text)
+        texts.extend(_outcome_texts(settled))
     return texts
+
+
+def _outcome_texts(outcome) -> list[str]:  # noqa: ANN001 — 见上：本模块不在导入期拉 app.*
+    """这一次调用玩家实际看到的正文。
+
+    🔴 待掷守卫那句固定文案走的是**按人裁的 segments**（`exec/23 #76`），不是
+    全房间的 `text`。只读 `text` 的话，`test_the_tape_covers_a_settlement_turn`
+    里那条「守卫文案不该出现」就变成结构上永远成立——一条自证的假绿。
+    """
+    if outcome.text:
+        return [outcome.text]
+    return [segment.text for segment in outcome.segments if segment.text]
 
 
 async def _run(module_path: Path, out_path: Path, rounds: list[str]) -> int:

@@ -21,7 +21,7 @@ from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.memory.fact_ledger import revealed_fact_ids
-from app.core.keeper.runtime.agent import KeeperAgent
+from app.core.keeper.runtime.agent import ROLL_PENDING_NOTICE, KeeperAgent
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.runtime.pending import (
     LUCK_SPEND_KIND,
@@ -734,3 +734,67 @@ async def test_the_card_blocks_a_new_turn_the_same_way_a_dice_roll_does() -> Non
     assert blocked.check_requests == []
     assert len(blocked.player_offers) == 1
     assert blocked.player_offers[0].kind == "luck_spend"
+
+
+async def _add_player(room_id: str, nickname: str) -> str:
+    async with _session_factory() as db:
+        player = Player(room_id=room_id, nickname=nickname)
+        db.add(player)
+        await db.commit()
+        return player.id
+
+
+async def test_the_guard_speaks_only_to_the_owner_of_the_card() -> None:
+    """🔴 守卫那句是**第二人称祈使句**，只能发给卡的主人（`exec/23 #76`）。
+
+    此前它走全房间的 `text`，于是手上没有卡的玩家也被要求「先把手上那张检定卡
+    掷了」——而他点不出任何东西。
+    """
+    room_id, player_id, nickname = await _seed_room()
+    await _enqueue(
+        room_id,
+        [_check(room_id=room_id, check_request_id="chk-solo", player_id=player_id)],
+    )
+
+    blocked = await _agent().narrate(
+        NarrationContext(
+            utterance="我去看看窗外",
+            player_nickname=nickname,
+            room_id=room_id,
+            player_id=player_id,
+        )
+    )
+
+    assert blocked.text == "", "祈使句不许再走全房间广播"
+    assert len(blocked.segments) == 1, "只有他一个人发言，没有第二个受众"
+    assert blocked.segments[0].text == ROLL_PENDING_NOTICE
+    assert blocked.segments[0].audience == (player_id,)
+
+
+async def test_the_others_get_told_why_nothing_happened() -> None:
+    """🔴 被顶回来的其他发言者**不能什么都收不到**——说了话没有任何回应，玩家
+    只会认为坏了（「按钮没有缓冲区」的同族）。他们收的是第三人称的说明，
+    不带技能名/理由/点数（那些在卡片上，卡片按受众发）。"""
+    room_id, owner_id, nickname = await _seed_room()
+    other_id = await _add_player(room_id, "阿贵")
+    await _enqueue(
+        room_id,
+        [_check(room_id=room_id, check_request_id="chk-duo", player_id=owner_id)],
+    )
+
+    blocked = await _agent().narrate(
+        NarrationContext(
+            utterance="我推门进去",
+            player_nickname="阿贵",
+            room_id=room_id,
+            player_id=other_id,
+            participant_ids=(owner_id, other_id),
+        )
+    )
+
+    by_audience = {seg.audience: seg.text for seg in blocked.segments}
+    assert by_audience[(owner_id,)] == ROLL_PENDING_NOTICE
+    said = by_audience[(other_id,)]
+    assert nickname in said, "得说清楚在等谁"
+    assert "侦察" not in said and "搜索书房" not in said, "技能名/理由只在卡片上"
+    assert ROLL_PENDING_NOTICE not in said

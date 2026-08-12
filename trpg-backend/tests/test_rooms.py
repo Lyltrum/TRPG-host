@@ -26,8 +26,11 @@ async def test_join_rejects_full_room(client: AsyncClient) -> None:
     assert response.json()["error"]["code"] == "ROOM_FULL"
 
 
-async def test_join_rejects_new_player_after_story_starts(client: AsyncClient) -> None:
-    """中途加入仍然拒绝——但这条只针对**新人**，老成员重连见下面那条对照用例。"""
+async def test_a_latecomer_can_join_after_the_story_started(client: AsyncClient) -> None:
+    """🔴 **行为变更**（2026-08-12）：这条原本断言中途加入被拒（`if room.phase !=
+    "Lobby": raise`）。聚会的物理现实是有人晚到，而在此之前他连房间都进不来。
+
+    仍然拒绝的只有已经结束的房间——见下一条。"""
     room = await create_room(client)
     module_id = (await client.get("/api/v1/modules")).json()["data"][0]["id"]
     await client.post(
@@ -37,6 +40,34 @@ async def test_join_rejects_new_player_after_story_starts(client: AsyncClient) -
     )
     await client.post(
         f"{ROOMS_BASE}/{room['roomId']}/start-story",
+        json=None,
+        headers=reconnect(room["reconnectToken"]),
+    )
+    latecomer = await register(client)
+
+    response = await client.post(
+        f"{ROOMS_BASE}/{room['roomCode']}/join",
+        json={"nickname": "迟到玩家"},
+        headers=bearer(latecomer),
+    )
+
+    assert response.status_code == 200, response.text
+    # 他还没建卡——这正是他进来之后要做的第一件事（`quick_build_character`
+    # 填个名字就有一张完整的卡）。
+    assert response.json()["data"]["characterId"] is None
+
+
+async def test_join_is_still_refused_once_the_room_is_over(client: AsyncClient) -> None:
+    """已经结束的房间没有"加入"可言——他要的是回放。"""
+    room = await create_room(client)
+    module_id = (await client.get("/api/v1/modules")).json()["data"][0]["id"]
+    await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/module",
+        json={"moduleId": module_id, "attributeGenMethod": "point_buy"},
+        headers=reconnect(room["reconnectToken"]),
+    )
+    await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/disband",
         json=None,
         headers=reconnect(room["reconnectToken"]),
     )

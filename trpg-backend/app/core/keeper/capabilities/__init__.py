@@ -23,6 +23,7 @@ from app.core.keeper.capabilities.luck_spend import CAPABILITY as LUCK_SPEND
 from app.core.keeper.capabilities.madness import CAPABILITY as MADNESS
 from app.core.keeper.capabilities.movement import CAPABILITY as MOVEMENT
 from app.core.keeper.capabilities.open_threads import CAPABILITY as OPEN_THREADS
+from app.core.keeper.capabilities.presence import CAPABILITY as PRESENCE
 from app.core.keeper.capabilities.progression import CAPABILITY as PROGRESSION
 from app.core.keeper.capabilities.san_check import CAPABILITY as SAN_CHECK
 from app.core.keeper.capabilities.skill_check import CAPABILITY as SKILL_CHECK
@@ -55,6 +56,7 @@ CAPABILITIES: tuple[KeeperCapability, ...] = (
     SAN_CHECK,
     MADNESS,
     OPEN_THREADS,
+    PRESENCE,
 )
 
 

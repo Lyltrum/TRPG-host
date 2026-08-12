@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Users, Map, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll, EyeOff, Coffee } from 'lucide-react'
+import { ArrowLeft, Users, Map, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll, EyeOff, Coffee, DoorOpen } from 'lucide-react'
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react'
 import type { ChatMessage, PartyCharacter, PartyUpdatePayload } from 'trpg-sdk'
 import { useRoomStore } from '@/stores/room-store'
@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useCharacterStore } from '@/stores/character-store'
 import { connectWebSocket, waitForWsOpen, sdk, onWsMessage, disconnectWebSocket, friendlyErrorMessage } from '@/services/api-client'
 import { BACKGROUND_DETAIL_FIELDS } from '@/data/character-model'
-import { endGame } from '@/services/room'
+import { endGame, setPlayerAway } from '@/services/room'
 import { fetchCharacter } from '@/services/character/character-api'
 import { toCompletedCharacter } from '@/services/character/character-view'
 import { useRoomPlayers } from '@/hooks/useRoomPlayers'
@@ -1213,6 +1213,27 @@ export default function RoomPage() {
     }
   }
 
+  // 「我先离开一会」——跟上面的退出、跟休息都不是一回事：
+  // - 退出：只是关掉这个页面，角色**还在故事里**，别人看不出区别；
+  // - 休息：**全桌**停下等你，心跳也冻住；
+  // - 这个：只有我的角色退出剧情（守秘人下一段会给个理由把他送出这一幕），
+  //   别人照常玩。回来时守秘人会再交代一次他登场。
+  const [away, setAway] = useState(false)
+  const [awayBusy, setAwayBusy] = useState(false)
+  const handleToggleAway = async () => {
+    if (!roomId || !playerId || awayBusy) return
+    setAwayBusy(true)
+    try {
+      const next = !away
+      await setPlayerAway(roomId, playerId, next)
+      setAway(next)
+    } catch (err) {
+      setEndError(friendlyErrorMessage(err, '操作失败'))
+    } finally {
+      setAwayBusy(false)
+    }
+  }
+
   // 退出（不是结束游戏）——只是自己离开，房间对其他人继续存在、phase 不变，
   // 之后可以从「我的游戏」用同一个身份重新进来（见 MyRoomsPage 的继续逻辑）。
   const handleExit = () => {
@@ -2206,6 +2227,17 @@ export default function RoomPage() {
                   className="w-full py-2 mb-2 rounded-sm bg-transparent text-text-body border border-border-light text-xs font-medium flex items-center justify-center gap-1.5 active:bg-border-light"
                 >
                   <Coffee className="w-3.5 h-3.5" /> {paused ? '继续游戏' : '先休息一下'}
+                </button>
+                {/* 🔴 「休息」与「我先走」是两件事，别合并：休息是**全桌**停下等你
+                    （心跳也冻住），我先走是**只有我**退出剧情、别人继续玩。
+                    后者会让守秘人给一个说得通的理由把这个角色送出这一幕。 */}
+                <button
+                  onClick={handleToggleAway}
+                  disabled={awayBusy}
+                  className="w-full py-2 mb-2 rounded-sm bg-transparent text-text-body border border-border-light text-xs font-medium flex items-center justify-center gap-1.5 active:bg-border-light disabled:opacity-60"
+                >
+                  <DoorOpen className="w-3.5 h-3.5" />
+                  {awayBusy ? '处理中…' : away ? '我回来了' : '我先离开一会（角色暂时退场）'}
                 </button>
                 <button onClick={() => setConfirmEnd(true)}
                   className="w-full py-2 rounded-sm bg-transparent text-[#c04040] border border-[#c04040]/40 text-xs font-medium flex items-center justify-center gap-1.5 active:bg-[#c04040]/5">

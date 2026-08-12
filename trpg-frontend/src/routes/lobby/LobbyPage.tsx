@@ -7,7 +7,14 @@ const InviteSheet = lazy(() => import('@/shared/components/InviteSheet'))
 import { useRoomStore } from '@/stores/room-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { connectWebSocket, sdk, onWsMessage, waitForWsOpen, disconnectWebSocket, friendlyErrorMessage } from '@/services/api-client'
-import { startStory, addAiPlayer } from '@/services/room'
+import {
+  startStory,
+  addAiPlayer,
+  disbandRoom,
+  kickPlayer,
+  transferHost,
+  updateRoomSettings,
+} from '@/services/room'
 import { useRoomPlayers } from '@/hooks/useRoomPlayers'
 
 // 第一个等待界面：等所有玩家进入房间、都标记"已就绪"，才能一起往下走到
@@ -123,7 +130,7 @@ export default function LobbyPage() {
     sdk.roomSocket.setReady(playerId, { ready: next })
   }
 
-  const handleLeave = () => {
+  const handleLeave = async () => {
     // ★ 不能让"没有 playerId 就直接 return"卡死用户——刷新页面等场景下
     // room-store 可能还没恢复完，但用户始终要有办法离开这个页面（见
     // 2026-07-13 测试报告 P0：返回按钮失效导致的死锁）。
@@ -131,8 +138,52 @@ export default function LobbyPage() {
       setConfirmLeave(true)
       return
     }
+    // 🔴 房主这条确认一直写着「所有成员将被移出」，而代码只是 navigate 回首页
+    // ——房间还活着、别人还在里面等。文案说的事现在真的会发生了。
+    if (isHost && roomId) {
+      try {
+        await disbandRoom(roomId)
+      } catch (err) {
+        setError(friendlyErrorMessage(err, '解散房间失败'))
+        return
+      }
+    }
     if (playerId) disconnectWebSocket()
     navigate('/home')
+  }
+
+  // 房主点某个成员 → 一张便条，里面是对他的操作。做成便条而不是行内按钮：
+  // 375 宽的行里已经有头像、昵称、身份、就绪盖章，再塞两个按钮会挤成一团。
+  const [acting, setActing] = useState<{ playerId: string; nickname: string } | null>(null)
+  const [memberBusy, setMemberBusy] = useState(false)
+
+  const runMemberAction = async (action: () => Promise<void>, fallback: string) => {
+    if (memberBusy) return
+    setMemberBusy(true)
+    try {
+      setError('')
+      await action()
+      setActing(null)
+    } catch (err) {
+      setError(friendlyErrorMessage(err, fallback))
+    } finally {
+      setMemberBusy(false)
+    }
+  }
+
+  // 人数上限。中途加入放开之后，最常撞上的就是"位置不够了"。
+  const [seatBusy, setSeatBusy] = useState(false)
+  const changeSeats = async (delta: number) => {
+    if (!roomId || !info || seatBusy) return
+    setSeatBusy(true)
+    try {
+      setError('')
+      await updateRoomSettings(roomId, info.maxPlayers + delta)
+    } catch (err) {
+      setError(friendlyErrorMessage(err, '改人数失败'))
+    } finally {
+      setSeatBusy(false)
+    }
   }
 
   return (
@@ -198,9 +249,66 @@ export default function LobbyPage() {
             <br />
             <span className="text-brass-bright font-mono">{players.length}</span> / {info.maxPlayers}{' '}
             人已加入
+            {/* 人数上限就长在"几人已加入"旁边——那是这个问题被问出来的地方 */}
+            {isHost && (
+              <span className="inline-flex items-center gap-1 ml-2 align-middle">
+                <button
+                  type="button"
+                  onClick={() => changeSeats(-1)}
+                  disabled={seatBusy || info.maxPlayers <= players.length}
+                  className="cut-corner w-[20px] h-[20px] leading-none border border-brass-dark text-brass-bright disabled:opacity-35 active:scale-[0.92]"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  onClick={() => changeSeats(1)}
+                  disabled={seatBusy || info.maxPlayers >= 20}
+                  className="cut-corner w-[20px] h-[20px] leading-none border border-brass-dark text-brass-bright disabled:opacity-35 active:scale-[0.92]"
+                >
+                  ＋
+                </button>
+              </span>
+            )}
           </>
         )}
       </p>
+
+      {/* 对某个成员的操作。同 `leaf`：压在桌上的一张便条，不是页面里的卡片 */}
+      {acting && (
+        <div className="theme-paper leaf paper-grain relative z-10 bg-book text-ink p-3.5 mb-3.5 border-l-[3px] border-l-brass-dark">
+          <p className="text-[12px] text-ink mb-2.5 pl-2">
+            对 <b>{acting.nickname}</b> 做点什么？
+          </p>
+          <div className="flex flex-col gap-2 pl-2">
+            <button
+              disabled={memberBusy}
+              onClick={() =>
+                runMemberAction(() => transferHost(roomId!, acting.playerId), '转让房主失败')
+              }
+              className="cut-corner py-2 border border-ink/35 text-ink text-[12px] font-semibold bg-white/25 disabled:opacity-50 active:scale-[0.97]"
+            >
+              把房主交给他
+            </button>
+            <button
+              disabled={memberBusy}
+              onClick={() =>
+                runMemberAction(() => kickPlayer(roomId!, acting.playerId), '移出玩家失败')
+              }
+              className="cut-corner py-2 bg-rust-dark text-book text-[12px] font-semibold disabled:opacity-50 active:scale-[0.97]"
+            >
+              移出房间
+            </button>
+            <button
+              disabled={memberBusy}
+              onClick={() => setActing(null)}
+              className="cut-corner py-2 border border-ink/25 text-ink-soft text-[12px] disabled:opacity-50 active:scale-[0.97]"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
       {error && <p className="relative z-10 text-center text-[11.5px] text-rust mb-3">{error}</p>}
 
       {/* 到场登记表：跟准备页的登记表同一张纸，只是登记的是"到没到、就没就绪" */}
@@ -216,10 +324,16 @@ export default function LobbyPage() {
 
         {players.map((p) => {
           const isSelf = p.playerId === playerId
+          // 房主能对别人动手；对自己和 AI 不行（踢自己会让房间永远没有房主，
+          // 把房主转给 AI 等于同一件事——后端两条都挡，这里只是不给入口）。
+          const manageable = isHost && !isSelf && !p.isAi
           return (
             <div
               key={p.playerId}
-              className="flex items-center gap-2.5 px-3 py-2.5 border-b border-ink/20 last:border-b-0"
+              onClick={() => manageable && setActing({ playerId: p.playerId, nickname: p.nickname })}
+              className={`flex items-center gap-2.5 px-3 py-2.5 border-b border-ink/20 last:border-b-0 ${
+                manageable ? 'cursor-pointer active:bg-ink/[0.06]' : ''
+              }`}
             >
               <div
                 className={`w-[34px] h-[34px] flex-none flex items-center justify-center text-[15px] bg-ink/[0.08] border ${

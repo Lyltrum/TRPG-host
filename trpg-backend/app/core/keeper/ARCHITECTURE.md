@@ -29,7 +29,7 @@ keeper/
 │   └── npcs.py         NPC 实体寻址（把模型写的名字解析成白名单 id）
 │
 ├── capabilities/   🔴 一个能力一个目录，新人只读这一个
-│   ├── skill_check/  san_check/  health/  movement/  madness/
+│   ├── skill_check/  san_check/  health/  movement/  madness/  presence/
 │   └── world_state/  clue_reveal/  agenda/  progression/  open_threads/
 │
 ├── runtime/        编排与共享运行时状态（能力无关）

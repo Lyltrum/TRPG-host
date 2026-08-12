@@ -99,6 +99,34 @@ class RoomPlayerRead(CamelModel):
     is_ai: bool = False
 
 
+class TransferHostBody(CamelModel):
+    """POST /api/v1/rooms/{roomId}/host 请求体——把房主交给谁。"""
+
+    player_id: str = Field(..., min_length=1)
+
+
+class PlayerAwayBody(CamelModel):
+    """POST /api/v1/rooms/{roomId}/players/{playerId}/away 请求体。
+
+    显式的 `away` 而不是两个动词端点（`/away` 与 `/back`）：**这是一个开关，
+    不是两件事**，两个端点会让"他到底在不在"多出一处需要同步的判断。
+    """
+
+    away: bool
+
+
+class RoomSettingsBody(CamelModel):
+    """PATCH /api/v1/rooms/{roomId} 请求体。
+
+    只有人数上限一项。房间名不在这里：改名是纯展示需求，而这条接口的存在
+    理由是"位置不够了"这个会卡住桌子的问题——两件事没必要绑在一起。
+    区间跟建房时一致（`RoomCreate.max_players`），下界由服务层再按当前人数
+    收紧一次（不能调到比在座的人还少）。
+    """
+
+    max_players: int = Field(..., ge=1, le=20)
+
+
 class AiPlayerCreateBody(CamelModel):
     """加一个 AI 队友（exec/21）。三个字段都可选。
 

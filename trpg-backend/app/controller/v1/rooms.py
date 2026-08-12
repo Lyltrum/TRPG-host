@@ -33,11 +33,14 @@ from app.dto.replay import ReplayEventRead, RoomSummaryRead
 from app.dto.room import (
     AiPlayerCreateBody,
     JoinRoomBody,
+    PlayerAwayBody,
     RoomCreate,
     RoomCreateResult,
     RoomPlayerRead,
     RoomPreview,
+    RoomSettingsBody,
     SelectModuleBody,
+    TransferHostBody,
 )
 from app.models.user import User
 from app.service import ai_player as ai_player_service
@@ -239,12 +242,123 @@ async def end_game(
     return ApiResponse.ok(None)
 
 
+@router.delete("/{room_id}/players/{player_id}", response_model=ApiResponse[None])
+async def kick_player(
+    room_id: str,
+    player_id: str,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[None]:
+    """DELETE /api/v1/rooms/{roomId}/players/{playerId} —— 房主在大厅移出玩家。"""
+    try:
+        await room_service.kick_player(db, room_id, player_id, reconnect_token)
+    except (
+        room_service.RoomNotFoundError,
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+        room_service.RoomConflictError,
+    ) as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(None)
+
+
+@router.post("/{room_id}/host", response_model=ApiResponse[None])
+async def transfer_host(
+    room_id: str,
+    payload: TransferHostBody,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[None]:
+    """POST /api/v1/rooms/{roomId}/host —— 转让房主。"""
+    try:
+        await room_service.transfer_host(db, room_id, payload.player_id, reconnect_token)
+    except (
+        room_service.RoomNotFoundError,
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+        room_service.RoomConflictError,
+    ) as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(None)
+
+
+@router.patch("/{room_id}", response_model=ApiResponse[None])
+async def update_room_settings(
+    room_id: str,
+    payload: RoomSettingsBody,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[None]:
+    """PATCH /api/v1/rooms/{roomId} —— 改人数上限。"""
+    try:
+        await room_service.update_room_settings(db, room_id, payload.max_players, reconnect_token)
+    except (
+        room_service.RoomNotFoundError,
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+        room_service.RoomConflictError,
+    ) as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(None)
+
+
+@router.post("/{room_id}/players/{player_id}/away", response_model=ApiResponse[None])
+async def set_player_away(
+    room_id: str,
+    player_id: str,
+    payload: PlayerAwayBody,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[None]:
+    """POST /api/v1/rooms/{roomId}/players/{playerId}/away —— 中途离开 / 回来。
+
+    `away=true` 让这个角色暂时退出剧情（守秘人下一段会把他圆出去），
+    `away=false` 是回来。本人或房主可操作。
+    """
+    try:
+        await room_service.set_player_away(db, room_id, player_id, payload.away, reconnect_token)
+    except (
+        room_service.RoomNotFoundError,
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+        room_service.RoomConflictError,
+    ) as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(None)
+
+
+@router.post("/{room_id}/disband", response_model=ApiResponse[None])
+async def disband_room(
+    room_id: str,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[None]:
+    """POST /api/v1/rooms/{roomId}/disband —— 房主解散房间。"""
+    try:
+        await room_service.disband_room(db, room_id, reconnect_token)
+    except (
+        room_service.RoomNotFoundError,
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+        room_service.RoomConflictError,
+    ) as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(None)
+
+
 @router.get("/{room_id}/summary", response_model=ApiResponse[RoomSummaryRead])
 async def get_room_summary(
     room_id: str, db: AsyncSession = Depends(get_db)
 ) -> ApiResponse[RoomSummaryRead]:
-    """GET /api/v1/rooms/{roomId}/summary —— 复盘摘要（本期未实现）。"""
-    summary = await room_service.get_summary(db, room_id)
+    """GET /api/v1/rooms/{roomId}/summary —— 复盘摘要。
+
+    上半是代码算的数字，下半是模型写的一段回顾（没配 key 时为 null，
+    见 `service/recap.py`）。
+    """
+    try:
+        summary = await room_service.get_summary(db, room_id)
+    except room_service.RoomNotFoundError as exc:
+        _raise_service_error(exc)
     return ApiResponse.ok(summary)
 
 

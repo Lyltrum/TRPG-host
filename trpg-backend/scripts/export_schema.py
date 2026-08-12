@@ -46,6 +46,10 @@ _MODELS: list[type[BaseModel]] = [
     room.RoomCreateResult,
     room.RoomPlayerRead,
     room.AiPlayerCreateBody,
+    # 房间成员管理四件套 + 中途离开（2026-08-12）
+    room.TransferHostBody,
+    room.RoomSettingsBody,
+    room.PlayerAwayBody,
     room.ModuleRead,
     room.RoomPreview,
     room.MyRoomSummary,

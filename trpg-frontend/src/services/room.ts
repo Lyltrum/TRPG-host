@@ -4,11 +4,12 @@ import type {
   MyRoomSummary,
   RoomPlayerSummary,
   RoomPreview,
+  RoomSummary,
 } from 'trpg-sdk';
 import { DEFAULT_MAX_PLAYERS, useRoomStore } from '@/stores/room-store';
 import { getAuthToken, sdk } from './api-client';
 
-export type { CreateRoomResult, ModuleSummary, MyRoomSummary, RoomPreview };
+export type { CreateRoomResult, ModuleSummary, MyRoomSummary, RoomPreview, RoomSummary };
 
 // 房主/已加入玩家专属的操作（选模组/开始游戏/结束游戏/我的房间列表）需要
 // 后端的房间重连凭证（X-Reconnect-Token，issue #39），加入/创建房间时签发、
@@ -94,4 +95,44 @@ export async function listMyRooms(): Promise<MyRoomSummary[]> {
 // 房主结束游戏，房间转入「已完成」状态，之后只能查看复盘
 export async function endGame(roomId: string): Promise<void> {
   await sdk.rooms.endGame(roomId, requireReconnectToken());
+}
+
+// ── 房间成员管理（2026-08-12）──────────────────────────────
+
+// 房主在大厅把某个人移出房间。**只在大厅阶段**——开局之后想把人赶走是社交
+// 问题，不是软件问题（后端也挡）。
+export async function kickPlayer(roomId: string, playerId: string): Promise<void> {
+  await sdk.rooms.kickPlayer(roomId, playerId, requireReconnectToken());
+}
+
+// 转让房主。不限阶段：真实场景恰恰是开局之后房主要先走。
+export async function transferHost(roomId: string, playerId: string): Promise<void> {
+  await sdk.rooms.transferHost(roomId, playerId, requireReconnectToken());
+}
+
+// 改人数上限。下界是当前人数（后端裁定），中途加入撞上"位置不够"时用它。
+export async function updateRoomSettings(roomId: string, maxPlayers: number): Promise<void> {
+  await sdk.rooms.updateSettings(roomId, maxPlayers, requireReconnectToken());
+}
+
+// 房主解散房间。跟 endGame 的区别只有阶段：那条要求进行中，这条是"人没凑齐，
+// 散了"。两者都不删数据，回放照常打得开。
+export async function disbandRoom(roomId: string): Promise<void> {
+  await sdk.rooms.disband(roomId, requireReconnectToken());
+}
+
+// 中途离开 / 回来。他的角色暂时退出剧情：不进守秘人的在场名单，守秘人下一段
+// 会给一个说得通的理由把他送出这一幕。本人或房主可操作。
+export async function setPlayerAway(
+  roomId: string,
+  playerId: string,
+  away: boolean
+): Promise<void> {
+  await sdk.rooms.setPlayerAway(roomId, playerId, away, requireReconnectToken());
+}
+
+// 复盘摘要。highlights 是代码算的数字，summaryText 是模型写的一段回顾
+// （没配 key 时为 null——那是如实的降级，前端要照实处理，不要编一段占位文案）。
+export async function getRoomSummary(roomId: string): Promise<RoomSummary> {
+  return sdk.rooms.getSummary(roomId, requireReconnectToken());
 }

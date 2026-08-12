@@ -45,10 +45,14 @@ test('🔴 换设备重连：新的客户端实例只凭账号 token 就能拿�
   assert.equal(recovered.reconnectToken, original.reconnectToken, '换设备也要能拿回房间凭证')
 })
 
-test('🔴 游戏开始后：老成员能重连，新人被拒', async () => {
-  // 一对互为对照的断言。改动前这里是一刀切 `if phase != Lobby: 409`，把「中途
-  // 加入」和「掉线重连」当成同一件事拒掉——只测其中一边的话，「一刀切拒绝」和
+test('🔴 游戏开始后：老成员能重连，晚到的新人也能进', async () => {
+  // 一对互为对照的断言。最早这里是一刀切 `if phase != Lobby: 409`，把「中途
+  // 加入」和「掉线重连」当成同一件事拒掉；只测其中一边的话，「一刀切拒绝」和
   // 「一刀切放行」各能通过一条。
+  //
+  // 🔴 **行为变更（2026-08-12）**：中途加入放开了——聚会的物理现实是有人晚到，
+  // 而在此之前他连房间都进不来。现在拒的只有**已经结束**的房间（见下一条）。
+  // 老成员重连那半一个字没变，仍然是这条用例的另一半。
   const room = await createRoomWithModule('phase')
   const guest = await registerPlayer('phaseguest')
   const joined = await guest.sdk.rooms.join(room.roomCode, { nickname: '访客' }, guest.token)
@@ -59,13 +63,24 @@ test('🔴 游戏开始后：老成员能重连，新人被拒', async () => {
   assert.equal(rejoined.playerId, joined.playerId, '老成员在 Building 阶段必须能重连')
 
   const latecomer = await registerPlayer('latecomer')
+  const late = await latecomer.sdk.rooms.join(room.roomCode, { nickname: '迟到' }, latecomer.token)
+  assert.ok(late.playerId, '晚到的新人现在能进来')
+  assert.notEqual(late.playerId, joined.playerId, '他是新的一位，不是谁的重连')
+  assert.equal(late.characterId, null, '他还没建卡——那是他进来之后要做的第一件事')
+})
+
+test('🔴 已经结束的房间仍然拒绝加入（他要的是回放）', async () => {
+  const room = await createRoomWithModule('overroom')
+  await room.host.sdk.rooms.disband(room.roomId, room.reconnectToken)
+
+  const latecomer = await registerPlayer('toolate')
   await assert.rejects(
-    () => latecomer.sdk.rooms.join(room.roomCode, { nickname: '迟到' }, latecomer.token),
+    () => latecomer.sdk.rooms.join(room.roomCode, { nickname: '太迟' }, latecomer.token),
     (error: Error) => {
-      assert.match(error.message, /已开始|CONFLICT/)
+      assert.match(error.message, /结束|CONFLICT/)
       return true
     },
-    '新人在 Building 阶段必须被拒'
+    '已结束的房间必须拒绝新人'
   )
 })
 

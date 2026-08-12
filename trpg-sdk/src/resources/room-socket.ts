@@ -244,6 +244,23 @@ export class RoomSocket {
    *
    * 只有确认这一个动作，**没有否认**：不确认就是维持分离，那本来就是默认与
    * 安全方向。走到别人所在的地点时后端会在 `party.update` 里给 `mergePendingAt`。 */
+  /** room.pause —— 「大家在休息」（`exec/35`）。
+   *
+   * 任何人都能按、任何人都能恢复：要去接电话的不一定是房主，回来的人也不该
+   * 等房主点一下。暂停期间世界心跳不推进、行动提交被挡回，**讨论区照常**。
+   *
+   * ⚠️ 已经在跑的那一轮不会被打断——叙事已经调出去了，收不回来。 */
+  setPaused(playerId: string, paused: boolean): void {
+    this.send('room.pause', playerId, { paused });
+  }
+
+  /** turn.retry —— 守秘人这一拍失败了，用同一批原话再跑一次（`exec/35`）。
+   *
+   * 实现上就是**不带澄清的纠错**：同样回滚世界指针、清掉还没掷的待决定项。 */
+  retryTurn(playerId: string): void {
+    this.send('turn.retry', playerId, {});
+  }
+
   /** turn.clarify —— 「你把我的话理解错了」（`exec/35`）。
    *
    * 服务端会把世界指针回滚到上一轮之前、清掉还没掷的待决定项，然后带着这句

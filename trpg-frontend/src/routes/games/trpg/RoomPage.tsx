@@ -1350,10 +1350,14 @@ export default function RoomPage() {
           }
 
           const isNarr = msg.type === 'narr'
-          // 🔴 空间规则：左 = 主持人，右 = 玩家们（自己与队友都靠右）。
-          // 讨论区没有主持人，左边空出来了 → 队友回到左边，左右分栏更好读。
+          // 🔴 空间规则：**右 = 我自己，左 = 除我之外的所有人**（主持人和队友）。
+          //
+          // 原来对局区是「左 = 主持人，右 = 玩家们」——单人局这两种说法给出的
+          // 结果一模一样，所以它一直看不出问题；多人真机才暴露：队友的发言跟
+          // 自己的挤在同一侧，纸色和回形针金属那点差别不足以让人一眼认出哪句
+          // 是自己说的。改成微信那种"我在右、别人在左"，两个 channel 同一条规则。
           const isSelf = msg.type === 'player' && msg.isSelf
-          const onRight = channel === 'dm' ? !isNarr : isSelf
+          const onRight = isSelf
 
           // 守秘人 = 书页：裁齐的边、版心、装订侧阴影、页码
           if (isNarr) {

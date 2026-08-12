@@ -70,6 +70,7 @@ from app.core.keeper.narration.narration_hints import (
     UNRESOLVED_CONFLICT_HINT,
     build_bystander_hint,
     build_check_boundary_hint,
+    build_clarification_guidance,
     build_opening_cast_hint,
     build_person_hint,
 )
@@ -382,6 +383,11 @@ class KeeperAgent(Narrator):
                     narration_len=len(narration),
                 )
                 return NarrationOutcome(text=narration)
+
+        # 玩家纠错轮（`exec/35`）：把澄清摆到裁决器眼前。指针已经由调用方
+        # 回滚过了，这里只负责让它按澄清后的意思重裁那一轮的原话。
+        if context.clarification:
+            situation = f"{situation}\n\n{build_clarification_guidance(context.clarification)}"
 
         # 阶段1·裁决：结构化输出，检定是 schema 字段，不存在"忘了裁决"。
         decision = await self._adjudicate(situation)

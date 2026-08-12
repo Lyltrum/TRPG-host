@@ -182,6 +182,20 @@ class PartyUpdatePayload(CamelModel):
     merge_pending_at: str | None
 
 
+class TurnClarifyPayload(CamelModel):
+    """`turn.clarify` 客户端事件：「你把我的话理解错了」（`exec/35`）。
+
+    `clarification` 必填，理由同 `ActionSubmitPayload.utterance`：不带内容的
+    纠错是畸形消息，而给默认空串会让 SDK 侧变成可选、于是静默无操作。
+
+    🔴 **没有"纠正哪一轮"这个参数**：只能纠最新的一轮。翻旧账要能定位到
+    任意一轮的世界状态，那是一整套 undo 基础设施；而且真人桌上纠错本来就
+    只发生在刚刚那一拍。
+    """
+
+    clarification: str = Field(..., min_length=1, max_length=500)
+
+
 class PartyMergeConfirmPayload(CamelModel):
     """`party.merge.confirm` 客户端事件：当事人确认「我确实跟他们碰上了」。
 

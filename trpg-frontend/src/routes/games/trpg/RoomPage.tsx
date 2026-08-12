@@ -643,6 +643,9 @@ export default function RoomPage() {
   const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null)
   // 已点开的私密气泡下标。默认折叠，点一下才显形。
   const [revealedPrivate, setRevealedPrivate] = useState<Set<number>>(new Set())
+  // 纠错弹层（exec/35）：「你把我的话理解错了」
+  const [clarifying, setClarifying] = useState(false)
+  const [clarifyText, setClarifyText] = useState('')
   const [skillsTab, setSkillsTab] = useState<'occupation' | 'interest'>('occupation')
   const [showDice, setShowDice] = useState(false)
   const [pendingCheck, setPendingCheck] = useState<PendingCheck | null>(null)
@@ -1317,7 +1320,13 @@ export default function RoomPage() {
               )
             })
           )
-        ) : messages.map((msg, i) => {
+        ) : (() => {
+          // 最后一条叙事的下标：纠错按钮只长在它下面
+          let lastNarrIndex = -1
+          for (let k = messages.length - 1; k >= 0; k--) {
+            if (messages[k].type === 'narr') { lastNarrIndex = k; break }
+          }
+          return messages.map((msg, i) => {
           // 系统提示：居中的一枚小铭牌，不是聊天软件的圆胶囊
           if (msg.type === 'system') {
             return (
@@ -1384,6 +1393,19 @@ export default function RoomPage() {
                   <div className="kp-bubble paper-grain relative bg-book text-ink px-3 py-2.5">
                     <p className="font-display text-[13.5px] leading-[1.78] whitespace-pre-wrap">{msg.content}</p>
                   </div>
+                  {/* 🔴 纠错入口只挂在**最新**那段叙事下面（exec/35）：只能纠
+                      刚刚那一拍，翻旧账需要整套 undo 基础设施，而真人桌上纠错
+                      本来也只发生在当下。任何人都能按——被误解的不一定是发言
+                      的那个人（真机那次是「阿福说话、阿贵被挪走」）。 */}
+                  {i === lastNarrIndex && !msg.streaming && (
+                    <button
+                      type="button"
+                      onClick={() => setClarifying(true)}
+                      className="typed mt-1.5 text-[10.5px] text-text-dim underline underline-offset-2 active:opacity-70"
+                    >
+                      理解错了？告诉守秘人
+                    </button>
+                  )}
                 </div>
               </div>
             )
@@ -1434,7 +1456,57 @@ export default function RoomPage() {
               <span className="typed text-[10.5px] text-text-muted">{msg.time}</span>
             </div>
           )
-        })}
+          })
+        })()}
+
+        {clarifying && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/55" onClick={() => setClarifying(false)}>
+            <div
+              className="theme-paper paper-grain relative w-full max-w-[420px] bg-dossier text-ink px-4 pt-4 pb-6"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="typed border-b-[1.5px] border-ink/40 pb-2 mb-3 text-[11px] text-ink-soft">
+                告诉守秘人他理解错了什么
+              </div>
+              <textarea
+                value={clarifyText}
+                onChange={e => setClarifyText(e.target.value.slice(0, 500))}
+                placeholder="比如：我说的是绕到屋后，不是进屋"
+                autoFocus
+                rows={3}
+                className="w-full bg-ink/[0.06] border border-ink/25 px-3 py-2 text-[13.5px] text-ink placeholder:text-ink-soft resize-none"
+              />
+              {/* 🔴 把边界当场说清楚：能纠的是"你听错了我的话"，不是"我要改
+                  结果"。结构上它也撤不了既成事实——但玩家点之前就该知道。 */}
+              <p className="text-[11px] text-ink-soft mt-2 leading-relaxed">
+                他会把刚才那一幕重讲一遍。已经掷过的骰子、扣掉的生命与理智不会撤销。
+              </p>
+              <div className="flex gap-2 mt-3">
+                <button
+                  type="button"
+                  onClick={() => { setClarifying(false); setClarifyText('') }}
+                  className="cut-corner flex-1 py-2 bg-ink/10 text-ink text-[12px] font-semibold active:scale-[0.97]"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  disabled={!clarifyText.trim() || !playerId}
+                  onClick={() => {
+                    if (!playerId) return
+                    sdk.roomSocket.clarifyTurn(playerId, clarifyText.trim())
+                    setClarifying(false)
+                    setClarifyText('')
+                    setTyping(true)
+                  }}
+                  className="cut-corner flex-1 py-2 bg-brass-dark text-book text-[12px] font-semibold disabled:opacity-50 active:scale-[0.97]"
+                >
+                  重讲一遍
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Typing indicator（只属于主持人频道——讨论区没有"守秘人正在输入"这回事）
             🔴 `typing` 只由**自己**的提交点亮，没发言的人看不到；分头时另一组

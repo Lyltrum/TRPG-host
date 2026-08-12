@@ -128,6 +128,20 @@
     box-sizing: border-box;
   }
 
+  /* 🔴 真机（iOS Safari）实测：整个页面能被上下拖动。两个原因叠在一起，
+     两条都要治，缺一条都还能拖：
+
+     ① `100vh` 在 iOS Safari 里是**工具栏收起时**的高度（large viewport），
+        而工具栏显示着的时候可见区域更矮 ⇒ 页面比看得见的部分高出一条工具栏，
+        于是 body 自己就能滚。`100dvh` 是**当下真实**的可见高度。
+        先写 100vh 再写 100dvh：不认识 dvh 的老浏览器吃前一行，行为不变。
+     ② 橡皮筋（overscroll bounce）：滚到头还能继续拽。`overscroll-behavior:
+        none` 关掉页面级的那一层。<main> 那层是 `contain`（见 PhoneLayout），
+        它自己照常滚，只是滚到底不再把滚动"传"给页面。 */
+  html {
+    overscroll-behavior: none;
+  }
+
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
     background: #e8e2d4;
@@ -135,14 +149,19 @@
     display: flex;
     justify-content: center;
     min-height: 100vh;
+    min-height: 100dvh;
     -webkit-font-smoothing: antialiased;
     overflow-x: hidden;
+    overscroll-behavior: none;
   }
 
   #root {
     width: 100%;
     max-width: 390px;
+    /* 见 body 上那段：100vh 是给不认识 dvh 的浏览器的兜底，dvh 才是真机上
+       "看得见的那么高"。桌面预览走下面 500px 那条媒体查询的 820px，不受影响。 */
     height: 100vh;
+    height: 100dvh;
     background: #faf7f0;
     position: relative;
     /* 不能在这个元素自己身上开 overflow:auto——它同时也是下面 transform

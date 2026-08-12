@@ -9,6 +9,7 @@ const LoginPage = lazy(() => import('@/routes/auth/LoginPage'));
 const RegisterPage = lazy(() => import('@/routes/auth/RegisterPage'));
 const HomePage = lazy(() => import('@/routes/home/HomePage'));
 const JoinRoomPage = lazy(() => import('@/routes/join/JoinRoomPage'));
+const InviteLandingPage = lazy(() => import('@/routes/join/InviteLandingPage'));
 const CreateRoomPage = lazy(() => import('@/routes/create/CreateRoomPage'));
 const GameSelectionPage = lazy(() => import('@/routes/games/GameSelectionPage'));
 const ScenarioSelectionPage = lazy(() => import('@/routes/games/trpg/ScenarioSelectionPage'));
@@ -63,6 +64,10 @@ function App() {
           {/* /auth/* —— 登录和注册是身份验证下两个平级的入口方式（互斥的
               替代动作，不是谁从属谁），所以是同一个前缀下的两个兄弟路径，
               不是互相嵌套。 */}
+          {/* 受邀链接落地页。**放在登录之外**：朋友点开链接时多半还没有身份，
+              这一屏自己会给他建一个（只问昵称），不该先把他弹去登录页。 */}
+          <Route path="/join/:roomCode" element={<InviteLandingPage />} />
+
           <Route path="/auth/login" element={<LoginPage />} />
           <Route path="/auth/register" element={<RegisterPage />} />
 

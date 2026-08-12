@@ -56,3 +56,19 @@ export async function updateProfile(nickname: string): Promise<MeResult> {
   if (!token) throw new Error('未登录');
   return sdk.auth.updateNickname({ nickname }, token);
 }
+
+/**
+ * 受邀入房用的「只报个名字」注册：账号密码由前端随机生成，玩家只输昵称。
+ *
+ * 🔴 **不是游客模式**：账号仍然真实存在，`join` 的幂等键（issue #106：掉线
+ * 重连认的就是账号）一个字没动。这里省掉的只是**让朋友想一个账号密码**这一步
+ * ——聚会时人手一遍注册流程是入房最大的摩擦。
+ *
+ * 代价写明：账号密码不告诉玩家，token 存在这台设备的 localStorage 里，
+ * **换设备或清缓存 = 新身份**（那一局里他会变成一个新玩家）。
+ */
+export async function registerAsGuest(nickname: string): Promise<AuthResult> {
+  const rand = () =>
+    Array.from(crypto.getRandomValues(new Uint8Array(9)), (b) => b.toString(36).padStart(2, '0')).join('');
+  return register(`g_${rand()}`, rand(), nickname);
+}

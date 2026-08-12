@@ -90,6 +90,8 @@ const PAYLOAD_VALIDATORS: {
     typeof p.cost === 'number' &&
     typeof p.luckRemaining === 'number',
   'keeper.busy': (p) => typeof p.busy === 'boolean',
+  // exec/35：大家在休息
+  'room.paused': (p) => typeof p.paused === 'boolean' && typeof p.byNickname === 'string',
   error: (p) => typeof p.code === 'string' && typeof p.message === 'string',
 };
 

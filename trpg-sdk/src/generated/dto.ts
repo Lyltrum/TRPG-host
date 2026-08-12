@@ -594,6 +594,24 @@ export interface LuckOfferPayload {
 }
 
 /**
+ * 临时性疯狂的一种发作表现（COC7「疯狂发作·即时」1D10 表）。
+ *
+ * 有 id 才有地基：此前"单次损失≥5 触发临时疯狂"只是掷骰文本末尾的一句
+ * 警告，症状由叙事器现编，下一轮没有任何地方记着它——同「即兴出来的东西
+ * 没有落点」。做成 id 之后它是 keeper_state 里的一条记录、局面块里的一行，
+ * 解除必须走裁决字段。
+ *
+ * `roll` 是它在 1D10 表上的点数（服务端掷，模型碰不到）。表本身属于规则
+ * 系统而不是引擎：COC7 是插件，症状表跟着它走。
+ */
+export interface MadnessSymptomSpec {
+  id: string;
+  roll: number;
+  label: string;
+  description: string;
+}
+
+/**
  * GET /PATCH /api/v1/auth/me 返回
  */
 export interface MeRead {
@@ -1045,6 +1063,7 @@ export interface RulesetRead {
   skills: SkillSpec[];
   occupations: OccupationSpec[];
   successTiers?: SuccessTierSpec[];
+  madnessSymptoms?: MadnessSymptomSpec[];
 }
 
 /**

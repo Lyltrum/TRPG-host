@@ -48,6 +48,7 @@ if TYPE_CHECKING:  # pragma: no cover - 仅为类型标注，运行时不产生�
     from app.core.keeper.runtime.deps import KeeperDeps
     from app.core.keeper.runtime.pending import PendingDecision
     from app.core.narration.contract import CheckResultNotice
+    from app.dto.game import RulesetRead
 
 
 class DecisionModel(BaseModel):
@@ -79,6 +80,11 @@ class Capability(StrEnum):
     #: 「此刻藏着没」。与 SET_SCENE 分开而不是共用一条：玩家向守秘人提问那一轮
     #: 要收走移动与场景指针，但**不该让藏起来的人现身**（exec/27 阶段 3 · B 族）。
     SET_HIDING = "set_hiding"
+    #: 「他从临时性疯狂里缓过来了」。与 SET_HIDING 同族单列：疯狂是已经成立
+    #: 的状态，不因为这一轮玩家只是问了句话就该被收走。
+    CLEAR_MADNESS = "clear_madness"
+    #: 「有件事还悬着 / 那件事了结了」。同上，也是已经成立的处境。
+    TRACK_THREADS = "track_threads"
     FIRE_AGENDA = "fire_agenda"
     #: 揭开一条线索密级配对（原 REVEAL_VISIBILITY，exec/27 三处撞名一起改）。
     REVEAL_CLUE = "reveal_clue"
@@ -130,6 +136,14 @@ class SituationContext:
     #: 待决定队列里、**要查库**——渲染钩子拿不到 db，所以由 `build_situation`
     #: 查好带进来。这是第三次因为新需求加字段，同一个理由。
     merge_pending: frozenset[str] = frozenset()
+    #: 这一局用的规则数据。第四次加字段：`madness` 的局面块要把 symptom_id
+    #: 翻成人看得懂的症状名，而那张表属于规则系统（`RulesetRead`），不属于
+    #: 引擎——keeper_state 里存的只有 id。
+    #:
+    #: 可空：默认 None 让既有能力与既有测试的构造一个字都不用改。用得上它的
+    #: 能力自己判断"没有规则数据"该怎么表现（`madness` 的表现是整块不渲染，
+    #: 不是编一个症状名）。
+    ruleset: RulesetRead | None = None
 
 
 @dataclass(frozen=True)

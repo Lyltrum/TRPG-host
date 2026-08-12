@@ -20,7 +20,9 @@ from app.core.keeper.capabilities.closure import CAPABILITY as CLOSURE
 from app.core.keeper.capabilities.clue_reveal import CAPABILITY as CLUE_REVEAL
 from app.core.keeper.capabilities.health import CAPABILITY as HEALTH
 from app.core.keeper.capabilities.luck_spend import CAPABILITY as LUCK_SPEND
+from app.core.keeper.capabilities.madness import CAPABILITY as MADNESS
 from app.core.keeper.capabilities.movement import CAPABILITY as MOVEMENT
+from app.core.keeper.capabilities.open_threads import CAPABILITY as OPEN_THREADS
 from app.core.keeper.capabilities.progression import CAPABILITY as PROGRESSION
 from app.core.keeper.capabilities.san_check import CAPABILITY as SAN_CHECK
 from app.core.keeper.capabilities.skill_check import CAPABILITY as SKILL_CHECK
@@ -37,6 +39,7 @@ from app.core.keeper.contract.registry import (
     SettleHook,
     SituationContext,
 )
+from app.dto.game import RulesetRead
 
 #: 已经垂直切出来的能力。其余的还散在骨架里，逐个切（exec/27 阶段 3）。
 CAPABILITIES: tuple[KeeperCapability, ...] = (
@@ -50,6 +53,8 @@ CAPABILITIES: tuple[KeeperCapability, ...] = (
     LUCK_SPEND,
     SKILL_CHECK,
     SAN_CHECK,
+    MADNESS,
+    OPEN_THREADS,
 )
 
 
@@ -116,6 +121,7 @@ def situation_blocks(
     observer_id: str | None = None,
     players: tuple[tuple[str, str], ...] = (),
     merge_pending: frozenset[str] = frozenset(),
+    ruleset: RulesetRead | None = None,
     keeper_view: bool = True,
 ) -> list[tuple[float, str]]:
     """渲染各能力要摆在模型眼前的状态，返回 (order, 成品文本块)。
@@ -132,6 +138,7 @@ def situation_blocks(
         observer_id=observer_id,
         players=players,
         merge_pending=merge_pending,
+        ruleset=ruleset,
     )
     rendered: list[tuple[float, str]] = []
     for capability in CAPABILITIES:

@@ -159,9 +159,15 @@ logger = structlog.get_logger()
 #: 得跑一次模型往返，而守卫存在的理由之一正是"别在等骰子的时候再开一轮"。
 #: 代价是它只答得了这张卡的事，答不了别的——那正好是新手在这一刻会问的。
 #:
-#: 🔴 **不许带技能名、理由、点数**：这两句走 `_broadcast_narration`，是**全房间**
-#: 的。那些字段本来就在卡片上，而卡片是按受众发的——写进这里就是把刚修好的
-#: `exec/33 #78` 又开一个口子（"加兜底前先问它会不会跟已有规则组成闭环"）。
+#: 🔴 **不许带技能名、理由、点数**：那些字段本来就在卡片上，而卡片是按受众
+#: 发的——写进这里就是把刚修好的 `exec/33 #78` 又开一个口子（"加兜底前先问
+#: 它会不会跟已有规则组成闭环"）。
+#:
+#: 🔴 **这两句是第二人称祈使句，所以只能发给卡的主人**（2026-08-11 双人真机）：
+#: 原先它们走全房间广播，于是手上没有卡的玩家也被要求「先把手上那张检定卡
+#: 掷了」，而他点不出任何东西。被顶回来的其他发言者改收 `PENDING_WAIT_NOTICE`
+#: ——**不能什么都不回**（「按钮没有缓冲区」的同族：说了话没有任何回应，玩家
+#: 只会认为坏了）。
 ROLL_PENDING_NOTICE = (
     "先把手上那张检定卡掷了——点一下卡片，骰子由我来掷，"
     "掷出来是多少就是多少。掷不好也不会把线索卡死，只是这条路会更慢、"
@@ -172,6 +178,15 @@ LUCK_PENDING_NOTICE = (
     "幸运是你角色的一项属性，花掉就少掉那么多、不会自己长回来，"
     "所以留着还是现在用，你自己定。选完我们接着说。"
 )
+
+
+def build_pending_wait_notice(owner_nickname: str) -> str:
+    """本轮被待决定守卫顶回来、但手上没有那张卡的人收到的话。
+
+    只提昵称（房间成员列表本来就看得见），不提技能名/理由/点数——那些在卡片
+    上，而卡片是按受众发的。
+    """
+    return f"稍等一下：{owner_nickname}手上还有一张卡要先处理，处理完我们接着说。"
 
 
 class KeeperAgent(Narrator):
@@ -212,6 +227,12 @@ class KeeperAgent(Narrator):
         # 主动心跳 / 开场仪式：有待掷时直接放弃（开场不该卡在旧检定上）。
         async with self._session_factory() as db:
             pending = await pending_decision_manager.first(db, room_id, TURN_BLOCKING_KINDS)
+            owner_nickname = ""
+            if pending is not None:
+                owner = (
+                    await db.execute(select(Player).where(Player.id == pending.player_id))
+                ).scalar_one_or_none()
+                owner_nickname = owner.nickname if owner is not None else "另一位调查员"
         if pending is not None:
             if is_heartbeat or is_opening_ceremony:
                 return NarrationOutcome(text="")
@@ -224,13 +245,31 @@ class KeeperAgent(Narrator):
             # 🔴 重发的是**那一项本来的形状**：幸运卡不能当成检定请求重发，
             # 否则玩家收到一张点了会报「没有这个待掷的检定」的卡片
             # （同族于「加一种 kind 就要检查每个逐个列出类别的消费方」）。
-            if pending.kind == LUCK_SPEND_KIND:
-                return NarrationOutcome(
-                    text=LUCK_PENDING_NOTICE,
-                    player_offers=[pending],
+            #: 受众分两段：卡的主人收祈使句，本轮**其他**被顶回来的发言者收一句
+            #: 说明。不在本轮发言的人不发——他没被顶回来，多一条只是噪声。
+            waiting = tuple(pid for pid in turn_player_ids if pid != pending.player_id)
+            segments = [
+                NarrationSegment(
+                    text=(
+                        LUCK_PENDING_NOTICE
+                        if pending.kind == LUCK_SPEND_KIND
+                        else ROLL_PENDING_NOTICE
+                    ),
+                    audience=(pending.player_id,),
                 )
+            ]
+            if waiting:
+                segments.append(
+                    NarrationSegment(
+                        text=build_pending_wait_notice(owner_nickname),
+                        audience=waiting,
+                    )
+                )
+            if pending.kind == LUCK_SPEND_KIND:
+                return NarrationOutcome(text="", segments=segments, player_offers=[pending])
             return NarrationOutcome(
-                text=ROLL_PENDING_NOTICE,
+                text="",
+                segments=segments,
                 check_requests=[to_notice(pending)],
             )
 

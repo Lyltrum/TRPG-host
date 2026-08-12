@@ -1101,7 +1101,8 @@ async def _run_turn(
         except Exception:  # noqa: BLE001 — 心跳模块不可用时不影响主路径
             pass
         # outcome.text 可能为空（两段式玩家掷骰：pending 守卫命中时守秘人只
-        # 重发检定请求，不产生新叙事）——空文本不广播一条空 narration.push。
+        # 重发检定请求，那句提示走**按人裁的** segments，见 `exec/23 #76`）——
+        # 空文本不广播一条空 narration.push。
         for notice in outcome.stat_changes:
             await _broadcast_stat_change(room_id, notice, db)
         if outcome.text:

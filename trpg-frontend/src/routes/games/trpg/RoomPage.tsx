@@ -15,6 +15,7 @@ import { useRoomPlayers } from '@/hooks/useRoomPlayers'
 import { useRuleset } from '@/hooks/useRuleset'
 import { useSpeechInput } from '@/hooks/useSpeechInput'
 import TypedNarration from './TypedNarration'
+import { mergeRoomHistory, shouldShowThinking } from './room-history'
 
 // ─── Types ───────────────────────────────────────────
 interface Message {
@@ -599,6 +600,14 @@ export default function RoomPage() {
   // 读写，进 state 会让这个订阅 effect 多一个变化源——而**重订阅窗口就是丢
   // 消息窗口**（exec/19 #34）。
   const streamingEventIdsRef = useRef<Set<string>>(new Set())
+  // 🔴 「已经有叙事到手了吗」必须从 ref 读：boot 那段只看得见自己拼的数组，
+  // 看不见 WS 已经送到的那条——于是它会一边把消息覆盖掉、一边点亮
+  // 「守秘人正在思考」，然后没有人来关（真人实测 2026-08-11 多人局）。
+  const hasNarrationRef = useRef(false)
+  // 「我还在敲字」的上一次发送时刻（`exec/33 §10`）。**按节奏续期，不是开关**：
+  // 服务端不依赖 typing:false（刷新/断网/关标签页都发不出它），它靠"过了 TTL
+  // 没有新的一条就当他停了"。所以这里只要每秒最多一条即可。
+  const typingSentAtRef = useRef(0)
   // 去重闸门：见过返回 false（丢弃），没见过登记并返回 true（渲染）。
   // 🔴 `id` 缺失时**直接放行**（exec/19 #42）——身份不明就不该假装认识它，
   // 重复显示只是难看，静默丢弃是永久丢消息。
@@ -773,21 +782,24 @@ export default function RoomPage() {
             })
           }
         }
-        // 仍无旁白：只显示等待提示，不客户端垫第二段开场
-        if (!boot.some((m) => m.type === 'narr')) {
+        // 仍无旁白：只显示等待提示，不客户端垫第二段开场。
+        // 🔴 判据要算上 **WS 已经送到**的那条（`hasNarrationRef`），否则开场正好
+        // 落在这段轮询窗口里时，这里会点亮一个再也没人关的「正在思考」。
+        if (!boot.some((m) => m.type === 'narr') && !hasNarrationRef.current) {
           boot.push({
             type: 'system',
             content: '守秘人正在开场…',
             time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
           })
-          setTyping(true)
         }
       } catch {
         // replay 失败时至少给系统条
       }
       if (cancelled) return
-      setMessages(boot)
-      if (boot.some(m => m.type === 'narr')) setTyping(false)
+      // 🔴 **合并，不覆盖**：boot 跑的这几秒里 WS 可能已经把开场叙事送到了，
+      // 而它一旦被覆盖就**永久丢失**（eventId 已进去重表，不会再被加回来）。
+      setMessages(prev => mergeRoomHistory(boot, prev))
+      setTyping(shouldShowThinking(boot) && !hasNarrationRef.current)
     })()
 
     return () => {
@@ -840,6 +852,7 @@ export default function RoomPage() {
         }])
       } else if (envelope.type === 'narration.push') {
         setTyping(false)
+        hasNarrationRef.current = true
         const pushedId = envelope.payload.eventId
         // 🔴 流式已经把同样的内容一段段推过来了（exec/28）：这条完整文本用来
         // **校正**那条气泡，不是新增一条。两者靠 eventId 认亲。
@@ -870,6 +883,7 @@ export default function RoomPage() {
       } else if (envelope.type === 'narration.delta') {
         // 守秘人开始说话了——第一段一到就撤掉"正在思考"，不等整段写完。
         setTyping(false)
+        hasNarrationRef.current = true
         const { eventId, seq, text } = envelope.payload
         // 去重键是 (eventId, seq)：重连补发或重复投递时，同一段不能追加两次。
         if (!dedupe(`narrdelta:${eventId}:${seq}`, eventId)) return
@@ -1667,7 +1681,16 @@ export default function RoomPage() {
           )}
           <input
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value)
+              // 只有对守秘人说话才占回合窗口——讨论区是玩家之间的通道，
+              // 不进裁决，也不该让整桌等他打完。
+              if (channel !== 'dm' || !playerId || !e.target.value) return
+              const now = Date.now()
+              if (now - typingSentAtRef.current < 1000) return
+              typingSentAtRef.current = now
+              sdk.roomSocket.markTyping(playerId)
+            }}
             readOnly={dmBusy}
             placeholder={
               channel === 'chat'

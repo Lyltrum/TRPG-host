@@ -72,6 +72,11 @@ class Room(Base):
     # 其内容——这是 agent 的自由笔记本，形状由 agent 自己决定。
     keeper_state: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
 
+    # 「大家在休息」（`exec/35`）。聚会游戏的物理现实：有人上厕所、点外卖、
+    # 接电话。暂停期间**世界心跳不推进、行动提交被挡回**，但讨论区照常——
+    # 休息时聊天正是它的用途。
+    paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
     # 玩家纠错通道（`exec/35`）的回滚点：上一轮**开始之前**的世界指针 +
     # 那一轮的原话。形状 `{"keeper_state": {...}, "utterances": [...]}`。
     #

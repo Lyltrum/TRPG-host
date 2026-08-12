@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Users, Map, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll, EyeOff } from 'lucide-react'
+import { ArrowLeft, Users, Map, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll, EyeOff, Coffee } from 'lucide-react'
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react'
 import type { ChatMessage, PartyCharacter, PartyUpdatePayload } from 'trpg-sdk'
 import { useRoomStore } from '@/stores/room-store'
@@ -632,6 +632,11 @@ export default function RoomPage() {
   // 的，没发言的人看不到——分头时另一组因此是整整十几秒黑屏。这条来自服务端
   // 广播，属于元层信息（不含任何虚构内容）。
   const [keeperBusy, setKeeperBusy] = useState(false)
+  // 大家在休息（exec/35）。服务端广播的房间级状态，不是本地开关——
+  // 谁按的所有人都看得见，恢复也是任何人都能点。
+  const [paused, setPaused] = useState(false)
+  // 守秘人这一拍失败了：给一个「再试一次」，而不是让玩家自己重打一遍
+  const [canRetry, setCanRetry] = useState(false)
   // 我自己的空间处境（我在哪 · 谁跟我在一处 · 别处还有几组）。逐人裁过再发，
   // 不是全房间的分组表。它存在的理由：系统把位置认错时此前没人看得见。
   const [party, setParty] = useState<PartyUpdatePayload | null>(null)
@@ -856,6 +861,7 @@ export default function RoomPage() {
       } else if (envelope.type === 'narration.push') {
         setTyping(false)
         hasNarrationRef.current = true
+        setCanRetry(false)
         const pushedId = envelope.payload.eventId
         // 🔴 流式已经把同样的内容一段段推过来了（exec/28）：这条完整文本用来
         // **校正**那条气泡，不是新增一条。两者靠 eventId 认亲。
@@ -887,6 +893,7 @@ export default function RoomPage() {
         // 守秘人开始说话了——第一段一到就撤掉"正在思考"，不等整段写完。
         setTyping(false)
         hasNarrationRef.current = true
+        setCanRetry(false)
         const { eventId, seq, text } = envelope.payload
         // 去重键是 (eventId, seq)：重连补发或重复投递时，同一段不能追加两次。
         if (!dedupe(`narrdelta:${eventId}:${seq}`, eventId)) return
@@ -1032,6 +1039,14 @@ export default function RoomPage() {
       } else if (envelope.type === 'keeper.busy') {
         // 守秘人开始/结束这一轮。没发言的人靠它知道"他在忙"，而不是盯着黑屏。
         setKeeperBusy(envelope.payload.busy)
+      } else if (envelope.type === 'room.paused') {
+        const p = envelope.payload as { paused: boolean; byNickname: string }
+        setPaused(p.paused)
+        setMessages(prev => [...prev, {
+          type: 'system',
+          content: p.paused ? `${p.byNickname} 让大家先休息一下` : `${p.byNickname} 说可以继续了`,
+          time: now,
+        }])
       } else if (envelope.type === 'error') {
         // QUEUED 不是错误，是**回执**：话已经记下了，守秘人处理完手头这轮就会
         // 回到你（exec/19 #36）。所以这一支不清打字指示——它确实还在写。
@@ -1050,6 +1065,9 @@ export default function RoomPage() {
         if (envelope.payload.code === 'CHECK_NOT_PENDING') {
           setPendingCheck(null)
         }
+        // 🔴 失败之后要给出路：此前这里只有一句「请稍后重试」，而玩家能做的
+        // 只有把刚才那句话再打一遍。重试用的是服务端存的上一轮原话。
+        if (envelope.payload.code === 'INTERNAL_ERROR') setCanRetry(true)
         if (friendly) {
           setMessages(prev => [...prev, { type: 'system', content: friendly, time: now }])
         }
@@ -1104,7 +1122,9 @@ export default function RoomPage() {
   // 手头还有自己的待掷检定时也锁：此刻该做的是掷骰，不是打字（打了也会被
   // 守秘人的 pending 守卫挡回来）。讨论区永远不锁——那是玩家之间的通道。
   const myPendingRoll = pendingCheck !== null
-  const dmBusy = channel === 'dm' && (typing || myPendingRoll)
+  // 暂停时对守秘人的输入也停下——后端会挡回，前端提前禁用免得"点了没反应"
+  // （「按钮没有缓冲区」）。讨论区不受影响：休息时聊天正是它的用途。
+  const dmBusy = channel === 'dm' && (typing || myPendingRoll || paused)
 
   const sendMessage = (e?: FormEvent) => {
     e?.preventDefault()
@@ -1459,6 +1479,25 @@ export default function RoomPage() {
           })
         })()}
 
+        {/* 🔴 失败之后的出路（exec/35）：不给按钮的话，玩家能做的只有把刚才
+            那句话再打一遍——而服务端本来就存着上一轮的原话。 */}
+        {canRetry && (
+          <div className="flex justify-center py-1">
+            <button
+              type="button"
+              onClick={() => {
+                if (!playerId) return
+                sdk.roomSocket.retryTurn(playerId)
+                setCanRetry(false)
+                setTyping(true)
+              }}
+              className="cut-corner px-4 py-1.5 bg-brass-dark text-book text-[12px] font-semibold active:scale-[0.97]"
+            >
+              再试一次
+            </button>
+          </div>
+        )}
+
         {clarifying && (
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/55" onClick={() => setClarifying(false)}>
             <div
@@ -1771,7 +1810,9 @@ export default function RoomPage() {
             placeholder={
               channel === 'chat'
                 ? '和队友讨论…'
-                : dmBusy
+                : paused
+                  ? '大家在休息…'
+                  : dmBusy
                   ? (myPendingRoll ? '先掷骰吧…' : '守秘人正在回应…')
                   : privateAction
                     ? '私密行动，只有你看得到…'
@@ -2149,10 +2190,21 @@ export default function RoomPage() {
                 </div>
               </div>
             ) : (
-              <button onClick={() => setConfirmEnd(true)}
-                className="w-full py-2 rounded-sm bg-transparent text-[#c04040] border border-[#c04040]/40 text-xs font-medium flex items-center justify-center gap-1.5 active:bg-[#c04040]/5">
-                <FlagOff className="w-3.5 h-3.5" /> 结束游戏
-              </button>
+              <>
+                {/* 🔴 休息跟结束游戏放在一起：它们回答的是同一个问题——"我们
+                    不打算继续了"分成「先停一下」和「今天到此为止」两档。
+                    任何人都能按，也任何人都能恢复。 */}
+                <button
+                  onClick={() => { if (playerId) sdk.roomSocket.setPaused(playerId, !paused) }}
+                  className="w-full py-2 mb-2 rounded-sm bg-transparent text-text-body border border-border-light text-xs font-medium flex items-center justify-center gap-1.5 active:bg-border-light"
+                >
+                  <Coffee className="w-3.5 h-3.5" /> {paused ? '继续游戏' : '先休息一下'}
+                </button>
+                <button onClick={() => setConfirmEnd(true)}
+                  className="w-full py-2 rounded-sm bg-transparent text-[#c04040] border border-[#c04040]/40 text-xs font-medium flex items-center justify-center gap-1.5 active:bg-[#c04040]/5">
+                  <FlagOff className="w-3.5 h-3.5" /> 结束游戏
+                </button>
+              </>
             )}
           </div>
         )}

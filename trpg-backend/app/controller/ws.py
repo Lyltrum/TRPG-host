@@ -73,6 +73,8 @@ from app.dto.ws import (
     PartyUpdatePayload,
     PlayerReadyPayload,
     RoomJoinPayload,
+    RoomPausedPayload,
+    RoomPausePayload,
     RoomRejoinPayload,
     SanCheckRequestPayload,
     SanCheckResultPayload,
@@ -790,9 +792,12 @@ async def _handle_clarify(
     websocket: WebSocket,
     room_id: str,
     player_id: str,
-    clarification: str,
+    clarification: str | None,
 ) -> None:
     """玩家纠错（`exec/35`）：「你把我的话理解错了」→ 回滚指针 → 重裁上一轮。
+
+    `clarification=None` = **重试**（`turn.retry`）：同样回滚、同样重跑上一轮，
+    只是不多给模型那句话。守秘人调用失败之后玩家需要的正是它。
 
     ## 为什么需要它
 
@@ -816,8 +821,6 @@ async def _handle_clarify(
     # 其余几处待决定队列的用法）。
     from app.core.keeper.runtime.pending import pending_decision_manager
 
-    if not clarification:
-        return
     room = await room_service.find_room_by_id(db, room_id)
     snapshot = (room.last_turn_snapshot or {}) if room is not None else {}
     saved_utterances = snapshot.get("utterances") or []
@@ -832,31 +835,33 @@ async def _handle_clarify(
         await _send_error(websocket, "CONFLICT", "守秘人正忙，稍后再试")
         return
     try:
-        player = await room_service.get_player(db, player_id)
-        nickname = player.nickname if player is not None else "调查员"
         # 澄清本身是玩家说的话：落库 + 按受众广播，跟别的发言一条路
         # （历史、replay、per-audience 裁剪因此天然成立）。
         # ⚠️ 不并入收集窗口——它不开新的一轮，它重跑旧的那一轮。
-        audience = await _audience_at_speaker_location(db, room_id, player_id)
-        event_payload: dict = {"utterance": clarification, "clarification": True}
-        if audience is not None:
-            event_payload["audience"] = audience
-        event_id = await room_service.record_event(
-            db, room_id, player_id, "action.submit", event_payload
-        )
-        envelope = ServerEnvelope(
-            type="action.broadcast",
-            payload=ActionBroadcastPayload(
-                player_id=player_id,
-                nickname=nickname,
-                utterance=clarification,
-                event_id=event_id,
-            ).model_dump(by_alias=True),
-        ).model_dump(by_alias=True)
-        if audience is None:
-            await manager.broadcast(room_id, envelope)
-        else:
-            await manager.send_to_players(room_id, audience, envelope)
+        # 重试（clarification=None）没有这句话，跳过整段。
+        if clarification:
+            player = await room_service.get_player(db, player_id)
+            nickname = player.nickname if player is not None else "调查员"
+            audience = await _audience_at_speaker_location(db, room_id, player_id)
+            event_payload: dict = {"utterance": clarification, "clarification": True}
+            if audience is not None:
+                event_payload["audience"] = audience
+            event_id = await room_service.record_event(
+                db, room_id, player_id, "action.submit", event_payload
+            )
+            envelope = ServerEnvelope(
+                type="action.broadcast",
+                payload=ActionBroadcastPayload(
+                    player_id=player_id,
+                    nickname=nickname,
+                    utterance=clarification,
+                    event_id=event_id,
+                ).model_dump(by_alias=True),
+            ).model_dump(by_alias=True)
+            if audience is None:
+                await manager.broadcast(room_id, envelope)
+            else:
+                await manager.send_to_players(room_id, audience, envelope)
 
         # 回滚指针 + 清掉基于误解发起的待决定项
         if room is not None:
@@ -879,6 +884,44 @@ async def _handle_clarify(
         await _run_turn(db, websocket, room_id, submissions, clarification=clarification)
     finally:
         action_lock_manager.release(room_id, lock_token)
+
+
+async def _handle_pause(
+    db: AsyncSession,
+    websocket: WebSocket,
+    room_id: str,
+    player_id: str,
+    paused: bool,
+) -> None:
+    """暂停 / 恢复（`exec/35`）：「大家在休息」。
+
+    🔴 **任何人都能按，任何人都能恢复**——聚会里要去接个电话的不一定是房主，
+    而回来的人也不该等房主点一下。自用场景不需要权限模型。
+
+    暂停期间：世界心跳不推进（`heartbeat.maybe_fire_room`）、行动提交被挡回。
+    **讨论区照常**——休息时聊天正是它的用途（`exec/18` 的判据：讨论区是玩家
+    之间的通道，不推进世界）。
+
+    ⚠️ 已经在跑的那一轮**不会被打断**：它已经调出去了，叙事收不回来。
+    暂停的语义是"别开新的"，不是"取消当前的"。
+    """
+    room = await room_service.find_room_by_id(db, room_id)
+    if room is None or room.paused == paused:
+        return
+    room.paused = paused
+    await db.commit()
+    player = await room_service.get_player(db, player_id)
+    nickname = player.nickname if player is not None else "有人"
+    # 元层信息（谁按了暂停），不含虚构内容 → 全房间，同 `exec/33 §3.3`
+    await manager.broadcast(
+        room_id,
+        ServerEnvelope(
+            type="room.paused",
+            payload=RoomPausedPayload(paused=paused, by_nickname=nickname).model_dump(
+                by_alias=True
+            ),
+        ).model_dump(by_alias=True),
+    )
 
 
 async def _handle_action_submit(
@@ -908,6 +951,14 @@ async def _handle_action_submit(
     - Narrator 失败（超时/网络/API 错）：只告诉发起者（error 不广播），
       其他人看到了原话但等不到回复，发起者重试即可。
     """
+    # 🔴 大家在休息（`exec/35`）：暂停期间不开新的一轮。
+    # 挡在 `_ingest_utterance` **之前**——它会广播原话并入窗口，走过去就等于
+    # 这句话已经排进队里了，恢复时会突然一起涌进来。
+    room = await room_service.find_room_by_id(db, room_id)
+    if room is not None and room.paused:
+        await _send_error(websocket, "CONFLICT", "大家在休息，恢复之后再说")
+        return
+
     player = await room_service.get_player(db, player_id)
     nickname = player.nickname if player is not None else "玩家"
 
@@ -1540,6 +1591,17 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                         await _handle_luck_decide(
                             db, websocket, room_id, bound_player_id, luck_payload
                         )
+                    elif event_type == "room.pause":
+                        pause_payload = RoomPausePayload.model_validate(raw_payload)
+                        await _handle_pause(
+                            db, websocket, room_id, bound_player_id, pause_payload.paused
+                        )
+                    elif event_type == "turn.retry":
+                        # 🔴 重试 = **不带澄清的纠错**：同样回滚指针、清掉没掷的
+                        # 待决定项、用上一轮的原话再跑一次。两者的区别只在于有没有
+                        # 多给模型一句话，没必要各写一套（「一个概念被起了它某个
+                        # 实例的名字」的反面：别给同一个动作造两条实现）。
+                        await _handle_clarify(db, websocket, room_id, bound_player_id, None)
                     elif event_type == "turn.clarify":
                         clarify_payload = TurnClarifyPayload.model_validate(raw_payload)
                         await _handle_clarify(

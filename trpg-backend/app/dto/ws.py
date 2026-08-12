@@ -182,6 +182,23 @@ class PartyUpdatePayload(CamelModel):
     merge_pending_at: str | None
 
 
+class RoomPausePayload(CamelModel):
+    """`room.pause` 客户端事件：暂停 / 恢复（`exec/35`）。
+
+    一个事件带 bool，而不是 pause/resume 两个事件——「暂停中」是个状态位，
+    两个事件会让"连点两次暂停"和"没暂停就恢复"各自需要一条规则。
+    """
+
+    paused: bool
+
+
+class RoomPausedPayload(CamelModel):
+    """`room.paused` 推送：房间暂停状态变了，附带是谁按的。"""
+
+    paused: bool
+    by_nickname: str
+
+
 class TurnClarifyPayload(CamelModel):
     """`turn.clarify` 客户端事件：「你把我的话理解错了」（`exec/35`）。
 

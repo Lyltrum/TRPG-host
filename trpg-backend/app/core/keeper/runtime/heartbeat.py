@@ -209,6 +209,11 @@ async def maybe_fire_room(
         room = await db.get(Room, room_id)
         if room is None or room.phase != "InGame":
             return False
+        # 🔴 大家在休息（`exec/35`）：暂停期间世界不该自己往前走。心跳是唯一
+        # 一条**不需要玩家动手**就能推进世界的路径，所以暂停必须在这里也挡一道
+        # ——只挡玩家提交是挡不住它的。
+        if room.paused:
+            return False
 
     player = await _pick_player(session_factory, room_id, spotlight_seconds)
     if player is None:

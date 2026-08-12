@@ -836,3 +836,70 @@ def test_clarify_rolls_the_world_pointer_back(sync_client: TestClient) -> None:
     # 快照是在第一轮开始之前存的，那时还没有「当前场景」这一键 ⇒ 回滚之后
     # 它应该**消失**，而不是留着那个错的值（「保留旧值 = 静默说谎」）。
     assert _read_scene() is None
+
+
+# ── 大家在休息（exec/35） ─────────────────────────────
+
+
+def _set_paused(ws, player: dict, paused: bool) -> None:
+    ws.send_json(
+        {"type": "room.pause", "playerId": player["playerId"], "payload": {"paused": paused}}
+    )
+
+
+def test_pause_blocks_new_turns_and_resume_lets_them_through(
+    sync_client: TestClient,
+) -> None:
+    """🔴 暂停期间行动提交被挡回，恢复之后照常。
+
+    挡在 `_ingest_utterance` **之前**：走过去就等于这句话已经排进收集窗口，
+    恢复时会突然一起涌进来。
+    """
+    narrator = _RecordingNarrator()
+    app.state.narrator = narrator
+
+    token = register_and_login(sync_client, "pause_host")
+    room = create_room(sync_client, token)
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+
+        _set_paused(ws, room, True)
+        paused_evt = ws.receive_json()
+        _submit_action(ws, room, "我推开门")
+        refused = ws.receive_json()
+
+        _set_paused(ws, room, False)
+        resumed_evt = ws.receive_json()
+        _submit_action(ws, room, "我推开门")
+        echo = ws.receive_json()
+        for _ in range(4):
+            ws.receive_json()
+
+    assert (paused_evt["type"], paused_evt["payload"]["paused"]) == ("room.paused", True)
+    assert paused_evt["payload"]["byNickname"] == "房主"
+    assert refused["type"] == "error"
+    assert refused["payload"]["code"] == "CONFLICT"
+    assert (resumed_evt["type"], resumed_evt["payload"]["paused"]) == ("room.paused", False)
+    assert echo["type"] == "action.broadcast"
+    # 🔴 被挡回的那句**没有**在恢复后补跑：它压根没进过窗口
+    assert len(narrator.contexts) == 1
+
+
+def test_pausing_twice_is_a_noop(sync_client: TestClient) -> None:
+    """连点两次暂停不该再广播一次——「暂停中」是状态位，不是动作。"""
+    token = register_and_login(sync_client, "pause_idem")
+    room = create_room(sync_client, token)
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+        _set_paused(ws, room, True)
+        first = ws.receive_json()
+        _set_paused(ws, room, True)
+        # 第二次不广播 ⇒ 下一条收到的必须是别的东西。发一条**必然有回复**的
+        # 消息来确认这一点：等一条永远不来的消息会让用例挂住而不是失败。
+        _set_paused(ws, room, False)
+        second = ws.receive_json()
+
+    assert first["payload"]["paused"] is True
+    assert second["payload"]["paused"] is False

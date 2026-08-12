@@ -949,6 +949,24 @@ export interface RoomJoinPayload {
 }
 
 /**
+ * `room.pause` 客户端事件：暂停 / 恢复（`exec/35`）。
+ *
+ * 一个事件带 bool，而不是 pause/resume 两个事件——「暂停中」是个状态位，
+ * 两个事件会让"连点两次暂停"和"没暂停就恢复"各自需要一条规则。
+ */
+export interface RoomPausePayload {
+  paused: boolean;
+}
+
+/**
+ * `room.paused` 推送：房间暂停状态变了，附带是谁按的。
+ */
+export interface RoomPausedPayload {
+  paused: boolean;
+  byNickname: string;
+}
+
+/**
  * 房间内玩家摘要。
  *
  * 注意 `player_id` 对应 ORM `Player` 的主键属性 `id`（名字不一样），所以不能直接
@@ -1155,6 +1173,20 @@ export interface SuccessTierSpec {
  */
 export interface TurnBeginPayload {
   playerId: string;
+}
+
+/**
+ * `turn.clarify` 客户端事件：「你把我的话理解错了」（`exec/35`）。
+ *
+ * `clarification` 必填，理由同 `ActionSubmitPayload.utterance`：不带内容的
+ * 纠错是畸形消息，而给默认空串会让 SDK 侧变成可选、于是静默无操作。
+ *
+ * 🔴 **没有"纠正哪一轮"这个参数**：只能纠最新的一轮。翻旧账要能定位到
+ * 任意一轮的世界状态，那是一整套 undo 基础设施；而且真人桌上纠错本来就
+ * 只发生在刚刚那一拍。
+ */
+export interface TurnClarifyPayload {
+  clarification: string;
 }
 
 /**

@@ -105,6 +105,8 @@ export type {
   // 幸运消费（exec/26 #66，exec/34 第 4 步）
   LuckOfferPayload,
   LuckDecidePayload,
+  // exec/35：大家在休息
+  RoomPausedPayload,
 } from './generated/dto';
 
 /** GET /api/v1/me/rooms 返回项。 */
@@ -202,4 +204,6 @@ export type ServerToClientEvent =
   // exec/34 第 4 步：骰子已经停下、结果还没生效——问他要不要花幸运推成成功。
   // 同处一地的队友也收得到（前端只给本人渲染按钮）：他们至少知道桌子为什么停着。
   | { type: 'luck.offer'; payload: LuckOfferPayload }
+  // exec/35：大家在休息。元层信息（谁按的、现在停没停），不含虚构内容 → 全房间。
+  | { type: 'room.paused'; payload: RoomPausedPayload }
   | { type: 'error'; payload: ErrorPayload };

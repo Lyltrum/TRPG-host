@@ -70,6 +70,7 @@ from app.core.keeper.narration.narration_hints import (
     UNRESOLVED_CONFLICT_HINT,
     build_bystander_hint,
     build_check_boundary_hint,
+    build_opening_cast_hint,
     build_person_hint,
 )
 from app.core.keeper.narration.prompts import (
@@ -351,6 +352,10 @@ class KeeperAgent(Narrator):
                         "活跃气氛」这类）读出来；不要发起检定。"
                     ),
                 )
+                # 🔴 开场也要按在场者定人称与在场感（`exec/33 #84`）：这一拍走的是
+                # 独立分支，`_narrate_per_audience` 里那两个提示够不着它。开场
+                # **不分段**，受众就是全房间。
+                opening_cast = [n for _, n in players]
                 narration = await self._narrate_prose(
                     situation,
                     opening_decision,
@@ -358,6 +363,9 @@ class KeeperAgent(Narrator):
                     [],
                     max_tokens=token_limit,
                     max_chars=char_limit,
+                    extra_suffix=(
+                        build_person_hint(opening_cast) + build_opening_cast_hint(opening_cast)
+                    ),
                 )
                 narration = self._finalize_prose(
                     narration,

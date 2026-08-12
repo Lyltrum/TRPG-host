@@ -388,27 +388,63 @@ _FAKE_STAT_LOG_LEAK = re.compile(
 _LOSS_DICE_LEAK = re.compile(r"\d*\s*[dD]\d+")
 
 
-def _strip_mechanic_announce(sentence: str) -> str:
+def _clause_bounds(core: str) -> list[tuple[int, int]]:
+    """按 `_CLAUSE_SPLIT` 把一句切成分句，返回每段的 (起, 止) 下标。
+
+    返回下标而不是字符串：砍掉某一段时要保留它**前面那个分隔符之前**的原文，
+    而分隔符宽度不一（破折号"——"两个字符、逗号一个），算下标才不会错位。
+    """
+    bounds: list[tuple[int, int]] = []
+    start = 0
+    for m in _CLAUSE_SPLIT.finditer(core):
+        bounds.append((start, m.start()))
+        start = m.end()
+    bounds.append((start, len(core)))
+    return bounds
+
+
+def _is_only_vocative(head: str, vocatives: frozenset[str]) -> bool:
+    """head 是不是只剩一句呼语（「阿福」/「阿福、阿贵」）。
+
+    🔴 判据是**跟在场者昵称精确相等**，不是长度阈值、不是模糊匹配——昵称是
+    库里的权威值，这是白名单，不是同义词表（`exec/17` 那条判据）。长度阈值
+    会误伤「他愣住了」这种真描写。
+    """
+    if not vocatives:
+        return False
+    parts = [p.strip() for p in _CLAUSE_SPLIT.split(head) if p.strip()]
+    return bool(parts) and all(p in vocatives for p in parts)
+
+
+def _strip_mechanic_announce(sentence: str, vocatives: frozenset[str] = frozenset()) -> str:
     """砍掉句子里泄露的机制播报，返回处理后的句子（未命中则原样返回）。
 
     真人实测 2026-07-28 复现的实际形态比"整句就是播报"更常见的是**分句里
     的尾句**（"现在距离近了，你该掷斗殴检定了。"/"……朝你的后背砸来——该
-    掷躲闪了。"，逗号和破折号都见过）——只匹配整句会漏掉这种真实 LLM 输出。
-    命中整句就整句丢弃；命中的是分句里的最后一段，就只砍掉那一段+它前面的
-    分隔符，保留前半句描写和收尾标点。用 `finditer` 找最后一个分隔符的位置
-    直接切片，不对分隔符宽度做假设（破折号"——"是两个字符，逗号只有一个）。"""
+    掷躲闪了。"，逗号和破折号都见过）。
+
+    🔴 **播报不一定在句尾**（`exec/33 #83`，2026-08-12 双人真机复现）：
+    「该掷潜行检定了——点一下卡片，看看脚下有没有惊动什么。」整句一字未删，
+    因为老实现只拿**最后一个**分隔符之后的那段去比对，而这里播报是第一段。
+    改成逐分句找**第一个**命中的，砍掉它**及其之后的全部**——播报后面跟的
+    通常是同一次越界的延续（这句里就是 UI 指令"点一下卡片"）。
+    同族于 `exec/28`：「作用域」是可以被证伪的断言，别默认它总在句尾。
+
+    🔴 **砍完要问剩下的还是不是一句话**（`exec/33 #82`，同一局）：
+    「……门廊里。阿福，该你掷侦察了。」砍掉尾段后留下一句「阿福。」——head
+    只是个呼语。剩呼语就整句丢。
+    """
     core = sentence.rstrip("。！？.!?…")
     trailing = sentence[len(core) :]
     if _MECHANIC_ANNOUNCE_SENTENCE.match(core):
         return ""
-    last_sep = None
-    for m in _CLAUSE_SPLIT.finditer(core):
-        last_sep = m
-    if last_sep is not None:
-        tail = core[last_sep.end() :].strip()
-        if _MECHANIC_ANNOUNCE_SENTENCE.match(tail):
-            head = core[: last_sep.start()].rstrip("，,、—")
-            return f"{head}{trailing}" if head else ""
+    for start, end in _clause_bounds(core):
+        if not _MECHANIC_ANNOUNCE_SENTENCE.match(core[start:end].strip()):
+            continue
+        head = core[:start].rstrip("，,、— ")
+        if not head or _is_only_vocative(head, vocatives):
+            return ""
+        return f"{head}{trailing}"
     return sentence
 
 
@@ -428,6 +464,7 @@ def scrub_sentence_scoped(
     confused: bool,
     trim_head: bool = True,
     trim_tail: bool = True,
+    vocatives: frozenset[str] = frozenset(),
 ) -> str:
     """只跑**作用域不超过一句 / 一个括号块 / 一行**的规则。
 
@@ -464,7 +501,7 @@ def scrub_sentence_scoped(
                 continue
             if _LOSS_DICE_LEAK.search(s):
                 continue
-            stripped = _strip_mechanic_announce(s)
+            stripped = _strip_mechanic_announce(s, vocatives)
             if not stripped:
                 continue
             kept_soft.append(sent if stripped == s else stripped)
@@ -492,7 +529,7 @@ def scrub_sentence_scoped(
             continue
         if _LOSS_DICE_LEAK.search(s):
             continue
-        stripped = _strip_mechanic_announce(s)
+        stripped = _strip_mechanic_announce(s, vocatives)
         if not stripped:
             continue
         kept.append(sent if stripped == s else stripped)
@@ -538,7 +575,13 @@ def degrade_when_scrubbed_empty(original: str) -> str:
     return body
 
 
-def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = False) -> str:
+def scrub_kp_anti_patterns(
+    text: str,
+    *,
+    action_intent: bool,
+    confused: bool = False,
+    vocatives: frozenset[str] = frozenset(),
+) -> str:
     """叙事后处理：去菜单尾巴；行动轮去掉「你可以/如果你」虚拟挡（全模组通用）。
 
     confused=True（玩家问「能做什么」）时只打硬菜单：方括号块、编号列表、
@@ -551,7 +594,9 @@ def scrub_kp_anti_patterns(text: str, *, action_intent: bool, confused: bool = F
 
     body = scrub_bracket_blocks(body)
     body = _MENU_TAIL.sub("", body).rstrip()
-    body = scrub_sentence_scoped(body, action_intent=action_intent, confused=confused)
+    body = scrub_sentence_scoped(
+        body, action_intent=action_intent, confused=confused, vocatives=vocatives
+    )
     # 收尾空白标点
     body = _TRAILING_JUNK.sub("", body)
 

@@ -365,6 +365,7 @@ class KeeperAgent(Narrator):
                     confused=False,
                     max_chars=char_limit,
                     room_id=room_id,
+                    vocatives=frozenset(n for _, n in players),
                 )
                 logger.info(
                     "keeper_opening_narrated",
@@ -795,6 +796,7 @@ class KeeperAgent(Narrator):
         room_id: str | None,
         on_delta: NarrationDeltaSink,
         tape_key: str | None = None,
+        vocatives: frozenset[str] = frozenset(),
     ) -> str:
         """流式叙事：边写边推，返回玩家实际收到的全文（`exec/28`）。
 
@@ -822,6 +824,7 @@ class KeeperAgent(Narrator):
             module=self._module,
             action_intent=action_intent,
             confused=confused,
+            vocatives=vocatives,
             max_chars=char_limit,
             room_id=room_id,
         )
@@ -909,6 +912,10 @@ class KeeperAgent(Narrator):
         covert_speakers = [pid for pid in turn_player_ids if pid in covert_player_ids]
         open_speakers = {pid for pid in turn_player_ids if pid not in covert_player_ids}
         nicknames = dict(players)
+        #: 在场者昵称集合：纪律层砍掉机制播报后，靠它判断"剩下的还是不是一句话"
+        #: （`exec/33 #82`：「阿福，该你掷侦察了。」砍完只剩「阿福。」）。
+        #: 🔴 **全房间与分头两条路都要传**，漏一条就是那条路上仍然留残句。
+        vocatives = frozenset(nicknames.values())
 
         def _bystanders(audience: tuple[str, ...]) -> str:
             """这一段的受众里，本轮没发言的人（exec/19 #41）。按受众裁。"""
@@ -943,6 +950,7 @@ class KeeperAgent(Narrator):
                         confused=confused,
                         room_id=room_id,
                         on_delta=on_delta,
+                        vocatives=vocatives,
                     ),
                     [],
                 )
@@ -962,6 +970,7 @@ class KeeperAgent(Narrator):
                     confused=confused,
                     max_chars=char_limit,
                     room_id=room_id,
+                    vocatives=vocatives,
                 ),
                 [],
             )
@@ -1019,6 +1028,7 @@ class KeeperAgent(Narrator):
                     room_id=room_id,
                     on_delta=segment_delta_sink(event_id, audience),
                     tape_key=tape_key,
+                    vocatives=vocatives,
                 )
             else:
                 event_id = None
@@ -1038,6 +1048,7 @@ class KeeperAgent(Narrator):
                     confused=confused,
                     max_chars=char_limit,
                     room_id=room_id,
+                    vocatives=vocatives,
                 )
             return NarrationSegment(
                 text=text,
@@ -1144,8 +1155,11 @@ class KeeperAgent(Narrator):
         confused: bool = False,
         max_chars: int,
         room_id: str | None = None,
+        vocatives: frozenset[str] = frozenset(),
     ) -> str:
-        scrubbed = scrub_kp_anti_patterns(text, action_intent=action_intent, confused=confused)
+        scrubbed = scrub_kp_anti_patterns(
+            text, action_intent=action_intent, confused=confused, vocatives=vocatives
+        )
         # 泄密守门（exec/14 P3）：元层断言被逐字复述 → 整句丢弃；片段命中只
         # 记日志不删（元层里常含公开人名/地名，片段匹配必然误伤合法叙事）。
         # 这是全部三条叙事路径的唯一咽喉，放这里就不会有旁路。

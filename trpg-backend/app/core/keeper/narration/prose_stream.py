@@ -62,9 +62,18 @@ class ProseStreamer:
             推给玩家
     """
 
-    def __init__(self, *, action_intent: bool, confused: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        action_intent: bool,
+        confused: bool = False,
+        vocatives: frozenset[str] = frozenset(),
+    ) -> None:
         self._action_intent = action_intent
         self._confused = confused
+        #: 在场者昵称。砍掉机制播报后判断"剩下的还是不是一句话"要用它
+        #: （`exec/33 #82`）——流式与全量必须拿到同一份，否则两条路不等价。
+        self._vocatives = vocatives
         self._raw = ""
         self._cut = 0
         self._emitted_any = False
@@ -93,6 +102,7 @@ class ProseStreamer:
             scrub_bracket_blocks(piece),
             action_intent=self._action_intent,
             confused=self._confused,
+            vocatives=self._vocatives,
             # 整段的首尾只有一次：开头归第一个非空片段，结尾归 finish()
             trim_head=not self._emitted_any,
             trim_tail=False,
@@ -115,6 +125,7 @@ class ProseStreamer:
             body,
             action_intent=self._action_intent,
             confused=self._confused,
+            vocatives=self._vocatives,
             trim_head=not self._emitted_any,
             trim_tail=True,
         )

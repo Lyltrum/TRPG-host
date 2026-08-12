@@ -216,6 +216,17 @@ export class RoomSocket {
     this.send('chat.send', playerId, payload);
   }
 
+  /** player.typing —— 「我还在敲字」。**不广播、不落库**，唯一的消费方是
+   * 服务端的回合收集窗口（`_await_window`）：还有人在敲就把窗口往后推，
+   * 没人在敲就立刻收窗。
+   *
+   * 🔴 客户端要**按节奏续期**（每次击键、约每秒一条），不要只在开始时发一条：
+   * 服务端不依赖 `typing:false`（刷新/断网/关标签页都发不出它），它靠的是
+   * "过了 TTL 没有新的一条就当他停了"。 */
+  markTyping(playerId: string, typing = true): void {
+    this.send('player.typing', playerId, { typing });
+  }
+
   /** check.roll —— 玩家确认并结算一次守秘人已发起的待掷技能检定（两段式
    * 玩家掷骰，feat/keeper-agent）：骰值由服务端权威生成，这里只带
    * `checkRequestId` 表明"确认掷这一个"。非 keeper 模式下后端回

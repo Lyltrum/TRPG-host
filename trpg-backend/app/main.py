@@ -23,7 +23,7 @@ from app.controller.v1.router import api_router
 from app.controller.ws import router as ws_router
 from app.core.ai_actor import AiActor
 from app.core.background_writer import BackgroundWriter
-from app.core.config import get_settings
+from app.core.config import PRIVATE_NETWORK_ORIGIN_REGEX, get_settings
 from app.core.db import async_session_factory
 from app.core.errors import AppException, ErrorCode
 from app.core.llm_tape import activate_from_env
@@ -152,9 +152,16 @@ def create_app() -> FastAPI:
 
     # 允许配置里列出的前端源发起跨域请求（本地开发场景下 Vite 默认跑在
     # 9877 端口，跟后端的 8000 端口不同源，没有这个中间件浏览器会拦截请求）。
+    #
+    # `allow_origin_regex` 是局域网开局那一条：朋友从 `http://192.168.x.x:9877`
+    # 打开时 Origin 是那个 IP，固定清单里不可能有它。放行范围只有私有网段，
+    # 见 `PRIVATE_NETWORK_ORIGIN_REGEX`。
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        allow_origin_regex=(
+            PRIVATE_NETWORK_ORIGIN_REGEX if settings.cors_allow_private_network else None
+        ),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

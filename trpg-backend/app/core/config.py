@@ -11,6 +11,26 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: 私有网段（RFC 1918）+ 本机的 Origin，任意端口。给 CORSMiddleware 的
+#: `allow_origin_regex` 用。
+#:
+#: 🔴 **不用 `*`**：`allow_credentials=True` 时通配符本来就非法（浏览器直接拒），
+#: 而且"允许任何来源"和"允许同一间屋子里的设备"是两件事。这条正则只认
+#: 10.0.0.0/8、172.16.0.0/12、192.168.0.0/16 与 localhost/127.0.0.1——一台
+#: 公网页面拿不到这样的 Origin。
+#:
+#: 只认 `http://`：局域网里没有证书，走的必然是明文。以后真上了公网要配的是
+#: `CORS_ORIGINS` 那张显式清单，不是把这条正则放宽。
+PRIVATE_NETWORK_ORIGIN_REGEX = (
+    r"^http://("
+    r"localhost"
+    r"|127\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r")(:\d+)?$"
+)
+
 
 class Settings(BaseSettings):
     # env_file=".env"：本地开发时从 backend 目录下的 .env 文件读取（该文件已被
@@ -38,6 +58,15 @@ class Settings(BaseSettings):
     # 允许跨域请求的前端来源列表，交给 main.py 里的 CORSMiddleware 使用。
     # 本地默认放行 Vite 开发服务器的默认端口 9877。
     cors_origins: list[str] = ["http://localhost:9877"]
+
+    # 🔴 局域网开局：朋友用手机从 `http://192.168.x.x:9877` 打开时，浏览器发出的
+    # Origin 是那个 IP，**不在上面那张固定清单里**，请求会被 CORS 挡掉。
+    #
+    # 默认 **True**：这个项目的定位就是"自己和朋友在一间屋子里玩"，默认关掉等于
+    # 邀请链接做了也用不了（同 `exec/35` 那条——链接指向 localhost 就等于没做）。
+    # 放行范围**只有私有网段**（见 `PRIVATE_NETWORK_ORIGIN_REGEX`），不是 `*`；
+    # 真要收紧就把它设成 false。
+    cors_allow_private_network: bool = True
 
     # DeepSeek API Key（issue #107 地基，`app/core/narration/`）：配了就走真实
     # DeepSeek 生成叙事回应，不配（默认）自动回退到确定性的占位文案——CI/e2e

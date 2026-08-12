@@ -7,8 +7,28 @@ import { ApiError, createTrpgSdk, type ServerToClientEvent } from 'trpg-sdk';
 
 export { ApiError };
 
+/** 后端端口。前端跑在 9877、后端跑在这个端口，两者同机不同端口。 */
+const BACKEND_PORT = 8000;
+
+/**
+ * 后端地址：**跟着当前页面的主机名走**，不写死 127.0.0.1。
+ *
+ * 🔴 局域网开局的关键一行。朋友扫码从 `http://192.168.1.5:9877` 打开时，
+ * 写死 127.0.0.1 的话前端会去请求**他自己那台手机**的 8000 端口——邀请链接
+ * 做得再对也连不上。同族于 `inviteUrlFor`「域名用当前 host」：**地址要从
+ * 运行时的锚点推出来，不要写常量**，这样局域网 IP 换了、以后上公网了都不用
+ * 改代码。
+ *
+ * `VITE_API_BASE_URL` 仍然优先——需要指向另一台机器时（比如后端跑在别处）
+ * 用它覆盖。⚠️ 反过来说：`.env` 里把它钉成 127.0.0.1 会让这条派生失效。
+ */
+function defaultApiBaseUrl(): string {
+  const { protocol, hostname } = window.location;
+  return `${protocol}//${hostname}:${BACKEND_PORT}/api/v1`;
+}
+
 export const sdk = createTrpgSdk({
-  baseUrl: import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000/api/v1'
+  baseUrl: import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl()
 });
 
 const TOKEN_STORAGE_KEY = 'aidm_token';

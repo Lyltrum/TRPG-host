@@ -179,6 +179,41 @@ async def test_walking_into_someone_holds_them_apart_until_confirmed(party) -> N
     assert is_party_split(state, [a_id, b_id], pending) is True
 
 
+async def test_walking_back_yourself_needs_no_confirmation(party) -> None:
+    """🔴 收窄（2026-08-11，用户真机反馈"手动汇合很奇怪"）：**他自己说要过去的
+    就别再问一遍**。
+
+    两条判据都由代码判：① 他被 `moves` 逐人点名挪动；② 他本轮自己发过言。
+    这里阿贵自己发言、自己被点名走回门厅 —— 那就是他的意思。
+    """
+    deps, a_id, b_id = party
+    await _split(deps)
+    deps.turn_player_ids = (b_id,)
+    deps.player_id = b_id
+    await execute_side_effects(
+        deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="hall")])
+    )
+    assert await _merge_pending(deps.room_id) == set()
+    state = await _state(deps)
+    assert is_party_split(state, [a_id, b_id]) is False
+
+
+async def test_being_summoned_by_someone_else_still_needs_confirmation(party) -> None:
+    """对照：他这一轮**一个字都没说**却被挪过去 —— 那是别人替他做的决定，非问不可。
+
+    `test_walking_into_someone_holds_them_apart_until_confirmed` 已经是这个形状
+    （fixture 的发言者是阿福），这里显式把"谁发言"写出来，免得收窄条件哪天被
+    改成只看"有没有被点名"而没有东西变红。
+    """
+    deps, _a_id, b_id = party
+    await _split(deps)
+    deps.turn_player_ids = (_a_id,)  # 只有阿福发言
+    await execute_side_effects(
+        deps, KeeperDecision(moves=[PlayerMove(player="阿贵", node_id="hall")])
+    )
+    assert await _merge_pending(deps.room_id) == {b_id}
+
+
 async def test_confirming_merges_them(party) -> None:
     deps, a_id, b_id = party
     await _split(deps)

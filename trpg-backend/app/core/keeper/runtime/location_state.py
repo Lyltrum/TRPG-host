@@ -342,7 +342,12 @@ async def snapshot_locations(deps: KeeperDeps) -> dict[str, str | None]:
     return {pid: location_of(state, pid) for pid in roster}
 
 
-async def record_merges_since(deps: KeeperDeps, before: dict[str, str | None]) -> list[str]:
+async def record_merges_since(
+    deps: KeeperDeps,
+    before: dict[str, str | None],
+    *,
+    self_declared: set[str] | frozenset[str] = frozenset(),
+) -> list[str]:
     """跟**回合开始时不在一处**的人变成了同处 → 给真人挂上待确认会合。
 
     🔴 **必须按回合前后比对，不能在每次写入时各判各的**（2026-08-10 验证跑当场
@@ -360,6 +365,23 @@ async def record_merges_since(deps: KeeperDeps, before: dict[str, str | None]) -
     是因为「变化」只有能看见前后两个快照的这一层答得了。
 
     AI 队友不挂卡：它没有独立意图，跟着谁走由代码定（`exec/21` 第一层）。
+
+    ## 🔴 `self_declared`：他自己说要过去的，就别再问一遍（2026-08-11 收窄）
+
+    协议原样是"任何会合都必须当事人点头"。真机上用户的反馈是**这一步很多余**
+    ——他自己说「我去屋后找阿福」，系统还要弹一张卡问他「你跟他们碰上了吗」。
+
+    收窄判据两条**都由代码判**，不掺模型判断：
+    ① 他被 `moves`/`movers` **逐人点名**挪动（`self_declared`）；
+    ② 他**本轮自己发过言**（`deps.turn_player_ids`）。
+    两条同时成立 ⇒ 直接合并；否则照旧必须确认（典型：阿福喊「阿贵你过来」而
+    阿贵这一轮一个字没说 —— 那是**别人替他做的决定**，非确认不可）。
+
+    ⚠️ **已知代价，用户 2026-08-11 明确接受**：它重新打开了 `exec/33 #79` 前半
+    那个口子——玩家说「**考虑**要不要绕过去」被裁决器读成"去了"，而他确实发了
+    言、也确实被点名，于是不再问一句就合并了，**而合并不可撤回**。
+    减轻它的是同一天加的两道位置门：房间指针已经造不出合并，只剩 `moves` 这
+    一条路。
     """
     async with deps.write_lock, deps.session_factory() as db:
         room = await db.get(Room, deps.room_id)
@@ -393,6 +415,9 @@ async def record_merges_since(deps: KeeperDeps, before: dict[str, str | None]) -
             # 真的走过去。站着没动的人被别人走过来，不该额外弹一张卡——一次会合
             # 弹两张，玩家会以为出了两件事。
             if before.get(pid) == here:
+                continue
+            # 他自己说要过去的，不再问一遍（见上面 `self_declared`）。
+            if pid in self_declared and pid in (deps.turn_player_ids or ()):
                 continue
             newly_together = [
                 other
@@ -658,8 +683,14 @@ async def clear_current_node_impl(deps: KeeperDeps) -> str:
     return "场景已离开剧本节点范围，节点指针清空"
 
 
-async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> str:
-    """把**一名**调查员单独挪到某个剧本节点（分头探索，P5.2）。
+async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> tuple[str, str]:
+    """把**一名**调查员单独挪到某个剧本节点（分头探索，P5.2）。返回 (玩家 id, 报告)。
+
+    🔴 **要返回 id 是因为会合确认要区分「他自己说要过去」和「他被推断过去」**
+    （`exec/33 §5.2` 的收窄，2026-08-11）：被 `moves` 逐人点名、且本轮他自己发过
+    言 ⇒ 那就是他的意思，再问一遍「你跟他们碰上了吗」是废话。名字在这一层已经
+    解析成 id 了，让调用方拿昵称再解析一次就是「同一件事写两遍」。
+    形状同 `create_improvised_location_impl`（也是 `(id, 报告)`）。
 
     与 `set_current_node_impl` 的分工是"默认 vs 覆盖"：那个写「本轮发言的人
     共同到了哪」，这个写「谁没跟着大家、单独在哪」，写的是同一张逐人表。
@@ -688,7 +719,7 @@ async def move_player_impl(deps: KeeperDeps, player_name: str, node_id: str) -> 
             "keeper.move",
             {"player": player.nickname, "node_id": node_id, "title": title},
         )
-    return f"{player.nickname}单独前往：{title}（{node_id}）"
+    return player.id, f"{player.nickname}单独前往：{title}（{node_id}）"
 
 
 async def only_speakers_named(deps: KeeperDeps, player_names: list[str]) -> bool:

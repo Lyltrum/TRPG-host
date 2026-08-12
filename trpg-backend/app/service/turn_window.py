@@ -58,8 +58,29 @@ class TurnWindowManager:
     #: 每轮都在等。真人桌上"大家七嘴八舌说完"大约就是这个量级。
     WINDOW_SECONDS = 2.5
 
+    #: 还有人在打字时窗口能延到多长（真人实测 2026-08-11 多人局）。
+    #:
+    #: 🔴 **2.5 秒是给"同时按下发送"用的，不是给打字用的**：真人第二个人开始
+    #: 敲键盘时窗口早关了，他那条于是变成**紧接着的另一轮**——世界在两个人之间
+    #: 推进了一次，多人局退化回"一人一轮"。真人 KP 的等待长度是**看人的**：
+    #: 看见你在张嘴他就等，没人有动静他立刻推。
+    #:
+    #: 所以关闭条件从"到点"改成"**没人在敲了**"，`WINDOW_SECONDS` 退成下限、
+    #: 这个是封顶。封顶必须有：一个走开去泡茶的人不该让整桌停住。
+    WINDOW_MAX_SECONDS = 8.0
+
+    #: 一条 `player.typing` 多久之后当他停了（客户端每次击键都会续期）。
+    #:
+    #: 🔴 **成对的信号必须每条路径都配对**——而"开始打字"与"不打了"这一对，
+    #: 客户端**天然配不齐**：刷新、断网、切后台、直接关标签页都只发得出前一半。
+    #: 所以这里不依赖 `typing=false`，只依赖**续期**：过了这个时间没有新的一条
+    #: 就当他停了。漏掉 false 只让窗口多等 1.5 秒，漏掉 true 才会让人掉轮。
+    TYPING_TTL_SECONDS = 1.5
+
     def __init__(self) -> None:
         self._buffers: dict[str, _Buffer] = {}
+        #: room_id → {player_id: 最后一次击键的单调时刻}
+        self._typing: dict[str, dict[str, float]] = {}
 
     def window_seconds(self, connected_players: int) -> float:
         """单人局为 0——退化到"提交即裁决"，与本功能上线前逐字一致。"""
@@ -88,9 +109,40 @@ class TurnWindowManager:
         buffer = self._buffers.get(room_id)
         return len(buffer.submissions) if buffer is not None else 0
 
+    def mark_typing(self, room_id: str, player_id: str, *, now: float) -> None:
+        """有人在敲字。客户端按 `TYPING_TTL_SECONDS` 的节奏续期。"""
+        self._typing.setdefault(room_id, {})[player_id] = now
+
+    def clear_typing(self, room_id: str, player_id: str) -> None:
+        """他发出去了 / 清空了输入框。**不是**窗口关闭的必要条件（见 TTL）。"""
+        room = self._typing.get(room_id)
+        if room is not None:
+            room.pop(player_id, None)
+            if not room:
+                self._typing.pop(room_id, None)
+
+    def submitted_player_ids(self, room_id: str) -> set[str]:
+        buffer = self._buffers.get(room_id)
+        return {s.player_id for s in buffer.submissions} if buffer is not None else set()
+
+    def someone_still_typing(self, room_id: str, *, now: float) -> bool:
+        """还有人在敲吗。
+
+        🔴 **已经提交过的人不算**：他多半在敲下一轮要说的话，让他把这一轮
+        无限撑下去就成了另一种"一人一轮"。
+        """
+        room = self._typing.get(room_id)
+        if not room:
+            return False
+        submitted = self.submitted_player_ids(room_id)
+        return any(
+            now - at <= self.TYPING_TTL_SECONDS for pid, at in room.items() if pid not in submitted
+        )
+
     def drain(self, room_id: str) -> list[Submission]:
         """取走本轮全部宣告并关闭窗口。之后再提交就是新的一轮（或被锁拒）。"""
         buffer = self._buffers.pop(room_id, None)
+        self._typing.pop(room_id, None)
         return list(buffer.submissions) if buffer is not None else []
 
 

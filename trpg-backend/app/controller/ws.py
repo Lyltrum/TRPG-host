@@ -1017,10 +1017,18 @@ async def _await_window(room_id: str, connected_players: int) -> None:
     if window <= 0:
         return
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + window
+    started = loop.time()
+    deadline = started + window
+    hard_deadline = started + turn_window_manager.WINDOW_MAX_SECONDS
     while loop.time() < deadline:
         if turn_window_manager.pending_count(room_id) >= connected_players:
             return
+        # 🔴 还有人在敲字就把截止时间往后推（真人实测 2026-08-11）：2.5 秒是给
+        # "同时按下发送"用的，真人第二个人才刚开始打字。封顶 `WINDOW_MAX_SECONDS`
+        # ——走开去泡茶的人不该让整桌停住。
+        now = loop.time()
+        if turn_window_manager.someone_still_typing(room_id, now=now):
+            deadline = min(now + window, hard_deadline)
         await asyncio.sleep(_WINDOW_POLL_SECONDS)
 
 
@@ -1368,6 +1376,19 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                             utterance,
                             private=submit_payload.visibility == "private",
                         )
+                    elif event_type == "player.typing":
+                        # 收集窗口的输入（见 `_await_window`）。**不广播、不落库**
+                        # ——它既不是虚构内容也不是审计对象，只是让窗口知道"还有人
+                        # 在敲"。别的玩家不需要看见"某某正在输入"，那是另一个功能。
+                        if bound_player_id is not None:
+                            if bool((raw_payload or {}).get("typing", True)):
+                                turn_window_manager.mark_typing(
+                                    room_id,
+                                    bound_player_id,
+                                    now=asyncio.get_running_loop().time(),
+                                )
+                            else:
+                                turn_window_manager.clear_typing(room_id, bound_player_id)
                     elif event_type == "chat.send":
                         chat_payload = ChatSendPayload.model_validate(raw_payload)
                         await _handle_chat_send(

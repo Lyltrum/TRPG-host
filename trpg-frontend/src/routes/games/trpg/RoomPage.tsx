@@ -1362,12 +1362,19 @@ export default function RoomPage() {
           }
 
           if (msg.type === 'dice') {
+            // 🔴 跟下面发言那条**同一条空间规则**：右 = 我自己，左 = 除我之外的
+            // 所有人。改发言那次漏了这个分支——同一条规则落在两处，只改了一处
+            // （「一份数据有几个出口，规则就要落几处」）。数据里 isSelf 一直都在。
+            const diceOnRight = !!msg.isSelf
             return (
-              <div key={i} className="flex flex-row-reverse gap-2 items-start animate-[msgIn_0.3s_ease]">
+              <div
+                key={i}
+                className={`flex ${diceOnRight ? 'flex-row-reverse' : 'flex-row'} gap-2 items-start animate-[msgIn_0.3s_ease]`}
+              >
                 <div className="w-[26px] h-[26px] flex-shrink-0 flex items-center justify-center text-[13px] bg-mold/15 border border-mold/50">
                   🎲
                 </div>
-                <div className="min-w-0 text-right">
+                <div className={`min-w-0 ${diceOnRight ? 'text-right' : 'text-left'}`}>
                   <div className="typed text-[10.5px] text-mold mb-[3px]">{msg.sender} · 掷骰</div>
                   <div className="font-mono text-[14px] font-bold text-text-primary bg-mold/20 border-l-[3px] border-mold px-3 py-2 inline-block text-left">
                     {msg.content}

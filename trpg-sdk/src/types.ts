@@ -105,8 +105,6 @@ export type {
   // 幸运消费（exec/26 #66，exec/34 第 4 步）
   LuckOfferPayload,
   LuckDecidePayload,
-  // exec/35：大家在休息
-  RoomPausedPayload,
 } from './generated/dto';
 
 /** GET /api/v1/me/rooms 返回项。 */
@@ -150,6 +148,7 @@ import type {
   NarrationPushPayload,
   PartyUpdatePayload,
   PlayerJoinedPayload,
+  RoomPausedPayload,
   RoomStatePayload,
   SanCheckRequestPayload,
   SanCheckResultPayload,

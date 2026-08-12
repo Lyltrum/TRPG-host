@@ -320,6 +320,7 @@ class KeeperAgent(Narrator):
             ending_id=ending_id,
             is_heartbeat=is_heartbeat,
             is_opening_ceremony=is_opening_ceremony,
+            ruleset=self._ruleset,
         )
         situation = situation_builder.for_keeper(
             nickname=context.player_nickname, utterance=context.utterance

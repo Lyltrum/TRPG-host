@@ -26,6 +26,7 @@ from app.core.keeper.runtime.deps import (
     write_stat,
 )
 from app.core.keeper.runtime.location_state import location_of, resolve_content_node_id
+from app.core.keeper.runtime.madness_state import MADNESS_LOSS_THRESHOLD, enter_madness
 from app.core.keeper.runtime.pending import PendingDecision
 from app.core.narration.contract import CheckResultNotice
 from app.models.room import Room
@@ -71,7 +72,9 @@ async def san_check_only(
     result = "成功" if outcome.succeeded else "失败"
     warnings = []
     if loss >= 5:
-        warnings.append("单次损失≥5，触发临时疯狂（由你按 COC7 规则叙述发作表现）")
+        # 症状不在这里说：生效那一步（`_apply_san_loss`）会掷症状表并把具体
+        # 那一条写进 check_results，两处都说会让叙事收到两种发作表现。
+        warnings.append("单次损失≥5，触发临时疯狂")
     if new_value == 0:
         warnings.append("理智归零，角色永久疯狂")
     suffix = "；".join(warnings)
@@ -103,6 +106,9 @@ async def _apply_san_loss(deps: KeeperDeps, detail: dict, player_name: str | Non
     # 照旧值写回去就是把那次改动吞掉。
     async with deps.write_lock, deps.session_factory() as db:
         player, character = await resolve_character(db, deps, player_name)
+        # 疯狂那一步要用它，而 `detail` 里**不一定有** player_id：两段式那条路
+        # 传进来的 detail 是 `apply_san_check` 现搭的（只有落过库的那几样）。
+        player_id, nickname = player.id, player.nickname
         written = max(0, current_stat(character, "SAN") - loss)
         write_stat(character, "SAN", written)
         await record_event(
@@ -122,6 +128,17 @@ async def _apply_san_loss(deps: KeeperDeps, detail: dict, player_name: str | Non
         f"{detail['player']} · 理智检定：{detail['rolled']}/{current} → {result}，"
         f"San {current} → {written}（-{loss}）"
     )
+    # 🔴 临时性疯狂：**代码强制**，不是请模型自觉。触发条件是这里刚算出来的
+    # 数，症状点数也由代码掷——能确定性判断的一律代码强制。解除那一半才是
+    # 模型的活儿（`capabilities/madness`）。状态放在 runtime 是因为两片能力
+    # 不许互相 import，理由见 `madness_state` 模块说明。
+    if loss >= MADNESS_LOSS_THRESHOLD:
+        symptom = await enter_madness(deps, player_id, nickname)
+        if symptom is not None:
+            deps.check_results.append(
+                f"{nickname} · 单次损失 {loss} 点，陷入临时性疯狂："
+                f"{symptom.label}——{symptom.description}"
+            )
 
 
 async def san_check_impl(

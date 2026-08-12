@@ -29,8 +29,8 @@ keeper/
 │   └── npcs.py         NPC 实体寻址（把模型写的名字解析成白名单 id）
 │
 ├── capabilities/   🔴 一个能力一个目录，新人只读这一个
-│   ├── skill_check/  san_check/  health/  movement/
-│   └── world_state/  clue_reveal/  agenda/  progression/
+│   ├── skill_check/  san_check/  health/  movement/  madness/
+│   └── world_state/  clue_reveal/  agenda/  progression/  open_threads/
 │
 ├── runtime/        编排与共享运行时状态（能力无关）
 │   ├── agent.py        KeeperAgent 门面（实现 Narrator 接口）
@@ -41,6 +41,7 @@ keeper/
 │   ├── deps.py         一轮的依赖包 + 角色卡读写
 │   ├── phase.py        对局阶段（共享状态）
 │   ├── location_state.py / scene_state.py  谁在哪（共享状态）
+│   ├── madness_state.py 谁在疯（共享状态：进入由 san_check 写、解除由 madness 写）
 │   ├── pending.py      两段式待掷队列
 │   └── heartbeat.py    世界心跳
 │

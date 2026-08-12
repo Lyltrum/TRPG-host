@@ -21,6 +21,7 @@ from app.dto.game import (
     AgeRangeSpec,
     AttributePointBuyRules,
     AttributeSpec,
+    MadnessSymptomSpec,
     OccupationSpec,
     RulesetRead,
     SkillChoiceSlot,
@@ -7786,6 +7787,79 @@ COC7_OCCUPATIONS: list[OccupationSpec] = [
 ]
 
 
+#: 临时性疯狂的发作表现（COC7「疯狂发作·即时」1D10 表）。
+#:
+#: 🔴 **只有临时性这一档。** 不定性疯狂的触发条件是「一天内损失 ≥1/5 理智」，
+#: 而"一天"要靠 keeper_state 里那个自由文本的游戏内时间——代码不参与时间判断
+#: （见判据「时间根本不是地基」），做出来只会是个概率性的东西；SAN 归零的永久
+#: 疯狂则属于**规则决定的收束**（同"全员死亡/玩家撤离"那一层，`exec/30 §10.4`），
+#: 归 closure 那条线，不在这里半做。两者现状都不变（掷骰文本末尾的警告）。
+#:
+#: `description` 是写给模型的**约束**：症状由代码定，叙事只负责演出来。
+COC7_MADNESS_SYMPTOMS: list[MadnessSymptomSpec] = [
+    MadnessSymptomSpec(
+        id="amnesia",
+        roll=1,
+        label="失忆",
+        description="他不记得刚才发生了什么，也不记得自己怎么到这里的——最后的记忆停在更早的地方",
+    ),
+    MadnessSymptomSpec(
+        id="psychosomatic-disability",
+        roll=2,
+        label="假性残疾",
+        description="身体没有伤，但他失明／失聪／某条手臂或腿动不了了",
+    ),
+    MadnessSymptomSpec(
+        id="violence",
+        roll=3,
+        label="暴力倾向",
+        description="他对眼前的一切（包括同伴）动手，不加分辨",
+    ),
+    MadnessSymptomSpec(
+        id="paranoia",
+        roll=4,
+        label="偏执",
+        description="他坚信所有人都在骗他、监视他、准备加害他",
+    ),
+    MadnessSymptomSpec(
+        id="significant-person",
+        roll=5,
+        label="人际依赖",
+        description="他把在场的某个人错认成自己生命中重要的那个人，并照那段关系行事",
+    ),
+    MadnessSymptomSpec(
+        id="faint",
+        roll=6,
+        label="昏厥",
+        description="他当场晕过去，直到被弄醒为止都不能行动",
+    ),
+    MadnessSymptomSpec(
+        id="flee-in-panic",
+        roll=7,
+        label="恐慌逃跑",
+        description="他不顾一切地往外跑，不管跑向哪、也不管把谁丢下",
+    ),
+    MadnessSymptomSpec(
+        id="hysterics",
+        roll=8,
+        label="歇斯底里",
+        description="他放声大笑或痛哭、语无伦次，说不出一句有用的话",
+    ),
+    MadnessSymptomSpec(
+        id="phobia",
+        roll=9,
+        label="恐惧症",
+        description="他当场对现场某样具体的东西产生了强烈恐惧，哪怕它本身无害",
+    ),
+    MadnessSymptomSpec(
+        id="mania",
+        roll=10,
+        label="狂躁症",
+        description="他当场迷上现场某样具体的东西，不顾危险地追求它",
+    ),
+]
+
+
 def build_coc7_ruleset() -> RulesetRead:
     """组装成 `RulesetRead`，供 seed 写入 `GameSystem.ruleset` /
     `get_ruleset` 兜底使用。"""
@@ -7800,4 +7874,5 @@ def build_coc7_ruleset() -> RulesetRead:
             SuccessTierSpec(id=tier_id, label=label, divisor=divisor)
             for tier_id, label, divisor in SUCCESS_TIERS
         ],
+        madness_symptoms=COC7_MADNESS_SYMPTOMS,
     )

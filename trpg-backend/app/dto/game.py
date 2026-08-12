@@ -151,6 +151,25 @@ class SuccessTierSpec(CamelModel):
     divisor: int
 
 
+class MadnessSymptomSpec(CamelModel):
+    """临时性疯狂的一种发作表现（COC7「疯狂发作·即时」1D10 表）。
+
+    有 id 才有地基：此前"单次损失≥5 触发临时疯狂"只是掷骰文本末尾的一句
+    警告，症状由叙事器现编，下一轮没有任何地方记着它——同「即兴出来的东西
+    没有落点」。做成 id 之后它是 keeper_state 里的一条记录、局面块里的一行，
+    解除必须走裁决字段。
+
+    `roll` 是它在 1D10 表上的点数（服务端掷，模型碰不到）。表本身属于规则
+    系统而不是引擎：COC7 是插件，症状表跟着它走。
+    """
+
+    id: str
+    roll: int
+    label: str
+    #: 给模型看的发作表现，一句话。它是叙事的**约束**，不是可选参考。
+    description: str
+
+
 class RulesetRead(CamelModel):
     """建卡所需的规则数据：属性/技能/职业目录（`GET /systems/{systemId}/ruleset`）。"""
 
@@ -164,3 +183,6 @@ class RulesetRead(CamelModel):
     occupations: list[OccupationSpec]
     # 难度分档（困难/极难）。空列表 = 这套规则没有分档概念，见 SuccessTierSpec。
     success_tiers: list[SuccessTierSpec] = []
+    # 临时性疯狂症状表。空列表 = 这套规则没有疯狂概念，那时 madness 能力整块
+    # 不渲染、也不会有人进入疯狂——不伪造一个默认症状（同 success_tiers）。
+    madness_symptoms: list[MadnessSymptomSpec] = []

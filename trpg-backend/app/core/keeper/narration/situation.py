@@ -36,6 +36,7 @@ from app.core.keeper.memory.history import HistoryLine, visible_history
 from app.core.keeper.narration.prompts import format_turn_input
 from app.core.keeper.runtime.pending import MERGE_CONFIRM_KIND, pending_decision_manager
 from app.core.keeper.runtime.phase import format_phase_status
+from app.dto.game import RulesetRead
 
 
 @dataclass(frozen=True)
@@ -120,6 +121,7 @@ async def build_situation(
     ending_id: str | None,
     is_heartbeat: bool,
     is_opening_ceremony: bool,
+    ruleset: RulesetRead | None = None,
 ) -> SituationBuilder:
     """读一次库，把这一轮的局面块组装器建出来。"""
     # 事实账本 L1：读全量（不设 limit）——它必须活过 HISTORY_LIMIT 的 200 条
@@ -151,6 +153,7 @@ async def build_situation(
             observer_id=observer_id,
             players=tuple(players),
             merge_pending=merge_pending,
+            ruleset=ruleset,
         ),
         narrator_capability_blocks=situation_blocks(
             module,
@@ -158,6 +161,7 @@ async def build_situation(
             observer_id=observer_id,
             players=tuple(players),
             merge_pending=merge_pending,
+            ruleset=ruleset,
             keeper_view=False,
         ),
         is_heartbeat=is_heartbeat,

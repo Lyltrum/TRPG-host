@@ -102,6 +102,10 @@ class CharacterRead(CamelModel):
     background: str = ""
     notes: str = ""
     background_detail: dict[str, str] | None = None
+    # 这张卡是从卡库里哪张常用卡复制来的（没用常用卡建的恒为 None）。客户端据此
+    # 知道"它已经在卡库里了"——否则准备页会请玩家把同一张卡再存一遍，卡库里就
+    # 多出一张一模一样的（2026-08-13 真人反馈）。
+    based_on_template_id: str | None = None
 
 
 class PartyCharacterRead(CamelModel):

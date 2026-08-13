@@ -1,11 +1,12 @@
 import { useNavigate } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, BookmarkPlus, UserPlus, Swords, Eye, RefreshCw, X } from 'lucide-react'
+import { ArrowLeft, BookmarkPlus, BookmarkCheck, UserPlus, Swords, Eye, RefreshCw, X } from 'lucide-react'
 import { useCharacterStore } from '@/stores/character-store'
 import {
   fetchCharacter,
   regenerateBackground,
   saveAsTemplate,
+  deleteMyTemplate,
 } from '@/services/character/character-api'
 import { toCompletedCharacter } from '@/services/character/character-view'
 import { BACKGROUND_DETAIL_FIELDS } from '@/data/character-model'
@@ -360,11 +361,13 @@ export default function CharacterReadyPage() {
   const navigate = useNavigate()
   const [showSelfSheet, setShowSelfSheet] = useState(false)
   const [starting, setStarting] = useState(false)
-  // 存进卡库（我的常用角色卡）。`savedTemplate` 只是这一屏的即时反馈——
-  // 重进页面会回到"存卡"，重复存会得到两张同名的，这是可接受的：卡库列表
-  // 里能删，而在这里维护"这张卡存过没有"要多查一次接口。
+  // 存进卡库（我的常用角色卡）。存的是**哪一张**要记住，因为存卡必须可撤——
+  // 点错了不该逼玩家自己摸到卡库里去删。
+  //
+  // 仍然只是这一屏的即时反馈：重进页面会回到"存卡"（那时 `fromTemplate` 会
+  // 接管"这张卡本来就来自卡库"那一种）。
   const [savingTemplate, setSavingTemplate] = useState(false)
-  const [savedTemplate, setSavedTemplate] = useState(false)
+  const [savedTemplateId, setSavedTemplateId] = useState<string | null>(null)
   const [templateError, setTemplateError] = useState('')
   const roomId = useRoomStore((s) => s.roomId)
   const selfPlayerId = useRoomStore((s) => s.playerId)
@@ -380,6 +383,9 @@ export default function CharacterReadyPage() {
   // 页面却显示成"还没建卡"。现在有了 GET 端点，就该以后端那份为准——本地缓存
   // 保留是为了拉取回来之前不闪空白，不是权威源。
   const [remoteCharacter, setRemoteCharacter] = useState<typeof cachedCharacter>(null)
+  // 这张卡是不是从卡库拿的。是的话它**已经在卡库里**，不该请玩家再存一遍——
+  // 存了只会得到一张一模一样的（2026-08-13 真人反馈）。
+  const [fromTemplate, setFromTemplate] = useState(false)
   useEffect(() => {
     if (!roomId || !characterId || !readyRuleset) return
     let cancelled = false
@@ -387,6 +393,7 @@ export default function CharacterReadyPage() {
       .then((saved) => {
         if (cancelled) return
         setRemoteCharacter(toCompletedCharacter(saved, readyRuleset))
+        setFromTemplate(saved.basedOnTemplateId != null)
       })
       .catch(() => {
         // 拉不到就沿用本地缓存（比如还没建过卡），不打断这个页面。
@@ -404,10 +411,27 @@ export default function CharacterReadyPage() {
     setTemplateError('')
     try {
       // 卡库里的名字用角色名——玩家找的是"我那个记者"，不是一串日期。
-      await saveAsTemplate(characterId, character?.info.name || '我的调查员')
-      setSavedTemplate(true)
+      const saved = await saveAsTemplate(characterId, character?.info.name || '我的调查员')
+      // 🔴 记住存出来的是哪张，才能撤：存卡此前是**单向的**，点错了只能自己
+      // 摸到卡库里去删（2026-08-13 真人反馈）。
+      setSavedTemplateId(saved.templateId)
     } catch (err) {
       setTemplateError(err instanceof Error ? err.message : '存进卡库失败')
+    } finally {
+      setSavingTemplate(false)
+    }
+  }
+
+  /** 撤销刚才那次存卡：把它从卡库里删掉，按钮回到"存卡"。 */
+  const handleUndoSaveTemplate = async () => {
+    if (!savedTemplateId) return
+    setSavingTemplate(true)
+    setTemplateError('')
+    try {
+      await deleteMyTemplate(savedTemplateId)
+      setSavedTemplateId(null)
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : '撤销失败')
     } finally {
       setSavingTemplate(false)
     }
@@ -587,16 +611,41 @@ export default function CharacterReadyPage() {
                         编辑
                       </button>
                       {/* 存进卡库：这一屏的卡已经是 complete 的完整态，
-                          而向导最后一步那张还是 draft——存早了会存进半截数据。 */}
-                      <button
-                        onClick={() => void handleSaveTemplate()}
-                        disabled={savingTemplate}
-                        title="存进我的常用卡"
-                        className="cut-corner text-[11px] font-semibold px-2 py-1 border border-ink/35 text-ink-soft bg-white/15 flex items-center gap-1 active:scale-[0.95] transition-all whitespace-nowrap disabled:opacity-50"
-                      >
-                        <BookmarkPlus className="w-3 h-3" />
-                        {savedTemplate ? '已存' : savingTemplate ? '存…' : '存卡'}
-                      </button>
+                          而向导最后一步那张还是 draft——存早了会存进半截数据。
+
+                          三种状态：
+                          ①这张卡本来就是从卡库拿的 → 不给存（存了只是复制一张
+                            一模一样的），按钮说明它已经在库里；
+                          ②刚存过 → 给「撤销」，存卡不能是单向的；
+                          ③其余 → 「存卡」。 */}
+                      {fromTemplate ? (
+                        <span
+                          title="这张卡就是从卡库里拿的，已经在库里了"
+                          className="cut-corner text-[11px] font-semibold px-2 py-1 border border-ink/25 text-ink-soft/70 bg-white/10 flex items-center gap-1 whitespace-nowrap"
+                        >
+                          <BookmarkCheck className="w-3 h-3" /> 在卡库
+                        </span>
+                      ) : savedTemplateId ? (
+                        <button
+                          onClick={() => void handleUndoSaveTemplate()}
+                          disabled={savingTemplate}
+                          title="从卡库里撤掉刚存的那张"
+                          className="cut-corner text-[11px] font-semibold px-2 py-1 border border-ink/35 text-ink-soft bg-white/15 flex items-center gap-1 active:scale-[0.95] transition-all whitespace-nowrap disabled:opacity-50"
+                        >
+                          <BookmarkCheck className="w-3 h-3" />
+                          {savingTemplate ? '撤…' : '已存 · 撤销'}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => void handleSaveTemplate()}
+                          disabled={savingTemplate}
+                          title="存进我的常用卡"
+                          className="cut-corner text-[11px] font-semibold px-2 py-1 border border-ink/35 text-ink-soft bg-white/15 flex items-center gap-1 active:scale-[0.95] transition-all whitespace-nowrap disabled:opacity-50"
+                        >
+                          <BookmarkPlus className="w-3 h-3" />
+                          {savingTemplate ? '存…' : '存卡'}
+                        </button>
+                      )}
                     </>
                   ) : (
                     <button

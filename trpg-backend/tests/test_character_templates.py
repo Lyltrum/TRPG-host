@@ -134,6 +134,9 @@ async def test_reusing_a_template_copies_it_into_a_fresh_draft(client: AsyncClie
     )
     assert got.json()["data"]["name"] == "凌铭辉"
     assert got.json()["data"]["attributes"] == template["data"]["attributes"]
+    # 🔴 卡要认得出自己是从卡库来的：准备页据此**不再请玩家存一遍**——存了只会
+    # 在卡库里多出一张一模一样的（2026-08-13 真人反馈）。
+    assert got.json()["data"]["basedOnTemplateId"] == template["templateId"]
 
 
 async def test_a_template_that_is_illegal_here_falls_back_to_a_draft(

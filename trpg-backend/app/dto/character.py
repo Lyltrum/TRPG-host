@@ -197,6 +197,21 @@ class CharacterTemplateCreateBody(CamelModel):
     character_id: str = Field(..., min_length=1)
 
 
+class CharacterTemplateUpdateBody(CamelModel):
+    """PATCH /api/v1/me/character-templates/{templateId} 请求体：改卡库里那张卡。
+
+    🔴 **只改文字，不改规则数**：`data` 里能给的键由 service 层的白名单说了算
+    （姓名/性别/居住地/出生地/背景故事/备注/结构化背景），属性、年龄、职业、
+    技能一律不收——那些改一处就要重跑整套 COC7 校验与年龄修正，而那条链路长在
+    建卡向导上，在卡库里再造一套等于同一件事有两个实现。
+
+    两个字段都可选，且 `data` 是**部分更新**：只合并真正给了的键。
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    data: dict[str, object] | None = None
+
+
 class CharacterTemplateRead(CamelModel):
     """`我的常用角色卡` 列表/详情返回项。"""
 

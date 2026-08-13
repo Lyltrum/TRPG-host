@@ -15,8 +15,8 @@ import { friendlyErrorMessage } from '@/services/api-client'
  * 里的话，存进去之后就再也看不到它了（2026-08-13 真机反馈：「我确实能存进
  * 去，但是人物卡在哪里看呢？」）。
  *
- * 这一页只做**看和删**。「用这张卡开局」不在这里——那要先有房间，入口在建卡
- * 向导第一步。
+ * 这一页只做**列表和删**：点某张卡进详情页（看全部信息 + 改文字）。
+ * 「用这张卡开局」不在这里——那要先有房间，入口在建卡向导第一步。
  */
 
 /** 属性摘要：八维里挑最能辨认一张卡的几项，不做完整卡片。 */
@@ -112,7 +112,18 @@ export default function MyCharactersPage() {
                     <div className="w-[34px] h-[34px] flex-none flex items-center justify-center bg-page">
                       <UserRound className="w-[18px] h-[18px] text-text-muted" />
                     </div>
-                    <div className="flex-1 min-w-0">
+                    {/* 🔴 只有姓名那一块可点进详情，不把整张卡片做成按钮：删除键
+                        在同一行里，整卡可点会把它吞掉（点删除先触发跳转）。 */}
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => navigate(`/home/characters/${template.templateId}`)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ')
+                          navigate(`/home/characters/${template.templateId}`)
+                      }}
+                      className="flex-1 min-w-0 cursor-pointer"
+                    >
                       <div className="text-[13.5px] font-bold text-text-primary truncate">
                         {template.name}
                       </div>

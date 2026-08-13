@@ -12,7 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.controller.dependencies import extract_bearer_token, get_current_user
 from app.core.db import get_db
 from app.core.errors import AppException, ErrorCode
-from app.dto.character import CharacterTemplateCreateBody, CharacterTemplateRead
+from app.dto.character import (
+    CharacterTemplateCreateBody,
+    CharacterTemplateRead,
+    CharacterTemplateUpdateBody,
+)
 from app.dto.common import ApiResponse
 from app.dto.room import MyRoomSummary
 from app.models.user import User
@@ -35,6 +39,10 @@ def _raise_service_error(exc: Exception) -> NoReturn:
         character_service.CharacterTemplateNotFoundError | character_service.CharacterNotFoundError,
     ):
         raise AppException(ErrorCode.NOT_FOUND, str(exc), status.HTTP_404_NOT_FOUND) from exc
+    if isinstance(exc, character_service.CharacterTemplateNotEditableError):
+        raise AppException(
+            ErrorCode.VALIDATION_ERROR, str(exc), status.HTTP_422_UNPROCESSABLE_CONTENT
+        ) from exc
     raise exc
 
 
@@ -101,6 +109,26 @@ async def get_character_template(
     user_id = await _require_user_id(authorization, db)
     try:
         template = await character_service.get_character_template(db, user_id, template_id)
+    except ValueError as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(template)
+
+
+@router.patch(
+    "/character-templates/{template_id}", response_model=ApiResponse[CharacterTemplateRead]
+)
+async def update_character_template(
+    template_id: str,
+    payload: CharacterTemplateUpdateBody,
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[CharacterTemplateRead]:
+    """PATCH /api/v1/me/character-templates/{templateId} —— 改卡库里那张卡的文字。"""
+    user_id = await _require_user_id(authorization, db)
+    try:
+        template = await character_service.update_character_template(
+            db, user_id, template_id, payload
+        )
     except ValueError as exc:
         _raise_service_error(exc)
     return ApiResponse.ok(template)

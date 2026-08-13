@@ -6,6 +6,7 @@
 角色卡操作跟房间操作共用同一套"这是房间里的哪个玩家"身份体系。
 """
 
+import contextlib
 import random
 from dataclasses import asdict
 
@@ -42,6 +43,7 @@ from app.dto.character import (
     CharacterRead,
     CharacterTemplateCreateBody,
     CharacterTemplateRead,
+    CharacterTemplateUpdateBody,
     CharacterUpdateBody,
     EduImprovementCheckView,
     PartyCharacterRead,
@@ -66,6 +68,14 @@ class CharacterTemplateNotFoundError(ValueError):
 
     三种情况共用一个错误：对调用方来说它们是同一件事（这张卡你用不了），
     而分开报会把"这个 id 确实存在，只是不是你的"泄露出去。
+    """
+
+
+class CharacterTemplateNotEditableError(ValueError):
+    """想在卡库里改的字段不在可改白名单里（属性/年龄/职业/技能这些规则数）。
+
+    显式拒绝而不是静默丢弃：静默丢弃的话，前端以为改上去了、界面也显示改了，
+    刷新一下又变回原样——这种 bug 前后端两头都不会变红。
     """
 
 
@@ -105,9 +115,15 @@ async def create_character_draft(
     的建卡态整份复制进新草稿。**复制，不是引用**——这一局怎么玩坏都不会回头
     改动卡库里那张。不带这个字段则完全是原来"从零建卡"的行为。
 
-    🔴 草稿建出来仍是 `status="draft"`：复用不等于跳过校验。玩家还要过一遍
-    向导（可以直接走到最后一步提交），而 complete 时那套校验一条都不少——
-    模板存的时候合法，不代表拿到**这个**房间的规则系统下还合法。
+    🔴 **合法就直接建成 `complete`，不把人再赶进向导一遍**（2026-08-13 真人
+    反馈：「我选择自己常用的角色卡之后，为什么还要我进行下一步呀？」）。
+    卡库里那张是**已经建完的**卡——让玩家把八步再走一遍，唯一的产出是把他
+    刚选的东西原样确认一次。
+
+    校验一条都不少，只是**换了执行的人**：这里直接调 `complete_character`，
+    走的是同一道闸门（模板存的时候合法，不代表在**这个**房间的规则系统下
+    还合法）。**校验没过才退回 `draft`**，让玩家进向导修——那时候向导是
+    "修一张具体哪里不合法的卡"，不是"再确认一遍"。
     """
     room = await find_room_by_id(db, room_id)
     player = await get_player_by_reconnect_token(db, reconnect_token)
@@ -131,6 +147,17 @@ async def create_character_draft(
         character.based_on_template_id = template.id
     db.add(character)
     await db.commit()
+
+    if based_on_template_id is not None:
+        # 这张常用卡在本房间的规则下不合法时（换了规则系统、规则表改过…）**不抛
+        # 给玩家**：草稿已经建出来了，抛异常等于让他连修的入口都没有。留在 draft，
+        # 进向导改，那里会把具体是哪一条显示出来。
+        #
+        # 🔴 **不 rollback**：`complete_character` 先校验后落值，抛出来时一个字段
+        # 都还没改，没有东西要回滚；而 rollback 会让 `character` 过期，紧接着读
+        # `.status` 就变成一次同步 IO（MissingGreenlet）。
+        with contextlib.suppress(CharacterInvalidError):
+            await complete_character(db, room_id, character.id, reconnect_token)
     return CharacterDraftResult(character_id=character.id, status=character.status)
 
 
@@ -831,6 +858,44 @@ async def get_character_template(
     db: AsyncSession, user_id: str, template_id: str
 ) -> CharacterTemplateRead:
     return _to_template_read(await _require_template(db, user_id, template_id))
+
+
+#: 卡库详情页能改的建卡态字段。🔴 **规则相关的数一个都不收**：属性、年龄、职业、
+#: 技能、生成方式、衍生值改一处就要重跑整套 COC7 校验与年龄修正，而那套链路已经
+#: 长在建卡向导那条路上——在卡库里再造一套，就是"功能写在某个实现里，换一个实现
+#: 就悄悄没了"。想改数值的路是：用这张卡开局 → 在向导里改 → 再存一张。
+_TEMPLATE_EDITABLE_FIELDS = (
+    "name",
+    "gender",
+    "residence",
+    "birthplace",
+    "background",
+    "notes",
+    "background_detail",
+)
+
+
+async def update_character_template(
+    db: AsyncSession, user_id: str, template_id: str, payload: CharacterTemplateUpdateBody
+) -> CharacterTemplateRead:
+    """改卡库里那张卡的文字部分（卡名 + 建卡态里的文本字段）。
+
+    `data` 是**部分更新**：只合并请求里真正给了的键，没给的原样留着——整份覆盖
+    的话，前端少传一个字段就等于把它清空了。
+    """
+    template = await _require_template(db, user_id, template_id)
+    if payload.name is not None:
+        template.name = payload.name
+    if payload.data:
+        unknown = sorted(set(payload.data) - set(_TEMPLATE_EDITABLE_FIELDS))
+        if unknown:
+            # 显式拒绝而不是静默丢弃：静默丢弃的话，前端以为改上去了、界面上也
+            # 显示改了，刷新一下又变回去——这种 bug 两头都不会变红。
+            raise CharacterTemplateNotEditableError(f"这些字段不能在卡库里改：{'、'.join(unknown)}")
+        template.data = {**(template.data or {}), **payload.data}
+    await db.commit()
+    await db.refresh(template)
+    return _to_template_read(template)
 
 
 async def delete_character_template(db: AsyncSession, user_id: str, template_id: str) -> None:

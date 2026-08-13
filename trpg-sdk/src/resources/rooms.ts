@@ -182,6 +182,19 @@ export class RoomsResource {
   }
 
   /**
+   * DELETE /api/v1/rooms/{roomId} — 房主彻底删除房间
+   *
+   * 🔴 跟 `disband` 是两件事：那条只标已完成、复盘照常打得开；这条把房间、事件
+   * 流、角色卡、复盘一起删掉，**不可撤回**。走账号鉴权（入口在「我的房间」，
+   * 那里没有房间的重连凭证）。
+   */
+  remove(roomId: string, token: string): Promise<null> {
+    return this.client.delete<null>(`/rooms/${roomId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  }
+
+  /**
    * POST /api/v1/rooms/{roomId}/players/{playerId}/away — 中途离开 / 回来
    *
    * `away=true` 让这个角色暂时退出剧情：他**不进守秘人的在场名单**（那一半是

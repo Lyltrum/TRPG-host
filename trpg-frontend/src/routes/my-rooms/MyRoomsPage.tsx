@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Play, ScrollText, Hash, Plus } from 'lucide-react'
+import { Play, ScrollText, Hash, Plus, Trash2 } from 'lucide-react'
 import ShellPage from '@/shared/components/ShellPage'
-import { listMyRooms, joinRoomByCode, getRoomInfo, type MyRoomSummary } from '@/services/room'
+import {
+  listMyRooms,
+  joinRoomByCode,
+  getRoomInfo,
+  deleteRoom,
+  type MyRoomSummary,
+} from '@/services/room'
 import { friendlyErrorMessage } from '@/services/api-client'
 import { useAuthStore } from '@/stores/auth-store'
 import { useRoomStore } from '@/stores/room-store'
@@ -40,6 +46,43 @@ const RESUME_ROUTE: Record<string, string> = {
   InGame: '/room/play',
 }
 
+/**
+ * 删除确认条。**代价要写在按下之前**：删房间连这一局的复盘一起没，而复盘是
+ * 玩完之后唯一还看得到的东西——只写「确定删除吗」等于没提示。
+ */
+function DeleteConfirm({
+  deleting,
+  onConfirm,
+  onCancel,
+}: {
+  deleting: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="bg-page p-2.5 flex flex-col gap-2">
+      <p className="text-[11px] text-text-muted leading-relaxed">
+        删了就找不回来了——这一局的记录和<span className="font-bold text-text-primary">复盘也会一起没</span>。
+      </p>
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={onConfirm}
+          disabled={deleting}
+          className="press px-2.5 py-1.5 text-[11.5px] font-bold bg-rust text-[#fff5ea] disabled:opacity-60 whitespace-nowrap"
+        >
+          {deleting ? '删除中…' : '确认删除'}
+        </button>
+        <button
+          onClick={onCancel}
+          className="press px-2.5 py-1.5 text-[11.5px] font-bold bg-card text-text-muted whitespace-nowrap"
+        >
+          取消
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function MyRoomsPage() {
   const navigate = useNavigate()
   const nickname = useAuthStore((s) => s.nickname)
@@ -48,6 +91,8 @@ export default function MyRoomsPage() {
   const [rooms, setRooms] = useState<MyRoomSummary[] | null>(null)
   const [error, setError] = useState('')
   const [resumingCode, setResumingCode] = useState<string | null>(null)
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   useEffect(() => {
     listMyRooms()
@@ -57,6 +102,24 @@ export default function MyRoomsPage() {
 
   const inProgress = rooms?.filter((r) => r.phase !== 'Completed') ?? []
   const completed = rooms?.filter((r) => r.phase === 'Completed') ?? []
+
+  /**
+   * 删房间是**不可撤回**的（房间、事件流、角色卡、复盘一起没），所以：
+   * ①只有房主能看见那个键；②必须点两下，第二下前把代价写在脸上。
+   */
+  const handleDelete = async (room: MyRoomSummary) => {
+    setDeletingId(room.roomId)
+    setError('')
+    try {
+      await deleteRoom(room.roomId)
+      setRooms((prev) => (prev ?? []).filter((r) => r.roomId !== room.roomId))
+    } catch (err) {
+      setError(friendlyErrorMessage(err, '删除房间失败'))
+    } finally {
+      setDeletingId(null)
+      setConfirmingId(null)
+    }
+  }
 
   const handleResume = async (room: MyRoomSummary) => {
     setResumingCode(room.roomCode)
@@ -112,21 +175,39 @@ export default function MyRoomsPage() {
             </span>
             <div className="flex flex-col gap-2.5">
               {inProgress.map((room) => (
-                <div key={room.roomCode} className="press-soft bg-card p-3 flex items-center gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13.5px] font-bold text-text-primary truncate">{room.roomName}</div>
-                    <div className="text-[10.5px] text-text-muted mt-0.5">
-                      {room.moduleTitle || '尚未选择模组'} · {PHASE_LABEL[room.phase] || room.phase} · {formatTime(room.updatedAt)}
+                <div key={room.roomCode} className="press-soft bg-card p-3 flex flex-col gap-2">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[13.5px] font-bold text-text-primary truncate">{room.roomName}</div>
+                      <div className="text-[10.5px] text-text-muted mt-0.5">
+                        {room.moduleTitle || '尚未选择模组'} · {PHASE_LABEL[room.phase] || room.phase} · {formatTime(room.updatedAt)}
+                      </div>
                     </div>
+                    <button
+                      onClick={() => handleResume(room)}
+                      disabled={resumingCode === room.roomCode}
+                      className="press flex items-center gap-1 px-3 py-1.5 text-[11.5px] font-bold bg-rust text-[#fff5ea] disabled:opacity-60 whitespace-nowrap"
+                    >
+                      <Play className="w-[14px] h-[14px]" />
+                      {resumingCode === room.roomCode ? '进入中…' : '继续'}
+                    </button>
+                    {room.isHost && confirmingId !== room.roomId && (
+                      <button
+                        onClick={() => setConfirmingId(room.roomId)}
+                        aria-label={`删除 ${room.roomName}`}
+                        className="press flex-none p-1.5 text-text-muted"
+                      >
+                        <Trash2 className="w-[15px] h-[15px]" />
+                      </button>
+                    )}
                   </div>
-                  <button
-                    onClick={() => handleResume(room)}
-                    disabled={resumingCode === room.roomCode}
-                    className="press flex items-center gap-1 px-3 py-1.5 text-[11.5px] font-bold bg-rust text-[#fff5ea] disabled:opacity-60 whitespace-nowrap"
-                  >
-                    <Play className="w-[14px] h-[14px]" />
-                    {resumingCode === room.roomCode ? '进入中…' : '继续'}
-                  </button>
+                  {confirmingId === room.roomId && (
+                    <DeleteConfirm
+                      deleting={deletingId === room.roomId}
+                      onCancel={() => setConfirmingId(null)}
+                      onConfirm={() => void handleDelete(room)}
+                    />
+                  )}
                 </div>
               ))}
             </div>
@@ -140,20 +221,38 @@ export default function MyRoomsPage() {
             </span>
             <div className="flex flex-col gap-2.5">
               {completed.map((room) => (
-                <div key={room.roomCode} className="press-soft bg-card p-3 flex items-center gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13.5px] font-bold text-text-primary truncate">{room.roomName}</div>
-                    <div className="text-[10.5px] text-text-muted mt-0.5">
-                      {room.moduleTitle || '未知模组'} · {formatTime(room.updatedAt)}
+                <div key={room.roomCode} className="press-soft bg-card p-3 flex flex-col gap-2">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[13.5px] font-bold text-text-primary truncate">{room.roomName}</div>
+                      <div className="text-[10.5px] text-text-muted mt-0.5">
+                        {room.moduleTitle || '未知模组'} · {formatTime(room.updatedAt)}
+                      </div>
                     </div>
+                    <button
+                      onClick={() => navigate(`/home/my-rooms/review/${room.roomCode}`)}
+                      className="press flex items-center gap-1 px-3 py-1.5 text-[11.5px] font-bold bg-card text-text-primary whitespace-nowrap"
+                    >
+                      <ScrollText className="w-[14px] h-[14px]" />
+                      查看复盘
+                    </button>
+                    {room.isHost && confirmingId !== room.roomId && (
+                      <button
+                        onClick={() => setConfirmingId(room.roomId)}
+                        aria-label={`删除 ${room.roomName}`}
+                        className="press flex-none p-1.5 text-text-muted"
+                      >
+                        <Trash2 className="w-[15px] h-[15px]" />
+                      </button>
+                    )}
                   </div>
-                  <button
-                    onClick={() => navigate(`/home/my-rooms/review/${room.roomCode}`)}
-                    className="press flex items-center gap-1 px-3 py-1.5 text-[11.5px] font-bold bg-card text-text-primary whitespace-nowrap"
-                  >
-                    <ScrollText className="w-[14px] h-[14px]" />
-                    查看复盘
-                  </button>
+                  {confirmingId === room.roomId && (
+                    <DeleteConfirm
+                      deleting={deletingId === room.roomId}
+                      onCancel={() => setConfirmingId(null)}
+                      onConfirm={() => void handleDelete(room)}
+                    />
+                  )}
                 </div>
               ))}
             </div>

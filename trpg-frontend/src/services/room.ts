@@ -92,6 +92,18 @@ export async function listMyRooms(): Promise<MyRoomSummary[]> {
   return sdk.rooms.listMyRooms(token);
 }
 
+/**
+ * 房主彻底删除房间：房间、事件流、角色卡、复盘一起没，**不可撤回**。
+ *
+ * 跟「结束游戏 / 解散」是两件事——那两条只把房间标成已完成，复盘照常打得开。
+ * 走账号 token：入口在「我的房间」，那里没有这个房间的重连凭证。
+ */
+export async function deleteRoom(roomId: string): Promise<void> {
+  const token = getAuthToken();
+  if (!token) throw new Error('未登录，无法删除房间');
+  await sdk.rooms.remove(roomId, token);
+}
+
 // 房主结束游戏，房间转入「已完成」状态，之后只能查看复盘
 export async function endGame(roomId: string): Promise<void> {
   await sdk.rooms.endGame(roomId, requireReconnectToken());

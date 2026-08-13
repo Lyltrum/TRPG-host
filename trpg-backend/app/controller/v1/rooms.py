@@ -331,6 +331,27 @@ async def set_player_away(
     return ApiResponse.ok(None)
 
 
+@router.delete("/{room_id}", response_model=ApiResponse[None])
+async def delete_room(
+    room_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ApiResponse[None]:
+    """DELETE /api/v1/rooms/{roomId} —— 房主彻底删除房间（连复盘一起）。
+
+    走**账号**鉴权而不是重连凭证：入口在「我的房间」列表，那里手上没有这个房间
+    的凭证。跟 `disband`（只标 Completed、复盘还在）是两件事。
+    """
+    try:
+        await room_service.delete_room(db, room_id, user)
+    except (
+        room_service.RoomNotFoundError,
+        room_service.RoomAuthorizationError,
+    ) as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(None)
+
+
 @router.post("/{room_id}/disband", response_model=ApiResponse[None])
 async def disband_room(
     room_id: str,

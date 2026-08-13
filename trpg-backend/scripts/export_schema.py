@@ -62,6 +62,7 @@ _MODELS: list[type[BaseModel]] = [
     character.PartyCharacterRead,
     character.RollAttributesResult,
     character.CharacterTemplateCreateBody,
+    character.CharacterTemplateOverwriteBody,
     character.CharacterTemplateRead,
     character.CharacterTemplateUpdateBody,
     # 建卡计算/校验预览（issue #84 S2）

@@ -204,6 +204,19 @@ export async function updateMyTemplate(
   return sdk.characterTemplates.update(templateId, patch, requireAuthToken());
 }
 
+/**
+ * 用这张角色卡的当前状态整份覆盖卡库里那张（「改完了，更新我卡库里那张」）。
+ *
+ * 跟 `updateMyTemplate` 的分工不在改多少，在**数据谁给的**：那条发前端填的
+ * 文字字段，这条只发 characterId、建卡态由后端从角色卡读。
+ */
+export async function overwriteMyTemplate(
+  templateId: string,
+  characterId: string
+): Promise<CharacterTemplate> {
+  return sdk.characterTemplates.overwrite(templateId, { characterId }, requireAuthToken());
+}
+
 export async function deleteMyTemplate(templateId: string): Promise<void> {
   await sdk.characterTemplates.remove(templateId, requireAuthToken());
 }

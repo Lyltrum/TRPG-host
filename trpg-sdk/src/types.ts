@@ -48,6 +48,7 @@ export type {
   CharacterTemplateCreateBody as SaveCharacterTemplateInput,
   CharacterTemplateRead as CharacterTemplate,
   CharacterTemplateUpdateBody as UpdateCharacterTemplateInput,
+  CharacterTemplateOverwriteBody as OverwriteCharacterTemplateInput,
   // 建卡计算/校验预览（issue #84 S2）—— 对应后端 dto/character.py
   CharacterPreviewRequest as PreviewCharacterInput,
   CharacterComputeResult,

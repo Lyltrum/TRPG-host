@@ -1,6 +1,7 @@
 import type { ApiClient } from '../client';
 import type {
   CharacterTemplate,
+  OverwriteCharacterTemplateInput,
   SaveCharacterTemplateInput,
   UpdateCharacterTemplateInput,
 } from '../types';
@@ -54,6 +55,25 @@ export class CharacterTemplatesResource {
     token: string
   ): Promise<CharacterTemplate> {
     return this.client.patch<CharacterTemplate>(
+      `/me/character-templates/${templateId}`,
+      payload,
+      this.authenticated(token)
+    );
+  }
+
+  /**
+   * PUT /api/v1/me/character-templates/{templateId} — 用一张角色卡整份覆盖它
+   *
+   * 「改完了，更新我卡库里那张」。跟 `update` 的分工不在改多少，在**数据谁给
+   * 的**：那条收前端传来的文字字段，这条只收 characterId、建卡态由后端从那张
+   * 角色卡读。卡名不动（卡库里的名字是玩家自己起的）。
+   */
+  overwrite(
+    templateId: string,
+    payload: OverwriteCharacterTemplateInput,
+    token: string
+  ): Promise<CharacterTemplate> {
+    return this.client.put<CharacterTemplate>(
       `/me/character-templates/${templateId}`,
       payload,
       this.authenticated(token)

@@ -43,8 +43,22 @@ type TextPatch = {
   gender: string
   residence: string
   birthplace: string
+  equipment: string
+  notes: string
   background: string
   backgroundDetail: BackgroundDetail
+}
+
+/** 装备在后端是 `list[str]`，这一页按一行文本编辑（同建卡向导那一步）。 */
+function equipmentToText(value: unknown): string {
+  return Array.isArray(value) ? value.filter((v) => typeof v === 'string').join('、') : ''
+}
+
+function equipmentToList(text: string): string[] {
+  return text
+    .split(/[,，、\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
 }
 
 function readString(data: Record<string, unknown>, key: string): string {
@@ -79,6 +93,8 @@ export default function MyCharacterDetailPage() {
           gender: readString(raw, 'gender'),
           residence: readString(raw, 'residence'),
           birthplace: readString(raw, 'birthplace'),
+          equipment: equipmentToText(raw.equipment),
+          notes: readString(raw, 'notes'),
           background: readString(raw, 'background'),
           // 八栏引导后端当不透明字典存，缺键是常态——补齐成完整形状再进表单，
           // 否则受控 textarea 会从 undefined 变成有值，React 当场报非受控警告。
@@ -128,6 +144,8 @@ export default function MyCharacterDetailPage() {
           gender: text.gender,
           residence: text.residence,
           birthplace: text.birthplace,
+          equipment: equipmentToList(text.equipment),
+          notes: text.notes,
           background: text.background,
           background_detail: text.backgroundDetail,
         },
@@ -222,6 +240,23 @@ export default function MyCharacterDetailPage() {
                   ))}
                 </div>
               )}
+            </Section>
+
+            <Section title="装备与备注">
+              <textarea
+                value={text.equipment}
+                onChange={(e) => edit({ equipment: e.target.value })}
+                rows={2}
+                placeholder="随身携带的东西，用顿号或换行分开"
+                className="shell-field w-full px-3 py-2 text-[12.5px] leading-relaxed resize-y"
+              />
+              <textarea
+                value={text.notes}
+                onChange={(e) => edit({ notes: e.target.value })}
+                rows={2}
+                placeholder="备注：只有你自己看得到的memo"
+                className="shell-field w-full px-3 py-2 text-[12.5px] leading-relaxed resize-y"
+              />
             </Section>
 
             <Section title="背景故事">

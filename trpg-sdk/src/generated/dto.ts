@@ -277,6 +277,17 @@ export interface CharacterTemplateCreateBody {
 }
 
 /**
+ * PUT /api/v1/me/character-templates/{templateId} 请求体：拿一张角色卡的
+ * 当前状态整份覆盖卡库里那张。
+ *
+ * 只收 `character_id`，理由同 `CharacterTemplateCreateBody`：存什么由后端决定。
+ * 卡名不在里面——卡库里的名字是玩家起的，不该被角色名盖掉（要改名走 PATCH）。
+ */
+export interface CharacterTemplateOverwriteBody {
+  characterId: string;
+}
+
+/**
  * `我的常用角色卡` 列表/详情返回项。
  */
 export interface CharacterTemplateRead {

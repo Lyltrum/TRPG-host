@@ -6,6 +6,7 @@ import {
   fetchCharacter,
   regenerateBackground,
   saveAsTemplate,
+  overwriteMyTemplate,
   deleteMyTemplate,
 } from '@/services/character/character-api'
 import { toCompletedCharacter } from '@/services/character/character-view'
@@ -385,7 +386,10 @@ export default function CharacterReadyPage() {
   const [remoteCharacter, setRemoteCharacter] = useState<typeof cachedCharacter>(null)
   // 这张卡是不是从卡库拿的。是的话它**已经在卡库里**，不该请玩家再存一遍——
   // 存了只会得到一张一模一样的（2026-08-13 真人反馈）。
-  const [fromTemplate, setFromTemplate] = useState(false)
+  const [fromTemplate, setFromTemplate] = useState<string | null>(null)
+  // 「在卡库」点开之后的两个动作（更新那张 / 另存为新的）
+  const [templateMenuOpen, setTemplateMenuOpen] = useState(false)
+  const [templateDone, setTemplateDone] = useState('')
   useEffect(() => {
     if (!roomId || !characterId || !readyRuleset) return
     let cancelled = false
@@ -393,7 +397,7 @@ export default function CharacterReadyPage() {
       .then((saved) => {
         if (cancelled) return
         setRemoteCharacter(toCompletedCharacter(saved, readyRuleset))
-        setFromTemplate(saved.basedOnTemplateId != null)
+        setFromTemplate(saved.basedOnTemplateId ?? null)
       })
       .catch(() => {
         // 拉不到就沿用本地缓存（比如还没建过卡），不打断这个页面。
@@ -415,8 +419,31 @@ export default function CharacterReadyPage() {
       // 🔴 记住存出来的是哪张，才能撤：存卡此前是**单向的**，点错了只能自己
       // 摸到卡库里去删（2026-08-13 真人反馈）。
       setSavedTemplateId(saved.templateId)
+      setTemplateMenuOpen(false)
     } catch (err) {
       setTemplateError(err instanceof Error ? err.message : '存进卡库失败')
+    } finally {
+      setSavingTemplate(false)
+    }
+  }
+
+  /**
+   * 更新卡库里那张：把这张卡的当前状态整份写回去。
+   *
+   * 🔴 为什么需要它：`basedOnTemplateId` 记的是**血统**（从哪张复制来的），
+   * 不是"内容还一不一样"。玩家用常用卡开局之后在向导里改了改，这时候他想做
+   * 的是"更新那张"还是"另存一张"，代码判断不出来——**但他自己一眼就能答**。
+   */
+  const handleOverwriteTemplate = async () => {
+    if (!characterId || !fromTemplate) return
+    setSavingTemplate(true)
+    setTemplateError('')
+    try {
+      await overwriteMyTemplate(fromTemplate, characterId)
+      setTemplateDone('已更新卡库那张')
+      setTemplateMenuOpen(false)
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : '更新失败')
     } finally {
       setSavingTemplate(false)
     }
@@ -593,6 +620,28 @@ export default function CharacterReadyPage() {
                 {isSelf && templateError && (
                   <div className="text-[11px] text-rust-dark truncate">{templateError}</div>
                 )}
+                {/* 🔴 两个动作摊开让玩家选，而不是替他判断"改过没有"：
+                    `basedOnTemplateId` 记的是血统（从哪张复制来的），不是内容
+                    还一不一样。玩家用常用卡开局后在向导里改了改，他想"更新那
+                    张"还是"另存一张"，代码判断不出来，他自己一眼就能答。 */}
+                {isSelf && templateMenuOpen && (
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <button
+                      onClick={() => void handleOverwriteTemplate()}
+                      disabled={savingTemplate}
+                      className="cut-corner text-[11px] font-semibold px-2 py-1 border border-brass-dark text-brass-dark bg-white/25 active:scale-[0.95] transition-all whitespace-nowrap disabled:opacity-50"
+                    >
+                      更新卡库那张
+                    </button>
+                    <button
+                      onClick={() => void handleSaveTemplate()}
+                      disabled={savingTemplate}
+                      className="cut-corner text-[11px] font-semibold px-2 py-1 border border-ink/35 text-ink-soft bg-white/15 active:scale-[0.95] transition-all whitespace-nowrap disabled:opacity-50"
+                    >
+                      另存为新的
+                    </button>
+                  </div>
+                )}
               </div>
               {isSelf ? (
                 <div className="flex items-center gap-1.5">
@@ -614,18 +663,12 @@ export default function CharacterReadyPage() {
                           而向导最后一步那张还是 draft——存早了会存进半截数据。
 
                           三种状态：
-                          ①这张卡本来就是从卡库拿的 → 不给存（存了只是复制一张
-                            一模一样的），按钮说明它已经在库里；
-                          ②刚存过 → 给「撤销」，存卡不能是单向的；
+                          ①刚存过 → 给「撤销」，存卡不能是单向的（不管这张卡
+                            是不是从卡库来的）；
+                          ②这张卡来自卡库 → 点开是两个动作（更新那张/另存一张），
+                            不替玩家判断"改过没有"；
                           ③其余 → 「存卡」。 */}
-                      {fromTemplate ? (
-                        <span
-                          title="这张卡就是从卡库里拿的，已经在库里了"
-                          className="cut-corner text-[11px] font-semibold px-2 py-1 border border-ink/25 text-ink-soft/70 bg-white/10 flex items-center gap-1 whitespace-nowrap"
-                        >
-                          <BookmarkCheck className="w-3 h-3" /> 在卡库
-                        </span>
-                      ) : savedTemplateId ? (
+                      {savedTemplateId ? (
                         <button
                           onClick={() => void handleUndoSaveTemplate()}
                           disabled={savingTemplate}
@@ -634,6 +677,16 @@ export default function CharacterReadyPage() {
                         >
                           <BookmarkCheck className="w-3 h-3" />
                           {savingTemplate ? '撤…' : '已存 · 撤销'}
+                        </button>
+                      ) : fromTemplate ? (
+                        <button
+                          onClick={() => setTemplateMenuOpen((open) => !open)}
+                          disabled={savingTemplate}
+                          title="这张卡来自卡库——可以更新那张，也可以另存一张"
+                          className="cut-corner text-[11px] font-semibold px-2 py-1 border border-ink/35 text-ink-soft bg-white/15 flex items-center gap-1 active:scale-[0.95] transition-all whitespace-nowrap disabled:opacity-50"
+                        >
+                          <BookmarkCheck className="w-3 h-3" />
+                          {savingTemplate ? '存…' : templateDone || '在卡库'}
                         </button>
                       ) : (
                         <button

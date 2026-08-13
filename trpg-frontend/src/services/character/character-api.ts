@@ -185,6 +185,25 @@ export async function saveAsTemplate(
   return sdk.characterTemplates.save({ name, characterId }, requireAuthToken());
 }
 
+/** 卡库详情：单张常用卡。 */
+export async function fetchMyTemplate(templateId: string): Promise<CharacterTemplate> {
+  return sdk.characterTemplates.get(templateId, requireAuthToken());
+}
+
+/**
+ * 改卡库里那张卡的文字部分。
+ *
+ * 🔴 `data` 是**部分更新**，而且只收文字字段（姓名/性别/居住地/出生地/背景）。
+ * 属性、年龄、职业、技能后端会**显式拒绝**——那些改一处就要重跑整套 COC7 校验
+ * 与年龄修正，那条链路长在建卡向导上，不在卡库里再造一套。
+ */
+export async function updateMyTemplate(
+  templateId: string,
+  patch: { name?: string; data?: Record<string, unknown> }
+): Promise<CharacterTemplate> {
+  return sdk.characterTemplates.update(templateId, patch, requireAuthToken());
+}
+
 export async function deleteMyTemplate(templateId: string): Promise<void> {
   await sdk.characterTemplates.remove(templateId, requireAuthToken());
 }
@@ -193,7 +212,9 @@ export async function deleteMyTemplate(templateId: string): Promise<void> {
 export async function createDraftFromTemplate(
   roomId: string,
   templateId: string
-): Promise<string> {
+): Promise<{ characterId: string; status: string }> {
+  // 🔴 status 要带回去：常用卡合法时后端**直接建成 complete**，玩家不该再被
+  // 赶进向导（2026-08-13 真人反馈）。只有校验没过才是 draft，那时才进向导修。
   const res = await sdk.characters.createDraft(roomId, requireReconnectToken(), templateId);
-  return res.characterId;
+  return { characterId: res.characterId, status: res.status };
 }

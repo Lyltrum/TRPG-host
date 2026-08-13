@@ -120,10 +120,12 @@ export default function CharacterWizardPage() {
     setUsingTemplate(true)
     setTemplateError('')
     try {
-      const newCharacterId = await createDraftFromTemplate(roomId, templateId)
-      // 🔴 复制出来的仍是 draft，不直接跳去准备页：停在向导里，让水合把模板
-      // 数据填进表单（characterId 是它的依赖），玩家确认一遍再提交。
-      useRoomStore.getState().setCharacterId(newCharacterId)
+      const created = await createDraftFromTemplate(roomId, templateId)
+      useRoomStore.getState().setCharacterId(created.characterId)
+      // 🔴 卡库里那张本来就是建完的卡：合法就直接去准备页开局，不让玩家把八步
+      // 再走一遍确认（2026-08-13 真人反馈）。只有校验没过才落成 draft——那时
+      // 留在向导里，水合把数据填进表单，玩家改掉不合法的地方再提交。
+      if (created.status === 'complete') navigate('/room/ready')
     } catch (err) {
       setTemplateError(translateCharacterValidationError(err))
     } finally {

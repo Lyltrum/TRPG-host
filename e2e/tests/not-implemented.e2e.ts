@@ -70,14 +70,15 @@ test('🔴 常用角色卡库已经实现：存得进、取得回、复制进新
     [saved.templateId]
   )
 
-  // 第二局：拿常用卡开草稿。**复制不是引用**，而且仍是 draft（复用不等于跳过校验）
+  // 第二局：拿常用卡开卡。**复制不是引用**；合法就直接建成 complete——卡库里
+  // 那张本来就是建完的卡，不该让玩家把八步向导再走一遍（2026-08-13 真人反馈）。
   const second = await createRoomWithModule('tpl2', room.host)
   const draft = await second.host.sdk.characters.createDraft(
     second.roomId,
     second.reconnectToken,
     saved.templateId
   )
-  assert.equal(draft.status, 'draft')
+  assert.equal(draft.status, 'complete')
 })
 
 test('复盘事件流已经是真实现（不是桩）', async () => {

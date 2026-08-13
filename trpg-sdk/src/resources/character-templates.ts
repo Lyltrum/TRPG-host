@@ -1,5 +1,9 @@
 import type { ApiClient } from '../client';
-import type { CharacterTemplate, SaveCharacterTemplateInput } from '../types';
+import type {
+  CharacterTemplate,
+  SaveCharacterTemplateInput,
+  UpdateCharacterTemplateInput,
+} from '../types';
 
 /**
  * `/api/v1/me/character-templates` 的类型化封装——玩家的「我的常用角色卡」库
@@ -34,6 +38,24 @@ export class CharacterTemplatesResource {
   get(templateId: string, token: string): Promise<CharacterTemplate> {
     return this.client.get<CharacterTemplate>(
       `/me/character-templates/${templateId}`,
+      this.authenticated(token)
+    );
+  }
+
+  /**
+   * PATCH /api/v1/me/character-templates/{templateId} — 改卡库里那张卡的文字
+   *
+   * 只收文字类字段（卡名 + 姓名/性别/居住地/出生地/背景）。属性、年龄、职业、
+   * 技能这些规则数后端会**显式拒绝**，不是静默丢弃。
+   */
+  update(
+    templateId: string,
+    payload: UpdateCharacterTemplateInput,
+    token: string
+  ): Promise<CharacterTemplate> {
+    return this.client.patch<CharacterTemplate>(
+      `/me/character-templates/${templateId}`,
+      payload,
       this.authenticated(token)
     );
   }

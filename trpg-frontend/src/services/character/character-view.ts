@@ -1,4 +1,4 @@
-import type { Character, Ruleset } from 'trpg-sdk';
+import type { Character, CharacterTemplate, Ruleset } from 'trpg-sdk';
 import type { BackgroundDetail } from '@/data/character-model';
 import type { CompletedCharacter } from '@/stores/character-store';
 
@@ -65,4 +65,38 @@ export function toCompletedCharacter(
     // 就是 undefined、自然被过滤掉，所以这个断言不会造成运行时问题。
     backgroundDetail: (saved.backgroundDetail as BackgroundDetail | null) ?? undefined,
   };
+}
+
+/**
+ * 卡库列表项的副标题：「私家侦探 · 32 岁 · 存于 8/13」。
+ *
+ * 卡库页与建卡向导的选择浮层**共用这一份**——两处显示的是同一份数据的同一种
+ * 摘要，各写一份就是「两处必须一致」，改一处漏一处不会有任何东西变红。
+ *
+ * 🔴 **重名是合法用法，不是要消除的异常**（用户 2026-08-13）：玩家可以把
+ * 五张预设卡全叫「凌铭辉」。所以这一行必须保证**完全重名时也分得出来**——
+ * 职业、年龄、存入日期依次是三道分辨手段。
+ *
+ * 🔴 角色名**按条件**去掉，不是无条件：卡库名默认就等于角色名，那时标题
+ * 和副标题字对字重复、白占一行；但一旦两者不同（将来支持重命名），角色名
+ * 就是有效信息，要显示出来。
+ */
+export function templateSubtitle(template: CharacterTemplate): string {
+  const data = (template.data ?? {}) as Record<string, unknown>;
+  const roleName = typeof data.name === 'string' ? data.name : null;
+  const parts = [
+    roleName && roleName !== template.name ? roleName : null,
+    typeof data.occupation === 'string' ? data.occupation : null,
+    typeof data.age === 'number' ? `${data.age} 岁` : null,
+    templateSavedOn(template.createdAt),
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(' · ') : '调查员';
+}
+
+/** 「存于 8/13」。日期是职业年龄都撞车时（同一个调查员存了两次）最后的分辨手段。 */
+function templateSavedOn(createdAt: string): string | null {
+  const parsed = Date.parse(createdAt);
+  if (Number.isNaN(parsed)) return null;
+  const d = new Date(parsed);
+  return `存于 ${d.getMonth() + 1}/${d.getDate()}`;
 }

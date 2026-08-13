@@ -4,6 +4,7 @@ import { Plus, Trash2, UserRound } from 'lucide-react'
 import type { CharacterTemplate } from 'trpg-sdk'
 import ShellPage from '@/shared/components/ShellPage'
 import { deleteMyTemplate, listMyTemplates } from '@/services/character/character-api'
+import { templateSubtitle } from '@/services/character/character-view'
 import { friendlyErrorMessage } from '@/services/api-client'
 
 /**
@@ -17,23 +18,6 @@ import { friendlyErrorMessage } from '@/services/api-client'
  * 这一页只做**看和删**。「用这张卡开局」不在这里——那要先有房间，入口在建卡
  * 向导第一步。
  */
-
-function formatTime(ts: string): string {
-  const parsed = Date.parse(ts)
-  if (Number.isNaN(parsed)) return '未知时间'
-  return new Date(parsed).toLocaleDateString('zh-CN')
-}
-
-/** 卡库列表项的副标题：认出"这是我那个记者"要的就是这几样。 */
-function subtitle(template: CharacterTemplate): string {
-  const data = (template.data ?? {}) as Record<string, unknown>
-  const parts = [
-    typeof data.name === 'string' ? data.name : null,
-    typeof data.occupation === 'string' ? data.occupation : null,
-    typeof data.age === 'number' ? `${data.age} 岁` : null,
-  ].filter(Boolean)
-  return parts.length > 0 ? parts.join(' · ') : '调查员'
-}
 
 /** 属性摘要：八维里挑最能辨认一张卡的几项，不做完整卡片。 */
 const SUMMARY_ATTRS: [string, string][] = [
@@ -133,7 +117,7 @@ export default function MyCharactersPage() {
                         {template.name}
                       </div>
                       <div className="text-[10.5px] text-text-muted mt-0.5 truncate">
-                        {subtitle(template)} · 存于 {formatTime(template.createdAt)}
+                        {templateSubtitle(template)}
                       </div>
                     </div>
                     {/* 删除要二次确认：卡库里的卡是玩家攒下来的，误删没有撤销 */}

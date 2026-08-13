@@ -14,6 +14,7 @@ from app.core.db import get_db
 from app.core.errors import AppException, ErrorCode
 from app.dto.character import (
     CharacterTemplateCreateBody,
+    CharacterTemplateOverwriteBody,
     CharacterTemplateRead,
     CharacterTemplateUpdateBody,
 )
@@ -109,6 +110,27 @@ async def get_character_template(
     user_id = await _require_user_id(authorization, db)
     try:
         template = await character_service.get_character_template(db, user_id, template_id)
+    except ValueError as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(template)
+
+
+@router.put(
+    "/character-templates/{template_id}", response_model=ApiResponse[CharacterTemplateRead]
+)
+async def overwrite_character_template(
+    template_id: str,
+    payload: CharacterTemplateOverwriteBody,
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[CharacterTemplateRead]:
+    """PUT /api/v1/me/character-templates/{templateId} —— 用一张角色卡的当前状态
+    整份覆盖卡库里那张（「改完了，更新我卡库里那张」）。"""
+    user_id = await _require_user_id(authorization, db)
+    try:
+        template = await character_service.overwrite_character_template(
+            db, user_id, template_id, payload
+        )
     except ValueError as exc:
         _raise_service_error(exc)
     return ApiResponse.ok(template)

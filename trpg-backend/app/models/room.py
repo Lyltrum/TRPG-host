@@ -158,6 +158,13 @@ class Character(Base):
 
     __tablename__ = "characters"
 
+    # 🔴 「一个玩家在一个房间只有一张卡」以前只是**惯例**：`quick_build` 复用
+    # 已有那行、`create_character_draft` 每次新建，于是连点几次「用我的常用卡」
+    # 就留下几张，而两条读路径认的还不是同一张（重连取第一行，队伍面板与守秘人
+    # 取最后一行，且两处都没有 ORDER BY）。service 层已经统一成复用，但不变式
+    # 得由数据库兜底——先查再插是 check-then-act，并发下照样各插一行。
+    __table_args__ = (UniqueConstraint("room_id", "player_id", name="uq_characters_room_player"),)
+
     id: Mapped[str] = mapped_column(
         Uuid(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
     )

@@ -114,8 +114,9 @@ export class ApiClient {
     return this.request<T>(path, { ...init, method: 'POST', body: form }, { omitContentType: true });
   }
 
-  put<T>(path: string, payload: unknown): Promise<T> {
-    return this.request<T>(path, { method: 'PUT', body: JSON.stringify(payload) });
+  put<T>(path: string, payload: unknown, init?: RequestInit): Promise<T> {
+    // `init` 是给鉴权头用的（账号级资源要带 Authorization），同 patch/delete。
+    return this.request<T>(path, { ...init, method: 'PUT', body: JSON.stringify(payload) });
   }
 
   patch<T>(path: string, payload: unknown, init?: RequestInit): Promise<T> {

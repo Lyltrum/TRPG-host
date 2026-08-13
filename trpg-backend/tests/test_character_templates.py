@@ -213,7 +213,15 @@ async def test_editing_a_template_changes_only_the_text(client: AsyncClient) -> 
         f"{TEMPLATES_BASE}/{template['templateId']}",
         json={
             "name": "跑长期的那张",
-            "data": {"name": "凌铭辉（改）", "gender": "男", "background": "他是个记者。"},
+            "data": {
+                "name": "凌铭辉（改）",
+                "gender": "男",
+                "background": "他是个记者。",
+                # 装备与备注也在可改白名单里：这一页号称展示"全部信息"，而模板
+                # 里存了这两项（2026-08-13 扫描发现详情页一项都没渲染）。
+                "equipment": ["笔记本", "手电筒"],
+                "notes": "别忘了问管家",
+            },
         },
         headers=bearer(token),
     )
@@ -224,6 +232,8 @@ async def test_editing_a_template_changes_only_the_text(client: AsyncClient) -> 
     assert updated["data"]["name"] == "凌铭辉（改）"
     assert updated["data"]["gender"] == "男"
     assert updated["data"]["background"] == "他是个记者。"
+    assert updated["data"]["equipment"] == ["笔记本", "手电筒"]
+    assert updated["data"]["notes"] == "别忘了问管家"
     # 没给的键原样留着——尤其是规则数
     assert updated["data"]["attributes"] == before["attributes"]
     assert updated["data"]["skills"] == before["skills"]
@@ -330,3 +340,242 @@ async def test_a_player_without_an_account_gets_a_clear_reason(
 
     assert response.status_code == 404
     assert "登录" in response.json()["error"]["message"]
+
+
+async def test_picking_a_template_twice_does_not_leave_two_cards(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """🔴 一个玩家在一个房间**只能有一张**角色卡。
+
+    此前 `create_character_draft` 每次都新建一行，而 `quick_build_character`
+    复用已有那行——同一件事两种做法。连点三次「用我的常用卡」就留下三张，
+    而"哪张算数"两边不一致：重连走 `db.scalar(...)` 取**第一行**，队伍面板与
+    守秘人走 `{player_id: c}` 覆盖成**最后一行**（两处都没有 ORDER BY，连
+    "最后一张"都不是保证）。症状是你在准备页编辑的卡跟桌上生效的不是同一张。
+    """
+    from sqlalchemy import func
+
+    from app.models.room import Character
+
+    token = await register(client)
+    first = await _room_with_module(client, token)
+    template = await _save_template(client, token, await _built_character(client, first))
+
+    second = await _room_with_module(client, token)
+    # 先随便建一张，再改主意用卡库那张——真实操作顺序
+    await _built_character(client, second, name="先建的那张")
+    ids = set()
+    for _ in range(3):
+        response = await client.post(
+            f"{ROOMS_BASE}/{second['roomId']}/characters",
+            json={"basedOnTemplateId": template["templateId"]},
+            headers=reconnect(second["reconnectToken"]),
+        )
+        assert response.status_code in (200, 201), response.text
+        ids.add(response.json()["data"]["characterId"])
+
+    rows = await db_session.scalar(
+        select(func.count()).select_from(Character).where(Character.room_id == second["roomId"])
+    )
+    assert rows == 1, f"同一玩家在同一房间留下了 {rows} 张角色卡"
+    assert len(ids) == 1, "每次点都换了一个 characterId，客户端会拿着旧的那张"
+
+    # 两条读路径必须指向同一张：重连回来的那张 = 队伍面板里的那张
+    rejoined = (
+        await client.post(
+            f"{ROOMS_BASE}/{second['roomCode']}/join",
+            json={"nickname": "凌铭辉"},
+            headers=bearer(token),
+        )
+    ).json()["data"]
+    party = (
+        await client.get(
+            f"{ROOMS_BASE}/{second['roomId']}/characters",
+            headers=reconnect(second["reconnectToken"]),
+        )
+    ).json()["data"]
+    assert rejoined["characterId"] == party[0]["id"]
+
+
+async def test_creating_a_draft_without_a_template_never_wipes_the_existing_card(
+    client: AsyncClient,
+) -> None:
+    """🔴 「一个玩家一张卡」不许退化成「后来的把先前的清空」。
+
+    向导的 `ensureCharacterId` 在本地没有 characterId 时就会调这个端点（清掉
+    浏览器存储、换台设备都会）。它必须原样拿回已经建好的那张——清掉等于把玩家
+    建完的卡抹了，比本来要修的多张卡更糟。
+    """
+    token = await register(client)
+    room = await _room_with_module(client, token)
+    character_id = await _built_character(client, room, name="已经建好的")
+
+    again = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters",
+        json={},
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    assert again.status_code in (200, 201), again.text
+    assert again.json()["data"]["characterId"] == character_id
+    got = (
+        await client.get(
+            f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}",
+            headers=reconnect(room["reconnectToken"]),
+        )
+    ).json()["data"]
+    assert got["name"] == "已经建好的"
+    assert got["status"] == "complete"
+    assert got["attributes"]
+
+
+async def test_deleting_a_template_clears_the_pointer_on_cards_made_from_it(
+    client: AsyncClient,
+) -> None:
+    """🔴 删掉卡库那张之后，用它建的角色卡不许留着一个指向空处的指针。
+
+    `characters.based_on_template_id` 有外键，但 SQLite 默认不强制——删完指针
+    还在。它的消费方是准备页的「在卡库」：于是那张卡永远显示"已经在卡库里了"，
+    而卡库里根本没有，玩家再也存不进去。**悬空的指针比没有指针更坏**，它让
+    下游做出确信的错误判断。
+    """
+    token = await register(client)
+    first = await _room_with_module(client, token)
+    template = await _save_template(client, token, await _built_character(client, first))
+
+    second = await _room_with_module(client, token)
+    made = (
+        await client.post(
+            f"{ROOMS_BASE}/{second['roomId']}/characters",
+            json={"basedOnTemplateId": template["templateId"]},
+            headers=reconnect(second["reconnectToken"]),
+        )
+    ).json()["data"]
+
+    assert (
+        await client.delete(f"{TEMPLATES_BASE}/{template['templateId']}", headers=bearer(token))
+    ).status_code == 200
+
+    got = (
+        await client.get(
+            f"{ROOMS_BASE}/{second['roomId']}/characters/{made['characterId']}",
+            headers=reconnect(second["reconnectToken"]),
+        )
+    ).json()["data"]
+    assert got["basedOnTemplateId"] is None
+    # 卡本身照常在，只是不再声称自己在卡库里
+    assert got["name"] == "凌铭辉"
+
+
+async def test_overwriting_a_template_from_a_character(client: AsyncClient) -> None:
+    """🔴 「改完了，更新我卡库里那张」。
+
+    `basedOnTemplateId` 记的是**血统**（从哪张复制来的），不是"内容还一不一样"。
+    玩家用常用卡开局后在向导里改了改，他要的是更新那张还是另存一张，代码判断
+    不出来——所以给两个动作，这是"更新"那个。
+
+    跟 PATCH 的分工不在改多少，在**数据谁给的**：那条收前端填的文字，这条只收
+    characterId、建卡态由后端从角色卡读，前端一个规则数都碰不到。
+    """
+    token = await register(client)
+    first = await _room_with_module(client, token)
+    template = await _save_template(client, token, await _built_character(client, first))
+    original_skills = template["data"]["skills"]
+
+    second = await _room_with_module(client, token)
+    made = (
+        await client.post(
+            f"{ROOMS_BASE}/{second['roomId']}/characters",
+            json={"basedOnTemplateId": template["templateId"]},
+            headers=reconnect(second["reconnectToken"]),
+        )
+    ).json()["data"]
+    # 在这一局里改了改（改名 + 改一项技能，模拟走了一遍向导）。PATCH 收的是
+    # 整份建卡态，不是补丁——少给一个必填字段会 422，所以从模板数据拼全。
+    tpl_data = template["data"]
+    patched = await client.patch(
+        f"{ROOMS_BASE}/{second['roomId']}/characters/{made['characterId']}",
+        json={
+            "name": "改过的凌铭辉",
+            "age": tpl_data["age"],
+            "attributes": tpl_data["attributes"],
+            "allocatedAttributes": tpl_data["allocated_attributes"],
+            # 只发 HP/SAN/MP：前端就是这么发的，而 `CharacterUpdateBody` 的
+            # `derived_stats` 声明成 dict[str, int]，把模板里那份原样发回去会
+            # 422（DB 是 "0" 这种字符串）。
+            "derivedStats": {
+                k: v for k, v in tpl_data["derived_stats"].items() if k in ("HP", "SAN", "MP")
+            },
+            "skills": {**original_skills, "dodge": 55},
+            "occupationId": tpl_data["occupation_id"],
+            "occupation": tpl_data["occupation"],
+            "generationMethod": tpl_data["generation_method"],
+        },
+        headers=reconnect(second["reconnectToken"]),
+    )
+    assert patched.status_code == 200, patched.text
+
+    response = await client.put(
+        f"{TEMPLATES_BASE}/{template['templateId']}",
+        json={"characterId": made["characterId"]},
+        headers=bearer(token),
+    )
+
+    assert response.status_code == 200, response.text
+    updated = response.json()["data"]
+    assert updated["data"]["name"] == "改过的凌铭辉"
+    assert updated["data"]["skills"]["dodge"] == 55
+    # 卡库里的名字是玩家自己起的，不该被角色名盖掉
+    assert updated["name"] == template["name"]
+    # 卡库里仍然只有这一张——「更新」不是「另存」
+    listed = (await client.get(TEMPLATES_BASE, headers=bearer(token))).json()["data"]
+    assert len(listed) == 1
+
+
+async def test_overwriting_someone_elses_template_is_not_found(client: AsyncClient) -> None:
+    owner = await register(client)
+    room = await _room_with_module(client, owner)
+    character_id = await _built_character(client, room)
+    template = await _save_template(client, owner, character_id)
+
+    stranger = await register(client)
+    response = await client.put(
+        f"{TEMPLATES_BASE}/{template['templateId']}",
+        json={"characterId": character_id},
+        headers=bearer(stranger),
+    )
+    assert response.status_code == 404
+
+
+async def test_editing_background_detail_keeps_keys_the_client_does_not_know(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """🔴 `background_detail` 是字典的字典，顶层合并对它不够。
+
+    前端只认识自己那八栏，整份替换会把模板里别的键静默抹掉（以后加栏、或别处
+    写进去的东西）。这条钉住"嵌一层合并"。
+    """
+    from app.models.user import UserCharacterTemplate
+
+    token = await register(client)
+    room = await _room_with_module(client, token)
+    template = await _save_template(client, token, await _built_character(client, room))
+
+    row = await db_session.get(UserCharacterTemplate, template["templateId"])
+    assert row is not None
+    row.data = {
+        **row.data,
+        "background_detail": {"ideology": "旧的信条", "somethingNewLater": "别人写的"},
+    }
+    await db_session.commit()
+
+    response = await client.patch(
+        f"{TEMPLATES_BASE}/{template['templateId']}",
+        json={"data": {"background_detail": {"ideology": "改过的信条"}}},
+        headers=bearer(token),
+    )
+
+    assert response.status_code == 200, response.text
+    detail = response.json()["data"]["data"]["background_detail"]
+    assert detail["ideology"] == "改过的信条"
+    assert detail["somethingNewLater"] == "别人写的"

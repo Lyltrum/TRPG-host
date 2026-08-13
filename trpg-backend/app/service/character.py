@@ -10,7 +10,7 @@ import contextlib
 import random
 from dataclasses import asdict
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.background_writer import BackgroundWriter
@@ -42,6 +42,7 @@ from app.dto.character import (
     CharacterPreviewRequest,
     CharacterRead,
     CharacterTemplateCreateBody,
+    CharacterTemplateOverwriteBody,
     CharacterTemplateRead,
     CharacterTemplateUpdateBody,
     CharacterUpdateBody,
@@ -130,7 +131,34 @@ async def create_character_draft(
     if player.room_id != room.id:
         raise RoomAuthorizationError("你不在这个房间里")
 
-    character = Character(room_id=room_id, player_id=player.id, status="draft")
+    # 🔴 **一个玩家在一个房间只有一张卡**：复用已有那行，不新建。
+    #
+    # 此前这里每次都新建，而 `quick_build_character` 复用——同一件事两种做法，
+    # 于是连点几次「用我的常用卡」就留下几张。危害不在脏数据本身，而在**哪张
+    # 算数两边不一致**：重连走 `db.scalar(...)` 取第一行（`service/room.py`），
+    # 队伍面板与守秘人走 `{player_id: c}` 覆盖成最后一行（两处都没 ORDER BY，
+    # 连"最后一张"都不是保证）。症状是玩家在准备页编辑的卡跟桌上生效的不是
+    # 同一张。
+    character = await db.scalar(
+        select(Character).where(Character.room_id == room_id, Character.player_id == player.id)
+    )
+    if character is None:
+        character = Character(room_id=room_id, player_id=player.id, status="draft")
+    elif based_on_template_id is not None:
+        # 换成卡库那张：旧的要**整张让位**，不能只盖掉模板带来的字段（残留的
+        # 技能/装备会跟新卡混在一起）。
+        #
+        # 🔴 只在"明确要换一张卡"时清。不带模板的调用**必须原样保留已有那张**：
+        # 向导的 `ensureCharacterId` 在本地没有 characterId 时就会走这条路
+        # （清掉浏览器存储、换台设备都会），清了等于把玩家已经建完的卡抹掉——
+        # 那比本来要修的 bug 更糟。
+        for field in _TEMPLATE_FIELDS:
+            setattr(character, field, None)
+        character.generation_method = GENERATION_POINT_BUY
+        character.background = ""
+        character.notes = ""
+        character.status = "draft"
+        character.based_on_template_id = None
     if based_on_template_id is not None:
         # 🔴 `Player.user_id` 可空（匿名入房）。卡库是账号级的，没有账号就没有
         # 卡库——要**显式说清楚**，不能让它掉进"常用卡不存在"里含糊过去。
@@ -861,6 +889,37 @@ async def get_character_template(
     return _to_template_read(await _require_template(db, user_id, template_id))
 
 
+async def overwrite_character_template(
+    db: AsyncSession, user_id: str, template_id: str, payload: CharacterTemplateOverwriteBody
+) -> CharacterTemplateRead:
+    """把一张角色卡的当前建卡态**整份写回**卡库里已有的那张。
+
+    场景：玩家用常用卡开了一局，在向导里改了改，觉得这就是这个调查员的正式
+    版本——他要的是"更新那张"，不是"再存一张"。
+
+    🔴 **跟 PATCH 的分工**：那条是详情页改文字，只收白名单里的文本字段；这条
+    连属性技能一起覆盖，但数据**由后端从角色卡读**（同 `create_character_template`
+    的那段），前端一个规则数都碰不到。区别不在"改多少"，在"数据谁给的"。
+
+    🔴 卡名不动：卡库里的名字是玩家自己起的（「跑长期的那张」），不该被角色名
+    盖掉。要改名走详情页。
+    """
+    template = await _require_template(db, user_id, template_id)
+    character = await db.get(Character, payload.character_id)
+    if character is None:
+        raise CharacterNotFoundError("角色不存在")
+    room = await db.get(Room, character.room_id)
+    if room is None or room.system_id is None:
+        raise CharacterNotFoundError("这张角色卡不属于任何已选定规则系统的房间")
+    if room.system_id != template.system_id:
+        raise CharacterTemplateNotFoundError("这张角色卡的规则系统跟那张常用卡对不上")
+
+    template.data = character_to_template_data(character)
+    await db.commit()
+    await db.refresh(template)
+    return _to_template_read(template)
+
+
 #: 卡库详情页能改的建卡态字段。🔴 **规则相关的数一个都不收**：属性、年龄、职业、
 #: 技能、生成方式、衍生值改一处就要重跑整套 COC7 校验与年龄修正，而那套链路已经
 #: 长在建卡向导那条路上——在卡库里再造一套，就是"功能写在某个实现里，换一个实现
@@ -870,6 +929,9 @@ _TEMPLATE_EDITABLE_FIELDS = (
     "gender",
     "residence",
     "birthplace",
+    # 装备是一串物品名（`Character.equipment` 是 list[str]），跟备注一样属于
+    # 文字：COC7 不按装备算数值，改它不触发任何规则计算。
+    "equipment",
     "background",
     "notes",
     "background_detail",
@@ -893,14 +955,40 @@ async def update_character_template(
             # 显式拒绝而不是静默丢弃：静默丢弃的话，前端以为改上去了、界面上也
             # 显示改了，刷新一下又变回去——这种 bug 两头都不会变红。
             raise CharacterTemplateNotEditableError(f"这些字段不能在卡库里改：{'、'.join(unknown)}")
-        template.data = {**(template.data or {}), **payload.data}
+        merged = {**(template.data or {}), **payload.data}
+        # 🔴 `background_detail` 是**字典的字典**，顶层合并对它不够：前端只认识
+        # 自己那八栏，整份替换会把模板里别的键静默抹掉（以后加栏、或别处写进去
+        # 的东西）。嵌一层合并——键的含义是前端表单的事，后端不逐键校验，但也
+        # 不替它删。
+        incoming_detail = payload.data.get("background_detail")
+        if isinstance(incoming_detail, dict):
+            existing_detail = (template.data or {}).get("background_detail")
+            merged["background_detail"] = {
+                **(existing_detail if isinstance(existing_detail, dict) else {}),
+                **incoming_detail,
+            }
+        template.data = merged
     await db.commit()
     await db.refresh(template)
     return _to_template_read(template)
 
 
 async def delete_character_template(db: AsyncSession, user_id: str, template_id: str) -> None:
-    await db.delete(await _require_template(db, user_id, template_id))
+    """删掉卡库里那张。
+
+    🔴 **先把引用它的角色卡指针清掉**：`characters.based_on_template_id` 有外键，
+    但 SQLite 默认不强制，删完那些角色卡就指向一个不存在的模板。指针的消费方是
+    准备页的「在卡库」——于是那张卡永远显示"已经在卡库里了"，而卡库里根本没有，
+    玩家再也存不进去（2026-08-13 扫描复现）。**悬空的指针比没有指针更坏**：它
+    让下游做出确信的错误判断。
+    """
+    template = await _require_template(db, user_id, template_id)
+    await db.execute(
+        update(Character)
+        .where(Character.based_on_template_id == template.id)
+        .values(based_on_template_id=None)
+    )
+    await db.delete(template)
     await db.commit()
 
 

@@ -732,6 +732,7 @@ export interface MyRoomSummary {
   playerCount: number;
   maxPlayers: number;
   updatedAt: string;
+  isHost?: boolean;
 }
 
 /**

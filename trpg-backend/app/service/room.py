@@ -14,6 +14,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import Base
 from app.core.keeper.capabilities.presence import state as presence_state
 from app.core.narration.contract import NarrationContext
 from app.dto.game import GameRead, GameSystemRead, RulesetRead
@@ -478,6 +479,9 @@ async def list_my_rooms(db: AsyncSession, user: User) -> list[MyRoomSummary]:
             player_count=counts.get(room.id, 0),
             max_players=room.max_players,
             updated_at=room.updated_at,
+            # 删房间是房主专属，前端得知道该不该显示那个键——让它自己拿昵称去猜
+            # 是猜不出来的（房主身份在 `host_user_id` 上，列表里根本没有这一列）。
+            is_host=room.host_user_id == user.id,
         )
         for room in rooms
     ]
@@ -641,6 +645,37 @@ async def disband_room(db: AsyncSession, room_id: str, reconnect_token: str | No
     room.phase = "Completed"
     room.ended_at = datetime.now(UTC)
     await chat_service.clear_room_chat(db, room.id)
+    await db.commit()
+
+
+async def delete_room(db: AsyncSession, room_id: str, user: User) -> None:
+    """房主把这个房间**彻底删掉**：房间本身 + 所有指向它的数据（玩家、角色卡、
+    事件流、聊天、复盘）。
+
+    🔴 **跟 `disband_room` 是两件事**：解散只是标成 Completed，复盘照常打得开；
+    这条是"这局我不要了"（跑坏的、试手的房间该能清掉）。不可撤回，前端必须二次
+    确认，并明说复盘会一起没。
+
+    🔴 **身份走账号，不走重连凭证**：入口在「我的房间」列表，那是账号级页面，
+    手上没有那个房间的 `reconnect_token`（换台设备更没有）。所以这里认
+    `host_user_id`。
+
+    🔴 **不逐个列出要清的表**：扫元数据里所有指向 `rooms.id` 的外键，按子表在前
+    的顺序删。逐个列出的话，以后新加一张带 `room_id` 的表就会漏——而漏了不会有
+    任何东西变红（外键在 SQLite 默认还不强制，只会静默留下孤儿行）。
+    """
+    room = await find_room_by_id(db, room_id)
+    if room.host_user_id is None or room.host_user_id != user.id:
+        raise RoomAuthorizationError("仅房主可以删除房间")
+
+    # sorted_tables 是"被依赖的在前"，倒过来就是"子表在前"，先删引用方再删房间。
+    for table in reversed(Base.metadata.sorted_tables):
+        if table.name == Room.__tablename__:
+            continue
+        for fk in table.foreign_keys:
+            if fk.column.table.name == Room.__tablename__:
+                await db.execute(delete(table).where(table.c[fk.parent.name] == room_id))
+    await db.execute(delete(Room).where(Room.id == room_id))
     await db.commit()
 
 

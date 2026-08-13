@@ -185,3 +185,5 @@ class MyRoomSummary(CamelModel):
     player_count: int
     max_players: int
     updated_at: UtcDatetime
+    #: 当前账号是不是这个房间的房主（删除房间是房主专属操作）。
+    is_host: bool = False

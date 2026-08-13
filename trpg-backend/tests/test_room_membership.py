@@ -423,3 +423,107 @@ async def test_a_bystander_cannot_send_someone_else_away(client: AsyncClient) ->
     )
 
     assert response.status_code == 403
+
+
+# ── 彻底删除 ─────────────────────────────────────────
+
+
+async def test_the_host_can_delete_a_room_for_good(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """🔴 删除跟解散是两件事：解散只标 Completed（复盘还在），这条**连复盘一起删**。
+
+    场景是自己和朋友玩：跑坏的、试手的房间要能从列表里清掉。
+    """
+    host_token = await register(client)
+    room = await create_room(client, token=host_token)
+    guest_token = await register(client)
+    await join_room(client, room["roomCode"], guest_token, nickname="阿福")
+
+    response = await client.delete(f"{ROOMS_BASE}/{room['roomId']}", headers=bearer(host_token))
+    assert response.status_code == 200, response.text
+
+    # 房间没了：列表里、房间码查询、复盘三处都得一致
+    listed = (await client.get("/api/v1/me/rooms", headers=bearer(host_token))).json()["data"]
+    assert all(r["roomId"] != room["roomId"] for r in listed)
+    assert (await client.get(f"{ROOMS_BASE}/{room['roomCode']}")).status_code == 404
+    replay = await client.get(
+        f"{ROOMS_BASE}/{room['roomId']}/replay", headers=reconnect(room["reconnectToken"])
+    )
+    assert replay.status_code in (401, 403, 404)
+
+    assert await db_session.get(Room, room["roomId"]) is None
+
+
+async def test_deleting_leaves_no_row_pointing_at_the_room(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """🔴 这条是**泛化**的，故意不逐个列出表名。
+
+    删房间要清的表不止一张（玩家、角色卡、事件、聊天、复盘…），而"逐个列出的
+    地方，加一项就漏一项"——以后新加一张带 `room_id` 的表，逐条断言的测试照样
+    绿，只是悄悄留下孤儿行。这里扫元数据里所有指向 `rooms.id` 的外键，加表也
+    自动覆盖。
+    """
+    from sqlalchemy import func, select
+
+    from app.core.db import Base
+
+    host_token = await register(client)
+    room = await create_room(client, token=host_token)
+    guest_token = await register(client)
+    await join_room(client, room["roomCode"], guest_token, nickname="阿福")
+
+    referencing = [
+        (table, fk.parent.name)
+        for table in Base.metadata.sorted_tables
+        if table.name != Room.__tablename__
+        for fk in table.foreign_keys
+        if fk.column.table.name == Room.__tablename__
+    ]
+    assert referencing, "一张指向 rooms 的表都扫不到 ⇒ 这条用例在测空气"
+    before = 0
+    for table, column in referencing:
+        rows = await db_session.scalar(
+            select(func.count()).select_from(table).where(table.c[column] == room["roomId"])
+        )
+        before += rows or 0
+    assert before > 0, "删之前就没有任何引用行 ⇒ 这条用例在测空气"
+
+    assert (
+        await client.delete(f"{ROOMS_BASE}/{room['roomId']}", headers=bearer(host_token))
+    ).status_code == 200
+
+    for table, column in referencing:
+        left = await db_session.scalar(
+            select(func.count()).select_from(table).where(table.c[column] == room["roomId"])
+        )
+        assert left == 0, f"{table.name}.{column} 还留着指向已删房间的行"
+
+
+async def test_only_the_host_can_delete_the_room(client: AsyncClient) -> None:
+    """房间里的其他人删不掉——这条不可撤回，权限比踢人还该收紧。"""
+    host_token = await register(client)
+    room = await create_room(client, token=host_token)
+    guest_token = await register(client)
+    await join_room(client, room["roomCode"], guest_token, nickname="阿福")
+
+    response = await client.delete(f"{ROOMS_BASE}/{room['roomId']}", headers=bearer(guest_token))
+
+    assert response.status_code == 403
+    assert (await client.get(f"{ROOMS_BASE}/{room['roomCode']}")).status_code == 200
+
+
+async def test_my_rooms_says_who_is_the_host(client: AsyncClient) -> None:
+    """前端据此决定显不显示删除键——房主身份在 `host_user_id` 上，列表里原先
+    根本没有这个信息，让前端拿昵称去猜是猜不出来的。"""
+    host_token = await register(client)
+    room = await create_room(client, token=host_token)
+    guest_token = await register(client)
+    await join_room(client, room["roomCode"], guest_token, nickname="阿福")
+
+    mine = (await client.get("/api/v1/me/rooms", headers=bearer(host_token))).json()["data"]
+    theirs = (await client.get("/api/v1/me/rooms", headers=bearer(guest_token))).json()["data"]
+
+    assert next(r for r in mine if r["roomId"] == room["roomId"])["isHost"] is True
+    assert next(r for r in theirs if r["roomId"] == room["roomId"])["isHost"] is False

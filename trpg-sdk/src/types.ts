@@ -80,7 +80,6 @@ export type {
   // WebSocket 新增 14 个事件（issue #77）
   CheckRollPayload,
   SanCheckRollPayload,
-  RoomRejoinPayload,
   RoomStatePayload,
   PlayerJoinedPayload,
   TurnBeginPayload,

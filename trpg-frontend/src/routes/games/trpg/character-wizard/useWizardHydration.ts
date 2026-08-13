@@ -17,10 +17,16 @@ import { DEFAULT_AGE, type WizardAction, type WizardHydratePatch } from './wizar
  * 拿到结果后再一次性 dispatch 进表单；preview 失败就整体不水合，退回空白
  * 向导，不留半截水合的状态。
  */
-export function useWizardHydration(ruleset: Ruleset | null, dispatch: (action: WizardAction) => void) {
+export function useWizardHydration(
+  ruleset: Ruleset | null,
+  dispatch: (action: WizardAction) => void,
+  // 🔴 characterId 要当依赖传进来，不能只在 effect 里 `getState()` 读：那样它
+  // 变了不会重新水合。「用常用卡建卡」正是在向导开着的时候换掉 characterId 的
+  // （2026-08-13），少了这个依赖，模板数据就永远填不进表单。
+  characterId: string | null,
+) {
   useEffect(() => {
     const roomId = useRoomStore.getState().roomId
-    const characterId = useRoomStore.getState().characterId
     if (!roomId || !characterId || !ruleset) return
 
     let cancelled = false
@@ -96,5 +102,5 @@ export function useWizardHydration(ruleset: Ruleset | null, dispatch: (action: W
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ruleset])
+  }, [ruleset, characterId])
 }

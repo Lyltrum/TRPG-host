@@ -1,12 +1,13 @@
 import type {
   AgeAdjustmentResult,
+  CharacterTemplate,
   RollAttributePoolResult,
   RollAttributesResult,
   RollLuckResult,
 } from 'trpg-sdk';
 import type { BackgroundDetail, GenerationMethod } from '@/data/character-model';
 import { useRoomStore } from '@/stores/room-store';
-import { sdk } from '../api-client';
+import { getAuthToken, sdk } from '../api-client';
 
 // 真实建卡流程对接：POST 建草稿 → PATCH 填数据 → POST complete 完成。
 
@@ -150,4 +151,49 @@ export async function applyAgeAdjustment(
   age: number
 ): Promise<AgeAdjustmentResult> {
   return sdk.characters.applyAgeAdjustment(roomId, characterId, age, requireReconnectToken());
+}
+
+// ── 我的常用角色卡（卡库）─────────────────────────────────────────
+//
+// 线下的老玩家会带着自己的调查员来。这一晚开第二局、或者换个模组重开时，
+// 他不想再走一遍八步向导。
+//
+// 🔴 **模板是复制一份新的**，不是同一个调查员带着成长回来——后者要战役支持，
+// 是另一件事。所以复用出来的仍是 draft，complete 时那套校验一条都不少。
+
+function requireAuthToken(): string {
+  const token = getAuthToken();
+  if (!token) throw new Error('常用卡属于账号，请先登录');
+  return token;
+}
+
+/** 我的卡库，最近更新的在前。 */
+export async function listMyTemplates(): Promise<CharacterTemplate[]> {
+  return sdk.characterTemplates.list(requireAuthToken());
+}
+
+/**
+ * 把一张已建好的卡存进卡库。
+ *
+ * 只传 `characterId`：**存哪些字段由后端决定**（规则权威在后端），前端不拼
+ * `data`——那样 Character 加一列就要两边同时改，漏一边不会有任何东西变红。
+ */
+export async function saveAsTemplate(
+  characterId: string,
+  name: string
+): Promise<CharacterTemplate> {
+  return sdk.characterTemplates.save({ name, characterId }, requireAuthToken());
+}
+
+export async function deleteMyTemplate(templateId: string): Promise<void> {
+  await sdk.characterTemplates.remove(templateId, requireAuthToken());
+}
+
+/** 用常用卡开一份新草稿，返回 characterId。 */
+export async function createDraftFromTemplate(
+  roomId: string,
+  templateId: string
+): Promise<string> {
+  const res = await sdk.characters.createDraft(roomId, requireReconnectToken(), templateId);
+  return res.characterId;
 }

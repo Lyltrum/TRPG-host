@@ -120,16 +120,6 @@ class SanCheckRollPayload(CamelModel):
     check_request_id: str = Field(..., min_length=1)
 
 
-class RoomRejoinPayload(CamelModel):
-    """room.rejoin 事件 payload（issue #77 新增，仅铺协议，见决策 6）。
-
-    `reconnect_token` 是房间身份体系的重连凭证（`players.reconnect_token`，
-    不是账号登录 token），本期只校验格式、不做真实的断线重连逻辑。
-    """
-
-    reconnect_token: str = Field(..., min_length=1)
-
-
 class ChatSendPayload(CamelModel):
     """chat.send 事件 payload（issue #107）——玩家往**讨论区**发一条消息。
 
@@ -466,10 +456,11 @@ class ClueGrantedPayload(CamelModel):
 
 
 class ErrorPayload(CamelModel):
-    """error 推送 payload（issue #77 新增）——本期唯一会被真的发出的新增
-    S→C 事件：`check.roll`/`san.check.roll`/`room.rejoin` 这三个 NOT_IMPLEMENTED
-    桩、以及原来 game.start 失败时被静默丢弃（`continue`，见 ws.py 旧逻辑）
-    的错误，都改成通过这个事件明确告知发起者，而不是让客户端干等。
+    """error 推送 payload（issue #77 新增）。
+
+    发起者做不成的事要明说，不能静默丢弃（`continue`，见 ws.py 旧逻辑）让
+    客户端干等。非 keeper 叙事实现下的 `check.roll`/`san.check.roll` 也走它
+    回 NOT_IMPLEMENTED。
     """
 
     code: str

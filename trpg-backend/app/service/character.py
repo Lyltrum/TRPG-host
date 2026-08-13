@@ -33,7 +33,6 @@ from app.core.coc7.rules import (
     validate_age,
     validate_character_with_occupation,
 )
-from app.core.errors import not_implemented
 from app.dto.character import (
     AgeAdjustmentResult,
     AttributePoolRollView,
@@ -52,6 +51,7 @@ from app.dto.character import (
 )
 from app.dto.game import RulesetRead
 from app.models.room import Character, Player, Room
+from app.models.user import UserCharacterTemplate
 from app.service.character_background import generate_background
 from app.service.room import (
     RoomAuthorizationError,
@@ -59,6 +59,14 @@ from app.service.room import (
     get_player_by_reconnect_token,
     require_ruleset,
 )
+
+
+class CharacterTemplateNotFoundError(ValueError):
+    """常用卡不存在、或不属于这个账号、或规则系统对不上。
+
+    三种情况共用一个错误：对调用方来说它们是同一件事（这张卡你用不了），
+    而分开报会把"这个 id 确实存在，只是不是你的"泄露出去。
+    """
 
 
 class CharacterNotFoundError(ValueError):
@@ -93,20 +101,34 @@ async def create_character_draft(
 ) -> CharacterDraftResult:
     """房间内玩家创建一份角色草稿。
 
-    `based_on_template_id`（issue #77 新增第三条建卡路径，issue 决策 5）：
-    带了这个字段说明玩家想复用自己的常用卡，但"复制模板数据进草稿"这条读写
-    本期没有实现（决策 5 原文：本期只铺表与接口，不实现），直接 NOT_IMPLEMENTED，
-    不创建任何草稿；不带这个字段则完全是原来"从零建卡"的行为，不受影响。
-    """
-    if based_on_template_id is not None:
-        raise not_implemented("复用常用角色卡本期尚未实现")
+    `based_on_template_id`（第三条建卡路径）：复用玩家自己的常用卡，把模板里
+    的建卡态整份复制进新草稿。**复制，不是引用**——这一局怎么玩坏都不会回头
+    改动卡库里那张。不带这个字段则完全是原来"从零建卡"的行为。
 
+    🔴 草稿建出来仍是 `status="draft"`：复用不等于跳过校验。玩家还要过一遍
+    向导（可以直接走到最后一步提交），而 complete 时那套校验一条都不少——
+    模板存的时候合法，不代表拿到**这个**房间的规则系统下还合法。
+    """
     room = await find_room_by_id(db, room_id)
     player = await get_player_by_reconnect_token(db, reconnect_token)
     if player.room_id != room.id:
         raise RoomAuthorizationError("你不在这个房间里")
 
     character = Character(room_id=room_id, player_id=player.id, status="draft")
+    if based_on_template_id is not None:
+        # 🔴 `Player.user_id` 可空（匿名入房）。卡库是账号级的，没有账号就没有
+        # 卡库——要**显式说清楚**，不能让它掉进"常用卡不存在"里含糊过去。
+        if player.user_id is None:
+            raise CharacterTemplateNotFoundError("常用卡属于账号，登录之后才能复用")
+        template = await _require_template(db, player.user_id, based_on_template_id)
+        # 🔴 规则系统必须对得上：COC7 的卡不能拿去玩 DND5e（`system_id` 这一列
+        # 存在的理由）。房间还没选模组时 system_id 是 None，那时也放行不了。
+        if room.system_id != template.system_id:
+            raise CharacterTemplateNotFoundError("这张常用卡不适用于本房间的规则系统")
+        for field, value in (template.data or {}).items():
+            if field in _TEMPLATE_FIELDS:
+                setattr(character, field, value)
+        character.based_on_template_id = template.id
     db.add(character)
     await db.commit()
     return CharacterDraftResult(character_id=character.id, status=character.status)
@@ -695,24 +717,147 @@ async def apply_age_adjustment(
     )
 
 
-# ── 我的常用角色卡库（issue 决策 5：本期只铺表与接口，不实现真实读写） ──
+# ── 我的常用角色卡库 ────────────────────────────────────────────────
+#
+# 2026-08-13 真正实现。此前是 issue 决策 5 留下的空壳：表、DTO、四个端点、
+# SDK 方法全都铺好了，**service 层四个函数一律 `raise not_implemented`**，
+# 前端一次都没调过。整条链每一层都在，就是没有一个人能用到它。
+#
+# 场景是线下的老玩家：这一晚开第二局、或者换个模组重开时，他不想再走一遍
+# 八步向导。模板是**复制一份新的**，不是同一个调查员带着成长回来——后者要
+# 战役支持，是另一件事，别混。
+
+#: 复制进模板的建卡态字段。🔴 **显式命名成"逐个列出的地方"**：Character 加了
+#: 新的建卡态列就要回来加一行，漏了不会有任何东西变红（新字段只是静默不进模板）。
+#: 不进模板的是：id / room_id / player_id / status / based_on_* / 时间戳——
+#: 那些要么是这一局的身份，要么是这张卡怎么来的。
+_TEMPLATE_FIELDS = (
+    "name",
+    "age",
+    "gender",
+    "residence",
+    "birthplace",
+    "generation_method",
+    "attribute_pool_total",
+    "occupation_id",
+    "occupation",
+    "attributes",
+    "allocated_attributes",
+    "derived_stats",
+    "skills",
+    "equipment",
+    "background",
+    "notes",
+    "background_detail",
+)
+
+
+def _restore_max_stats(derived: dict | None) -> dict | None:
+    """把 `derived_stats` 归位到建卡时的上限。
+
+    🔴 **模板不许带一身伤进新局。** keeper 改衍生值时把原值备份成 `{key}_MAX`、
+    当前值留在 `key` 本身（见 `deps.write_stat`），所以一张玩过的卡的
+    `derived_stats` 长这样：`{"HP": 3, "HP_MAX": 12}`。直接复制过去，新局
+    开局就是残血——而模板按设计**只存建卡态，不带任何单局才有的状态**
+    （`models/user.py` 那段注释）。
+
+    有 `_MAX` 备份的用备份值还原、并丢掉 `_MAX` 键；没被改过的卡原样返回。
+    """
+    if not derived:
+        return derived
+    out = {}
+    for key, value in derived.items():
+        if key.endswith("_MAX"):
+            continue
+        out[key] = derived.get(f"{key}_MAX", value)
+    return out
+
+
+def character_to_template_data(character: Character) -> dict:
+    """从一张角色卡提取建卡态。
+
+    🔴 **提取规则在后端**，不让前端拼 `data` 传上来——"什么算建卡态"是规则
+    知识（规则权威在后端），而且前端拼的话，Character 加一列就得两边同时改。
+    """
+    data = {field: getattr(character, field) for field in _TEMPLATE_FIELDS}
+    data["derived_stats"] = _restore_max_stats(data["derived_stats"])
+    return data
 
 
 async def list_character_templates(db: AsyncSession, user_id: str) -> list[CharacterTemplateRead]:
-    raise not_implemented("我的常用角色卡库本期尚未实现")
+    """我的卡库，最近更新的在前。"""
+    rows = (
+        (
+            await db.execute(
+                select(UserCharacterTemplate)
+                .where(UserCharacterTemplate.user_id == user_id)
+                .order_by(UserCharacterTemplate.updated_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_to_template_read(row) for row in rows]
 
 
 async def create_character_template(
     db: AsyncSession, user_id: str, payload: CharacterTemplateCreateBody
 ) -> CharacterTemplateRead:
-    raise not_implemented("我的常用角色卡库本期尚未实现")
+    """把一张已建好的角色卡存成常用卡。
+
+    只收 `character_id`：`system_id` 与建卡态都由后端从那张卡（和它所在的
+    房间）读出来，前端不参与决定"存什么"。
+    """
+    character = await db.get(Character, payload.character_id)
+    if character is None:
+        raise CharacterNotFoundError("角色不存在")
+    room = await db.get(Room, character.room_id)
+    if room is None or room.system_id is None:
+        raise CharacterNotFoundError("这张角色卡不属于任何已选定规则系统的房间")
+
+    template = UserCharacterTemplate(
+        user_id=user_id,
+        system_id=room.system_id,
+        name=payload.name,
+        data=character_to_template_data(character),
+    )
+    db.add(template)
+    await db.commit()
+    await db.refresh(template)
+    return _to_template_read(template)
 
 
 async def get_character_template(
     db: AsyncSession, user_id: str, template_id: str
 ) -> CharacterTemplateRead:
-    raise not_implemented("我的常用角色卡库本期尚未实现")
+    return _to_template_read(await _require_template(db, user_id, template_id))
 
 
 async def delete_character_template(db: AsyncSession, user_id: str, template_id: str) -> None:
-    raise not_implemented("我的常用角色卡库本期尚未实现")
+    await db.delete(await _require_template(db, user_id, template_id))
+    await db.commit()
+
+
+async def _require_template(
+    db: AsyncSession, user_id: str, template_id: str
+) -> UserCharacterTemplate:
+    """按 id 取模板，**同时校验它属于这个账号**。
+
+    🔴 不能只按 id 查：模板 id 是 uuid，但"猜不到"不是访问控制。别人的卡库
+    是别人的。
+    """
+    template = await db.get(UserCharacterTemplate, template_id)
+    if template is None or template.user_id != user_id:
+        raise CharacterTemplateNotFoundError("常用卡不存在")
+    return template
+
+
+def _to_template_read(template: UserCharacterTemplate) -> CharacterTemplateRead:
+    return CharacterTemplateRead(
+        template_id=template.id,
+        name=template.name,
+        system_id=template.system_id,
+        data=template.data or {},
+        created_at=template.created_at,
+        updated_at=template.updated_at,
+    )

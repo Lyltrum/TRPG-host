@@ -76,6 +76,10 @@ _ERROR_MAP: dict[type[Exception], tuple[ErrorCode, int]] = {
         status.HTTP_409_CONFLICT,
     ),
     character_service.AlreadyRolledError: (ErrorCode.ALREADY_ROLLED, status.HTTP_409_CONFLICT),
+    character_service.CharacterTemplateNotFoundError: (
+        ErrorCode.NOT_FOUND,
+        status.HTTP_404_NOT_FOUND,
+    ),
 }
 
 
@@ -424,8 +428,8 @@ async def create_character(
 ) -> ApiResponse[CharacterDraftResult]:
     """POST /api/v1/rooms/{roomId}/characters —— 玩家创建一份角色草稿。
 
-    `basedOnTemplateId`（issue #77 新增第三条建卡路径，见 CharacterCreateBody
-    的说明）本期未实现，带了这个字段会直接收到 NOT_IMPLEMENTED。
+    `basedOnTemplateId`（第三条建卡路径）：复用自己的常用卡，把建卡态整份
+    复制进新草稿。
     """
     based_on_template_id = payload.based_on_template_id if payload else None
     try:
@@ -436,6 +440,7 @@ async def create_character(
         room_service.RoomNotFoundError,
         room_service.RoomAuthenticationError,
         room_service.RoomAuthorizationError,
+        character_service.CharacterTemplateNotFoundError,
     ) as exc:
         _raise_service_error(exc)
     return ApiResponse.ok(result)

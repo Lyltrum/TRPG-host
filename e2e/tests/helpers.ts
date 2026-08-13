@@ -40,8 +40,12 @@ export interface TestRoom {
 }
 
 /** 建一个已经选好内置模组的房间，回到「可以开始建卡」的状态。 */
-export async function createRoomWithModule(prefix = 'e2e'): Promise<TestRoom> {
-  const host = await registerPlayer(prefix)
+export async function createRoomWithModule(
+  prefix = 'e2e',
+  // 复用同一个账号再开一个房间（"这一晚开第二局"）。不传就现注册一个。
+  existingHost?: TestPlayer
+): Promise<TestRoom> {
+  const host = existingHost ?? (await registerPlayer(prefix))
   const room = await host.sdk.rooms.create(
     {
       roomName: `${prefix} 房间`,

@@ -5,7 +5,6 @@ import type {
   LuckDecidePayload,
   PlayerReadyPayload,
   RoomJoinPayload,
-  RoomRejoinPayload,
   SanCheckRollPayload,
   ServerToClientEvent,
 } from '../types';
@@ -285,11 +284,6 @@ export class RoomSocket {
    * 停在那儿。所以卡片上两个按钮都要给。 */
   decideLuck(playerId: string, payload: LuckDecidePayload): void {
     this.send('luck.decide', playerId, payload);
-  }
-
-  /** room.rejoin —— 断线重连（issue #77 仅铺协议，后端本期回 NOT_IMPLEMENTED）。 */
-  rejoin(playerId: string, payload: RoomRejoinPayload): void {
-    this.send('room.rejoin', playerId, payload);
   }
 
   disconnect(): void {

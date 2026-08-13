@@ -1,15 +1,18 @@
 """closure：没有预设结局时的自然收尾（`exec/30 §10.4`）。
 
-守两件事：
-1. 「还剩多少内容」三个计数的口径——含**缺数据显式降级**（不许报 0）与
-   **扁平遍历**（只数顶层节点会得出假数字）；
-2. 反向门只禁危险方向——还在揭线索 / 还有一次性议程没触发时不许收尾。
+守三件事：
+1. 计数口径——含**缺数据显式降级**（不许报 0）与**扁平遍历**（只数顶层节点会
+   得出假数字）；
+2. 门只数配对与一次性议程；**「没去过的地方」不在门里**，且有一条用例实证
+   它永远见不了底（2026-08-13 那个 bug 的形状）；
+3. 局面块自己要说清楚哪几行是门槛——尤其「无进展轮数」是相反的信号。
 """
 
 from __future__ import annotations
 
 import random
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -21,6 +24,7 @@ from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.capabilities.closure.executor import execute_closure
 from app.core.keeper.capabilities.closure.remaining import (
+    format_key_facts,
     format_remaining_content,
     unfired_agenda_count,
     unrevealed_pair_count,
@@ -189,6 +193,41 @@ def test_missing_data_degrades_explicitly_instead_of_reporting_zero() -> None:
     assert "还剩 0" not in text
 
 
+def test_the_block_says_which_lines_are_the_gate() -> None:
+    """🔴 模型看到的是一串长得一样的数字，不写清楚哪几行算数，它只能自己猜。
+
+    「没去过的地方」和「无进展轮数」必须当场声明不是收尾依据——后者尤其：它大
+    说明这桌人在**打转**（该推），不是内容**跑完了**（该收），两件相反的事。
+    """
+    text = format_remaining_content(_MODULE, {})
+    assert "收尾门槛" in text
+    gate, reference = text.split("【下面两行只是参考，不是收尾依据】")
+    assert "线索配对" in gate and "议程" in gate
+    assert "没去过的地方" in reference and "没有新进展" in reference
+    assert "天然到不了 0" in reference
+    assert "该给推力" in reference
+
+
+def test_key_facts_are_put_in_front_of_the_adjudicator() -> None:
+    """核心真相已经在 system prompt 的剧本全文里了，这里是第二次摆——理由同
+    `format_endings_status`：埋在几千字中间等于每轮指望模型自己想起来去翻。
+
+    ⚠️ 概率性改进：key_facts 是自由文本，代码数不了"揭开了几条"，做不成门槛。
+    """
+    text = format_key_facts(_MODULE)
+    for fact in _MODULE.kp_truth.key_facts:
+        assert fact in text
+    # 没有 key_facts 的模组整块省略，不渲染一个空标题
+    assert (
+        format_key_facts(
+            _MODULE.model_copy(
+                update={"kp_truth": _MODULE.kp_truth.model_copy(update={"key_facts": []})}
+            )
+        )
+        == ""
+    )
+
+
 # ── 去过的节点 ───────────────────────────────────────
 
 
@@ -294,19 +333,75 @@ async def test_a_turn_that_just_revealed_a_clue_may_not_close() -> None:
     assert await _phase_of(room_id) != PHASE_FINISHED
 
 
-async def test_an_untriggered_once_agenda_no_longer_blocks_the_close() -> None:
-    """🔴 行为变更（2026-08-12）：议程没跑完**不再拦**。
-
-    真人 KP 完全可以在议程没跑完时收尾——那条门同样是代码替他做决定。它现在
-    降级成局面块里的一个数（参考材料）。反向门只剩「本轮刚揭开新线索」那条
-    自相矛盾的。
-    """
+async def test_an_untriggered_once_agenda_blocks_the_close() -> None:
+    """一次性议程还没发生 = 剧本还有一整块内容没上桌，这时候收尾是明显还没完。"""
     room_id, player_id = await _seed("CLS500", _done_state(**{AGENDA_FIRED_KEY: ""}))
     _report, issues = await execute_closure(
         _deps(room_id, player_id), KeeperDecision(story_ran_its_course=True), TurnFacts()
     )
-    assert not any("议程" in i for i in issues)
+    assert any("议程" in i for i in issues)
+    assert await _phase_of(room_id) != PHASE_ENDING
+
+
+async def test_unrevealed_pairs_block_the_close() -> None:
+    """门的另一半：配对**全部**揭开才准收，不设比例阈值（拍出来的阈值永远调不完）。"""
+    room_id, player_id = await _seed(
+        "CLS510", _done_state(**{CLUES_REVEALED_KEY: "pair-hall-mud@*"})
+    )
+    _report, issues = await execute_closure(
+        _deps(room_id, player_id), KeeperDecision(story_ran_its_course=True), TurnFacts()
+    )
+    assert any("配对没揭开" in i for i in issues)
+    assert await _phase_of(room_id) != PHASE_ENDING
+
+
+async def test_missing_pair_data_does_not_block_the_close() -> None:
+    """🔴 缺数据显式降级，不当"还剩很多"用：`None` 是"这份模组数不出来"。
+
+    反过来当门用的话，不产 `visibility_pairs` 的模组就又一次永远收不了尾——
+    正是这条能力被真人打回来的那个形状。
+    """
+    bare = _MODULE.model_copy(update={"visibility_pairs": [], "agenda": []})
+    room_id, player_id = await _seed("CLS520", _done_state(**{CLUES_REVEALED_KEY: ""}))
+    _report, issues = await execute_closure(
+        replace(_deps(room_id, player_id), module=bare),
+        KeeperDecision(story_ran_its_course=True),
+        TurnFacts(),
+    )
+    assert issues == []
     assert await _phase_of(room_id) == PHASE_ENDING
+
+
+async def test_places_never_visited_do_not_block_the_close() -> None:
+    """🔴 2026-08-13 回归：「没去过的地方」**不在门里**。
+
+    它当过门槛，而它的分母是扁平展开的全部节点、玩家位置却只落在地点类节点上
+    ⇒ 那个数永远见不了底 ⇒ 开放式模组永远等不到落幕。见下一条用例的实证。
+    """
+    room_id, player_id = await _seed("CLS530", _done_state(**{VISITED_NODES_KEY: ""}))
+    _report, issues = await execute_closure(
+        _deps(room_id, player_id), KeeperDecision(story_ran_its_course=True), TurnFacts()
+    )
+    assert issues == []
+    assert await _phase_of(room_id) == PHASE_ENDING
+
+
+def test_the_unvisited_count_can_never_reach_zero() -> None:
+    """🔴 这条就是那个 bug 的实证：**走遍每一个地点，这个数照样不为 0**。
+
+    玩家位置只可能落在地点类节点上（位置表写的就是这些），而分母是扁平展开的
+    全部节点——fixture 4 个节点里只有 2 个 location，剩下的 clue / 无 kind 的
+    子节点没有任何路径把它们标成"去过"。林中屋是 23 : 14 的同一形状。
+
+    所以旧的「三个数都见底才准收」在**结构上**不可能成立，跟模型聪不聪明无关。
+    发现一道门永远过不去时，先量它的两个端点，再决定是拆门还是修数。
+    """
+    from app.core.keeper.contract.module_loader import iter_all_nodes
+
+    every_place = [n.id for n in iter_all_nodes(_MODULE.nodes) if n.kind == "location"]
+    assert every_place, "fixture 得有地点，否则这条用例在测空气"
+    remaining = unvisited_node_count(_MODULE, {VISITED_NODES_KEY: ", ".join(every_place)})
+    assert remaining is not None and remaining > 0
 
 
 async def test_a_scripted_ending_this_turn_wins_and_is_not_closed_twice() -> None:

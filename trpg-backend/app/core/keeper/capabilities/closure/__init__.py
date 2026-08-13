@@ -4,7 +4,7 @@
 |---|---|
 | `schema.py` | `story_ran_its_course` 一个裁决字段 |
 | `prompt.py` | 规则 10b + 一行输出示例 |
-| `remaining.py` | 局面块：三个存量计数（缺数据显式降级，不报 0）+ 停滞轮数 |
+| `remaining.py` | 局面块：两行门槛 + 两行参考（缺数据显式降级，不报 0）、核心真相清单 |
 | `executor.py` | 「去过的节点」与「无进展轮数」记账 + 反向门 + 收束到 `ending` |
 
 🔴 **与 `progression` 的分工**：那片管「模组给的结局候选命中了」
@@ -15,20 +15,34 @@
 🔴 **它是局面块 + 反向门，不是正向门**：不判断"故事是不是真的完了"（语义，
 代码做不了），只在明显还没完时拦住。
 
-🔴 **2026-08-12 修正：这片能力自己也犯过同一个错。** 局面块的三个数本来是
-**参考材料**，规则 10b 却把它们写成了**准入门槛**（"三个数都见底才准收"）
-——代码替 KP 做了它本来就该做的判断。真人反馈实证了它的另一头：玩家一直
-偏离主线，三个数永远不见底，于是**永远等不到落幕**。
+## 🔴 2026-08-13：真人反馈「永远等不到落幕」的真根因是代码 bug
 
-修法不是调阈值，是**让判错的代价变小**：收尾落在 `ending`（可撤回），玩家
-接着说话就自动退回 `investigation`。代价小了，判断权才敢真正交回去。
-配套加了「无进展轮数」——前三份记账全是存量，回答不了"是不是在原地打转"，
-而真人 KP 判断收尾时数的正是后者。
+原来的门要求「三个数都见底」，而其中「没去过的地方」数的是扁平展开的**全部
+节点**，玩家位置却只落在**地点类**节点上（林中屋 23 : 14）——那个数**永远
+到不了 0**，门在结构上不可能通过。
+
+当天上午我的修法是**把门整个拆掉**（"你自己判断，那些数只是参考"），并顺手
+把「无进展轮数」也写成了收尾依据。两处都被推翻：
+
+- 拆门是**绕过 bug**。门没错，错的是它数错了东西 ⇒ 修数不修门。
+- **「卡住了」和「做完了」是相反的处境**，不能共用一个信号：打转该**推**
+  （给线索 / 让事件闯进来），内容跑完了才该**收**。
+
+现在：门只留有 id、有记账、分母到得了底的两样（未揭开配对全部归零、一次性
+议程全部触发，**不设比例阈值**——阈值一旦是拍的就永远调不完）；「没去过的
+地方」与「无进展轮数」降级为局面块里的参考，文本里明写它们不是依据。
+
+**可撤回的中间态保留**：收尾落在 `ending`，玩家接着说话就自动退回
+`investigation`（见 `agent.py`）。它管的是"提议错了怎么办"，跟"何时提议"
+是两件事，不因为门回来了就撤掉。
 """
 
 from app.core.keeper.capabilities.closure.executor import execute_closure
 from app.core.keeper.capabilities.closure.prompt import PROMPT_BLOCKS
-from app.core.keeper.capabilities.closure.remaining import render_remaining_content
+from app.core.keeper.capabilities.closure.remaining import (
+    render_key_facts,
+    render_remaining_content,
+)
 from app.core.keeper.capabilities.closure.schema import (
     FIELD_CAPABILITIES,
     ClosureDecisionFields,
@@ -45,9 +59,17 @@ CAPABILITY = KeeperCapability(
     # 85 > progression 的 80：剧本自己的结局先判，没命中才轮到自然收尾。
     executors=(ExecutorHook(order=85, run=execute_closure),),
     situations=(
+        # 核心真相排在存量前面：真人 KP 判"该收了"先看真相揭开没有，再看还剩
+        # 多少格子。`keeper_only`——它是 kp_truth，叙事器那份不给。
+        SituationBlock(
+            order=40.5,
+            heading="这份模组的核心真相（绝密，收尾判断的参照）",
+            render=render_key_facts,
+            keeper_only=True,
+        ),
         SituationBlock(
             order=41,
-            heading="这一局走到哪了（参考材料，不是收尾的门槛）",
+            heading="这一局还剩多少内容",
             render=render_remaining_content,
         ),
     ),

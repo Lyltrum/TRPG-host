@@ -14,11 +14,22 @@
 
 > **能确定化的是判断的输入，不是判断本身。**
 
-## 反向门：只禁自相矛盾的那一条
+## 🔴 2026-08-13 翻案：门回来了，改的是它数什么
 
-代价变小之后，门也跟着收窄到只剩**自打嘴巴**的那一种：本轮刚揭开新线索还要
-同时收尾。「还有一次性议程没触发」不再拦——真人 KP 完全可以在议程没跑完时
-收尾，那条同样是替他做决定，现在降级成局面块里的一个数。
+上午我把这道门整个拆了，理由是"边界画不准就让判错的代价变小"。**那是绕过
+bug，不是修 bug**：门本身没错，错的是它数错了东西——「没去过的地方」的分母
+是扁平展开的全部节点，而玩家位置只落在地点类节点上，那个数**永远见不了底**，
+于是「三个数都见底」在结构上不可能成立。发现一道门永远过不去时，先量它的
+两个端点，再决定是拆门还是修数。
+
+现在门只数**有 id、有记账、分母到得了底**的两样：未揭开的线索配对、未触发的
+一次性议程。缺数据（`None`）时不拦——那是"这份模组数不出来"，不是"还剩很多"，
+局面块里已经如实写明。
+
+## 反向门守的是不可逆的那一侧
+
+判错的代价仍然不对称，只是没原来那么悬殊了（收尾落在可撤回的 `ending`）。
+「故事是不是真的完了」是语义，代码做不了；这里只在**明显还没完**时拦住。
 
 🔴 这也是它**不问人**的理由：`exec/30 §10.3` 里「agent 提议 → 房主确认」被
 否掉了——房主也是玩家，他对剧本同样未知，那张卡片问的是「故事到这儿了吗」，
@@ -30,6 +41,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from app.core.keeper.capabilities.closure.remaining import (
+    unfired_agenda_count,
+    unrevealed_pair_count,
+)
 from app.core.keeper.contract.registry import TurnFacts
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError, record_event
 from app.core.keeper.runtime.location_state import load_player_locations
@@ -117,6 +132,16 @@ async def execute_closure(
 
     if facts.clues_revealed_this_turn:
         issues.append("自然收尾未执行：本轮刚揭开新线索，故事还在往下走")
+        return report, issues
+
+    unrevealed = unrevealed_pair_count(deps.module, keeper_state)
+    if unrevealed:
+        issues.append(f"自然收尾未执行：还有 {unrevealed} 条线索配对没揭开")
+        return report, issues
+
+    unfired = unfired_agenda_count(deps.module, keeper_state)
+    if unfired:
+        issues.append(f"自然收尾未执行：还有 {unfired} 条一次性议程没发生")
         return report, issues
 
     try:

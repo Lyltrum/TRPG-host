@@ -22,11 +22,21 @@ export class CharactersResource {
     return { headers: { 'X-Reconnect-Token': reconnectToken } };
   }
 
-  /** POST /api/v1/rooms/{roomId}/characters — 创建一份角色草稿 */
-  createDraft(roomId: string, reconnectToken: string): Promise<CharacterDraftResult> {
+  /**
+   * POST /api/v1/rooms/{roomId}/characters — 创建一份角色草稿
+   *
+   * `basedOnTemplateId`：复用自己的常用卡（第三条建卡路径），后端把模板里的
+   * 建卡态整份复制进新草稿。**复制不是引用**，这一局怎么改都不会动到卡库。
+   * 不传就是原来"从零建卡"的行为。
+   */
+  createDraft(
+    roomId: string,
+    reconnectToken: string,
+    basedOnTemplateId?: string
+  ): Promise<CharacterDraftResult> {
     return this.client.post<CharacterDraftResult>(
       `/rooms/${roomId}/characters`,
-      null,
+      basedOnTemplateId ? { basedOnTemplateId } : null,
       this.authenticated(reconnectToken)
     );
   }

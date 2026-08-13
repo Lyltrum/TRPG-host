@@ -1,10 +1,15 @@
 import { useEffect, useReducer, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
+import type { CharacterTemplate } from 'trpg-sdk'
 import { useCharacterStore, type CompletedCharacter } from '@/stores/character-store'
 import { useRoomStore } from '@/stores/room-store'
 import { useRuleset } from '@/hooks/useRuleset'
-import { quickBuildCharacter } from '@/services/character/character-api'
+import {
+  createDraftFromTemplate,
+  listMyTemplates,
+  quickBuildCharacter,
+} from '@/services/character/character-api'
 import { translateCharacterValidationError } from '@/services/character/ruleset-api'
 import { WIZARD_STEPS } from './wizard-steps'
 import { DEFAULT_AGE, createInitialWizardState, wizardReducer, type WizardState } from './wizard-state'
@@ -54,6 +59,7 @@ export default function CharacterWizardPage() {
   const navigate = useNavigate()
   const { ruleset, loading: rulesetLoading, error: rulesetError } = useRuleset()
   const roomId = useRoomStore((s) => s.roomId)
+  const characterId = useRoomStore((s) => s.characterId)
 
   const existingCharacter = useCharacterStore
     .getState()
@@ -61,7 +67,7 @@ export default function CharacterWizardPage() {
   const [state, dispatch] = useReducer(wizardReducer, existingCharacter, buildInitialState)
 
   const { preview, previewError, pendingDelta } = useWizardPreview(ruleset, state)
-  useWizardHydration(ruleset, dispatch)
+  useWizardHydration(ruleset, dispatch, characterId)
 
   // ruleset 到达后，把缺失的点数购买属性补上默认值——只补 pointBuy=true 的
   // 属性，幸运不在其列（此前这里连幸运也一起填了默认值，会让它看起来"已经
@@ -86,6 +92,44 @@ export default function CharacterWizardPage() {
   // 本地状态。跳转前不写 character-store，让 ready 页按 roomId 从后端水合。
   const [quickBuilding, setQuickBuilding] = useState(false)
   const [quickBuildError, setQuickBuildError] = useState('')
+  // 我的常用卡（第三条建卡路径）。拉不到就当卡库为空——没登录、卡库空、
+  // 网络抖，对这一屏来说是同一件事：不显示那一块，别的路照走。
+  const [templates, setTemplates] = useState<CharacterTemplate[]>([])
+  const [usingTemplate, setUsingTemplate] = useState(false)
+  const [templateError, setTemplateError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    listMyTemplates()
+      .then((list) => {
+        if (!cancelled) setTemplates(list)
+      })
+      .catch(() => {
+        if (!cancelled) setTemplates([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const handleUseTemplate = async (templateId: string) => {
+    if (!roomId) {
+      setTemplateError('房间信息丢失，请重新创建/加入房间')
+      return
+    }
+    setUsingTemplate(true)
+    setTemplateError('')
+    try {
+      const newCharacterId = await createDraftFromTemplate(roomId, templateId)
+      // 🔴 复制出来的仍是 draft，不直接跳去准备页：停在向导里，让水合把模板
+      // 数据填进表单（characterId 是它的依赖），玩家确认一遍再提交。
+      useRoomStore.getState().setCharacterId(newCharacterId)
+    } catch (err) {
+      setTemplateError(translateCharacterValidationError(err))
+    } finally {
+      setUsingTemplate(false)
+    }
+  }
   const handleQuickBuild = async () => {
     if (!roomId) {
       setQuickBuildError('房间信息丢失，请重新创建/加入房间')
@@ -249,6 +293,10 @@ export default function CharacterWizardPage() {
           onQuickBuild={() => void handleQuickBuild()}
           quickBuilding={quickBuilding}
           quickBuildError={quickBuildError}
+          templates={templates}
+          onUseTemplate={(id) => void handleUseTemplate(id)}
+          usingTemplate={usingTemplate}
+          templateError={templateError}
         />
       )}
       {stepMeta.id === 'attrs' && (

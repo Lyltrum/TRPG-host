@@ -185,15 +185,20 @@ class RollAttributesResult(CamelModel):
 
 
 class CharacterTemplateCreateBody(CamelModel):
-    """POST /api/v1/me/character-templates 请求体（issue 决策 5，本期不实现）。"""
+    """POST /api/v1/me/character-templates 请求体：把一张已建好的卡存成常用卡。
+
+    🔴 **只收 `character_id`，不收 `data`。** 原先的形状是让前端把建卡态自己
+    拼好传上来——那等于把"什么算建卡态"这条规则挪到前端（规则权威在后端），
+    而且 `Character` 加一列就要两边同时改、漏一边不会变红。现在后端自己去读
+    那张卡；`system_id` 同理，从卡所在的房间读。
+    """
 
     name: str = Field(..., min_length=1, max_length=200)
-    system_id: str = Field(..., min_length=1)
-    data: dict = Field(default_factory=dict)
+    character_id: str = Field(..., min_length=1)
 
 
 class CharacterTemplateRead(CamelModel):
-    """`我的常用角色卡` 列表/详情返回项（issue 决策 5，本期不实现）。"""
+    """`我的常用角色卡` 列表/详情返回项。"""
 
     template_id: str
     name: str

@@ -1,8 +1,12 @@
 import { useNavigate } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, UserPlus, Swords, Eye, RefreshCw, X } from 'lucide-react'
+import { ArrowLeft, BookmarkPlus, UserPlus, Swords, Eye, RefreshCw, X } from 'lucide-react'
 import { useCharacterStore } from '@/stores/character-store'
-import { fetchCharacter, regenerateBackground } from '@/services/character/character-api'
+import {
+  fetchCharacter,
+  regenerateBackground,
+  saveAsTemplate,
+} from '@/services/character/character-api'
 import { toCompletedCharacter } from '@/services/character/character-view'
 import { BACKGROUND_DETAIL_FIELDS } from '@/data/character-model'
 import { useRoomStore } from '@/stores/room-store'
@@ -356,6 +360,12 @@ export default function CharacterReadyPage() {
   const navigate = useNavigate()
   const [showSelfSheet, setShowSelfSheet] = useState(false)
   const [starting, setStarting] = useState(false)
+  // 存进卡库（我的常用角色卡）。`savedTemplate` 只是这一屏的即时反馈——
+  // 重进页面会回到"存卡"，重复存会得到两张同名的，这是可接受的：卡库列表
+  // 里能删，而在这里维护"这张卡存过没有"要多查一次接口。
+  const [savingTemplate, setSavingTemplate] = useState(false)
+  const [savedTemplate, setSavedTemplate] = useState(false)
+  const [templateError, setTemplateError] = useState('')
   const roomId = useRoomStore((s) => s.roomId)
   const selfPlayerId = useRoomStore((s) => s.playerId)
   const cachedCharacter = useCharacterStore((s) =>
@@ -388,6 +398,21 @@ export default function CharacterReadyPage() {
 
   const [regeneratingBackground, setRegeneratingBackground] = useState(false)
   const [regenerateBackgroundError, setRegenerateBackgroundError] = useState('')
+  const handleSaveTemplate = async () => {
+    if (!characterId) return
+    setSavingTemplate(true)
+    setTemplateError('')
+    try {
+      // 卡库里的名字用角色名——玩家找的是"我那个记者"，不是一串日期。
+      await saveAsTemplate(characterId, character?.info.name || '我的调查员')
+      setSavedTemplate(true)
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : '存进卡库失败')
+    } finally {
+      setSavingTemplate(false)
+    }
+  }
+
   const handleRegenerateBackground = async () => {
     if (!roomId || !characterId || !readyRuleset) return
     setRegeneratingBackground(true)
@@ -539,6 +564,11 @@ export default function CharacterReadyPage() {
                       ? '已完成建卡'
                       : '尚未创建人物卡'}
                 </div>
+                {/* 存卡失败要说出来——静默失败等于玩家以为存进去了，
+                    下一局打开卡库发现没有。 */}
+                {isSelf && templateError && (
+                  <div className="text-[11px] text-rust-dark truncate">{templateError}</div>
+                )}
               </div>
               {isSelf ? (
                 <div className="flex items-center gap-1.5">
@@ -555,6 +585,17 @@ export default function CharacterReadyPage() {
                         className="cut-corner text-[11px] font-semibold px-2 py-1 border border-ink/35 text-ink-soft bg-white/15 active:scale-[0.95] transition-all whitespace-nowrap"
                       >
                         编辑
+                      </button>
+                      {/* 存进卡库：这一屏的卡已经是 complete 的完整态，
+                          而向导最后一步那张还是 draft——存早了会存进半截数据。 */}
+                      <button
+                        onClick={() => void handleSaveTemplate()}
+                        disabled={savingTemplate}
+                        title="存进我的常用卡"
+                        className="cut-corner text-[11px] font-semibold px-2 py-1 border border-ink/35 text-ink-soft bg-white/15 flex items-center gap-1 active:scale-[0.95] transition-all whitespace-nowrap disabled:opacity-50"
+                      >
+                        <BookmarkPlus className="w-3 h-3" />
+                        {savedTemplate ? '已存' : savingTemplate ? '存…' : '存卡'}
                       </button>
                     </>
                   ) : (

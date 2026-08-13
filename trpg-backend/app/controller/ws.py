@@ -16,8 +16,9 @@
   留好，但本期不会真的发出）。
 - `action.submit` 的叙事回复本期是固定文案的占位实现（"Mock 叙事"，
   issue #43 允许），真实 AI 叙事生成留给 #43 落地。
-- `room.rejoin` 校验完 payload 后回一条 `error` 事件（`NOT_IMPLEMENTED`），
-  不做真实的断线重连（issue #77"三处原型取舍"表格 + 决策 6）。
+- 断线重连**没有单独的事件**：客户端重连时照常发 `room.join`，服务端用
+  `reconnect_token` 认人，`session.bound` 之后补发待掷卡片与会合确认卡。
+  （曾经铺过一条 `room.rejoin` 协议，从未接通，2026-08-13 删除。）
   `check.roll`/`san.check.roll`（两段式玩家掷骰，feat/keeper-agent）：确认
   并结算守秘人已发起的待掷检定，服务端权威生成骰值——keeper 模式下是真实
   实现，非 keeper 模式（Fallback/DeepSeekNarrator 没有"待掷检定"的概念）
@@ -75,7 +76,6 @@ from app.dto.ws import (
     RoomJoinPayload,
     RoomPausedPayload,
     RoomPausePayload,
-    RoomRejoinPayload,
     SanCheckRequestPayload,
     SanCheckResultPayload,
     SanCheckRollPayload,
@@ -1614,9 +1614,6 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                     elif event_type == "party.merge.confirm":
                         PartyMergeConfirmPayload.model_validate(raw_payload)
                         await _handle_merge_confirm(db, websocket, room_id, bound_player_id)
-                    elif event_type == "room.rejoin":
-                        RoomRejoinPayload.model_validate(raw_payload)
-                        await _send_error(websocket, "NOT_IMPLEMENTED", "断线重连本期尚未实现")
                 except ValidationError as exc:
                     # payload 层校验失败（信封 OK 但具体事件 payload 形状不对），
                     # 同样只丢弃这一条。event_type 此时必然已赋值。

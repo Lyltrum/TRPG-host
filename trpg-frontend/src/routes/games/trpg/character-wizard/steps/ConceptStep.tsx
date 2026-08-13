@@ -1,5 +1,5 @@
-import { Wand2 } from 'lucide-react'
-import type { Ruleset } from 'trpg-sdk'
+import { BookUser, Wand2 } from 'lucide-react'
+import type { CharacterTemplate, Ruleset } from 'trpg-sdk'
 import { StepShell, StepSection } from '../components/StepShell'
 import type { WizardAction, WizardState } from '../wizard-state'
 
@@ -10,6 +10,10 @@ export function ConceptStep({
   onQuickBuild,
   quickBuilding,
   quickBuildError,
+  templates,
+  onUseTemplate,
+  usingTemplate,
+  templateError,
 }: {
   state: WizardState
   dispatch: (action: WizardAction) => void
@@ -18,6 +22,11 @@ export function ConceptStep({
   onQuickBuild: () => void
   quickBuilding: boolean
   quickBuildError: string
+  /** 我的常用卡（第三条路）。空数组 = 卡库是空的或没登录，整块不渲染。 */
+  templates: CharacterTemplate[]
+  onUseTemplate: (templateId: string) => void
+  usingTemplate: boolean
+  templateError: string
 }) {
   const { info } = state
   const canQuickBuild = info.name.trim().length > 0 && !quickBuilding
@@ -110,6 +119,45 @@ export function ConceptStep({
           <p className="text-[10.5px] text-rust-dark text-center mt-2">{quickBuildError}</p>
         )}
       </StepSection>
+
+      {/* 第三条路：我带了自己的调查员来。
+          🔴 卡库为空时**整块不渲染**——新玩家第一次进来这里什么都没有，摆一个
+          空标题只会让他以为哪里没加载出来。 */}
+      {templates.length > 0 && (
+        <StepSection title="用我的常用卡">
+          <p className="text-[11.5px] text-ink-soft mb-2.5">
+            上次存进卡库的调查员。选一张会
+            <span className="text-brass-dark">复制一份新的</span>
+            过来，这一局怎么玩都不会改到卡库里那张。
+          </p>
+          <div className="space-y-2">
+            {templates.map((template) => (
+              <button
+                key={template.templateId}
+                onClick={() => onUseTemplate(template.templateId)}
+                disabled={usingTemplate}
+                className={`cut-corner w-full flex items-center gap-2 px-4 py-2.5 text-left transition-all ${
+                  usingTemplate
+                    ? 'border border-ink/25 text-ink-soft cursor-not-allowed'
+                    : 'border border-brass-dark/60 text-ink bg-white/25 active:bg-brass-dark active:text-dossier active:scale-[0.97]'
+                }`}
+              >
+                <BookUser className="w-4 h-4 shrink-0 text-brass-dark" />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-[13px] font-semibold truncate">{template.name}</span>
+                  <span className="block text-[10.5px] text-ink-soft truncate">
+                    {[template.data?.name, template.data?.occupation].filter(Boolean).join(' · ') ||
+                      '调查员'}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+          {templateError && (
+            <p className="text-[10.5px] text-rust-dark text-center mt-2">{templateError}</p>
+          )}
+        </StepSection>
+      )}
     </StepShell>
   )
 }

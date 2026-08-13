@@ -47,12 +47,37 @@ test('🔴 复盘摘要已经实现：数字一定有，那段回顾没 key 时�
   assert.equal(summary.summaryText, null)
 })
 
-test('常用角色卡库仍是 NOT_IMPLEMENTED', async () => {
-  const room = await createRoomWithModule('stub2')
-  await assert.rejects(
-    () => room.host.sdk.characterTemplates.list(room.host.token),
-    assertNotImplemented('这条变红说明常用卡库已经实现（或者坏了），该去看客户端要不要接')
+test('🔴 常用角色卡库已经实现：存得进、取得回、复制进新草稿', async () => {
+  // 这条原本也是 NOT_IMPLEMENTED 的守卫，写着「变红说明已经实现，该去接
+  // 客户端」——2026-08-13 正是那一天：service 层四个函数此前全是
+  // `raise not_implemented`，前端一次都没调过。
+  const room = await createRoomWithModule('tpl')
+  const character = await room.host.sdk.characters.quickBuild(
+    room.roomId,
+    room.reconnectToken,
+    { name: '凌铭辉' }
   )
+
+  const saved = await room.host.sdk.characterTemplates.save(
+    { name: '我的记者', characterId: character.characterId },
+    room.host.token
+  )
+  assert.equal(saved.name, '我的记者')
+
+  const listed = await room.host.sdk.characterTemplates.list(room.host.token)
+  assert.deepEqual(
+    listed.map((t) => t.templateId),
+    [saved.templateId]
+  )
+
+  // 第二局：拿常用卡开草稿。**复制不是引用**，而且仍是 draft（复用不等于跳过校验）
+  const second = await createRoomWithModule('tpl2', room.host)
+  const draft = await second.host.sdk.characters.createDraft(
+    second.roomId,
+    second.reconnectToken,
+    saved.templateId
+  )
+  assert.equal(draft.status, 'draft')
 })
 
 test('复盘事件流已经是真实现（不是桩）', async () => {

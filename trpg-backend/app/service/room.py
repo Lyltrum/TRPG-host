@@ -378,7 +378,7 @@ async def set_player_ready(db: AsyncSession, player_id: str, ready: bool) -> Non
 
 
 async def set_player_connected(db: AsyncSession, player_id: str, connected: bool) -> None:
-    """WS 连接建立/断开时维护 `Player.connected`（room.rejoin 断线重连判断用，
+    """WS 连接建立/断开时维护 `Player.connected`（重连时判断用，
     本期只维护状态不接真实重连逻辑）。"""
     player = await db.get(Player, player_id)
     if player is not None:

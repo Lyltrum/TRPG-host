@@ -263,18 +263,20 @@ export interface CharacterStatChangedPayload {
 }
 
 /**
- * POST /api/v1/me/character-templates 请求体（issue 决策 5，本期不实现）。
+ * POST /api/v1/me/character-templates 请求体：把一张已建好的卡存成常用卡。
+ *
+ * 🔴 **只收 `character_id`，不收 `data`。** 原先的形状是让前端把建卡态自己
+ * 拼好传上来——那等于把"什么算建卡态"这条规则挪到前端（规则权威在后端），
+ * 而且 `Character` 加一列就要两边同时改、漏一边不会变红。现在后端自己去读
+ * 那张卡；`system_id` 同理，从卡所在的房间读。
  */
 export interface CharacterTemplateCreateBody {
   name: string;
-  systemId: string;
-  data?: {
-    [k: string]: unknown;
-  };
+  characterId: string;
 }
 
 /**
- * `我的常用角色卡` 列表/详情返回项（issue 决策 5，本期不实现）。
+ * `我的常用角色卡` 列表/详情返回项。
  */
 export interface CharacterTemplateRead {
   templateId: string;
@@ -468,7 +470,6 @@ export type ErrorCode =
   | "ACTION_IN_PROGRESS"
   | "CHARACTER_INCOMPLETE"
   | "MODULE_NOT_SELECTED"
-  | "RECONNECT_TOKEN_EXPIRED"
   | "RATE_LIMITED"
   | "NOT_IMPLEMENTED"
   | "CHARACTER_INVALID"
@@ -495,10 +496,11 @@ export interface ErrorDetail {
 }
 
 /**
- * error 推送 payload（issue #77 新增）——本期唯一会被真的发出的新增
- * S→C 事件：`check.roll`/`san.check.roll`/`room.rejoin` 这三个 NOT_IMPLEMENTED
- * 桩、以及原来 game.start 失败时被静默丢弃（`continue`，见 ws.py 旧逻辑）
- * 的错误，都改成通过这个事件明确告知发起者，而不是让客户端干等。
+ * error 推送 payload（issue #77 新增）。
+ *
+ * 发起者做不成的事要明说，不能静默丢弃（`continue`，见 ws.py 旧逻辑）让
+ * 客户端干等。非 keeper 叙事实现下的 `check.roll`/`san.check.roll` 也走它
+ * 回 NOT_IMPLEMENTED。
  */
 export interface ErrorPayload {
   code: string;
@@ -1028,16 +1030,6 @@ export interface RoomPreview {
   playerCount: number;
   maxPlayers: number;
   players: RoomPlayerRead[];
-}
-
-/**
- * room.rejoin 事件 payload（issue #77 新增，仅铺协议，见决策 6）。
- *
- * `reconnect_token` 是房间身份体系的重连凭证（`players.reconnect_token`，
- * 不是账号登录 token），本期只校验格式、不做真实的断线重连逻辑。
- */
-export interface RoomRejoinPayload {
-  reconnectToken: string;
 }
 
 /**

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { BookUser, Wand2, X } from 'lucide-react'
 import type { CharacterTemplate, Ruleset } from 'trpg-sdk'
 import { templateSubtitle } from '@/services/character/character-view'
@@ -174,6 +175,14 @@ export function ConceptStep({
  * 🔴 用底部浮层而不是把列表铺在步骤里：卡库条目数没有上限，而建卡第一步是
  * 玩家**必经**的一屏，它的主任务是填基本信息。浮层的高度是自己的事，撑不到
  * 那一屏（形状照 `CharacterReadyPage` 的 InvestigatorSheet）。
+ *
+ * 🔴 **必须 portal 到 `#root`**（2026-08-13 真人反馈：卡库里两张卡只看得见
+ * 一张，浮层被拦腰截断）。别的浮层（InviteSheet / InvestigatorSheet）都挂在
+ * 页面根部，只有这一个长在**建卡向导滚动纸张容器的内部**——而
+ * `position: fixed` 一旦祖先链上有 `transform`/`filter`/`contain`，就改成锚定
+ * 那个祖先，于是浮层被裁在纸张的下边缘而不是手机屏底部（`#root` 自己正是靠
+ * `transform: translateZ(0)` 当手机屏的包含块，见 styles.css 那段注释）。
+ * portal 出去是**结构性**保证：不依赖"祖先链上恰好没有人建包含块"。
  */
 function TemplatePicker({
   templates,
@@ -186,14 +195,15 @@ function TemplatePicker({
   onPick: (templateId: string) => void
   onClose: () => void
 }) {
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/60 z-30 animate-fade-in" onClick={onClose} />
+  return createPortal(
+    <div className="fixed inset-0 z-40 flex items-end justify-center">
+      <div className="absolute inset-0 bg-black/60 animate-fade-in" onClick={onClose} />
       {/* 🔴 `theme-paper`：CSS 变量沿 DOM 继承，光"不加 theme-coc"不够——
-          祖先上有就照样生效，症状是牛皮纸上一片空白。 */}
+          祖先上有就照样生效，症状是牛皮纸上一片空白。
+          高度用 `max-h-[74%]`（相对手机屏）而不是 `74vh`：桌面预览里手机框是
+          固定 820px 的一块，`vh` 量的却是真实浏览器窗口，两者对不上。 */}
       <div
-        className="theme-paper paper-grain fixed inset-x-0 bottom-0 z-40 bg-dossier text-ink flex flex-col animate-slide-up max-w-[430px] mx-auto shadow-[0_-1px_0_rgba(255,255,255,.22),0_-3px_10px_rgba(0,0,0,.35)] border-t-[3px] border-brass-dark"
-        style={{ maxHeight: '74vh' }}
+        className="theme-paper paper-grain relative w-full max-h-[74%] bg-dossier text-ink flex flex-col animate-slide-up max-w-[430px] shadow-[0_-1px_0_rgba(255,255,255,.22),0_-3px_10px_rgba(0,0,0,.35)] border-t-[3px] border-brass-dark"
       >
         <span className="tab-flap absolute left-[26px] -top-[19px] typed text-[10.5px] px-3.5 pt-[5px] pb-1 bg-brass-dark text-dossier">
           我的调查员
@@ -231,6 +241,7 @@ function TemplatePicker({
           })}
         </div>
       </div>
-    </>
+    </div>,
+    document.getElementById('root') ?? document.body
   )
 }

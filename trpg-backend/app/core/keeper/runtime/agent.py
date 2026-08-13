@@ -118,7 +118,9 @@ from app.core.keeper.runtime.pending import (
     to_notice,
 )
 from app.core.keeper.runtime.phase import (
+    PHASE_ENDING,
     PHASE_FINISHED,
+    PHASE_INVESTIGATION,
     PHASE_KEY,
     PHASE_OPENING,
     load_ending_id,
@@ -277,9 +279,33 @@ class KeeperAgent(Narrator):
 
         keeper_state, history_lines, roster, players = await self._load_room_memory(room_id)
 
-        # 对局已结束：拒绝新行动（心跳亦静默）
         phase = load_phase(keeper_state)
         ending_id = load_ending_id(keeper_state)
+
+        # 🔴 收尾是可撤回的（2026-08-12）：`ending` 阶段里**玩家继续说话本身
+        # 就是"我们还想玩"**——不需要额外问一句，也不需要新交互。心跳与开场
+        # 不算数（那不是玩家的意思表示），所以它们不触发退回，只是静默。
+        #
+        # 这一步存在的理由是让收尾**判早了的代价变小**：从"对局不可撤回地结束"
+        # 降成"多写一段终章"。代价小了，那道替 KP 做判断的机械前提才拿得掉。
+        if phase == PHASE_ENDING:
+            if is_heartbeat or is_opening_ceremony:
+                return NarrationOutcome(text="")
+            deps_resume = KeeperDeps(
+                room_id=room_id,
+                player_id=context.player_id,
+                session_factory=self._session_factory,
+                module=self._module,
+                ruleset=self._ruleset,
+                reserved_state_keys=reserved_state_keys(),
+                turn_player_ids=turn_player_ids,
+            )
+            await set_phase_impl(deps_resume, PHASE_INVESTIGATION)
+            logger.info("keeper_closure_reopened", room_id=room_id, player_id=context.player_id)
+            keeper_state, history_lines, roster, players = await self._load_room_memory(room_id)
+            phase = load_phase(keeper_state)
+
+        # 对局已结束：拒绝新行动（心跳亦静默）
         if phase == PHASE_FINISHED:
             if is_heartbeat or is_opening_ceremony:
                 return NarrationOutcome(text="")

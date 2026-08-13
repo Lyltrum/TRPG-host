@@ -394,7 +394,10 @@ def test_module_without_agenda_renders_no_block(tmp_path: Path) -> None:
     path = tmp_path / "no_agenda.json"
     path.write_text(json.dumps(minimal, ensure_ascii=False), encoding="utf-8")
     module = load_module(path)
-    assert situation_blocks(module, None) == []
+    # 🔴 断言只针对**这片能力自己的块**。原先写的是"整个列表为空"，那口径
+    # 太宽：任何一片新能力注册了局面块都会把它打红，而那跟"议程渲不渲染"
+    # 无关（2026-08-12 closure 的停滞行当场撞上）。
+    assert not any("议程状态" in body for _order, body in situation_blocks(module, None))
     text = format_turn_input(
         None, [], ["阿福"], "阿福", "你好", capability_blocks=situation_blocks(module, None)
     )

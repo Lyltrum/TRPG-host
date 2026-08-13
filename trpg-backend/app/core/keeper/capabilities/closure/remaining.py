@@ -22,6 +22,7 @@ from app.core.keeper.runtime.progress_state import (
     is_pair_revealed,
     load_fired_agenda,
     load_revealed_clues,
+    load_stalled_turns,
     load_visited_nodes,
 )
 
@@ -68,12 +69,12 @@ def _line(label: str, remaining: int | None, total: int, missing_note: str) -> s
 
 
 def format_remaining_content(module: ScenarioModule, keeper_state: dict | None) -> str:
-    """渲染三行计数。三样都缺就整块省略（没有任何依据可摆）。"""
+    """渲染三行存量 + 一行停滞。三样存量都缺也照样渲染——**停滞那一行跟模组
+    有没有数据无关**，它恰恰是给"这份模组什么都数不出来"的局面兜底的。"""
     pairs = unrevealed_pair_count(module, keeper_state)
     agenda = unfired_agenda_count(module, keeper_state)
     nodes = unvisited_node_count(module, keeper_state)
-    if pairs is None and agenda is None and nodes is None:
-        return ""
+    stalled = load_stalled_turns(keeper_state)
     return "\n".join(
         [
             _line(
@@ -94,6 +95,7 @@ def format_remaining_content(module: ScenarioModule, keeper_state: dict | None) 
                 len(iter_all_nodes(module.nodes)),
                 "这份模组没有节点",
             ),
+            f"- 已经 {stalled} 轮没有新进展（没去新地方、没揭开新线索）",
         ]
     )
 

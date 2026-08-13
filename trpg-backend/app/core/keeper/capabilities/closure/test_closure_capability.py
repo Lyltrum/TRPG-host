@@ -31,11 +31,18 @@ from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.contract.registry import TurnFacts
 from app.core.keeper.runtime.deps import KeeperDeps
 from app.core.keeper.runtime.location_state import PLAYER_LOCATION_KEY
-from app.core.keeper.runtime.phase import PHASE_FINISHED, PHASE_KEY, load_phase
+from app.core.keeper.runtime.phase import (
+    PHASE_ENDING,
+    PHASE_FINISHED,
+    PHASE_KEY,
+    load_phase,
+)
 from app.core.keeper.runtime.progress_state import (
     AGENDA_FIRED_KEY,
     CLUES_REVEALED_KEY,
+    STALLED_TURNS_KEY,
     VISITED_NODES_KEY,
+    load_stalled_turns,
     load_visited_nodes,
 )
 from app.models.room import Character, Player, Room
@@ -133,6 +140,15 @@ async def _state_of(room_id: str) -> dict:
         return dict(room.keeper_state or {})
 
 
+async def _write_state(room_id: str, patch: dict) -> None:
+    """就地改几个键（模拟别的能力在这一轮之前写过东西）。"""
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        room.keeper_state = {**dict(room.keeper_state or {}), **patch}
+        await db.commit()
+
+
 # ── 计数口径 ─────────────────────────────────────────
 
 
@@ -161,8 +177,11 @@ def test_missing_data_degrades_explicitly_instead_of_reporting_zero() -> None:
     assert unrevealed_pair_count(bare, {}) is None
     assert unfired_agenda_count(bare, {}) is None
     assert unvisited_node_count(bare, {}) is None
-    # 三样全缺 → 整块省略（没有任何依据可摆）
-    assert format_remaining_content(bare, {}) == ""
+    # 🔴 行为变更（2026-08-12）：三样存量全缺时**不再整块省略**——停滞轮数跟
+    # 模组有没有数据无关，而"什么都数不出来的模组"恰恰是最需要它的那一种。
+    bare_text = format_remaining_content(bare, {})
+    assert "没有配对数据" in bare_text
+    assert "没有新进展" in bare_text
     # 只缺一样时那一行要说清楚缺了什么，不能写成 0
     no_pairs = _MODULE.model_copy(update={"visibility_pairs": []})
     text = format_remaining_content(no_pairs, {})
@@ -193,6 +212,44 @@ async def test_recording_the_same_place_twice_is_a_no_op() -> None:
     assert report == []
 
 
+# ── 无进展轮数 ───────────────────────────────────────
+
+
+async def test_stalled_turns_count_up_when_nothing_new_happens() -> None:
+    """🔴 前三份记账全是存量（还剩多少），回答不了「是不是在原地打转」——
+    而真人 KP 判断收尾时数的正是后者。玩家可以一直偏离主线，存量永远不见底。"""
+    room_id, player_id = await _seed(
+        "CLS800", {PLAYER_LOCATION_KEY: "p1@hall", VISITED_NODES_KEY: "hall"}
+    )
+    for expected in (1, 2, 3):
+        await execute_closure(_deps(room_id, player_id), KeeperDecision(), TurnFacts())
+        assert load_stalled_turns(await _state_of(room_id)) == expected
+
+
+async def test_going_somewhere_new_resets_the_stall_counter() -> None:
+    room_id, player_id = await _seed(
+        "CLS810",
+        {PLAYER_LOCATION_KEY: "p1@hall", VISITED_NODES_KEY: "hall", STALLED_TURNS_KEY: "4"},
+    )
+    await execute_closure(_deps(room_id, player_id), KeeperDecision(), TurnFacts())
+    assert load_stalled_turns(await _state_of(room_id)) == 5
+
+    await _write_state(room_id, {PLAYER_LOCATION_KEY: "p1@cellar"})
+    await execute_closure(_deps(room_id, player_id), KeeperDecision(), TurnFacts())
+    assert load_stalled_turns(await _state_of(room_id)) == 0
+
+
+async def test_revealing_a_clue_also_counts_as_progress() -> None:
+    """进展的口径只有代码确定性可判的两样：去了新地方、揭开了新线索。"""
+    room_id, player_id = await _seed(
+        "CLS820",
+        {PLAYER_LOCATION_KEY: "p1@hall", VISITED_NODES_KEY: "hall", STALLED_TURNS_KEY: "6"},
+    )
+    facts = TurnFacts(clues_revealed_this_turn=True)
+    await execute_closure(_deps(room_id, player_id), KeeperDecision(), facts)
+    assert load_stalled_turns(await _state_of(room_id)) == 0
+
+
 # ── 反向门 ───────────────────────────────────────────
 
 
@@ -208,13 +265,18 @@ def _done_state(**extra: str) -> dict:
 
 
 async def test_content_exhausted_closes_the_story_without_inventing_an_ending_id() -> None:
+    """🔴 行为变更（2026-08-12）：终点是 `ending` 而不是 `finished`。
+
+    自然收尾纯属 KP 判断，所以给它一个**可撤回**的中间态；直达 `finished`
+    的只有命中剧本预设结局那条路。
+    """
     room_id, player_id = await _seed("CLS300", _done_state())
     report, issues = await execute_closure(
         _deps(room_id, player_id), KeeperDecision(story_ran_its_course=True), TurnFacts()
     )
     assert issues == []
-    assert any("自然收尾" in line for line in report)
-    assert await _phase_of(room_id) == PHASE_FINISHED
+    assert any("进入收尾" in line for line in report)
+    assert await _phase_of(room_id) == PHASE_ENDING
     # 🔴 不许凭空造一个剧本里不存在的结局 id
     from app.core.keeper.runtime.phase import ENDING_ID_KEY
 
@@ -232,13 +294,19 @@ async def test_a_turn_that_just_revealed_a_clue_may_not_close() -> None:
     assert await _phase_of(room_id) != PHASE_FINISHED
 
 
-async def test_an_untriggered_once_agenda_blocks_the_close() -> None:
+async def test_an_untriggered_once_agenda_no_longer_blocks_the_close() -> None:
+    """🔴 行为变更（2026-08-12）：议程没跑完**不再拦**。
+
+    真人 KP 完全可以在议程没跑完时收尾——那条门同样是代码替他做决定。它现在
+    降级成局面块里的一个数（参考材料）。反向门只剩「本轮刚揭开新线索」那条
+    自相矛盾的。
+    """
     room_id, player_id = await _seed("CLS500", _done_state(**{AGENDA_FIRED_KEY: ""}))
     _report, issues = await execute_closure(
         _deps(room_id, player_id), KeeperDecision(story_ran_its_course=True), TurnFacts()
     )
-    assert any("议程" in i for i in issues)
-    assert await _phase_of(room_id) != PHASE_FINISHED
+    assert not any("议程" in i for i in issues)
+    assert await _phase_of(room_id) == PHASE_ENDING
 
 
 async def test_a_scripted_ending_this_turn_wins_and_is_not_closed_twice() -> None:

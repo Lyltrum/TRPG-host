@@ -27,6 +27,16 @@ AGENDA_FIRED_KEY = "已触发议程"
 
 VISITED_NODES_KEY = "去过的节点"
 
+#: 连续多少轮没有新进展（去了新地方 / 揭开了新线索都算进展）。
+#:
+#: 🔴 前三份记账全是**存量**（还剩多少没跑完），回答不了「他们是不是在原地
+#: 打转」。真人 KP 判断收尾时数的正是后者——他不数还剩几个房间没进，他数的是
+#: 「这帮人已经在这儿绕了半小时」。2026-08-12 真人反馈实证：玩家可以一直偏离
+#: 主线循环，而"还剩多少内容"永远不见底，于是**永远等不到落幕**。
+#:
+#: 它是**参考材料，不是门**：多少轮算久由 KP 判断，代码只负责把这个数算准。
+STALLED_TURNS_KEY = "无进展轮数"
+
 
 # ── 已揭开配对 ──────────────────────────────────────
 
@@ -115,3 +125,21 @@ def load_visited_nodes(keeper_state: dict | None) -> list[str]:
 
 def serialize_visited_nodes(node_ids: list[str]) -> str:
     return ", ".join(node_ids)
+
+
+# ── 无进展轮数 ──────────────────────────────────────
+
+
+def load_stalled_turns(keeper_state: dict | None) -> int:
+    """连续几轮没有新进展。读不出数字一律当 0——这个数只是参考材料，
+    宁可少报也不要因为一条脏记录把收尾判断带偏。"""
+    if not keeper_state:
+        return 0
+    raw = keeper_state.get(STALLED_TURNS_KEY)
+    if raw is None or raw == "":
+        return 0
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        return 0
+    return value if value > 0 else 0

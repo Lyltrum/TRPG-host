@@ -57,6 +57,12 @@ jobs:
         working-directory: trpg-frontend
         run: npm run lint
 
+      # 🔴 前端有 vitest 用例（向导预览换算、提交编排、房间历史、流式叙事…），
+      # 这一步此前**整个漏了**——SDK CI 有、前端没有，跑不跑全看谁记得。
+      - name: Test
+        working-directory: trpg-frontend
+        run: npm run test
+
       # build 里已经含 tsc -b，类型检查和打包一步完成。
       - name: Build
         working-directory: trpg-frontend

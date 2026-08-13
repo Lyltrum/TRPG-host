@@ -19,6 +19,7 @@ const LobbyPage = lazy(() => import('@/routes/lobby/LobbyPage'));
 const CharacterReadyPage = lazy(() => import('@/routes/character-ready/CharacterReadyPage'));
 const RoomPage = lazy(() => import('@/routes/games/trpg/RoomPage'));
 const MyRoomsPage = lazy(() => import('@/routes/my-rooms/MyRoomsPage'));
+const MyCharactersPage = lazy(() => import('@/routes/my-characters/MyCharactersPage'));
 const ReviewPage = lazy(() => import('@/routes/review/ReviewPage'));
 const ProfilePage = lazy(() => import('@/routes/profile/ProfilePage'));
 const MyModulesPage = lazy(() => import('@/routes/modules/MyModulesPage'));
@@ -82,6 +83,7 @@ function App() {
             element={<ScenarioSelectionPage />}
           />
           <Route path="/home/my-rooms" element={<MyRoomsPage />} />
+          <Route path="/home/characters" element={<MyCharactersPage />} />
           <Route path="/home/my-rooms/review/:roomCode" element={<ReviewPage />} />
           <Route path="/home/profile" element={<ProfilePage />} />
           {/* 模组导入（exec/29 第 5 步）。`/import` 必须排在 `/:jobId` 之前，

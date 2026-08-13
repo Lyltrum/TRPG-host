@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Hash, Paperclip, Plus, ScrollText } from 'lucide-react'
+import { Hash, Paperclip, Plus, ScrollText, UserRound } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 import ShellPage from '@/shared/components/ShellPage'
 import BrandMark from '@/shared/components/BrandMark'
@@ -68,6 +68,15 @@ export default function HomePage() {
         >
           <ScrollText className="w-[18px] h-[18px]" />
           我的游戏
+        </button>
+        {/* 卡库跟模组同理，也是**备料**：老玩家提前捏好卡，聚会那晚直接拿来用。
+            只挂在建卡向导里的话，存进去之后就再也看不到它了（2026-08-13 真机反馈）。 */}
+        <button
+          className="press w-full py-3 flex items-center justify-center gap-2 text-[14px] font-extrabold tracking-[0.16em] indent-[0.16em] bg-card text-text-primary"
+          onClick={() => navigate('/home/characters')}
+        >
+          <UserRound className="w-[18px] h-[18px]" />
+          我的调查员
         </button>
         {/* 🔴 导入模组是**备料**，跟开局在时间上是分开的（可能是聚会前几天），
             而且转换要跑 5–26 分钟——它不可能是建房流程里的一步。所以入口在顶层，

@@ -1,4 +1,5 @@
-import { BookUser, Wand2 } from 'lucide-react'
+import { useState } from 'react'
+import { BookUser, Wand2, X } from 'lucide-react'
 import type { CharacterTemplate, Ruleset } from 'trpg-sdk'
 import { StepShell, StepSection } from '../components/StepShell'
 import type { WizardAction, WizardState } from '../wizard-state'
@@ -29,6 +30,7 @@ export function ConceptStep({
   templateError: string
 }) {
   const { info } = state
+  const [pickerOpen, setPickerOpen] = useState(false)
   const canQuickBuild = info.name.trim().length > 0 && !quickBuilding
   return (
     <StepShell lead="先给你的调查员起个名字，其余信息随时可以回来改。">
@@ -121,43 +123,121 @@ export function ConceptStep({
       </StepSection>
 
       {/* 第三条路：我带了自己的调查员来。
-          🔴 卡库为空时**整块不渲染**——新玩家第一次进来这里什么都没有，摆一个
-          空标题只会让他以为哪里没加载出来。 */}
+          🔴 **只放一个入口，不平铺**：卡库会越攒越多，而这一屏的主任务是填
+          基本信息（真机反馈 2026-08-13：两张卡就占了大半屏）。列表放进浮层。
+          🔴 卡库为空时整块不渲染——新玩家第一次进来这里什么都没有，摆一个
+          空入口只会让他以为哪里没加载出来。 */}
       {templates.length > 0 && (
         <StepSection title="用我的常用卡">
           <p className="text-[11.5px] text-ink-soft mb-2.5">
-            上次存进卡库的调查员。选一张会
+            以前存进卡库的调查员。选一张会
             <span className="text-brass-dark">复制一份新的</span>
             过来，这一局怎么玩都不会改到卡库里那张。
           </p>
-          <div className="space-y-2">
-            {templates.map((template) => (
-              <button
-                key={template.templateId}
-                onClick={() => onUseTemplate(template.templateId)}
-                disabled={usingTemplate}
-                className={`cut-corner w-full flex items-center gap-2 px-4 py-2.5 text-left transition-all ${
-                  usingTemplate
-                    ? 'border border-ink/25 text-ink-soft cursor-not-allowed'
-                    : 'border border-brass-dark/60 text-ink bg-white/25 active:bg-brass-dark active:text-dossier active:scale-[0.97]'
-                }`}
-              >
-                <BookUser className="w-4 h-4 shrink-0 text-brass-dark" />
-                <span className="flex-1 min-w-0">
-                  <span className="block text-[13px] font-semibold truncate">{template.name}</span>
-                  <span className="block text-[10.5px] text-ink-soft truncate">
-                    {[template.data?.name, template.data?.occupation].filter(Boolean).join(' · ') ||
-                      '调查员'}
-                  </span>
-                </span>
-              </button>
-            ))}
-          </div>
+          <button
+            onClick={() => setPickerOpen(true)}
+            disabled={usingTemplate}
+            className={`cut-corner w-full flex items-center justify-center gap-1.5 px-5 py-2.5 text-[13px] font-semibold transition-all ${
+              usingTemplate
+                ? 'border border-ink/25 text-ink-soft cursor-not-allowed'
+                : 'border border-brass-dark text-brass-dark bg-white/25 active:bg-brass-dark active:text-dossier active:scale-[0.97]'
+            }`}
+          >
+            <BookUser className="w-4 h-4" />
+            {usingTemplate ? '取用中…' : `从我的调查员里选（${templates.length}）`}
+          </button>
           {templateError && (
             <p className="text-[10.5px] text-rust-dark text-center mt-2">{templateError}</p>
           )}
         </StepSection>
       )}
+
+      {pickerOpen && (
+        <TemplatePicker
+          templates={templates}
+          disabled={usingTemplate}
+          onPick={(id) => {
+            setPickerOpen(false)
+            onUseTemplate(id)
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
     </StepShell>
+  )
+}
+
+/**
+ * 从卡库里挑一张的浮层。
+ *
+ * 🔴 用底部浮层而不是把列表铺在步骤里：卡库条目数没有上限，而建卡第一步是
+ * 玩家**必经**的一屏，它的主任务是填基本信息。浮层的高度是自己的事，撑不到
+ * 那一屏（形状照 `CharacterReadyPage` 的 InvestigatorSheet）。
+ */
+function TemplatePicker({
+  templates,
+  disabled,
+  onPick,
+  onClose,
+}: {
+  templates: CharacterTemplate[]
+  disabled: boolean
+  onPick: (templateId: string) => void
+  onClose: () => void
+}) {
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/60 z-30 animate-fade-in" onClick={onClose} />
+      {/* 🔴 `theme-paper`：CSS 变量沿 DOM 继承，光"不加 theme-coc"不够——
+          祖先上有就照样生效，症状是牛皮纸上一片空白。 */}
+      <div
+        className="theme-paper paper-grain fixed inset-x-0 bottom-0 z-40 bg-dossier text-ink flex flex-col animate-slide-up max-w-[430px] mx-auto shadow-[0_-1px_0_rgba(255,255,255,.22),0_-3px_10px_rgba(0,0,0,.35)] border-t-[3px] border-brass-dark"
+        style={{ maxHeight: '74vh' }}
+      >
+        <span className="tab-flap absolute left-[26px] -top-[19px] typed text-[10.5px] px-3.5 pt-[5px] pb-1 bg-brass-dark text-dossier">
+          我的调查员
+        </span>
+
+        {/* 收起键自己占一行、钉在顶部：绝对定位的控件不知道内容多长，必然撞 */}
+        <div className="flex justify-end px-3 pt-3 pb-1 flex-none">
+          <button
+            onClick={onClose}
+            aria-label="关闭"
+            className="w-[30px] h-[30px] flex items-center justify-center border border-ink/30 bg-white/25 active:scale-[0.94] transition-all"
+          >
+            <X className="w-4 h-4 text-ink-soft" />
+          </button>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-6 space-y-2">
+          {templates.map((template) => {
+            const data = (template.data ?? {}) as Record<string, unknown>
+            const line = [
+              typeof data.name === 'string' ? data.name : null,
+              typeof data.occupation === 'string' ? data.occupation : null,
+              typeof data.age === 'number' ? `${data.age} 岁` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')
+            return (
+              <button
+                key={template.templateId}
+                onClick={() => onPick(template.templateId)}
+                disabled={disabled}
+                className="cut-corner w-full flex items-center gap-2 px-4 py-3 text-left border border-brass-dark/60 text-ink bg-white/25 active:bg-brass-dark active:text-dossier active:scale-[0.97] transition-all disabled:opacity-50"
+              >
+                <BookUser className="w-4 h-4 shrink-0 text-brass-dark" />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-[13px] font-semibold truncate">{template.name}</span>
+                  <span className="block text-[10.5px] text-ink-soft truncate">
+                    {line || '调查员'}
+                  </span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </>
   )
 }

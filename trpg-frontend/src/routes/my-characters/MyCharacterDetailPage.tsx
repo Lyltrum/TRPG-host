@@ -135,6 +135,9 @@ export default function MyCharacterDetailPage() {
       setCardName(updated.name)
       setData((updated.data ?? {}) as Record<string, unknown>)
       setSaved(true)
+      // 保存完就回卡库：这一页是"改这张卡"，改完这件事就结束了。停在原地会让人
+      // 以为还没完（还得自己找返回键），而列表页正好能看到改后的标题与副标题。
+      navigate('/home/characters')
     } catch (err) {
       setSaveError(friendlyErrorMessage(err, '保存失败'))
     } finally {

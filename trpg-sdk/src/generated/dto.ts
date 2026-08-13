@@ -244,6 +244,7 @@ export interface CharacterRead {
   backgroundDetail?: {
     [k: string]: string;
   } | null;
+  basedOnTemplateId?: string | null;
 }
 
 /**

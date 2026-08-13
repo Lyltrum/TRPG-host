@@ -419,6 +419,7 @@ async def get_character(
         background=character.background or "",
         notes=character.notes or "",
         background_detail=character.background_detail,
+        based_on_template_id=character.based_on_template_id,
     )
 
 

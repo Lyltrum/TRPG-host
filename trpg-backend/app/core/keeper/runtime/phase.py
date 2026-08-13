@@ -4,8 +4,14 @@
 
 - opening：开场仪式（念 opening.script、建立委托）
 - investigation：调查主循环
-- ending：结局收束中
-- finished：本局已结束，后续行动拒收
+- ending：**收尾中，但可撤回**——叙事写终章，行动照常受理；玩家继续说话就
+  自动退回 investigation（`agent.py`）。`closure` 的自然收尾落在这里。
+- finished：本局已结束，后续行动拒收。`progression` 命中**剧本预设结局**时
+  直达这里——那是剧本自己写好的落幕，依据最强，不需要留后路。
+
+🔴 **两条收尾路径的终点故意不同。** 命中 `endings[].trigger` 是「剧本说这里
+是结局」，`story_ran_its_course` 是「KP 自己觉得该停了」。后者纯属判断，所以
+给它一个可撤回的中间态——**判错的代价小了，才敢把判断权真正交给 KP**。
 
 推进由代码写（opening_complete / ending_reached），不交给 state_updates 自由键。
 

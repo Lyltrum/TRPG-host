@@ -29,9 +29,10 @@ class ClosureDecisionFields(DecisionModel):
     story_ran_its_course: bool = Field(
         default=False,
         description=(
-            "故事自然收尾：内容已经跑完、没有更多线索/事件/地方可去，可以落幕。"
-            "**模组有 endings 时优先用 ending_reached**；本字段是给没有预设结局的"
-            "模组用的。还在揭开新线索或还有未触发的议程时不许写 true。"
+            "故事该收尾了——由你像真人 KP 那样判断：讲完了，或者这桌人已经不会"
+            "再往前走了。**模组有 endings 时优先用 ending_reached**；本字段是给"
+            "没有预设结局的模组用的。「还剩多少内容」是参考不是门槛；唯一不许的"
+            "是本轮刚揭开新线索又同时说故事完了。收早了玩家接着行动就会退回。"
         ),
     )
 

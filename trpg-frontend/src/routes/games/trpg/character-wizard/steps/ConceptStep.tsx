@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { BookUser, Wand2, X } from 'lucide-react'
 import type { CharacterTemplate, Ruleset } from 'trpg-sdk'
+import { templateSubtitle } from '@/services/character/character-view'
 import { StepShell, StepSection } from '../components/StepShell'
 import type { WizardAction, WizardState } from '../wizard-state'
 
@@ -211,14 +212,6 @@ function TemplatePicker({
 
         <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-6 space-y-2">
           {templates.map((template) => {
-            const data = (template.data ?? {}) as Record<string, unknown>
-            const line = [
-              typeof data.name === 'string' ? data.name : null,
-              typeof data.occupation === 'string' ? data.occupation : null,
-              typeof data.age === 'number' ? `${data.age} 岁` : null,
-            ]
-              .filter(Boolean)
-              .join(' · ')
             return (
               <button
                 key={template.templateId}
@@ -230,7 +223,7 @@ function TemplatePicker({
                 <span className="flex-1 min-w-0">
                   <span className="block text-[13px] font-semibold truncate">{template.name}</span>
                   <span className="block text-[10.5px] text-ink-soft truncate">
-                    {line || '调查员'}
+                    {templateSubtitle(template)}
                   </span>
                 </span>
               </button>

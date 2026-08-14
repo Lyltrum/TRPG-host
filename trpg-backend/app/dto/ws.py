@@ -407,6 +407,11 @@ class CheckResultPayload(CamelModel):
     opposed_target_value: int | None = None
     opposed_result: str | None = None
     opposed_won: bool | None = None
+    # 幸运补正之后的有效出目与花掉的点数（2026-08-14 实测）。只改 `result` 而
+    # 把 `roll_value` 原样留着，玩家看到的是「掷出 7、目标 5、成功」——说不通。
+    # 两个都为 None = 这次没花幸运，前端渲染与此前一致。
+    effective_roll_value: int | None = None
+    luck_spent: int | None = None
 
 
 class SanCheckRequestPayload(CamelModel):

@@ -123,7 +123,7 @@ async def resolve_luck_spend(
     # 「只能推成普通成功」不是一条独立规则，是这个换算的推论，所以这里也不写
     # 成一条特判，直接按降下来的出目重新判等级。
     pushed = dice.evaluate_check(notice.target, notice.target)
-    revised = _revise(notice, pushed)
+    revised = _revise(notice, pushed, cost=cost)
     verdict = (
         "" if revised.opposed_opponent is None else f"，对抗{'胜' if revised.opposed_won else '负'}"
     )
@@ -134,8 +134,15 @@ async def resolve_luck_spend(
     return roll, revised
 
 
-def _revise(notice: CheckResultNotice, pushed: dice.CheckOutcome) -> CheckResultNotice:
-    """把推成成功之后的等级（以及对抗胜负）写回结果通知。"""
+def _revise(
+    notice: CheckResultNotice, pushed: dice.CheckOutcome, *, cost: int
+) -> CheckResultNotice:
+    """把推成成功之后的等级（以及对抗胜负）写回结果通知。
+
+    🔴 同时记下**补正后的有效出目**：只改 `level` 而把 `rolled`/`target` 原样
+    留着，玩家看到的就是「掷出 7、目标 5、成功」——那在卡面上说不通
+    （2026-08-14 实测）。`pushed.rolled` 就是补正后的那个数。
+    """
     opposed_won = notice.opposed_won
     if notice.opposed_level is not None and notice.opposed_target is not None:
         opponent = dice.CheckOutcome(
@@ -159,6 +166,8 @@ def _revise(notice: CheckResultNotice, pushed: dice.CheckOutcome) -> CheckResult
         opposed_target=notice.opposed_target,
         opposed_level=notice.opposed_level,
         opposed_won=opposed_won,
+        effective_rolled=pushed.rolled,
+        luck_spent=cost,
     )
 
 
@@ -181,6 +190,8 @@ def _notice_payload(notice: CheckResultNotice) -> dict:
         "opposed_target": notice.opposed_target,
         "opposed_level": notice.opposed_level,
         "opposed_won": notice.opposed_won,
+        "effective_rolled": notice.effective_rolled,
+        "luck_spent": notice.luck_spent,
     }
 
 

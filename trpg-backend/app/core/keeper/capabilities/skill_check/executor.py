@@ -160,11 +160,17 @@ async def roll_check_only(
     won = dice.resolve_opposed(outcome, opponent_outcome) if opponent_outcome is not None else None
     if opponent_outcome is not None:
         verdict = "胜" if won else "负"
+        # 🔴 结论放**句首**（2026-08-14 实测）。原来的写法是"…→ 成功；对手 …
+        # → 极难成功。凌铭辉负。"——「成功」两个字在前、「负」一个字在最末，
+        # 叙事模型抓了前者，写成了玩家赢（代码判的是输）。**代码判对了，是这
+        # 句话的结构在误导它。** 同一件事只说一次结论，且先说。
         text = (
+            f"【对抗结果：{player.nickname}{verdict}】"
             f"{player.nickname} 的{display_name}对抗检定（对手：{opposed_opponent}）："
-            f"d100={outcome.rolled}/{outcome.target} → {outcome.level}；"
+            f"自己 d100={outcome.rolled}/{outcome.target} → {outcome.level}；"
             f"对手 d100={opponent_outcome.rolled}/{opponent_outcome.target}"
-            f" → {opponent_outcome.level}。{player.nickname}{verdict}。"
+            f" → {opponent_outcome.level}。"
+            f"**以【对抗结果】为准，不要按各自的成功等级自行推断谁赢。**"
         )
     else:
         text = (
@@ -206,6 +212,9 @@ def _detail_of(pending: PendingDecision, notice: CheckResultNotice) -> dict:
         detail["opposed_target"] = notice.opposed_target
         detail["opposed_level"] = notice.opposed_level
         detail["opposed_won"] = notice.opposed_won
+    if notice.effective_rolled is not None:
+        detail["effective_rolled"] = notice.effective_rolled
+        detail["luck_spent"] = notice.luck_spent
     return detail
 
 
@@ -222,6 +231,9 @@ async def _record_check(deps: KeeperDeps, detail: dict) -> None:
         "target": detail["target"],
         "level": detail["level"],
     }
+    if detail.get("effective_rolled") is not None:
+        record["effective_rolled"] = detail["effective_rolled"]
+        record["luck_spent"] = detail["luck_spent"]
     if detail.get("opposed_opponent") is not None:
         record["opposed"] = {
             "opponent": detail["opposed_opponent"],
@@ -236,6 +248,14 @@ async def _record_check(deps: KeeperDeps, detail: dict) -> None:
             f"{detail['rolled']}/{detail['target']}（{detail['level']}） vs "
             f"{detail['opposed_rolled']}/{detail['opposed_target']}"
             f"（{detail['opposed_level']}） → {verdict}"
+        )
+    elif detail.get("effective_rolled") is not None:
+        # 花过幸运：原始出目 → 补正后的出目，两个数都要说，否则"7 对 5 却成功"
+        # 在卡面上说不通（2026-08-14 实测）。
+        summary = (
+            f"{detail['player']} · {detail['skill']}检定："
+            f"{detail['rolled']} 花 {detail['luck_spent']} 点幸运压到 "
+            f"{detail['effective_rolled']}/{detail['target']} → {detail['level']}"
         )
     else:
         summary = (

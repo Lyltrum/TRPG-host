@@ -6,6 +6,7 @@
 
 import random
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -288,12 +289,30 @@ async def test_running_out_of_luck_between_the_card_and_the_answer_fails_loudly(
 
 def test_the_notice_survives_a_round_trip() -> None:
     """🔴 **逐个列出的地方**：`_notice_payload` 少写一个字段，那个字段就会在玩家
-    答完之后静默变回默认值——而全套测试照样绿。所以这里逐字段比。"""
-    from dataclasses import fields
+    答完之后静默变回默认值——而全套测试照样绿。所以这里逐字段比。
+
+    🔴 **2026-08-14：这条测试自己漏过一次。** 遍历 `fields()` 的写法是对的，
+    但样本里新加的 `effective_rolled`/`luck_spent` 是 `None`（默认值）——
+    漏传之后恢复出来**也是** `None`，两边相等，变异体大摇大摆地活了下来。
+    **造的样本没走到被测分支，等于没测。**
+
+    所以先断言样本本身「没有任何字段停在默认值上」：以后再加字段，这一步会
+    先红，逼着加字段的人把样本补全，而不是让守护测试静默失效。
+    """
+    from dataclasses import MISSING, fields
 
     notice = _notice(rolled=68, target=60, level="失败", opposed=(50, 80, "成功", False))
-    restored = CheckResultNotice(**_notice_payload(notice))
+    # 🔴 补全的这四个字段里，`san_loss`/`san_remaining` 是**旧的**——它们从来
+    # 就没被这条测试真正守过，是上面那圈自检当场抓出来的。
+    notice = replace(notice, san_loss=3, san_remaining=52, effective_rolled=60, luck_spent=8)
 
+    for field in fields(CheckResultNotice):
+        default = field.default if field.default is not MISSING else None
+        assert getattr(notice, field.name) != default, (
+            f"样本的 `{field.name}` 停在默认值上——这条守护测试对它是瞎的，先把样本补全"
+        )
+
+    restored = CheckResultNotice(**_notice_payload(notice))
     for field in fields(CheckResultNotice):
         assert getattr(restored, field.name) == getattr(notice, field.name), (
             f"`{field.name}` 没被 `_notice_payload` 带过去"

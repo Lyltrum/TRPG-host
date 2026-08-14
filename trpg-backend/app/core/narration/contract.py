@@ -122,6 +122,12 @@ class CheckResultNotice:
     opposed_target: int | None = None
     opposed_level: str | None = None
     opposed_won: bool | None = None
+    # 幸运补正之后的**有效出目**（2026-08-14 实测补的）。花幸运把出目压到
+    # 目标值时，`level` 会改成"成功"而 `rolled`/`target` 原样保留——玩家于是
+    # 看到「掷出 7、目标 5、成功」，卡面上无法自洽。
+    # `None` = 这次没花幸运；有值时它必然等于 `target`（推成普通成功的定义）。
+    effective_rolled: int | None = None
+    luck_spent: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

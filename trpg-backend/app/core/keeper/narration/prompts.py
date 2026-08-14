@@ -213,6 +213,7 @@ def format_turn_input(
     is_heartbeat: bool = False,
     is_opening_ceremony: bool = False,
     phase: str | None = None,
+    party_sheet: str = "",
 ) -> str:
     """两阶段共用的"局面块"：名单 + 状态 + 阶段 + 议程 + 密级 + 历史 + 当前。
 
@@ -265,7 +266,15 @@ def format_turn_input(
         )
     # 骨架自己的状态块 + 各能力注册的 situation 块，按显式 order 归位
     # （exec/27 阶段 2）。留 10 的间隔给后面七个能力插队，插进去不必重排别人。
+    # 🔴 order=5：**排在所有能力块之前**，紧跟名册。它回答的是"这些人有几斤几两"，
+    # 是判断"要不要掷、掷哪个"的前提，摆在后面就等于让模型先决定再看卡。
+    sheet_block = (
+        f"## 调查员能力（决定要不要检定、检定什么之前先看这里）\n{party_sheet}\n\n"
+        if party_sheet
+        else ""
+    )
     blocks = [
+        (5.0, sheet_block),
         (30.0, phase_block),
         (70.0, chapters_block),
         (80.0, ledger_block),

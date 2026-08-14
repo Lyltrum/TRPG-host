@@ -546,6 +546,8 @@ async def _broadcast_check_result(
             opposed_target_value=notice.opposed_target,
             opposed_result=notice.opposed_level,
             opposed_won=notice.opposed_won,
+            effective_roll_value=notice.effective_rolled,
+            luck_spent=notice.luck_spent,
         )
         event_type = "check.result"
     envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))

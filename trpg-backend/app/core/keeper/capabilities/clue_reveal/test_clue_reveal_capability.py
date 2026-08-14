@@ -16,12 +16,14 @@ from app.core.keeper.capabilities.clue_reveal.pairs import (
     format_clue_status,
     is_pair_revealed,
     load_revealed_clues,
+    pairs_reached_by_nodes,
 )
 from app.core.keeper.capabilities.world_state.executor import update_state_impl
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.narration.prompts import format_turn_input
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
+from app.core.keeper.runtime.location_state import PLAYER_LOCATION_KEY
 from app.core.keeper.runtime.phase import (
     PHASE_INVESTIGATION,
     PHASE_KEY,
@@ -133,6 +135,68 @@ async def test_visibility_revealed_and_reserved_keys(deps: KeeperDeps) -> None:
         await update_state_impl(deps, AGENDA_FIRED_KEY, "hack")
     with pytest.raises(KeeperToolError, match="系统记账"):
         await update_state_impl(deps, PHASE_KEY, "opening")
+
+
+def test_only_pairs_whose_secret_side_is_a_real_node_can_be_reached() -> None:
+    """纯函数两头：真相侧是节点的能被"到过"点亮，不是节点的永远不会。
+
+    夹具刚好一头一个：`pair-hall-mud` 的真相侧是 `cellar`（真节点），
+    `pair-butler-faces` 的真相侧是 `butler-secret`（不是节点）。
+    """
+    module = load_module(_FIXTURE)
+    assert pairs_reached_by_nodes(module, [], {"cellar"}) == ["pair-hall-mud"]
+    # 没到过 → 一条都不给
+    assert pairs_reached_by_nodes(module, [], {"hall"}) == []
+    # 已经揭开过 → 不重复给（幂等）
+    assert pairs_reached_by_nodes(module, [("pair-hall-mud", "*")], {"cellar"}) == []
+    # 真相侧不是节点的那条，走遍全图也点不亮
+    assert "pair-butler-faces" not in pairs_reached_by_nodes(module, [], {"hall", "cellar"})
+
+
+@pytest.mark.asyncio
+async def test_reaching_the_secret_node_reveals_the_pair_without_the_model(
+    deps: KeeperDeps,
+) -> None:
+    """🔴 真人实测 2026-08-14 的回归：整局 106 次裁决 `clues_revealed` 一次没写过，
+    收尾门的分子恒为 0。这里断言**模型一个字不写**也能揭开。"""
+    async with deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        room.keeper_state = {PLAYER_LOCATION_KEY: f"{deps.player_id}@cellar"}
+        await db.commit()
+
+    decision = KeeperDecision(thinking="玩家下到地窖", narration_guidance="描述地窖")
+    assert not decision.clues_revealed  # 前提：模型确实什么都没写
+    report, issues = await execute_side_effects(deps, decision)
+    assert not issues
+
+    async with deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        entries = load_revealed_clues(room.keeper_state)
+    assert is_pair_revealed(entries, "pair-hall-mud")
+    assert not is_pair_revealed(entries, "pair-butler-faces")
+    assert any("密级揭开" in r for r in report)
+
+
+@pytest.mark.asyncio
+async def test_standing_somewhere_else_reveals_nothing(deps: KeeperDeps) -> None:
+    """必然失败样本：人在门厅，两条配对一条都不该动。"""
+    async with deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        room.keeper_state = {PLAYER_LOCATION_KEY: f"{deps.player_id}@hall"}
+        await db.commit()
+
+    _, issues = await execute_side_effects(
+        deps, KeeperDecision(thinking="人在门厅", narration_guidance="描述门厅")
+    )
+    assert not issues
+
+    async with deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        assert load_revealed_clues(room.keeper_state) == []
 
 
 def test_situation_blocks_carry_the_clue_status() -> None:

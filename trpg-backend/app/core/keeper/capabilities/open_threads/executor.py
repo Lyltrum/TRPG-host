@@ -15,6 +15,7 @@ from app.core.keeper.capabilities.open_threads.state import (
 )
 from app.core.keeper.contract.registry import TurnFacts
 from app.core.keeper.runtime.deps import KeeperDeps, record_event
+from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
 from app.models.room import Room
 
 logger = structlog.get_logger()
@@ -52,6 +53,11 @@ async def execute_open_threads(
                 continue
             report.append(f"「{entry['text']}」已了结（{thread_id}）")
 
+        # 🔴 记下这条处境**在哪成立**（2026-08-14）：没有作用域的 thread 会跟着
+        # 玩家跑遍全图（实测：疗养院的看护追进了两百公里外的地窖）。这里读的是
+        # 本轮执行完之后的当前节点——`movement` 的 order 比本能力小，位置已经
+        # 落定。读不到就不写这个键，退化成加它之前的行为。
+        here = state.get(CURRENT_NODE_KEY)
         opened: list[dict] = []
         for thread in new_threads:
             text = (thread.text or "").strip()
@@ -59,8 +65,11 @@ async def execute_open_threads(
                 issues.append("悬而未决未记录：内容为空")
                 continue
             thread_id, seq = next_thread_id(seq)
-            table[thread_id] = {"text": text}
-            opened.append({"id": thread_id, "text": text})
+            entry: dict = {"text": text}
+            if isinstance(here, str) and here.strip():
+                entry["node"] = here.strip()
+            table[thread_id] = entry
+            opened.append({"id": thread_id, **entry})
             report.append(f"悬而未决 +1：{thread_id}「{text}」")
 
         room.keeper_state = {**state, OPEN_THREADS_KEY: table, OPEN_THREADS_SEQ_KEY: seq}

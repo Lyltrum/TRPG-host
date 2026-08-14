@@ -187,7 +187,10 @@ async def _seed_with_character(room_code: str) -> tuple[str, str]:
                 room_id=room_id,
                 player_id=player_id,
                 name="阿福",
-                attributes={"STR": 50, "CON": 50},
+                # SIZ 是 2026-08-14 补的：`resolve_max_hp` 没有 `HP_MAX` 备份时
+                # 要靠 (CON+SIZ)/10 重算，缺一项就只能显式不封顶。真实建卡流程
+                # 一定产出全部九项属性，夹具此前只写两项是简化过头了。
+                attributes={"STR": 50, "CON": 50, "SIZ": 50},
                 skills={},
                 derived_stats={"HP": 10, "SAN": 55, "MP": 11},
             )
@@ -215,6 +218,44 @@ async def test_adjust_player_hp_damage_and_floor() -> None:
         derived = character.derived_stats or {}
         assert derived["HP"] == 0
         assert derived["HP_MAX"] == 10
+
+
+async def test_healing_adds_hp_back_but_never_above_the_cap() -> None:
+    """🔴 2026-08-14 实测：叙事写了清创、缝针、留院观察一晚，HP 却从被抓伤那刻
+    起再没动过——因为规则 3a 只写了扣减，回血那半句**根本不存在**。
+
+    补上规则的同时必须封顶：在此之前 delta 只可能是负数，没有上限也不出事。
+    """
+    room_id, player_id = await _seed_with_character("NPC005")
+    deps = _deps(room_id, player_id)
+
+    await adjust_hp_impl(deps, -6, "被米-戈爪击抓住")
+    text = await adjust_hp_impl(deps, 3, "医生缝合并包扎")
+    assert "4 → 7" in text
+
+    # 治疗量超过缺口时停在上限，不会顶出去
+    text = await adjust_hp_impl(deps, 99, "住院静养一周")
+    assert "→ 10" in text
+
+    async with _session_factory() as db:
+        character = await db.get(Character, (await _character_id(room_id)))
+        assert character is not None
+        assert (character.derived_stats or {})["HP"] == 10
+
+
+async def test_the_cap_holds_even_before_any_damage_backed_up_hp_max() -> None:
+    """必然失败样本：没受过伤的卡上根本没有 `HP_MAX`（它是首次改 HP 时才备份的）。
+    直接读那一格会漏封顶，所以走 `resolve_max_hp` 的公式重算这条来源。"""
+    room_id, player_id = await _seed_with_character("NPC006")
+    deps = _deps(room_id, player_id)
+
+    async with _session_factory() as db:
+        character = await db.get(Character, (await _character_id(room_id)))
+        assert character is not None
+        assert "HP_MAX" not in (character.derived_stats or {})  # 前提
+
+    text = await adjust_hp_impl(deps, 5, "喝了口热汤")
+    assert "10 → 10" in text
 
 
 async def _character_id(room_id: str) -> str:

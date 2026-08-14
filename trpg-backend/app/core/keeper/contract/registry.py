@@ -304,6 +304,19 @@ class TurnFacts:
     #: `movement` 读。没声明就是 None。
     scene_name_declared: str | None = None
 
+    #: 本轮**写了**「当前场景」但值跟上一轮**一模一样**。同样 `world_state`
+    #: 写、`movement` 读。
+    #:
+    #: 🔴 它跟 `scene_name_declared` 是互斥的两半，缺了它就没法区分「没提场景」
+    #: 和「明说了场景没变」——而这两件事对节点指针的含义完全不同：
+    #: 前者是"这一轮我用 current_node_id 表达移动"（合法），后者是"我确认还在
+    #: 原地"，那时再把指针挪到别的节点就是**自相矛盾**。
+    #:
+    #: 实据（2026-08-14 真人实测）：玩家在温特公寓连查四轮，每一轮裁决都写
+    #: `当前场景=温特公寓`（原样重写）**同时**把 `current_node_id` 改成
+    #: `investigation-start`。十次错误全是这个形状，一次例外都没有。
+    scene_name_restated: bool = False
+
     #: 本轮真的揭开了新线索。`clue_reveal`（order=70）写，`closure`（order=85）读
     #: ——**还在往外掏线索的那一轮不许收尾**。
     #: 注意是"真的揭开了"而不是"裁决里写了"：编造的 pair id 会被 clue_reveal 跳过，

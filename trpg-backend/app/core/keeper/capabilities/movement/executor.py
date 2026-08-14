@@ -9,6 +9,7 @@ from app.core.keeper.capabilities.movement.schema import PlayerMove as _Move
 from app.core.keeper.contract.registry import TurnFacts
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.runtime.location_state import (
+    IMPROVISED_ID_PREFIX,
     clear_current_node_impl,
     create_improvised_location_impl,
     move_player_impl,
@@ -18,6 +19,8 @@ from app.core.keeper.runtime.location_state import (
     set_stealth_impl,
     snapshot_locations,
 )
+from app.core.keeper.runtime.scene_state import load_current_node_id
+from app.models.room import Room
 
 logger = structlog.get_logger()
 
@@ -46,6 +49,50 @@ def _position_left_the_map(attempted_node_id: str | None, facts: TurnFacts) -> b
     if attempted_node_id:
         return True
     return facts.scene_name_declared is not None
+
+
+async def _repoint_verdict(deps: KeeperDeps, node_id: str, facts: TurnFacts) -> str | None:
+    """本轮自己说了「场景没变」，却要把指针挪到**别的**节点——自相矛盾。
+
+    返回 `"block"`（拦下）/ `"warn"`（记 issue 但照常执行）/ `None`（没问题）。
+
+    ## 🔴 实据（2026-08-14 真人实测）
+
+    玩家在温特公寓连查四轮（翻抽屉、查通讯录、看档案夹），每一轮裁决都写
+    `当前场景=温特公寓`（**原样重写，值没变**）**同时**把 `current_node_id`
+    改成 `investigation-start`。那个 id 是存在的（所以既有的存在性校验拦不住），
+    标题叫「调查起点」，在任何调查场景下模型都觉得它像对的。
+
+    下游后果不是"显示错了"：护栏按节点取 `checks[]`，日志里因此出现 4 次
+    「当前场景『地窖』模组标注检定点为 `['dodge']`，不允许即兴 spot-hidden」
+    ——门在按错误的节点执行。十次错误全是这个形状。
+
+    ## 🔴 为什么分成「拦」和「只报」两档
+
+    「场景名没变却改节点」并**不总是**错的：两个不同节点可以有同一个显示名
+    （`test_node_id_change_injects_even_when_scene_text_matches` 守着这条——
+    玩家移动到另一处也叫这个名字的地方，那时该注入过渡拍）。语义上区分不开
+    "错误改写"和"移动到同名地点"，硬拦就会误伤真实需求。
+
+    但有一个**完全确定**的子集：**人当前站在即兴地点（`loc-N`）上**。
+    `loc-N` 的语义就是"剧本里没有这个地方"——既然场景没变、人还站在剧本外，
+    那么把指针挪到任何剧本节点都是错的，不存在"同名的另一处"这种解释。
+    实测十次里有八次正是这一种（`loc-5` 温特公寓 → `investigation-start`）。
+
+    剩下那两次（剧本节点之间）只记 issue、不阻断——同 `_entity_name_in_key`
+    的先例：**代码判得了触发条件但判不准该不该拦时，报而不断**。它按
+    `exec/20` 的口径登记为概率性改进，别把它说成"已修复"。
+    """
+    if not facts.scene_name_restated:
+        return None
+    async with deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        current = load_current_node_id(room.keeper_state if room is not None else None)
+    if current is None or current == node_id:
+        return None
+    if current.startswith(IMPROVISED_ID_PREFIX) and not node_id.startswith(IMPROVISED_ID_PREFIX):
+        return "block"
+    return "warn"
 
 
 async def execute_movement(
@@ -119,6 +166,24 @@ async def execute_movement(
         handed_to_moves = False
 
     located = landing_handled
+    if node_id and (verdict := await _repoint_verdict(deps, node_id, facts)) is not None:
+        # 自相矛盾：这一轮明写了「当前场景」且值没变（= 人还在原地），却要把
+        # 节点指针挪到别处。两档处理的理由与实据见 `_repoint_verdict`。
+        #
+        # 🔴 这道门配着一条走得通的修法：真的移动了，就把「当前场景」也改掉
+        # ——那本来就是规则 4 要求的（「玩家移动后**必须**更新『当前场景』
+        # **并且**把 current_node_id 设为对应 id」）。
+        issues.append(
+            f"场景定位{'未执行' if verdict == 'block' else '可疑'}："
+            f"本轮写的「当前场景」跟上一轮相同（人还在原地），"
+            f"不该同时把场景节点改成 {node_id!r}"
+        )
+        if verdict == "block":
+            node_id = None
+        else:
+            logger.warning(
+                "keeper_repoint_while_scene_unchanged", room_id=deps.room_id, node_id=node_id
+            )
     if node_id:
         # node_id 存在性由 set_current_node_impl 校验（module.node_by_id）——
         # 非法 id 不写入、记为 issue，不炸整轮。

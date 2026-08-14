@@ -25,6 +25,8 @@ from app.core.keeper.capabilities.agenda.state import (
     format_agenda_status,
     load_fired_agenda,
 )
+from app.core.keeper.capabilities.movement.schema import NewLocation
+from app.core.keeper.capabilities.world_state.schema import StateUpdate
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import (
     load_module,
@@ -34,7 +36,7 @@ from app.core.keeper.contract.module_loader import (
 )
 from app.core.keeper.narration.prompts import format_turn_input
 from app.core.keeper.runtime.deps import KeeperDeps
-from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
+from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY, SCENE_NAME_KEY
 from app.core.keeper.runtime.turn_executor import execute_side_effects
 from app.models.event import Event
 from app.models.room import Character, Player, Room
@@ -359,6 +361,121 @@ async def test_execute_side_effects_valid_node_id_updates_state(deps: KeeperDeps
     # 按内容认，不按条数：每加一片能力都可能往报告里多写一行
     # （`closure` 就多了「去过的地方新增」），按下标断言会被无关能力弄红。
     assert any("hall" in line for line in report)
+    async with _session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        assert (room.keeper_state or {}).get(CURRENT_NODE_KEY) == "hall"
+
+
+async def test_repointing_off_an_improvised_location_while_the_scene_holds_is_blocked(
+    deps: KeeperDeps,
+) -> None:
+    """🔴 2026-08-14 真人实测的确切形状（十次里的八次）：玩家在温特公寓（即兴地点
+    `loc-N`）连查四轮，每一轮裁决都写 `当前场景=温特公寓`（**原样重写，值没变**）
+    **同时**把 `current_node_id` 改成 `investigation-start`。那个 id 存在（所以
+    既有的存在性校验拦不住），标题叫「调查起点」，在任何调查场景下都像是对的。
+
+    人站在 `loc-N` 上就意味着"剧本里没有这个地方"——场景又没变，那么挪到任何
+    剧本节点都是错的，不存在"同名的另一处"这种解释。所以这一支**拦**。
+
+    下游后果是护栏按错误节点取 `checks[]`（日志里 4 次「不允许即兴该技能」）。
+    """
+    await execute_side_effects(
+        deps,
+        KeeperDecision(
+            new_location=NewLocation(name="温特公寓", from_id="hall"),
+            state_updates=[StateUpdate(subject="world", key=SCENE_NAME_KEY, value="温特公寓")],
+        ),
+    )
+    async with _session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        here = (room.keeper_state or {}).get(CURRENT_NODE_KEY)
+    assert here is not None and here.startswith("loc-"), "前提：人站在即兴地点上"
+
+    _report, issues = await execute_side_effects(
+        deps,
+        KeeperDecision(
+            current_node_id="hall",
+            state_updates=[StateUpdate(subject="world", key=SCENE_NAME_KEY, value="温特公寓")],
+        ),
+    )
+    assert any("未执行" in i and "人还在原地" in i for i in issues)
+    async with _session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        assert (room.keeper_state or {}).get(CURRENT_NODE_KEY) == here, "指针不该被挪走"
+
+
+async def test_repointing_between_script_nodes_is_only_flagged_not_blocked(
+    deps: KeeperDeps,
+) -> None:
+    """🔴 剧本节点之间那一支**只报不拦**：两个不同节点可以有同一个显示名
+    （`test_node_id_change_injects_even_when_scene_text_matches` 守着那条真实
+    需求）。语义上区分不开"错误改写"与"移动到同名的另一处"，硬拦会误伤。
+
+    按 `exec/20` 的口径，这一半是概率性改进，不是保证。
+    """
+    await execute_side_effects(
+        deps,
+        KeeperDecision(
+            current_node_id="cellar",
+            state_updates=[StateUpdate(subject="world", key=SCENE_NAME_KEY, value="地窖")],
+        ),
+    )
+    _report, issues = await execute_side_effects(
+        deps,
+        KeeperDecision(
+            current_node_id="hall",
+            state_updates=[StateUpdate(subject="world", key=SCENE_NAME_KEY, value="地窖")],
+        ),
+    )
+    assert any("可疑" in i for i in issues)
+    async with _session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        assert (room.keeper_state or {}).get(CURRENT_NODE_KEY) == "hall", "只报不拦，照常执行"
+
+
+async def test_moving_and_saying_so_is_allowed(deps: KeeperDeps) -> None:
+    """场景名**变了** + 改节点 = 一次正常的移动，门不该碰它。"""
+    await execute_side_effects(
+        deps,
+        KeeperDecision(
+            current_node_id="cellar",
+            state_updates=[StateUpdate(subject="world", key=SCENE_NAME_KEY, value="地窖")],
+        ),
+    )
+    _report, issues = await execute_side_effects(
+        deps,
+        KeeperDecision(
+            current_node_id="hall",
+            state_updates=[StateUpdate(subject="world", key=SCENE_NAME_KEY, value="门厅")],
+        ),
+    )
+    assert not any("人还在原地" in i for i in issues)
+    async with _session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        assert (room.keeper_state or {}).get(CURRENT_NODE_KEY) == "hall"
+
+
+async def test_not_mentioning_the_scene_at_all_is_left_alone(deps: KeeperDeps) -> None:
+    """🔴 **「没提场景」跟「明说没变」是两回事**，这道门只管后者。
+
+    用 `current_node_id` 单独表达移动是合法的一条路（`movement` 的 prompt 就是
+    这么教的）。第一版的门连这条路一起拦了，当场打红 23 条既有测试——
+    **作用域越小越该单独开窄路**。
+    """
+    await execute_side_effects(
+        deps,
+        KeeperDecision(
+            current_node_id="cellar",
+            state_updates=[StateUpdate(subject="world", key=SCENE_NAME_KEY, value="地窖")],
+        ),
+    )
+    _report, issues = await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    assert not any("人还在原地" in i for i in issues)
     async with _session_factory() as db:
         room = await db.get(Room, deps.room_id)
         assert room is not None

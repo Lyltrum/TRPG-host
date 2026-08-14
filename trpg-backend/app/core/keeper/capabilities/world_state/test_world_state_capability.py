@@ -20,6 +20,11 @@ from app.core.coc7.content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.capabilities.world_state.executor import update_state_impl
+from app.core.keeper.capabilities.world_state.game_time import (
+    GAME_TIME_KEY,
+    goes_backwards,
+    parse_game_time,
+)
 from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
 from app.models.event import Event
@@ -185,13 +190,65 @@ async def test_state_subject_accepts_a_node(deps: KeeperDeps) -> None:
 
 async def test_world_level_state_keeps_a_bare_key(deps: KeeperDeps) -> None:
     """不属于任何实体的（时间/天气/委托进度）仍然是裸键，不强行套一个假主体。"""
-    line, issue = await update_state_impl(deps, "游戏内时间", "第2天 夜晚", "world")
+    line, issue = await update_state_impl(deps, GAME_TIME_KEY, "第2天 夜晚", "world")
     assert issue is None
     assert "游戏内时间 = 第2天 夜晚" in line
     async with _session_factory() as db:
         room = await db.get(Room, deps.room_id)
         assert room is not None
         assert room.keeper_state == {"游戏内时间": "第2天 夜晚"}
+
+
+def test_parsing_game_time() -> None:
+    assert parse_game_time("第2天 夜晚") == (2, 7)
+    assert parse_game_time("第10天 清晨") == (10, 2)
+    # 只有一半也算数：模组里「第3天」「夜里」都单独出现过
+    assert parse_game_time("第3天") == (3, 0)
+    assert parse_game_time("傍晚时分") == (0, 6)
+    # 完全认不出来 → None（放行，不是报错）
+    assert parse_game_time("案发之后的某个时候") is None
+    assert parse_game_time("") is None
+    assert parse_game_time(None) is None
+
+
+def test_synonyms_of_the_same_period_do_not_count_as_going_backwards() -> None:
+    """🔴 「傍晚」「黄昏」分不出先后，就别硬分——分不出来的宁可判成"没变"，
+    也不要判成"倒流"然后把一次合法的写入拒掉。"""
+    assert not goes_backwards("第2天 傍晚", "第2天 黄昏")
+    assert not goes_backwards("第2天 晚上", "第2天 夜晚")
+    # 认不出来的那一边一律放行
+    assert not goes_backwards("案发之后", "第1天 清晨")
+    assert not goes_backwards("第5天 深夜", "过了很久")
+
+
+async def test_game_time_cannot_run_backwards(deps: KeeperDeps) -> None:
+    """🔴 2026-08-14：时间此前是纯写给模型看的字符串，**没有任何代码路径会因为
+    它写错而出问题**——所以实测一整局只更新过一次也没人知道。倒流是代码判得了
+    的记账错误，直接拒。"""
+    await update_state_impl(deps, GAME_TIME_KEY, "第2天 清晨", "world")
+    with pytest.raises(KeeperToolError, match="不能倒流"):
+        await update_state_impl(deps, GAME_TIME_KEY, "第1天 夜晚", "world")
+    # 同一天里往回退也拒
+    with pytest.raises(KeeperToolError, match="不能倒流"):
+        await update_state_impl(deps, GAME_TIME_KEY, "第2天 凌晨", "world")
+
+    # 往前推、原地不动都放行
+    await update_state_impl(deps, GAME_TIME_KEY, "第2天 下午", "world")
+    await update_state_impl(deps, GAME_TIME_KEY, "第2天 下午", "world")
+    async with _session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        assert (room.keeper_state or {})[GAME_TIME_KEY] == "第2天 下午"
+
+
+async def test_an_unparseable_time_is_let_through(deps: KeeperDeps) -> None:
+    """认不出格式的一律放行——不认识的写法不该变成"你不许写"。"""
+    await update_state_impl(deps, GAME_TIME_KEY, "第2天 夜晚", "world")
+    await update_state_impl(deps, GAME_TIME_KEY, "案发之后的某个时候", "world")
+    async with _session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        assert (room.keeper_state or {})[GAME_TIME_KEY] == "案发之后的某个时候"
 
 
 async def test_unknown_subject_is_refused(deps: KeeperDeps) -> None:

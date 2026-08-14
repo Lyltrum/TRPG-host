@@ -11,6 +11,7 @@ from __future__ import annotations
 import structlog
 from pydantic import BaseModel
 
+from app.core.keeper.capabilities.world_state.game_time import GAME_TIME_KEY, goes_backwards
 from app.core.keeper.contract.module_loader import ScenarioModule, iter_all_nodes
 from app.core.keeper.contract.registry import TurnFacts
 from app.core.keeper.primitives.npcs import resolve_npc_id
@@ -93,8 +94,16 @@ async def update_state_impl(
         room = await db.get(Room, deps.room_id)
         if room is None:
             raise KeeperToolError("房间不存在")
+        current_state = room.keeper_state or {}
+        # 🔴 时间不许倒流（2026-08-14）：这是**代码判得了**的记账错误，不是
+        # 语义判断。此前时间是一个纯写给模型自己看的字符串，没有任何代码路径
+        # 会因为它写错而出问题——「加了字段没有消费方 = 没加」。
+        if stored_key == GAME_TIME_KEY and goes_backwards(current_state.get(stored_key), value):
+            raise KeeperToolError(
+                f"游戏内时间不能倒流：现在是 {current_state.get(stored_key)!r}，不能改成 {value!r}"
+            )
         # ⚠️ JSON 列整体重新赋值（同 write_stat 的原因）。
-        room.keeper_state = {**(room.keeper_state or {}), stored_key: value}
+        room.keeper_state = {**current_state, stored_key: value}
         await record_event(db, deps, "keeper.state", {"key": stored_key, "value": value})
     return f"已记录：{stored_key} = {value}", issue
 
@@ -129,12 +138,12 @@ async def execute_state_updates(
     issues: list[str] = []
     previous_scene = await _current_scene_name(deps)
     for update in getattr(decision, "state_updates", ()):
-        if (
-            update.key == SCENE_NAME_KEY
-            and update.value.strip()
-            and update.value.strip() != previous_scene
-        ):
-            facts.scene_name_declared = update.value
+        if update.key == SCENE_NAME_KEY and update.value.strip():
+            if update.value.strip() != previous_scene:
+                facts.scene_name_declared = update.value
+            elif previous_scene is not None:
+                # 明说了「还在原地」。跟"没提场景"是两回事——见 TurnFacts 的注释。
+                facts.scene_name_restated = True
         try:
             line, issue = await update_state_impl(deps, update.key, update.value, update.subject)
             report.append(line)

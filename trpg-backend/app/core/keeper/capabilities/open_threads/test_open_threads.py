@@ -25,6 +25,7 @@ from app.core.keeper.capabilities.open_threads.schema import NewThread
 from app.core.keeper.capabilities.open_threads.state import (
     OPEN_THREADS_KEY,
     OPEN_THREADS_SEQ_KEY,
+    format_open_threads,
     load_open_threads,
     load_thread_seq,
     next_thread_id,
@@ -33,6 +34,7 @@ from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import ScenarioModule
 from app.core.keeper.contract.registry import Capability
 from app.core.keeper.runtime.deps import KeeperDeps
+from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
 from app.core.keeper.runtime.turn_executor import execute_side_effects
 from app.models.room import Player, Room
 
@@ -230,4 +232,66 @@ async def test_the_model_cannot_overwrite_the_table_through_state_updates(deps) 
         ),
     )
     assert issues and "系统记账" in issues[0]
-    assert await _threads(deps) == {"thread-1": {"text": "米-戈仍在追击"}}
+    assert (await _threads(deps))["thread-1"]["text"] == "米-戈仍在追击"
+
+
+# ── 作用域：一条处境在哪成立（2026-08-14 实测） ─────────────────────
+
+
+def test_a_thread_opened_elsewhere_is_listed_apart_from_the_ones_here() -> None:
+    """🔴 实测：`「看护仍在身后追赶」`在疗养院开出来，跟着玩家跨了三个地点、
+    追了 25 分钟，最后跟米-戈同框——因为它只有 `{id, text}`，没有作用域。
+
+    修法不是自动关掉（追击**可以**跨地点，自动关会误杀），而是把判断的输入
+    摆准：离开原地之后单列一组，明说"多半已经不成立"。
+    """
+    state = {
+        OPEN_THREADS_KEY: {
+            "thread-1": {"text": "看护仍在身后追赶", "node": "asylum"},
+            "thread-2": {"text": "地窖里有东西在动", "node": "cellar"},
+        },
+        CURRENT_NODE_KEY: "cellar",
+    }
+    text = format_open_threads(state)
+    here, elsewhere = text.split("🔴")
+    assert "地窖里有东西在动" in here
+    assert "每一轮都仍然成立" in here
+    assert "看护仍在身后追赶" in elsewhere
+    assert "已经不成立" in elsewhere
+    assert "asylum" in elsewhere  # 说清楚是在哪开的
+
+
+def test_a_thread_left_behind_is_still_listed_so_it_can_be_closed() -> None:
+    """🔴 降级**不能**变成不列出：这块是模型挑 id 的白名单，没列出来的它就
+    关不掉，那条记录会永远躺在 keeper_state 里（`#46` 那个形状）。"""
+    state = {
+        OPEN_THREADS_KEY: {"thread-1": {"text": "看护仍在身后追赶", "node": "asylum"}},
+        CURRENT_NODE_KEY: "cellar",
+    }
+    text = format_open_threads(state)
+    assert "thread-1" in text
+    assert "resolved_threads" in text
+
+
+def test_threads_without_a_node_behave_exactly_as_before() -> None:
+    """老对局的条目没有 `node`——那表示"不知道在哪成立"，按到处都成立处理，
+    与加这个字段之前**逐字一致**（退化保证）。"""
+    state = {
+        OPEN_THREADS_KEY: {"thread-1": {"text": "米-戈仍在追击"}},
+        CURRENT_NODE_KEY: "cellar",
+    }
+    text = format_open_threads(state)
+    assert "🔴" not in text
+    assert "每一轮都仍然成立" in text
+
+
+async def test_opening_a_thread_records_where_it_happened(deps) -> None:
+    """写入侧：开的时候就记下当前节点，否则读出来永远没有作用域。"""
+    async with deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        room.keeper_state = {**(room.keeper_state or {}), CURRENT_NODE_KEY: "asylum"}
+        await db.commit()
+
+    await execute_side_effects(deps, KeeperDecision(new_threads=[NewThread(text="看护在追")]))
+    assert (await _threads(deps))["thread-1"]["node"] == "asylum"

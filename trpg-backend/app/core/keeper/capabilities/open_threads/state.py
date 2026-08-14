@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 from app.core.keeper.contract.registry import SituationContext
+from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
 
 #: 悬而未决的事。由本能力的 `reserved_state_keys` 声明出去，`state_updates` 改不动。
 OPEN_THREADS_KEY = "悬而未决"
@@ -49,7 +50,12 @@ OPEN_THREADS_SOFT_LIMIT = 12
 
 
 def load_open_threads(keeper_state: dict | None) -> dict[str, dict]:
-    """解析悬而未决表。形状不对的条目整条丢弃，不产生半条记录。"""
+    """解析悬而未决表。形状不对的条目整条丢弃，不产生半条记录。
+
+    `node` 是**这条处境在哪成立的**（2026-08-14 加，见 `format_open_threads`）。
+    老对局的条目没有这个键，读出来是 `None` —— 那表示"不知道在哪成立"，
+    按"到处都成立"处理，与加这个字段之前**逐字一致**。
+    """
     if not keeper_state:
         return {}
     raw = keeper_state.get(OPEN_THREADS_KEY)
@@ -62,7 +68,11 @@ def load_open_threads(keeper_state: dict | None) -> dict[str, dict]:
         text = str(payload.get("text") or "").strip()
         if not thread_id or not text:
             continue
-        out[str(thread_id)] = {"text": text}
+        node = payload.get("node")
+        entry: dict = {"text": text}
+        if isinstance(node, str) and node.strip():
+            entry["node"] = node.strip()
+        out[str(thread_id)] = entry
     return out
 
 
@@ -99,16 +109,51 @@ def format_open_threads(keeper_state: dict | None) -> str:
     🔴 **必须全量列出，不许"只显示最近 N 条"**：这块就是模型挑 id 的白名单，
     没列出来的对它等于不存在，它会把同一件事重新开一条。裁剪只能针对存储，
     不能针对展示（判据同即兴地点，`exec/32 §7.2`）。
+
+    ## 🔴 按「在哪成立」分两组（2026-08-14 真人实测）
+
+    实测里一条 `「看护仍在身后追赶」`在疗养院开出来，然后**跟着玩家跑了 25
+    分钟、跨了三个地点**：开车两小时到度假屋、下地窖、钻土室，裁决每一轮都在
+    写"看护仍在追，威胁成立"——最后跟米-戈同框。
+
+    根因不是模型笨，是**这条 thread 没有作用域**：它只有 `{id, text}`，
+    没有"在哪儿才算数"，于是每一轮都被原样读到。
+
+    修法不是自动关掉（追击**可以**跨地点，自动关会误杀），而是**把判断的输入
+    摆准**：离开原地之后单列一组，明说"多半已经不成立"。关不关仍由模型决定，
+    但它现在看得见这条信息了。这跟 `san_check` 那条判据同源——
+    **能确定化的是判断的输入，不是判断本身。**
     """
     table = load_open_threads(keeper_state)
     if not table:
         return ""
-    lines = [f"- {thread_id}：{entry['text']}" for thread_id, entry in table.items()]
-    return (
-        "这些事还悬着，**每一轮都仍然成立**，叙事时要把它们算进当前处境；"
-        "已经了结的（威胁被摆脱、期限到了、东西找到了）必须写进 "
-        "`resolved_threads`——不写就一直挂着。\n" + "\n".join(lines)
-    )
+    here = (keeper_state or {}).get(CURRENT_NODE_KEY)
+
+    def _line(thread_id: str, entry: dict) -> str:
+        return f"- {thread_id}：{entry['text']}"
+
+    # 没记 node 的（老对局）算"到处都成立"，跟加这个字段之前一致。
+    standing = {
+        tid: e for tid, e in table.items() if not e.get("node") or not here or e["node"] == here
+    }
+    left_behind = {tid: e for tid, e in table.items() if tid not in standing}
+
+    parts = []
+    if standing:
+        parts.append(
+            "这些事还悬着，**每一轮都仍然成立**，叙事时要把它们算进当前处境；"
+            "已经了结的（威胁被摆脱、期限到了、东西找到了）必须写进 "
+            "`resolved_threads`——不写就一直挂着。\n"
+            + "\n".join(_line(tid, e) for tid, e in standing.items())
+        )
+    if left_behind:
+        parts.append(
+            "🔴 下面这几条是在**别的地方**开的，调查员已经离开那里了——"
+            "除非它明确追了过来（对方会追、期限还在走），否则它**已经不成立**，"
+            "这一轮就该写进 `resolved_threads` 关掉，更不要拿它当当前的威胁来演：\n"
+            + "\n".join(f"{_line(tid, e)}（发生在 {e['node']}）" for tid, e in left_behind.items())
+        )
+    return "\n\n".join(parts)
 
 
 def render_open_threads(context: SituationContext) -> str:

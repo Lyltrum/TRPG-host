@@ -16,6 +16,11 @@ import { useRuleset } from '@/hooks/useRuleset'
 import { useSpeechInput } from '@/hooks/useSpeechInput'
 import TypedNarration from './TypedNarration'
 import { mergeRoomHistory, shouldShowThinking } from './room-history'
+import {
+  TIMELINE_EVENT_RENDERERS,
+  checkResultToEventPayload,
+  formatCheckLine,
+} from './timeline-events'
 
 // ─── Types ───────────────────────────────────────────
 interface Message {
@@ -788,6 +793,17 @@ export default function RoomPage() {
               time: t,
               isSelf,
             })
+          } else {
+            // 🔴 其余"要显示在时间线上的事件"走**共用的那张表**（#82）。
+            // 不要在这里继续加 `else if`——掷骰卡片刷新就没了，正是因为这段
+            // 只认上面两种。新增一类就在 timeline-events.ts 加一行，实时与
+            // 回放同时生效。
+            const render = TIMELINE_EVENT_RENDERERS[ev.eventType]
+            const message = render?.(payload)
+            if (message) {
+              if (!dedupe(`evt:${ev.id}`, ev.id)) continue
+              boot.push({ ...message, time: t, isSelf: ev.playerId === playerId })
+            }
           }
         }
         // 仍无旁白：只显示等待提示，不客户端垫第二段开场。
@@ -968,16 +984,14 @@ export default function RoomPage() {
           time: now,
         }])
       } else if (envelope.type === 'check.result') {
-        const { playerId: rollerId, skill, rollValue, targetValue, result, checkRequestId } = envelope.payload
-        // 对抗检定（exec/19 #38）：对手侧也由服务端掷骰，一起显示——玩家要
-        // 看得见自己输在哪一掷，不能只给一个"你失败了"。
-        const opposed = envelope.payload.opposedOpponent
-          ? ` vs ${envelope.payload.opposedOpponent} ${envelope.payload.opposedRollValue}/${envelope.payload.opposedTargetValue} · ${envelope.payload.opposedWon ? '胜' : '负'}`
-          : ''
+        const { playerId: rollerId, checkRequestId } = envelope.payload
+        // 🔴 文案走**跟重连回放同一个** `formatCheckLine`（#82）：两边各写一份
+        // 正是"刷新之后掷骰卡片就没了"的成因。这里只负责把 WS payload 适配成
+        // 落库形状。
         setMessages(prev => [...prev, {
           type: 'dice',
           sender: nicknameFor(rollerId),
-          content: `${skill} · ${rollValue}/${targetValue ?? '?'} · ${result}${opposed}`,
+          content: formatCheckLine(checkResultToEventPayload(envelope.payload)),
           time: now,
           isSelf: rollerId === playerId,
         }])
@@ -1670,16 +1684,25 @@ export default function RoomPage() {
       {/* 🔴 我在哪（exec/33 §5.4）。真人多人实测里系统把队友拖进了地下室，而
           界面上**一处都没有位置信息**，于是没有任何人会发现——这条的作用是把
           静默错误变成看得见、能当场纠正的错误。
-          只在**真的分头**时出现（otherGroups > 0）：全队在一起时它是噪声。 */}
-      {channel === 'dm' && party && party.otherGroups > 0 && (
+
+          🔴 **2026-08-14：条件从 `otherGroups > 0` 放宽成"有位置就显示"。**
+          原来只在真的分头时出现，理由是"全队在一起时它是噪声"——那个判断在
+          多人语境下成立，但它同时把**单人局**（otherGroups 恒为 0）整个排除掉了。
+          单人真机实测里玩家两次开口问「我现在在哪」：这个信息不是分头才需要的，
+          是**每一局都需要的**。判据是那条老的——「功能写在某个实现里，换一个
+          实现就悄悄没了」。数据一直都在（后端对所有人都推 party.update）。 */}
+      {channel === 'dm' && party && party.locationName && (
         <div className="relative z-[1] px-3 pt-2 flex-shrink-0">
           <div className="paper-grain relative bg-note text-ink border-l-[3px] border-brass px-3 py-2">
             <div className="text-[11.5px] leading-[1.6]">
-              <strong className="font-semibold">你在{party.locationName ?? '未记录的地方'}</strong>
+              <strong className="font-semibold">你在{party.locationName}</strong>
               {party.companions.length > 1 && (
                 <span className="text-ink-soft">· 同处：{party.companions.join('、')}</span>
               )}
-              <span className="text-ink-soft">· 另有 {party.otherGroups} 组调查员在别处</span>
+              {/* 分头相关的那一句仍然只在真的分头时出现——单人局说"另有 0 组"是噪声。 */}
+              {party.otherGroups > 0 && (
+                <span className="text-ink-soft">· 另有 {party.otherGroups} 组调查员在别处</span>
+              )}
             </div>
             {party.mergePendingAt && (
               <div className="mt-1.5 flex items-center gap-2">

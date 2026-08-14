@@ -31,11 +31,12 @@ from app.core.keeper.capabilities.san_check.state import (
     occupied_node_ids,
     san_point_ref,
 )
+from app.core.keeper.capabilities.world_state.schema import StateUpdate
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import ScenarioModule
 from app.core.keeper.runtime.deps import KeeperDeps
 from app.core.keeper.runtime.location_state import PLAYER_LOCATION_KEY
-from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
+from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY, SCENE_NAME_KEY
 from app.core.keeper.runtime.turn_executor import execute_side_effects
 from app.models.room import Character, Player, Room
 
@@ -205,9 +206,20 @@ async def _keeper_state(deps: KeeperDeps) -> dict:
         return dict(room.keeper_state or {})
 
 
+def _arrive_at(node_id: str, scene_name: str) -> KeeperDecision:
+    """一次到达：节点指针 + 场景名一起写（规则 4 要求的就是这两件事一起做）。"""
+    return KeeperDecision(
+        current_node_id=node_id,
+        state_updates=[StateUpdate(subject="world", key=SCENE_NAME_KEY, value=scene_name)],
+    )
+
+
 async def test_issuing_a_san_check_marks_the_point_at_that_node(solo) -> None:
     deps = solo
-    await execute_side_effects(deps, KeeperDecision(current_node_id="shrine"))
+    # 🔴 挪场景指针要**同时**声明新场景（2026-08-14 加的门）：规则原文要求的就是
+    # 这两件事一起做，只写 node 是没有依据的改写——实测里指针被写回「调查起点」
+    # 正是那个形状。这里照真实路径给两样。
+    await execute_side_effects(deps, _arrive_at("shrine", "神龛"))
     decision = KeeperDecision(
         san_checks=[SanCheckRequest(loss_on_success="0", loss_on_failure="1D6", reason="目睹")]
     )
@@ -219,7 +231,7 @@ async def test_issuing_a_san_check_marks_the_point_at_that_node(solo) -> None:
 async def test_a_san_check_somewhere_unannotated_marks_nothing(solo) -> None:
     """在没标注的节点上掷 SAN 完全合法（COC7 的基线表），但没有检定点可记。"""
     deps = solo
-    await execute_side_effects(deps, KeeperDecision(current_node_id="road"))
+    await execute_side_effects(deps, _arrive_at("road", "路上"))
     decision = KeeperDecision(
         san_checks=[SanCheckRequest(loss_on_success="0", loss_on_failure="1D3", reason="尸体")]
     )

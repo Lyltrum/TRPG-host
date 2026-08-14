@@ -30,7 +30,8 @@ keeper/
 │
 ├── capabilities/   🔴 一个能力一个目录，新人只读这一个
 │   ├── skill_check/  san_check/  health/  movement/  madness/  presence/
-│   └── world_state/  clue_reveal/  agenda/  progression/  open_threads/
+│   ├── world_state/  clue_reveal/  agenda/  progression/  open_threads/
+│   └── closure/      luck_spend/  cast/
 │
 ├── runtime/        编排与共享运行时状态（能力无关）
 │   ├── agent.py        KeeperAgent 门面（实现 Narrator 接口）

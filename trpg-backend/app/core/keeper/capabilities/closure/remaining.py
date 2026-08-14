@@ -30,7 +30,11 @@
 
 from __future__ import annotations
 
-from app.core.keeper.contract.module_loader import ScenarioModule, iter_all_nodes
+from app.core.keeper.contract.module_loader import (
+    ScenarioModule,
+    iter_all_nodes,
+    reachable_visibility_pairs,
+)
 from app.core.keeper.contract.registry import SituationContext
 from app.core.keeper.runtime.progress_state import (
     is_pair_revealed,
@@ -42,11 +46,17 @@ from app.core.keeper.runtime.progress_state import (
 
 
 def unrevealed_pair_count(module: ScenarioModule, keeper_state: dict | None) -> int | None:
-    """还有多少条线索配对没揭开。**没有配对数据时返回 None**，不是 0。"""
-    if not module.visibility_pairs:
+    """还有多少条**玩家揭得开的**线索配对没揭开。没有这类配对时返回 None，不是 0。
+
+    🔴 分母是 `reachable_visibility_pairs`，不是全部配对：真相侧不指向节点的
+    那些在结构上永远揭不开（林中屋 6 条里有 3 条指向 NPC id），留在分母里
+    等于这道门永远过不去。理由与判据见那个函数的 docstring。
+    """
+    reachable = reachable_visibility_pairs(module)
+    if not reachable:
         return None
     revealed = load_revealed_clues(keeper_state)
-    return sum(1 for pair in module.visibility_pairs if not is_pair_revealed(revealed, pair.id))
+    return sum(1 for pair in reachable if not is_pair_revealed(revealed, pair.id))
 
 
 def unfired_agenda_count(module: ScenarioModule, keeper_state: dict | None) -> int | None:
@@ -85,6 +95,43 @@ def _line(label: str, remaining: int | None, total: int, missing_note: str) -> s
     return f"- {label}：还剩 {remaining} / 共 {total}"
 
 
+#: 连续几轮没有新进展之后，那一行从「参考信息」升级成「本轮的硬要求」。
+#:
+#: 🔴 **这个信号此前没有任何消费方**（2026-08-14 实测：一局跑到 `无进展轮数=26`，
+#: 而它只是局面块里一句陈述）。症状是玩家连说四轮「继续走」，拿到四段越来越像
+#: 的洞穴描写——最后两拍**逐字相同**。模型收不了场，因为那条即兴出来的窄洞
+#: 没有长度、没有终点，而"该给推力了"这件事没人告诉它。
+#:
+#: 取 3：真人 KP 在玩家第二、三次重复同一句话时就会动手。再往上等，玩家已经
+#: 在打转里待够久了。
+STALL_PUSH_THRESHOLD = 3
+
+
+def _stalled_line(stalled: int) -> str:
+    """无进展那一行。到阈值之后**换成一条硬要求**，不再只是陈述一个数字。
+
+    🔴 **确定性只到"触发"这一层**：`stalled` 是代码算的、阈值是代码判的，
+    所以这句要求一定会出现在 prompt 里；但"这一轮到底有没有给出推力"是语义，
+    代码判不了 ⇒ 按 `exec/20` 的口径这仍是**概率性改进**，汇报时不说"已修复"。
+    """
+    if stalled < STALL_PUSH_THRESHOLD:
+        return (
+            f"- 已经 {stalled} 轮没有新进展（没去新地方、没揭开新线索）"
+            "——这说明这桌人在打转，该给推力（线索、事件、NPC 上门），不是该收场"
+        )
+    return (
+        f"🔴 **已经 {stalled} 轮没有新进展了（没去新地方、没揭开新线索）——"
+        "这一轮必须让局面动起来，不许再写一段「继续往前走」的同质描写。**"
+        "从下面挑一个真的落地：\n"
+        "  ① **让路到头**：走到尽头 / 塌方 / 岔成两条 / 通到一个新地方（那就建一个新位置）；\n"
+        "  ② **让事件闯进来**：追的东西追上了、手电没电了、NPC 喊了一声、听见上面有动静；\n"
+        "  ③ **跳过过程**：「你们走了二十分钟，前面豁然开朗」——别一步一步陪着挪；\n"
+        "  ④ **给一条新线索**（配得上这个地方的，不要凭空发明关键真相）。\n"
+        "  这**不是**该收尾的信号——打转要推，不要收场"
+        "（`story_ran_its_course` 照旧看上面两行门槛）。"
+    )
+
+
 def format_remaining_content(module: ScenarioModule, keeper_state: dict | None) -> str:
     """渲染两行门槛 + 两行参考。参考那两行跟模组有没有配对数据无关，照样渲染。
 
@@ -101,8 +148,11 @@ def format_remaining_content(module: ScenarioModule, keeper_state: dict | None) 
             _line(
                 "未揭开的线索配对",
                 pairs,
-                len(module.visibility_pairs),
-                "这份模组没有配对数据，据此判断不了还剩多少线索",
+                # 分母跟 `unrevealed_pair_count` 用**同一个**集合。分子分母来自
+                # 两个不同的集合，是「报少了多少之前先确认两边同一个单位」那条
+                # 判据里已经用错过三次的形态。
+                len(reachable_visibility_pairs(module)),
+                "这份模组没有玩家揭得开的配对数据，据此判断不了还剩多少线索",
             ),
             _line(
                 "未触发的议程（只数一次性的）",
@@ -118,8 +168,7 @@ def format_remaining_content(module: ScenarioModule, keeper_state: dict | None) 
                 "这份模组没有节点",
             )
             + ("（分母含物品、遭遇这类去不了的节点，它天然到不了 0）" if nodes is not None else ""),
-            f"- 已经 {stalled} 轮没有新进展（没去新地方、没揭开新线索）"
-            "——这说明这桌人在打转，该给推力（线索、事件、NPC 上门），不是该收场",
+            _stalled_line(stalled),
         ]
     )
 

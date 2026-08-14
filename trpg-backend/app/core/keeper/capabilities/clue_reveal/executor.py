@@ -8,10 +8,13 @@ from app.core.keeper.capabilities.clue_reveal.pairs import (
     CLUES_REVEALED_KEY,
     ROOM_WIDE_OBSERVER,
     load_revealed_clues,
+    pairs_reached_by_nodes,
     serialize_revealed_clues,
 )
 from app.core.keeper.contract.registry import TurnFacts
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError, record_event
+from app.core.keeper.runtime.location_state import load_player_locations
+from app.core.keeper.runtime.progress_state import load_visited_nodes
 from app.models.room import Room
 
 
@@ -66,18 +69,51 @@ async def mark_clues_revealed_impl(
     return "密级揭开：" + "、".join(report) if report else "密级揭开：（无）"
 
 
+async def _auto_reveal_reached_pairs(deps: KeeperDeps) -> list[str]:
+    """按「玩家到过真相侧节点」自动揭开配对。**无条件跑，不看模型写了什么。**
+
+    理由见 `pairs.pairs_reached_by_nodes` 的 docstring：模型没有可写的东西，
+    所以这条路必须由代码走完，否则收尾门的分子永远是 0。
+
+    读位置用「去过的节点 ∪ 此刻所在」——本能力跑在 `closure` 的位置记账之前，
+    只读前者会漏掉本轮刚到的那个。
+    """
+    async with deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        keeper_state = dict(room.keeper_state or {}) if room is not None else {}
+    reached = set(load_visited_nodes(keeper_state))
+    reached.update(nid for nid in load_player_locations(keeper_state).values() if nid)
+    return pairs_reached_by_nodes(deps.module, load_revealed_clues(keeper_state), reached)
+
+
 async def execute_clues_revealed(
     deps: KeeperDeps, decision: BaseModel, facts: TurnFacts
 ) -> tuple[list[str], list[str]]:
     """先校验 pair id 合法性，再交给 `mark_clues_revealed_impl`。
 
     白名单外的 id 一律跳过并记 issue——同 `agenda_fired`：模型编造的 id 不进状态。
+
+    模型写的那条路之外还有一条**代码自己走的**（`_auto_reveal_reached_pairs`），
+    两者是"或"的关系；后者哪怕模型一个字没写也照跑。
     """
-    revealed = list(getattr(decision, "clues_revealed", ()))
-    if not revealed:
-        return [], []
     report: list[str] = []
     issues: list[str] = []
+
+    try:
+        auto = await _auto_reveal_reached_pairs(deps)
+    except KeeperToolError as exc:  # pragma: no cover — 只有房间不存在时才会到
+        issues.append(f"密级揭开未执行：{exc}")
+        auto = []
+    if auto:
+        try:
+            report.append(await mark_clues_revealed_impl(deps, auto))
+            facts.clues_revealed_this_turn = True
+        except KeeperToolError as exc:
+            issues.append(f"密级揭开未执行：{exc}")
+
+    revealed = list(getattr(decision, "clues_revealed", ()))
+    if not revealed:
+        return report, issues
     pair_ids_ok = {p.id for p in deps.module.visibility_pairs}
     valid_pairs: list[str] = []
     for pid in revealed:

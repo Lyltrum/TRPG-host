@@ -24,6 +24,7 @@ from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys
 from app.core.keeper.capabilities.closure.executor import execute_closure
 from app.core.keeper.capabilities.closure.remaining import (
+    STALL_PUSH_THRESHOLD,
     format_key_facts,
     format_remaining_content,
     unfired_agenda_count,
@@ -31,7 +32,7 @@ from app.core.keeper.capabilities.closure.remaining import (
     unvisited_node_count,
 )
 from app.core.keeper.contract.decision import KeeperDecision
-from app.core.keeper.contract.module_loader import load_module
+from app.core.keeper.contract.module_loader import load_module, reachable_visibility_pairs
 from app.core.keeper.contract.registry import TurnFacts
 from app.core.keeper.runtime.deps import KeeperDeps
 from app.core.keeper.runtime.location_state import PLAYER_LOCATION_KEY
@@ -60,7 +61,12 @@ _MODULE = load_module(str(_TESTS_DIR / "fixtures" / "keeper_module.json"))
 #: 树形结构有两个子节点字段，这就是"报数量前先确认口径"的现场。
 _ALL_NODES = 4
 _ONCE_AGENDA = "night-1-footprints"
+#: fixture 有 2 条配对，但只有 1 条**玩家揭得开**：`pair-hall-mud` 的真相侧是
+#: `cellar`（真节点），`pair-butler-faces` 的真相侧是 `butler-secret`（不是节点）。
+#: 🔴 2026-08-14 起分母只数前者——真相侧不指向节点的在结构上永远揭不开，
+#: 留在分母里就是「这道门永远过不去」（林中屋 6 条里有 3 条正是这样）。
 _PAIRS = 2
+_REACHABLE_PAIRS = 1
 
 _db_path = Path(tempfile.mkdtemp(prefix="trpg-keeper-closure-test-")) / "closure.db"
 _engine = create_async_engine(f"sqlite+aiosqlite:///{_db_path}", poolclass=NullPool)
@@ -170,8 +176,37 @@ def test_only_once_agenda_counts_as_remaining_content() -> None:
 
 
 def test_pair_count_reads_the_room_wide_ledger() -> None:
-    assert unrevealed_pair_count(_MODULE, {}) == _PAIRS
-    assert unrevealed_pair_count(_MODULE, {CLUES_REVEALED_KEY: "pair-hall-mud@*"}) == _PAIRS - 1
+    assert unrevealed_pair_count(_MODULE, {}) == _REACHABLE_PAIRS
+    assert unrevealed_pair_count(_MODULE, {CLUES_REVEALED_KEY: "pair-hall-mud@*"}) == 0
+
+
+def test_pairs_whose_secret_side_is_not_a_node_stay_out_of_the_denominator() -> None:
+    """🔴 2026-08-14 实测：林中屋 6 条配对里 3 条的真相侧是 **NPC id**
+    （`mi-go-1/2/3`），玩家没有任何办法揭开它们——留在分母里，这道门在结构上
+    永远过不去。判据是「发现一道门永远过不去时，先量一遍它的两个端点」。"""
+    reachable = reachable_visibility_pairs(_MODULE)
+    assert [p.id for p in reachable] == ["pair-hall-mud"]
+    assert len(_MODULE.visibility_pairs) == _PAIRS  # 另一条还在，只是不进分母
+    # 分子分母来自同一个集合：全揭开就是 0，不会卡在一个永远减不掉的余数上
+    assert unrevealed_pair_count(_MODULE, {CLUES_REVEALED_KEY: "pair-hall-mud@*"}) == 0
+
+
+def test_stalling_turns_into_a_hard_ask_once_it_crosses_the_threshold() -> None:
+    """🔴 2026-08-14 实测：这个信号跑到 26 轮，而它**没有任何消费方**——
+    只是局面块里一句陈述。症状是玩家连说四轮「继续走」，拿到四段越来越像的
+    洞穴描写，最后两拍**逐字相同**。
+
+    过阈值之后那一行要变成本轮的硬要求，并且要明确说这**不是**该收尾的信号
+    （打转要推、玩完了才收——同一个数不能既当油门又当刹车）。
+    """
+    calm = format_remaining_content(_MODULE, {STALLED_TURNS_KEY: STALL_PUSH_THRESHOLD - 1})
+    assert "这一轮必须让局面动起来" not in calm
+
+    stuck = format_remaining_content(_MODULE, {STALLED_TURNS_KEY: STALL_PUSH_THRESHOLD})
+    assert "这一轮必须让局面动起来" in stuck
+    assert "让路到头" in stuck and "让事件闯进来" in stuck and "跳过过程" in stuck
+    # 🔴 不能被读成"该收尾了"：两件相反的处境不共用一个信号
+    assert "该收尾的信号" in stuck and "打转要推，不要收场" in stuck
 
 
 def test_missing_data_degrades_explicitly_instead_of_reporting_zero() -> None:
@@ -184,12 +219,12 @@ def test_missing_data_degrades_explicitly_instead_of_reporting_zero() -> None:
     # 🔴 行为变更（2026-08-12）：三样存量全缺时**不再整块省略**——停滞轮数跟
     # 模组有没有数据无关，而"什么都数不出来的模组"恰恰是最需要它的那一种。
     bare_text = format_remaining_content(bare, {})
-    assert "没有配对数据" in bare_text
+    assert "没有玩家揭得开的配对数据" in bare_text
     assert "没有新进展" in bare_text
     # 只缺一样时那一行要说清楚缺了什么，不能写成 0
     no_pairs = _MODULE.model_copy(update={"visibility_pairs": []})
     text = format_remaining_content(no_pairs, {})
-    assert "没有配对数据" in text
+    assert "没有玩家揭得开的配对数据" in text
     assert "还剩 0" not in text
 
 
@@ -345,14 +380,29 @@ async def test_an_untriggered_once_agenda_blocks_the_close() -> None:
 
 async def test_unrevealed_pairs_block_the_close() -> None:
     """门的另一半：配对**全部**揭开才准收，不设比例阈值（拍出来的阈值永远调不完）。"""
-    room_id, player_id = await _seed(
-        "CLS510", _done_state(**{CLUES_REVEALED_KEY: "pair-hall-mud@*"})
-    )
+    room_id, player_id = await _seed("CLS510", _done_state(**{CLUES_REVEALED_KEY: ""}))
     _report, issues = await execute_closure(
         _deps(room_id, player_id), KeeperDecision(story_ran_its_course=True), TurnFacts()
     )
     assert any("配对没揭开" in i for i in issues)
     assert await _phase_of(room_id) != PHASE_ENDING
+
+
+async def test_a_pair_nobody_can_reach_does_not_block_the_close() -> None:
+    """🔴 2026-08-14：`pair-butler-faces` 的真相侧不是节点，玩家永远揭不开它。
+    唯一揭得开的那条揭开之后，门就该放行——否则这道门在结构上过不去。
+
+    这正是林中屋那一局的形状：6 条配对里 3 条指向 NPC id，收尾因此从来不可能
+    触发（整局 106 次裁决 `clues_revealed` 一次没写过）。
+    """
+    room_id, player_id = await _seed(
+        "CLS511", _done_state(**{CLUES_REVEALED_KEY: "pair-hall-mud@*"})
+    )
+    _report, issues = await execute_closure(
+        _deps(room_id, player_id), KeeperDecision(story_ran_its_course=True), TurnFacts()
+    )
+    assert not any("配对没揭开" in i for i in issues)
+    assert await _phase_of(room_id) == PHASE_ENDING
 
 
 async def test_missing_pair_data_does_not_block_the_close() -> None:

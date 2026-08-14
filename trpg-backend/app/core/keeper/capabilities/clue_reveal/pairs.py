@@ -43,9 +43,44 @@ __all__ = [
     "format_clue_status",
     "is_pair_revealed",
     "load_revealed_clues",
+    "pairs_reached_by_nodes",
     "render_clue_status",
     "serialize_revealed_clues",
 ]
+
+
+def pairs_reached_by_nodes(
+    module: ScenarioModule,
+    revealed: list[tuple[str, str]],
+    reached_node_ids: set[str],
+) -> list[str]:
+    """玩家已经到过真相侧节点的那些配对（尚未记为已揭开的）。
+
+    ## 为什么需要它（2026-08-14 真人实测）
+
+    一整局 106 次裁决，`clues_revealed` **一次都没被写过**，于是收尾门的分子
+    恒为 0、结构上永远不可能通过。查下来**不是模型漏记**：导入出来的配对两端
+    全是 **node_id**（`公开侧 mi-go-4 ↔ 真相侧 mi-go-1`，note 写着"same_as
+    启发"），模型没有任何办法把"玩家在文件柜里找到了野外笔记"对应到某个
+    `pair-*` 上——**它没有可写的东西**，恒空是正确的模型行为。
+
+    🔴 这是同一个错误的第三次：**门的判据用了一个不对应玩家行为的量**（前两次
+    是"没去过的地方"，分母含玩家去不了的节点）。修法顺着数据本身的语义走：
+    既然两端就是节点 id，那么**玩家到过真相侧那个节点 = 这条配对已经揭开**。
+    完全由代码判定，不经过 LLM——`clues_revealed` 那条自由填写的路照旧留着，
+    两者是"或"的关系。
+
+    `reached_node_ids` 要同时包含历史去过的和此刻所在的：本能力（order=70）
+    跑在 `closure` 的位置记账（order=85）**之前**，只读「去过的节点」会漏掉
+    本轮刚到的那个。
+    """
+    if not module.visibility_pairs or not reached_node_ids:
+        return []
+    return [
+        pair.id
+        for pair in module.visibility_pairs
+        if pair.secret_ref in reached_node_ids and not is_pair_revealed(revealed, pair.id)
+    ]
 
 
 def format_clue_status(

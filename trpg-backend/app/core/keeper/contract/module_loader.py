@@ -510,3 +510,29 @@ def iter_all_nodes(nodes: list[ModuleNode]) -> list[ModuleNode]:
             out.extend(iter_all_nodes([node.sub_node]))
         out.extend(iter_all_nodes(node.sub_nodes))
     return out
+
+
+def reachable_visibility_pairs(module: ScenarioModule) -> list[VisibilityPair]:
+    """真相侧指向一个**真实节点**的那些配对——也就是玩家有办法揭开的那些。
+
+    ## 🔴 为什么要筛（2026-08-14 实测，量端点量出来的）
+
+    揭开一条配对的唯一确定性路径是「玩家到过真相侧那个节点」
+    （见 `clue_reveal/pairs.pairs_reached_by_nodes`）。而导入出来的配对，
+    `secret_ref` 不保证是节点——林中屋 6 条里有 3 条指向的是 **NPC id**
+    （`mi-go-1/2/3`，note 写着"same_as 启发"）。那 3 条**在结构上不可能被
+    揭开**，留在分母里就等于门永远过不去。
+
+    这不是"因为门过不去就拆门"（2026-08-13 那次做歪的正是这个）。判据是那条
+    补丁：**发现一道门永远过不去时，先量一遍它的两个端点，再决定是拆门还是
+    修数。** 量下来是分母里混进了达不成的项 —— 修的是数，门本身不动。
+
+    边界写在这里而不是各能力里：`closure` 要拿它算分母、`clue_reveal` 要拿它
+    算能点亮哪些，而**能力之间不许互相 import**；「这条配对的真相侧是不是一个
+    节点」本来就是模组结构问题，归属地就是这里。
+
+    ⚠️ 等「见过哪些 NPC」也有了记账（A2），指向 NPC 的那些就能一起接进来，
+    那时候把判断从"是节点"放宽到"是节点或 NPC"即可，调用方不用改。
+    """
+    node_ids = {node.id for node in iter_all_nodes(module.nodes)}
+    return [pair for pair in module.visibility_pairs if pair.secret_ref in node_ids]

@@ -29,6 +29,7 @@ from typing import Literal
 from pydantic import Field
 
 from app.core.keeper.capabilities.agenda.schema import AgendaDecisionFields
+from app.core.keeper.capabilities.cast.schema import CastDecisionFields
 from app.core.keeper.capabilities.closure.schema import ClosureDecisionFields
 from app.core.keeper.capabilities.clue_reveal.schema import ClueRevealDecisionFields
 from app.core.keeper.capabilities.health.schema import HealthDecisionFields
@@ -44,6 +45,7 @@ from app.core.keeper.contract.registry import DecisionModel
 
 class KeeperDecision(
     AgendaDecisionFields,
+    CastDecisionFields,
     ClosureDecisionFields,
     ClueRevealDecisionFields,
     HealthDecisionFields,

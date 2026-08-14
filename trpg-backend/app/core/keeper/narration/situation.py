@@ -33,6 +33,7 @@ from app.core.keeper.contract.module_loader import ScenarioModule
 from app.core.keeper.memory.chapter import Chapter, load_chapters, render_chapters, visible_chapters
 from app.core.keeper.memory.fact_ledger import render_ledger, revealed_fact_ids
 from app.core.keeper.memory.history import HistoryLine, visible_history
+from app.core.keeper.narration.party_sheet import format_party_sheet, load_party_characters
 from app.core.keeper.narration.prompts import format_turn_input
 from app.core.keeper.runtime.pending import MERGE_CONFIRM_KIND, pending_decision_manager
 from app.core.keeper.runtime.phase import format_phase_status
@@ -60,6 +61,14 @@ class SituationBuilder:
     narrator_capability_blocks: list[tuple[float, str]]
     is_heartbeat: bool
     is_opening_ceremony: bool
+    #: 「这些调查员会什么」（见 `party_sheet.py`）。**只给裁决那一拍**——叙事器
+    #: 不需要技能数值，给了反而诱它把数字写进散文。
+    #:
+    #: 默认空串让既有构造一个字都不用改（同 `SituationContext` 加字段的做法）。
+    #: 🔴 默认值意味着"忘了传"跟"这局没有卡"长得一样，所以 `build_situation`
+    #: 确实填了它这件事**由 test_party_sheet.py 单独钉住**——否则就是那条老毛病：
+    #: 加了字段没有消费方，两头都不会变红。
+    party_sheet: str = ""
 
     def render(
         self,
@@ -94,6 +103,7 @@ class SituationBuilder:
             is_heartbeat=self.is_heartbeat,
             is_opening_ceremony=self.is_opening_ceremony,
             phase=self.phase,
+            party_sheet=self.party_sheet if keeper_view else "",
         )
 
     def for_keeper(self, *, nickname: str, utterance: str) -> str:
@@ -135,6 +145,9 @@ async def build_situation(
         merge_pending = frozenset(
             await pending_decision_manager.player_ids_of_kind(db, room_id, MERGE_CONFIRM_KIND)
         )
+        # 「这些人会什么」（2026-08-14）。跟 merge_pending 同一个理由查在这里：
+        # 渲染钩子拿不到 db。按 `players` 的顺序取，名册怎么排它就怎么排。
+        party = await load_party_characters(db, room_id=room_id, players=players)
     return SituationBuilder(
         # 代码记账的键一律不原样喂给模型，判据与"state_updates 不许写"同源。
         visible_state=visible_keeper_state(keeper_state),
@@ -144,6 +157,7 @@ async def build_situation(
         phase_status=format_phase_status(phase, ending_id),
         ledger_status=render_ledger(module, known_facts),
         chapters=chapters,
+        party_sheet=format_party_sheet(party, ruleset),
         # 已经垂直切出去的能力要摆在模型眼前的状态（exec/27 阶段 2）：能力不只
         # 要能改世界，还得让模型**看见**自己改成了什么样，否则下一轮只能从上
         # 一段散文里猜。

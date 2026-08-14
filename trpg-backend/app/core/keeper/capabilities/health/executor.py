@@ -9,6 +9,7 @@ from __future__ import annotations
 import structlog
 from pydantic import BaseModel
 
+from app.core.coc7.rules import resolve_max_hp
 from app.core.keeper.capabilities.health.npc_state import (
     NPC_STATE_KEY,
     apply_hp_delta,
@@ -40,7 +41,17 @@ async def adjust_hp_impl(
     async with deps.write_lock, deps.session_factory() as db:
         player, character = await resolve_character(db, deps, player_name)
         current = current_stat(character, "HP")
+        # 🔴 上限跟着"治疗回血"（规则 3c）一起加：在此之前 delta 只可能是负数，
+        # 没有上限也不会出事；一旦允许正数，第一次包扎就可能把 HP 顶到上限以上。
+        #
+        # 走 `resolve_max_hp` 而不是直接读 `derived_stats["HP_MAX"]`：那一格是
+        # **keeper 第一次改 HP 时**才备份的，没受过伤的卡上根本没有它（而"先被
+        # 治疗后受伤"恰恰是那种卡）。权威函数有按公式重算的第二来源。
+        # 它返回 `None` 时**不封顶**，不拿假上限兜底——这张卡连属性都没有。
+        hp_max = resolve_max_hp(character.derived_stats or {}, character.attributes or {})
         new_value = max(0, current + delta)
+        if hp_max is not None:
+            new_value = min(new_value, hp_max)
         write_stat(character, "HP", new_value)
         await record_event(
             db,

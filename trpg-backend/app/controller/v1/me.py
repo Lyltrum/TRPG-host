@@ -115,9 +115,7 @@ async def get_character_template(
     return ApiResponse.ok(template)
 
 
-@router.put(
-    "/character-templates/{template_id}", response_model=ApiResponse[CharacterTemplateRead]
-)
+@router.put("/character-templates/{template_id}", response_model=ApiResponse[CharacterTemplateRead])
 async def overwrite_character_template(
     template_id: str,
     payload: CharacterTemplateOverwriteBody,

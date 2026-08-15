@@ -7,21 +7,31 @@
 节点里只有 1 处 `kind="san"` 检定点，玩家**进去了**，裁决器当轮只发了一次
 逃跑的敏捷对抗，SAN 一次没起——全局唯一那次理智检定反而掷在没标注的地方。
 
-**执行侧刻意不做成代码强制掷。** COC7 里触发点是「目睹的那一刻」，代码判得了
-「人在这个节点」，判不了「他看见了没有」；而 SAN 写进角色卡不可撤回，掷早了
-还会撞上规则里「同一来源不重复检定」。所以按 `exec/20` 的分层，这一条是
-**触发条件代码判、执行方式发请求 → 概率性改进**，汇报时说"已改善"，不说"已修复"。
+**执行侧刻意不做成代码强制掷。** COC7 里触发点是「目睹的那一刻」，代码判不了
+「他看见了没有」；而 SAN 写进角色卡不可撤回，掷早了还会撞上规则里「同一来源
+不重复检定」。所以按 `exec/20` 的分层，这一条是**触发条件由模型判、代码只
+提供数值 → 概率性改进**，汇报时说"已改善"，不说"已修复"。
 
-已触发记账（`SAN_POINTS_FIRED_KEY`）存在的理由也在这里：没有它，玩家在这个
-节点待几轮就会被提醒几轮，模型照做就是重复扣 SAN——比不提醒更糟。
+已触发记账（`SAN_POINTS_FIRED_KEY`）存在的理由：没有它，同一条标注会被提醒
+到这一局结束，模型照做就是重复扣 SAN——比不提醒更糟。
+
+## 🔴 2026-08-15：不再按位置过滤
+
+原来注入与记账**两头都按「玩家所在节点」**。08-14 回归实测量出来那是死路：
+林中屋唯一那条 `kind="san"` 挂在 `migo-cover-blown` 上，那个节点 `exits: []`
+**且没有任何节点指向它**——图上的孤岛，玩家用任何走法都站不上去。整块提示
+一次都没渲染过，28 轮 SAN 掷了 0 次。**不是模型不听话，是没给它看。**
+
+现在：注入列全模组未触发的标注、**只给数值不给标题**（标题本身剧透），
+记账改成**按损失数值回匹**。两头必须一起改——只改注入的话标注永远标不掉。
+`occupied_node_ids` / `san_points_at` / `fired_refs_at` 三个按节点取的辅助
+随之删除，它们是这次改动产生的孤儿。
 """
 
 from __future__ import annotations
 
-from app.core.keeper.contract.module_loader import ModuleCheck, ScenarioModule
+from app.core.keeper.contract.module_loader import ModuleCheck, ScenarioModule, iter_all_nodes
 from app.core.keeper.contract.registry import SituationContext
-from app.core.keeper.runtime.location_state import location_of, resolve_content_node_id
-from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
 
 SAN_POINTS_FIRED_KEY = "已触发理智检定点"
 
@@ -48,63 +58,66 @@ def load_fired_san_points(keeper_state: dict | None) -> list[str]:
     return [part.strip() for part in str(raw).split(",") if part.strip()]
 
 
-def occupied_node_ids(
+def _same_loss(left: str | None, right: str | None) -> bool:
+    """两个损失表达式是不是同一个。只做去空白 + 忽略大小写（`1D6` vs `1d6`）。
+
+    🔴 这**不是**自由文本当标识符：两侧同源——局面块把模组的数值原样列出来，
+    规则要求模型**照抄**，回来的就该是同一个串。归一只覆盖抄写时的大小写抖动，
+    不做任何同义词映射。
+    """
+    return (left or "").strip().casefold() == (right or "").strip().casefold()
+
+
+def match_san_point(
     module: ScenarioModule,
     keeper_state: dict | None,
-    players: tuple[tuple[str, str], ...],
-) -> list[str]:
-    """调查员此刻所在的剧本节点（保序去重）。
+    loss_on_success: str | None,
+    loss_on_failure: str | None,
+) -> str | None:
+    """把一次已发起的理智检定回匹到模组标注上，返回它的 ref。匹配不上返回 None。
 
-    分头时是多个。谁都定位不到（人在剧本节点之外）就是空列表——那时本来也
-    没有"模组标注的检定点"可言，与护栏的退化口径一致。
+    🔴 **为什么记账口径必须跟着注入口径一起改**：注入改成全局之后，原来那套
+    「按玩家所在节点标掉」几乎永远是空操作——玩家站不到遭遇节点上，于是
+    标注永远标不掉、提示**每轮重复**，模型照做就是重复扣 SAN，比不提醒更糟。
+    加了字段没有消费方是一种缺陷，**改了口径只改一半**是它的镜面。
 
-    即兴地点沿 `from` 上溯（`resolve_content_node_id`）：站在「屋后」的人
-    照样看得见「科比特家」标注的理智检定点，否则一旦分头到即兴位置，这块
-    反向护栏就整个失效。
+    按数值回匹，匹配不上就**不标**（显式降级，由调用方记 issue）——不猜、
+    也不按顺序随便标一条：多条标注数值不同时，标错等于把另一条也吞掉。
     """
-    found: list[str] = []
-    seen: set[str] = set()
-    candidates = [
-        resolve_content_node_id(module, keeper_state, location_of(keeper_state, pid))
-        for pid, _name in players
-    ]
-    if not players:
-        candidates = [
-            resolve_content_node_id(
-                module, keeper_state, (keeper_state or {}).get(CURRENT_NODE_KEY)
-            )
-        ]
-    for node_id in candidates:
-        if node_id and node_id not in seen:
-            seen.add(node_id)
-            found.append(node_id)
-    return found
+    for ref, check in unfired_san_points(module, keeper_state):
+        if _same_loss(check.on_success, loss_on_success) and _same_loss(
+            check.on_failure, loss_on_failure
+        ):
+            return ref
+    return None
 
 
-def san_points_at(
-    module: ScenarioModule, node_id: str, fired: set[str]
-) -> list[tuple[int, ModuleCheck]]:
-    """这个节点上还没触发过的理智检定点。节点不存在 → 空列表。"""
-    node = module.node_by_id(node_id)
-    if node is None:
-        return []
-    return [
-        (index, check)
-        for index, check in enumerate(node.checks)
-        if check.kind == SAN_KIND and san_point_ref(node_id, index) not in fired
-    ]
+def unfired_san_points(
+    module: ScenarioModule, keeper_state: dict | None
+) -> list[tuple[str, ModuleCheck]]:
+    """**全模组**还没触发过的理智检定点，保序。返回 (ref, check)。
 
+    🔴 **不按位置过滤**（2026-08-15 改）。原来只列"玩家此刻所在节点上"标注的，
+    而 08-14 回归实测量出来：林中屋唯一那条 `kind="san"` 挂在 `migo-cover-blown`
+    上，那个节点 `exits: []` **且没有任何节点指向它**——节点图上的孤岛，玩家
+    用任何走法都站不上去。于是整块提示**一次都没渲染过**，28 轮 SAN 掷了 0 次。
+    不是模型不听话，是没给它看。
 
-def fired_refs_at(module: ScenarioModule, node_id: str) -> list[str]:
-    """这个节点上全部理智检定点的引用——本轮真发起了检定就把它们记掉。"""
-    node = module.node_by_id(node_id)
-    if node is None:
-        return []
-    return [
-        san_point_ref(node_id, index)
-        for index, check in enumerate(node.checks)
-        if check.kind == SAN_KIND
-    ]
+    ⚠️ 这是**同一个错误的第四张脸**（前三次都在收尾门：分母含玩家去不了的
+    节点 / 分子没人写 / 分母含永远揭不开的配对）：**判据用了一个不对应玩家
+    实际处境的量**。这次不再试图修"玩家到不到得了那个节点"——遭遇类节点本来
+    就不是玩家会站上去的地方，那条路走不通。
+    """
+    fired = set(load_fired_san_points(keeper_state))
+    out: list[tuple[str, ModuleCheck]] = []
+    for node in iter_all_nodes(module.nodes):
+        for index, check in enumerate(node.checks):
+            if check.kind != SAN_KIND:
+                continue
+            ref = san_point_ref(node.id, index)
+            if ref not in fired:
+                out.append((ref, check))
+    return out
 
 
 def format_san_points(
@@ -112,25 +125,31 @@ def format_san_points(
     keeper_state: dict | None,
     players: tuple[tuple[str, str], ...],
 ) -> str:
-    """局面块正文。没有待触发的检定点就返回空串——整块不渲染。"""
-    fired = set(load_fired_san_points(keeper_state))
-    lines: list[str] = []
-    for node_id in occupied_node_ids(module, keeper_state, players):
-        node = module.node_by_id(node_id)
-        if node is None:
-            continue
-        for _index, check in san_points_at(module, node_id, fired):
-            difficulty = f"（{check.difficulty}）" if check.difficulty else ""
-            lines.append(
-                f"- 「{node.title}」{difficulty}：成功损失 {check.on_success or '—'}／"
-                f"失败损失 {check.on_failure or '—'}"
-            )
-    if not lines:
+    """局面块正文。没有待触发的检定点就返回空串——整块不渲染。
+
+    🔴 **只给数值，不给节点标题**（用户 2026-08-15 拍板的 A 方案）。
+    标题本身就是剧透——林中屋那条叫「揭穿伪装与战斗开始」，光是列出来就等于
+    提前告诉模型剧本要发生什么。而模组标注真正提供的东西是**数值**：
+    「什么时候该掷」本来就是 KP 的判断（真人 KP 也是看见怪物才喊掷），
+    代码判得了"人在哪"，判不了"他看见了没有"。
+
+    `players` 仍在签名里但不再参与过滤——保留是因为 `SituationBlock` 的渲染
+    钩子签名固定。**不删参数、也不假装用它**，理由写在这里。
+    """
+    points = unfired_san_points(module, keeper_state)
+    if not points:
         return ""
+    lines = []
+    for _ref, check in points:
+        difficulty = f"（{check.difficulty}）" if check.difficulty else ""
+        lines.append(
+            f"- {difficulty}成功损失 {check.on_success or '—'}／失败损失 {check.on_failure or '—'}"
+        )
     return (
-        "调查员此刻所在的节点上，模组标注了下面这些理智检定点，本局还没掷过。\n"
-        "玩家在这一轮**目睹**对应之物时，必须在 `san_checks` 里发起，"
-        "`loss_on_success`/`loss_on_failure` 照抄下面的数值；还没看见就先别掷。\n"
+        "这个模组标注了下面这些理智检定点，本局还没掷过（**不说在哪触发——"
+        "那由你判断**）。\n"
+        "玩家这一轮**目睹**足以动摇理智的东西时，必须在 `san_checks` 里发起，"
+        "`loss_on_success`/`loss_on_failure` **照抄**下面的数值；还没看见就先别掷。\n"
         + "\n".join(lines)
     )
 

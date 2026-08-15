@@ -12,8 +12,8 @@ from pydantic import BaseModel
 
 from app.core.keeper.capabilities.san_check.state import (
     SAN_POINTS_FIRED_KEY,
-    fired_refs_at,
     load_fired_san_points,
+    match_san_point,
 )
 from app.core.keeper.contract.registry import PendingContext, TurnFacts
 from app.core.keeper.primitives import dice
@@ -25,7 +25,6 @@ from app.core.keeper.runtime.deps import (
     resolve_character,
     write_stat,
 )
-from app.core.keeper.runtime.location_state import location_of, resolve_content_node_id
 from app.core.keeper.runtime.madness_state import MADNESS_LOSS_THRESHOLD, enter_madness
 from app.core.keeper.runtime.pending import PendingDecision
 from app.core.narration.contract import CheckResultNotice
@@ -185,19 +184,26 @@ async def create_pending_san_checks(
 async def mark_san_points_fired(
     deps: KeeperDeps, decision: BaseModel, _facts: TurnFacts
 ) -> tuple[list[str], list[str]]:
-    """本轮发起过理智检定 → 把这些人所在节点上标注的检定点记为已触发。
+    """本轮发起过理智检定 → 把对应的模组标注记为已触发。
 
     只为一件事：让局面块那条提醒**不再重复**。COC7 里同一来源不重复检定，而
-    没有这笔记账的话，玩家在这个节点待几轮就会被提醒几轮（`exec/31 #73`）。
+    没有这笔记账的话，玩家会被提醒到这一局结束（`exec/31 #73`）。
 
-    刻意做得粗：按"发起检定的人此刻在哪"整节点标掉，不去对应"标注的是哪一条"
-    ——`ModuleCheck` 没有 id，模型的 `san_checks` 里也没有指回标注的字段，
-    真要精确对应只能拿理由文本去猜，那正是**不要用自由文本当标识符**。
-    排在 movement（order 30）之后：要用的是本轮移动完成后的位置。
+    🔴 **2026-08-15：口径从「按玩家所在节点整节点标掉」改成「按损失数值回匹」。**
+
+    必须跟着注入一起改。注入改成全局列出之后，原来那套几乎永远是空操作
+    ——标注挂在遭遇节点上，玩家站不上去，于是**标不掉、每轮重复**，模型照做
+    就是重复扣 SAN，比不提醒更糟。「加了字段没有消费方」是一种缺陷，
+    **改了口径只改一半**是它的镜面版本，两边都不会变红。
+
+    数值可以当回匹依据是因为两侧同源：局面块把模组的数值原样列出，规则要求
+    模型**照抄**。匹配不上就不标 + 记 issue（显式降级），不按顺序随便标一条
+    ——多条标注数值不同时标错等于把另一条也吞掉。
     """
     requests = list(getattr(decision, "san_checks", ()))
     if not requests:
         return [], []
+    issues: list[str] = []
     async with deps.write_lock, deps.session_factory() as db:
         room = await db.get(Room, deps.room_id)
         if room is None:
@@ -206,31 +212,28 @@ async def mark_san_points_fired(
         already = load_fired_san_points(current_state)
         newly: list[str] = []
         for san in requests:
-            try:
-                player, _character = await resolve_character(db, deps, san.player)
-            except KeeperToolError:
-                # 发起侧（create_pending_san_checks）已经把这条记成 issue 了，
-                # 这里不重复报，只是没有位置可记。
-                continue
-            # 记账要记在**内容节点**上（即兴地点沿 from 上溯），跟局面块同一
-            # 口径——两边口径不一致就会"提醒了却记不掉"，玩家在屋后被反复提醒。
-            node_id = resolve_content_node_id(
-                deps.module, current_state, location_of(current_state, player.id)
+            # 匹配要拿**当前这一轮已经标掉的**当基线，否则同一轮里两次同数值的
+            # 检定会匹配到同一条标注上。
+            probe_state = {**current_state, SAN_POINTS_FIRED_KEY: ", ".join(already)}
+            ref = match_san_point(
+                deps.module, probe_state, san.loss_on_success, san.loss_on_failure
             )
-            if not node_id:
+            if ref is None:
+                issues.append(
+                    f"理智检定点未记账：损失 {san.loss_on_success}/{san.loss_on_failure} "
+                    "对不上模组标注的任何一条（这次检定照常进行，只是不计入标注）"
+                )
                 continue
-            for ref in fired_refs_at(deps.module, node_id):
-                if ref not in already:
-                    already.append(ref)
-                    newly.append(ref)
+            already.append(ref)
+            newly.append(ref)
         if newly:
             current_state[SAN_POINTS_FIRED_KEY] = ", ".join(already)
             room.keeper_state = current_state
             # 留痕**也是**这里唯一的 commit（record_event 负责提交，同 agenda）。
             await record_event(db, deps, "keeper.san_point", {"refs": newly})
     if not newly:
-        return [], []
-    return [f"模组标注的理智检定点已触发：{'、'.join(newly)}"], []
+        return [], issues
+    return [f"模组标注的理智检定点已触发：{'、'.join(newly)}"], issues
 
 
 async def settle_san_check(deps: KeeperDeps, pending: PendingDecision) -> CheckResultNotice:

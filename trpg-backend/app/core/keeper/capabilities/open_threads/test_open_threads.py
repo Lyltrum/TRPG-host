@@ -273,16 +273,25 @@ def test_a_thread_left_behind_is_still_listed_so_it_can_be_closed() -> None:
     assert "resolved_threads" in text
 
 
-def test_threads_without_a_node_behave_exactly_as_before() -> None:
-    """老对局的条目没有 `node`——那表示"不知道在哪成立"，按到处都成立处理，
-    与加这个字段之前**逐字一致**（退化保证）。"""
+def test_threads_without_a_node_are_flagged_as_unscoped() -> None:
+    """老对局的条目没有 `node` = **不知道它在哪成立**，单独一组说出来。
+
+    🔴 **2026-08-15 推翻了原来的退化保证。** 这条用例原来断言"按到处都成立
+    处理，与加这个字段之前逐字一致"——那个保证**实测有害**：08-14 那局，
+    前一天开的 `thread-2` 没有 node，跨了 10 小时、跨了对局，裁决在玩家躲在
+    树后时读到它，thinking 写着「米-戈已抓住凌铭辉」，**当时玩家根本没被抓**。
+    它直接污染了那一轮的世界认知。
+
+    仍然不自动关（关不关是语义判断），但不再假装它成立。
+    """
     state = {
         OPEN_THREADS_KEY: {"thread-1": {"text": "米-戈仍在追击"}},
         CURRENT_NODE_KEY: "cellar",
     }
     text = format_open_threads(state)
-    assert "🔴" not in text
-    assert "每一轮都仍然成立" in text
+    assert "thread-1" in text, "降级不能变成不列出——没列出来的模型关不掉"
+    assert "没有记下在哪成立" in text
+    assert "每一轮都仍然成立" not in text, "🔴 不许再混进「就在这儿成立」那一组"
 
 
 async def test_opening_a_thread_records_where_it_happened(deps) -> None:
@@ -295,3 +304,56 @@ async def test_opening_a_thread_records_where_it_happened(deps) -> None:
 
     await execute_side_effects(deps, KeeperDecision(new_threads=[NewThread(text="看护在追")]))
     assert (await _threads(deps))["thread-1"]["node"] == "asylum"
+
+
+# ── 同一件事不许开两条（2026-08-15 实测）────────────────
+#
+# 🔴 08-14 那局：`thread-2`「米-戈已抓住凌铭辉」还挂着，模型又开了一条
+# `thread-3`**文字一模一样**，最后两条一起关掉。根子是它没认出表里已经有了。
+
+
+async def test_opening_the_same_text_twice_is_refused(deps) -> None:
+    await execute_side_effects(deps, KeeperDecision(new_threads=[NewThread(text="米-戈已抓住他")]))
+    _report, issues = await execute_side_effects(
+        deps, KeeperDecision(new_threads=[NewThread(text="米-戈已抓住他")])
+    )
+
+    assert list(await _threads(deps)) == ["thread-1"], "同一件事不该有第二条"
+    assert any("已经是同一件事" in issue for issue in issues), issues
+    # 拒绝要配一条走得通的修法
+    assert any("先 resolve 掉再开新的" in issue for issue in issues), issues
+
+
+async def test_only_verbatim_duplicates_are_refused(deps) -> None:
+    """🔴 对照组：只拦**逐字相同**。
+
+    "这两句话是不是同一件事"是语义判断，模糊匹配是同义词打地鼠的开始。
+    没有这一条，把去重做成近似匹配也会绿——而那会把真正的新处境吞掉。
+    """
+    await execute_side_effects(deps, KeeperDecision(new_threads=[NewThread(text="米-戈已抓住他")]))
+    _report, issues = await execute_side_effects(
+        deps, KeeperDecision(new_threads=[NewThread(text="米-戈已抓住他的左臂")])
+    )
+
+    assert list(await _threads(deps)) == ["thread-1", "thread-2"]
+    assert issues == [], issues
+
+
+async def test_whitespace_and_case_do_not_defeat_the_dedup(deps) -> None:
+    """抄写抖动不该绕过去重——只归一空白与大小写，不做别的。"""
+    await execute_side_effects(deps, KeeperDecision(new_threads=[NewThread(text="MI-GO 在追")]))
+    await execute_side_effects(deps, KeeperDecision(new_threads=[NewThread(text="  mi-go 在追 ")]))
+
+    assert list(await _threads(deps)) == ["thread-1"]
+
+
+async def test_a_resolved_thread_frees_the_text_again(deps) -> None:
+    """关掉之后同样的文字可以再开——那是"这件事又发生了一次"，合法。"""
+    await execute_side_effects(deps, KeeperDecision(new_threads=[NewThread(text="米-戈已抓住他")]))
+    await execute_side_effects(deps, KeeperDecision(resolved_threads=["thread-1"]))
+    _report, issues = await execute_side_effects(
+        deps, KeeperDecision(new_threads=[NewThread(text="米-戈已抓住他")])
+    )
+
+    assert list(await _threads(deps)) == ["thread-2"]
+    assert issues == [], issues

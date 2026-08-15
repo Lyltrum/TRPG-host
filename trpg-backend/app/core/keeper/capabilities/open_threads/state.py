@@ -132,11 +132,18 @@ def format_open_threads(keeper_state: dict | None) -> str:
     def _line(thread_id: str, entry: dict) -> str:
         return f"- {thread_id}：{entry['text']}"
 
-    # 没记 node 的（老对局）算"到处都成立"，跟加这个字段之前一致。
-    standing = {
-        tid: e for tid, e in table.items() if not e.get("node") or not here or e["node"] == here
-    }
-    left_behind = {tid: e for tid, e in table.items() if tid not in standing}
+    # 🔴 **没记 node 的单独一组**（2026-08-15）。原来它们跟"就在这儿成立"的
+    # 混在一起，理由是"跟加这个字段之前一致"——那条退化保证**实测有害**：
+    # 08-14 那局，前一天开的 `thread-2` 没有 node，跨了 10 小时、跨了对局，
+    # 裁决在玩家躲在树后时读到它，thinking 写着「米-戈已抓住凌铭辉」——
+    # **当时玩家根本没被抓**。它直接污染了那一轮的世界认知。
+    #
+    # 仍然不自动关（关不关是语义判断），但要把"我们不知道它在哪成立"这件事
+    # 说出口。同 `left_behind` 那一组：**能确定化的是判断的输入，不是判断本身。**
+    scoped = {tid: e for tid, e in table.items() if e.get("node")}
+    unscoped = {tid: e for tid, e in table.items() if not e.get("node")}
+    standing = {tid: e for tid, e in scoped.items() if not here or e["node"] == here}
+    left_behind = {tid: e for tid, e in scoped.items() if tid not in standing}
 
     parts = []
     if standing:
@@ -152,6 +159,13 @@ def format_open_threads(keeper_state: dict | None) -> str:
             "除非它明确追了过来（对方会追、期限还在走），否则它**已经不成立**，"
             "这一轮就该写进 `resolved_threads` 关掉，更不要拿它当当前的威胁来演：\n"
             + "\n".join(f"{_line(tid, e)}（发生在 {e['node']}）" for tid, e in left_behind.items())
+        )
+    if unscoped:
+        parts.append(
+            "🔴 下面这几条**没有记下在哪成立**（更早的对局留下的）——不要默认它们"
+            "还算数。这一轮先判断一次：跟眼前这一幕对不上就写进 `resolved_threads` "
+            "关掉，别拿它当当前的威胁来演：\n"
+            + "\n".join(_line(tid, e) for tid, e in unscoped.items())
         )
     return "\n\n".join(parts)
 

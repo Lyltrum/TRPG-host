@@ -48,10 +48,28 @@ async def _fresh_db():
         await conn.run_sync(Base.metadata.drop_all)
 
 
-def _keeper() -> KeeperAgent:
+def _same_title_module():
+    """把 `cellar` 的标题改成跟 `hall` 一样，造出「两处同名」。
+
+    fixture 的四个节点标题两两不同，而 `movement` 的指针门 2026-08-15 起
+    **标题不同就拦**——想测"移动到另一处也叫这个名字的地方"，样本本身就得
+    真的同名，否则测的是被拦下来的那一支。
+    """
+    module = load_module(_FIXTURE_MODULE)
+    return module.model_copy(
+        update={
+            "nodes": [
+                node.model_copy(update={"title": "门厅"}) if node.id == "cellar" else node
+                for node in module.nodes
+            ]
+        }
+    )
+
+
+def _keeper(module=None) -> KeeperAgent:
     return KeeperAgent(
         api_key="fake-key",
-        module=load_module(_FIXTURE_MODULE),
+        module=module if module is not None else load_module(_FIXTURE_MODULE),
         ruleset=build_coc7_ruleset(),
         session_factory=_session_factory,
     )
@@ -121,8 +139,9 @@ async def _run(
     *,
     is_heartbeat: bool = False,
     prev_node_id: str | None = None,
+    module=None,
 ):
-    agent = _keeper()
+    agent = _keeper(module)
     captured = _stub_agent(agent, decision)
     room_id, player_id = await _seed_room(room_code, prev_scene, node_id=prev_node_id)
     context = NarrationContext(
@@ -234,6 +253,16 @@ async def test_scene_transition_stacks_with_action_resolution_guidance() -> None
 
 
 async def test_node_id_change_injects_even_when_scene_text_matches() -> None:
+    """🔴 **2026-08-15：样本换成真正同名的两个节点。**
+
+    这条用例的 docstring 一直写着"移动到另一处也叫这个名字的地方"，但样本用的
+    是 `hall`（门厅）→ `cellar`（地下室）——**标题不同**。08-15 指针门收紧成
+    "标题不同就拦"之后它当场变红，一查才发现**样本从来没走到它声称的那一支**：
+    它测的是"自由文本地名恰好撞车"，不是"两处真的同名"。
+
+    换成真同名之后，门放行、指针真的改了、过渡拍照常注入——这才是它要守的
+    那条真实需求。判据是那条老的：**造的样本没走到被测分支 = 没测。**
+    """
     decision = KeeperDecision(
         thinking="玩家移动到另一处也叫这个名字的地方",
         narration_guidance="裁决给出的原始指引",
@@ -241,7 +270,9 @@ async def test_node_id_change_injects_even_when_scene_text_matches() -> None:
         state_updates=[StateUpdate(key="当前场景", value="门厅")],
         current_node_id="cellar",
     )
-    final_decision = await _run("SCENE07", "门厅", decision, prev_node_id="hall")
+    final_decision = await _run(
+        "SCENE07", "门厅", decision, prev_node_id="hall", module=_same_title_module()
+    )
 
     assert "场景切换" in final_decision.narration_guidance
 

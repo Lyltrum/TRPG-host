@@ -176,17 +176,22 @@ async def test_non_conflict_without_check_keeps_the_old_hint() -> None:
     assert "直接把结果写成既定事实" in suffix
 
 
-# ── 护栏豁免：动手那一轮不过模组白名单（exec/19 #49）──────────
+# ── 护栏不再拦掷骰（2026-08-15 改版）──────────────────────
+#
+# 🔴 原来这一节叫「护栏豁免：动手那一轮不过模组白名单（exec/19 #49）」。
+# 豁免之所以存在，是因为护栏会**整条丢弃**没进白名单的检定——动手因此打不
+# 出去。08-15 护栏改成只拦揭示权（照掷、拿不到 reveals），那个豁免就失去了
+# 存在理由，连同 `physical_conflict` 那个分支一起去掉。
+#
+# 这两条用例保留，但守的东西变了：从"动手是个例外"变成"**谁都不再被拦**"。
 
 
 async def test_conflict_check_is_not_blocked_by_the_module_guard() -> None:
-    """🔴 试玩实测抓到的回归：护栏拦掉格斗 → 零检定 → #44 追问 → 玩家再说一次
-    → 又被拦 → 又追问。连着两轮问"你是要砸他的头？"，这一拳永远打不出去。
+    """动手那一轮的格斗检定照常发出（门厅只标注了 spot-hidden）。
 
-    护栏（设计 02）防的是"用模组没标注的调查技能即兴挖线索"，战斗不在此列——
-    模组不可能在每个节点标注格斗检定点，而玩家有权动手。
-
-    门厅只标注了 spot-hidden；`physical_conflict` 轮的格斗检定必须照样发出。
+    实据仍是那次回归：护栏拦掉格斗 → 零检定 → #44 追问 → 玩家再说一次 →
+    又被拦 → 又追问，连着两轮问"你是要砸他的头？"，这一拳永远打不出去。
+    现在它不靠豁免成立，靠的是护栏根本不再拦掷骰。
     """
     suffix = await _run(
         "CFL004", "physical_conflict", [CheckRequest(skill_id="fighting-brawl")], node_id="hall"
@@ -195,11 +200,19 @@ async def test_conflict_check_is_not_blocked_by_the_module_guard() -> None:
     assert "检定边界" in suffix
 
 
-async def test_non_conflict_check_is_still_blocked_by_the_guard() -> None:
-    """对照组：不是动手的轮次，护栏照常拦——豁免不能扩大成放水。"""
+async def test_an_improvised_check_outside_the_whitelist_still_rolls() -> None:
+    """🔴 改版的正题：**不是动手**的即兴检定，也照样掷得出来。
+
+    这条用例以前叫 `..._is_still_blocked_by_the_guard`，断言的是"本轮零检定、
+    走没有待掷检定那条老提醒"。回归实测证明那个行为是错的：9 次声明检定被
+    吞掉 6 次（追踪/潜行/导航/射击），**玩家侧完全静默**——没有骰子也没有
+    任何提示，叙事直接给结果。
+
+    门厅标注的是 spot-hidden，图书馆使用属于即兴：现在它照掷，只是揭不开
+    模组事实（`reveals` 为空，由 `test_reveals_*` 那两条守）。
+    """
     suffix = await _run(
         "CFL005", "clear_action", [CheckRequest(skill_id="library-use")], node_id="hall"
     )
-    # 被护栏拦掉 → 本轮零检定 → 走「没有待掷检定」那条老提醒
-    assert "直接把结果写成既定事实" in suffix
-    assert "检定边界" not in suffix
+    assert "检定边界" in suffix
+    assert "直接把结果写成既定事实" not in suffix

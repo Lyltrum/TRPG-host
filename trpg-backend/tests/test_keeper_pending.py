@@ -495,6 +495,55 @@ async def test_pending_check_carries_reveals_from_the_module() -> None:
     assert [p.reveals for p in pending] == [("fact-001",)]
 
 
+async def test_an_improvised_check_rolls_but_carries_no_reveals() -> None:
+    """🔴 护栏改版（2026-08-15）的正题：**照掷，但揭不开模组事实**。
+
+    这是「模组标注的检定拿得到 reveals」那条的镜面。两条一起才说得清护栏
+    现在到底在拦什么：拦的是**揭示权**，不是掷骰权。
+
+    回归实测的病根就是它拦错了维度——玩家在只标了 `INT`/`LUCK` 的节点上说
+    "追踪它/躲起来/辨方向"，`track`/`stealth`/`navigation` 被整条丢弃、
+    玩家侧完全静默。而"即兴掷一把就把真相挖出来"这件真正要防的事，靠
+    reveals 为空就已经防住了。
+    """
+    from app.core.keeper.capabilities.skill_check.schema import CheckRequest
+    from app.core.keeper.contract.decision import KeeperDecision
+    from app.core.keeper.contract.module_loader import ModuleFact
+    from app.core.keeper.runtime.turn_executor import create_pending_checks
+
+    room_id, player_id, _nickname = await _seed_room()
+    module = load_module(_FIXTURE_MODULE)
+    hall = module.node_by_id("hall")
+    assert hall is not None
+    module.facts.append(ModuleFact(id="fact-001", text="地毯上有半干的泥脚印"))
+    hall.checks[0].reveals = ["fact-001"]
+    whitelisted = hall.checks[0].skill_ids[0]
+
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        room.keeper_state = {"当前场景": hall.title, "当前场景节点": hall.id}
+        await db.commit()
+
+    deps = KeeperDeps(
+        room_id=room_id,
+        player_id=player_id,
+        session_factory=_session_factory,
+        module=module,
+        ruleset=build_coc7_ruleset(),
+        reserved_state_keys=reserved_state_keys(),
+    )
+    improvised = "library-use"
+    assert improvised != whitelisted, "样本必须真的落在白名单之外，否则这条什么都没测"
+    pending, issues = await create_pending_checks(
+        deps, KeeperDecision(checks=[CheckRequest(skill_id=improvised)])
+    )
+
+    assert len(pending) == 1, "即兴检定必须照样掷得出来"
+    assert pending[0].reveals == (), "但它揭不开模组标注的事实"
+    assert any("揭不开模组事实" in issue for issue in issues), issues
+
+
 # ── 骰值先落地、叙事随后（真人实测「反馈太慢」）─────────
 
 

@@ -15,7 +15,7 @@ from app.core.keeper.capabilities.skill_check.guard import (
     filter_checks_against_module,
     find_node_for_scene,
 )
-from app.core.keeper.contract.registry import PendingContext
+from app.core.keeper.contract.registry import PendingContext, TurnFacts
 from app.core.keeper.primitives import dice
 from app.core.keeper.primitives.skills import canonical_skill_name, resolve_skill_id
 from app.core.keeper.runtime.deps import (
@@ -24,7 +24,11 @@ from app.core.keeper.runtime.deps import (
     record_event,
     resolve_character,
 )
-from app.core.keeper.runtime.location_state import location_of, reveal_hidden_player_impl
+from app.core.keeper.runtime.location_state import (
+    location_of,
+    reveal_hidden_player_impl,
+    set_stealth_impl,
+)
 from app.core.keeper.runtime.pending import PendingDecision
 from app.core.narration.contract import CheckResultNotice
 from app.models.room import Character
@@ -272,6 +276,39 @@ async def roll_check_impl(deps: KeeperDeps, skill_name: str, player_name: str | 
     return text
 
 
+async def publish_stealth_check_requests(
+    deps: KeeperDeps, decision: BaseModel, facts: TurnFacts
+) -> tuple[list[str], list[str]]:
+    """**只发布事实，什么都不改**：本轮为谁发起了潜行检定。
+
+    🔴 为什么必须走 `TurnFacts` 而不是让 `movement` 直接读 `decision.checks`：
+    那是一片能力伸手进另一片的字段，没有 import 所以架构测试抓不到，正是最坏
+    的那种隐式耦合（同 `scene_name_declared` 的先例）。
+
+    🔴 为什么是 order=5：`movement`（order=30）要读它，而待掷记录的创建
+    （`PendingHook`）整个排在执行阶段**之后**——等不到。这个钩子唯一的职责
+    就是把"裁决要求谁掷潜行"这件事提前摆到黑板上。
+
+    解析不出玩家（编造的名字）就跳过，不记 issue：真正的 issue 由
+    `create_pending_skill_checks` 在建待掷记录时统一发，这里重复发一遍会让
+    同一件事在报告里出现两次。
+
+    🔴 判"这次掷的是不是潜行"走 `resolve_skill_target` + `_is_stealth_check`
+    ——跟结算侧同一套闭环内比较（两边都来自规则表），不拿模型写的字符串直接
+    比"潜行"。模型写 id 还是写中文名都认得出来。
+    """
+    async with deps.session_factory() as db:
+        for check in getattr(decision, "checks", ()):
+            try:
+                player, character = await resolve_character(db, deps, check.player)
+                display_name, _target = resolve_skill_target(deps, character, check.skill_id)
+            except KeeperToolError:
+                continue
+            if _is_stealth_check(deps, display_name):
+                facts.stealth_check_players.add(player.id)
+    return [], []
+
+
 async def create_pending_skill_checks(
     deps: KeeperDeps, decision: BaseModel, context: PendingContext
 ) -> tuple[list[PendingDecision], list[str]]:
@@ -282,7 +319,6 @@ async def create_pending_skill_checks(
     """
     pending: list[PendingDecision] = []
     issues: list[str] = []
-    physical_conflict = getattr(decision, "player_state", None) == "physical_conflict"
 
     for check in getattr(decision, "checks", ()):
         # 技能指向 id 化（exec/17）：`skill_id` 应当是白名单里的技能 id 或
@@ -307,22 +343,43 @@ async def create_pending_skill_checks(
         # （拿克苏鲁神话看穿真相那种）。**战斗不属于这个范畴**——模组不可能
         # 在每个节点都标注格斗检定点，而玩家有权动手。
         #
-        # 不豁免会死循环：护栏拦掉格斗 → 本轮零检定 → #44 的兜底要求叙事
-        # 停下来追问 → 玩家再说一次"我砸他的头" → 又被拦 → 又追问。
-        # 试玩里连着两轮都在问"你是要砸他的头？"，玩家永远打不出这一拳。
-        if not physical_conflict:
-            kept, guard_issues = filter_checks_against_module(
-                deps.module,
-                [check.skill_id],
-                current_scene=context.current_scene,
-                current_node_id=node_id,
-                keeper_state=context.keeper_state,
-            )
-            issues.extend(guard_issues)
-        else:
-            kept = [check.skill_id]
-        if not kept:
-            continue
+        # 🔴 **2026-08-15：护栏从"拦掷骰"改成"拦揭示权"。**
+        #
+        # 回归实测里 9 次声明检定被吞掉 6 次，全是同一个形状：玩家在
+        # `forest-wandering`（模组只标了 `INT`/`LUCK`）说"追踪它/躲起来/
+        # 辨方向"，`track`/`stealth`/`navigation` 逐条丢弃、**玩家侧完全静默**
+        # ——没有骰子，也没有任何"这次不用掷"的提示，叙事直接给结果。
+        #
+        # 病根是判据选错了维度：护栏真正要防的是**"即兴掷一把就把模组真相
+        # 挖出来"**，而"揭开模组事实"在代码里**本来就有独立表达**——模组检定点
+        # 上的 `reveals`，绑在待掷记录上。即兴检定天生没有 `reveals`，天生
+        # 揭不开任何东西。所以按技能 id 拦掷骰是**过度拦截**：它顺带没收了
+        # 玩家做任何模组没预见到的动作的权利。
+        #
+        # 同一个模组里的另一面同样荒唐：委托人所在的 `investigation-start`
+        # 标了 `fast-talk`，于是"用话术套他"掷得出来，"夸他两句让他松口"
+        # （`charm`）被静默吞掉——同一个人、同一个房间、换个合理办法就没了。
+        # 那张名单是导入时写死的，**不可能穷尽玩家想得到的办法**。
+        #
+        # 改后：**照掷，只是拿不到 reveals**（下面那段查 reveals 的代码自然
+        # 得空）。防剧透一点没松，玩家的行动全部还给他。`physical_conflict`
+        # 的豁免因此失去意义，一并去掉——它当初存在就是为了绕开这道拦截。
+        #
+        # 🔴 **护栏从此只报告，不参与执行。** 揭示权其实由下面那段绑定天然
+        # 限制着：它只认"这名玩家所在节点上、标注了这个 skill_id 的检定点"，
+        # 即兴检定匹配不上，自然拿不到 `reveals`。
+        #
+        # 这不是推理出来的——我先按"给绑定加一道 `may_reveal` 前置条件"写了
+        # 一版，**变异检验里那道条件删掉测试照样绿**，说明它一行也没起作用。
+        # 留着就是没有消费方的代码，删掉。护栏的返回值只用来发那条 issue。
+        _kept, guard_issues = filter_checks_against_module(
+            deps.module,
+            [check.skill_id],
+            current_scene=context.current_scene,
+            current_node_id=node_id,
+            keeper_state=context.keeper_state,
+        )
+        issues.extend(guard_issues)
         # 事实账本（exec/14 P4）：这名玩家所在节点上同名检定标注的
         # reveals，绑定到待掷记录上。查不到节点/查不到同名检定就是空。
         scene_node = find_node_for_scene(
@@ -332,6 +389,8 @@ async def create_pending_skill_checks(
             keeper_state=context.keeper_state,
         )
         reveals: tuple[str, ...] = ()
+        # 🔴 **这段就是揭示权本身**：只有模组在这个节点上为这个 skill_id 标注过
+        # 的检定点才交得出 reveals。即兴检定走到这里必然匹配不上 ⇒ 空。
         if scene_node is not None:
             for module_check in scene_node.checks:
                 if check.skill_id in module_check.skill_ids and module_check.reveals:
@@ -422,3 +481,22 @@ async def apply_skill_check(
         revealed = await reveal_hidden_player_impl(deps, pending.player_id, pending.player_nickname)
         if revealed:
             deps.check_results.append(f"{pending.player_nickname} 潜行对抗失败 → 被发现，不再隐匿")
+        return
+
+    # 🔴 **进入隐匿也归结算**（2026-08-15，回归实测）。
+    #
+    # 此前只有"输掉对抗 → 掀开"这一半是代码硬化的，而"藏进去"走的是裁决的
+    # `hiding` 字段，跟掷不掷骰完全无关——实测里潜行检定被护栏吞掉、隐匿状态
+    # 照样落库，**藏起来是白给的**。一条规则只写了一个方向，又一次。
+    #
+    # `movement` 那边看到"本轮为这个人发起了潜行检定"就不再抢先写状态
+    # （`TurnFacts.stealth_check_players`），把结论留到这里按骰子给。
+    #
+    # 判据只认成功等级，不看对抗：普通潜行（没有明确的观察者）就是自己掷、
+    # 掷过了就藏住了；有对手的那种上面已经处理完并 return。
+    if _is_stealth_check(deps, pending.skill) and pending.opposed_value is None:
+        if not dice.is_success(notice.level):
+            deps.check_results.append(f"{pending.player_nickname} 潜行失败 → 没藏住，仍然显眼")
+            return
+        await set_stealth_impl(deps, pending.player_nickname, True)
+        deps.check_results.append(f"{pending.player_nickname} 潜行成功 → 进入隐匿")

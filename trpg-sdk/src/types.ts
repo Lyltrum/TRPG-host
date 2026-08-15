@@ -101,6 +101,7 @@ export type {
   // HP 结构化广播（feat/keeper-agent，真人实测 09-#4 修复）
   CharacterStatChangedPayload,
   // 分组变更协议与空间处境（exec/33 §5）
+  KeeperPhasePayload,
   PartyUpdatePayload,
   KeeperBusyPayload,
   // 幸运消费（exec/26 #66，exec/34 第 4 步）
@@ -144,6 +145,7 @@ import type {
   ErrorPayload,
   GameEndedPayload,
   KeeperBusyPayload,
+  KeeperPhasePayload,
   LuckOfferPayload,
   NarrationDeltaPayload,
   NarrationPushPayload,
@@ -199,6 +201,10 @@ export type ServerToClientEvent =
   // exec/33 §5.4：这个玩家自己的空间处境（我在哪 · 谁跟我在一处 · 别处还有几组）。
   // **逐人裁过再发**，不是全房间的分组表。
   | { type: 'party.update'; payload: PartyUpdatePayload }
+  // 2026-08-15：这一局走到哪一步了（opening/investigation/ending/finished）。
+  // 🔴 补的是一条只有一半的链——closure 早就会把 phase 写成 ending/finished，
+  // 叙事纪律与字数上限也跟着变，而前端此前一个字都收不到。
+  | { type: 'keeper.phase'; payload: KeeperPhasePayload }
   // exec/33 §5.4：守秘人正在别处忙（分头时叙事逐组生成，没轮到的那组此前是黑屏）
   | { type: 'keeper.busy'; payload: KeeperBusyPayload }
   // exec/34 第 4 步：骰子已经停下、结果还没生效——问他要不要花幸运推成成功。

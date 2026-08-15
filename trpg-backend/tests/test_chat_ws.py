@@ -184,6 +184,10 @@ def test_lock_released_after_narrator_failure(sync_client: TestClient) -> None:
         # 屏幕上永远亮着。这条用例正好守住那个 early return。
         assert ws.receive_json() == {"type": "keeper.busy", "payload": {"busy": False}}
         assert ws.receive_json()["type"] == "party.update"
+        # 2026-08-15 新增的每轮推送：这一局走到哪一步了。这条用例是**显式守着
+        # 环境事件序列**的那几条之一（见 helpers.AMBIENT_WS_EVENTS 的注释），
+        # 所以加一种推送就要在这里加一拍。
+        assert ws.receive_json()["type"] == "keeper.phase"
 
         # 换一个能正常返回的 narrator，立刻重试——若锁没被释放，这里会收到
         # ACTION_IN_PROGRESS 而不是 action.broadcast。
@@ -742,14 +746,14 @@ def test_clarify_reruns_the_previous_turn_with_the_clarification(
     with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
         _join_ws(ws, room)
         _submit_action(ws, room, "我绕到屋后看看")
-        for _ in range(5):  # broadcast / busy / narration / busy / party
+        for _ in range(6):  # broadcast / busy / narration / busy / party / phase
             ws.receive_json()
 
         _clarify(ws, room, "我说的是绕到屋后，不是进屋")
         echo = ws.receive_json()
         # 重跑那一轮是在同一条消息的处理里 await 的——不把它的推送收完就退出
         # with 块，连接会在服务端还在跑的时候关掉。
-        rerun_events = [ws.receive_json() for _ in range(4)]
+        rerun_events = [ws.receive_json() for _ in range(5)]
 
     # 澄清本身也是玩家说的话：落库 + 广播，跟别的发言一条路
     assert echo["type"] == "action.broadcast"
@@ -759,6 +763,8 @@ def test_clarify_reruns_the_previous_turn_with_the_clarification(
         "narration.push",
         "keeper.busy",
         "party.update",
+        # 2026-08-15 新增的每轮推送（见 helpers.AMBIENT_WS_EVENTS）。
+        "keeper.phase",
     ]
 
     assert len(narrator.contexts) == 2

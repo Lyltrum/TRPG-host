@@ -71,7 +71,7 @@ async def _seed(room_code: str, phase: str) -> tuple[str, str]:
         return room.id, player.id
 
 
-def _agent() -> KeeperAgent:
+def _agent(player_state="normal", captured: dict | None = None) -> KeeperAgent:  # noqa: ANN001
     agent = KeeperAgent(
         api_key="fake-key",
         module=load_module(_FIXTURE_MODULE),
@@ -80,9 +80,11 @@ def _agent() -> KeeperAgent:
     )
 
     async def fake_adjudicate(situation: str) -> KeeperDecision:
-        return KeeperDecision(thinking="桩", narration_guidance="继续")
+        return KeeperDecision(thinking="桩", narration_guidance="继续", player_state=player_state)
 
-    async def fake_narrate_prose(*args, **kwargs) -> str:
+    async def fake_narrate_prose(situation, decision, *args, **kwargs) -> str:
+        if captured is not None:
+            captured["guidance"] = decision.narration_guidance
         return "阁楼的门在你手下吱呀作响。"
 
     agent._adjudicate = fake_adjudicate  # ty: ignore[invalid-assignment]
@@ -140,3 +142,80 @@ async def test_a_finished_game_is_still_a_hard_wall() -> None:
 
     assert await _phase_of(room_id) == PHASE_FINISHED
     assert "本局已结束" in outcome.text
+
+
+# ── 出戏地想收场 → 真的收（2026-08-15）─────────────────
+#
+# 🔴 上面那条退回规则假设「玩家继续说话 = 还想玩」。08-14 实测里它正好反过来：
+# 玩家已经回城复命完毕，连说三次「可以结束了」「结束了吧」，每一次都被判成
+# 还想玩，**对局就是结束不了**。那三句不是角色台词，是他抬起头跟主持人讲话
+# ——**出戏的话被当成戏内发言喂进了裁决**。
+
+
+async def test_an_out_of_character_wrap_up_really_ends_the_game() -> None:
+    room_id, player_id = await _seed("RPN400", PHASE_ENDING)
+
+    await _agent(player_state="wrap_up").narrate(_ctx(room_id, player_id, "结束了吧"))
+
+    assert await _phase_of(room_id) == PHASE_FINISHED
+
+
+async def test_the_next_action_after_a_wrap_up_hits_the_wall() -> None:
+    """收完之后再说话就该撞墙——不然"结束"只是句空话。"""
+    room_id, player_id = await _seed("RPN401", PHASE_ENDING)
+    await _agent(player_state="wrap_up").narrate(_ctx(room_id, player_id, "结束了吧"))
+
+    outcome = await _agent().narrate(_ctx(room_id, player_id, "我还想再看一眼"))
+
+    assert "本局已结束" in outcome.text
+
+
+async def test_a_wrap_up_outside_the_ending_phase_is_ignored() -> None:
+    """🔴 对照组：**收尾门没开过就不算数**。
+
+    玩家中途喊一句"不玩了"不该直接散场——门先得开过（内容跑完了），
+    判错的代价才小。没有这一条，把条件放宽成"只看 player_state"也会绿。
+    """
+    room_id, player_id = await _seed("RPN402", PHASE_INVESTIGATION)
+
+    await _agent(player_state="wrap_up").narrate(_ctx(room_id, player_id, "结束了吧"))
+
+    assert await _phase_of(room_id) == PHASE_INVESTIGATION
+
+
+async def test_reopening_still_works_for_anything_else() -> None:
+    """退化保证：不是 `wrap_up` 的发言仍然退回调查阶段。"""
+    room_id, player_id = await _seed("RPN403", PHASE_ENDING)
+
+    await _agent(player_state="clear_action").narrate(_ctx(room_id, player_id, "我还想上阁楼"))
+
+    assert await _phase_of(room_id) == PHASE_INVESTIGATION
+
+
+# ── ending 阶段的收束纪律（此前一条都没有）──────────────
+
+
+async def test_the_closing_turn_gets_closure_discipline() -> None:
+    """🔴 `ending` 阶段此前的全部效果只有：局面块多一行 + 叙事字数上限放宽。
+
+    于是玩家进了收尾阶段收到的还是一段普通调查叙事，跟没进一样。真人 KP 的
+    调研结论第 4 条写着「真收尾前会先铺垫一个收束场景，给玩家最后的动作机会」
+    ——那正是这里缺的一拍。
+    """
+    room_id, player_id = await _seed("RPN500", PHASE_ENDING)
+    captured: dict = {}
+
+    await _agent(captured=captured).narrate(_ctx(room_id, player_id, "我看看四周"))
+
+    assert "收束·代码注入" in captured["guidance"]
+    assert "不要再抛出任何新线索" in captured["guidance"]
+
+
+async def test_an_ordinary_turn_gets_no_closure_discipline() -> None:
+    """对照组：没进收尾阶段的普通轮次不该被塞收场指令。"""
+    room_id, player_id = await _seed("RPN501", PHASE_INVESTIGATION)
+    captured: dict = {}
+
+    await _agent(captured=captured).narrate(_ctx(room_id, player_id, "我看看四周"))
+
+    assert "收束·代码注入" not in captured.get("guidance", "")

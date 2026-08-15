@@ -112,6 +112,7 @@ _MODELS: list[type[BaseModel]] = [
     ws.ViewPrivatePayload,
     ws.CheckRequestPayload,
     ws.CheckResultPayload,
+    ws.KeeperPhasePayload,
     ws.SanCheckRequestPayload,
     ws.SanCheckResultPayload,
     ws.ClueGrantedPayload,

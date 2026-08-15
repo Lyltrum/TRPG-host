@@ -276,6 +276,34 @@ def inject_scene_transition_guidance(guidance: str) -> str:
     return f"{_SCENE_TRANSITION_GUIDANCE_PREFIX}\n{g}"
 
 
+#: 🔴 **`ending` 阶段此前一条纪律都没有**（2026-08-15 补）。
+#:
+#: 查下来它的全部效果只有两条：局面块多一行「结局收束中」、叙事字数上限放宽。
+#: 于是玩家进了收尾阶段收到的还是一段普通调查叙事，跟没进一样——08-14 实测里
+#: 他说完「可以结束了」，得到的是"德弗罗数出钞票推给你"然后**接着往下问**。
+#:
+#: 真人 KP 做的调研结论第 4 条写着「真收尾前会先铺垫一个收束场景，给玩家最后
+#: 的动作机会」——那正是这里缺的一拍。做收尾那条线时我记下了它，却没有实现。
+_CLOSURE_GUIDANCE_PREFIX = (
+    "【收束·代码注入】这一局的内容已经跑完了，本轮开始**收场**，不是继续调查。"
+    "①不要再抛出任何新线索、新地点、新 NPC、新悬念；"
+    "②把人从现场送出去——离开、上车、天亮、门在身后合上，给这一段一个落点；"
+    "③留一次最后的动作机会（他还想说句话、拿件东西、回头看一眼都行），"
+    "**不要替他决定就此收手**；"
+    "④如果玩家这一拍明确说要结束，就写完整的终章：把这一趟的结果讲清楚，"
+    "该给的钱/该有的后果落到实处，然后停下。"
+)
+
+
+def inject_closure_guidance(guidance: str) -> str:
+    g = (guidance or "").strip()
+    if _CLOSURE_GUIDANCE_PREFIX in g:
+        return g
+    if not g:
+        return _CLOSURE_GUIDANCE_PREFIX
+    return f"{_CLOSURE_GUIDANCE_PREFIX}\n{g}"
+
+
 def inject_spotlight_guidance(guidance: str, nickname: str) -> str:
     """把镜头转向被冷落的那位调查员（exec/14 P5.2 聚光灯）。
 

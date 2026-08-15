@@ -591,6 +591,26 @@ export interface KeeperBusyPayload {
 }
 
 /**
+ * `keeper.phase` 推送：这一局走到哪一步了（2026-08-15）。
+ *
+ * 🔴 **补的是一条只有一半的链**：`closure` 早就会把 phase 写成 `ending` /
+ * `finished`，叙事纪律与字数上限也照着它变，**但前端一个字都收不到**。
+ * 玩家侧的表现是：说完「结束了吧」，收到一段普通叙事，界面毫无变化——
+ * 「整条链都在，就是没人能用到」的又一处。
+ *
+ * ⚠️ 别跟 `RoomPhasePayload` 搞混：那个是**大厅级**的房间状态
+ * （Lobby/InGame/Completed），而且从来没有地方发出过。这一条是**对局内**
+ * 的守秘人阶段（opening/investigation/ending/finished），两者粒度不同。
+ *
+ * 只发 phase 与 ending_id，不发别的——收尾门里的数字（还剩几条配对没揭开）
+ * 是守秘人的判断依据，给玩家看等于剧透进度条。
+ */
+export interface KeeperPhasePayload {
+  phase: string;
+  endingId: string | null;
+}
+
+/**
  * POST /api/v1/auth/login 请求体
  */
 export interface LoginBody {

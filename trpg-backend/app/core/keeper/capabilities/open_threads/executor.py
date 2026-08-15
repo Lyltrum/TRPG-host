@@ -21,6 +21,11 @@ from app.models.room import Room
 logger = structlog.get_logger()
 
 
+def _same_text(left: str | None, right: str | None) -> bool:
+    """两条悬而未决说的是不是**逐字**同一件事。只去空白、忽略大小写。"""
+    return (left or "").strip().casefold() == (right or "").strip().casefold()
+
+
 async def execute_open_threads(
     deps: KeeperDeps, decision: BaseModel, _facts: TurnFacts
 ) -> tuple[list[str], list[str]]:
@@ -63,6 +68,22 @@ async def execute_open_threads(
             text = (thread.text or "").strip()
             if not text:
                 issues.append("悬而未决未记录：内容为空")
+                continue
+            # 🔴 **同一件事不许开两条**（2026-08-15 实测）：08-14 那局
+            # `thread-2`「米-戈已抓住凌铭辉」还挂着，模型又开了一条 `thread-3`
+            # **文字一模一样**，最后两条一起关掉。根子是它没认出表里已经有了。
+            #
+            # 只拦**逐字相同**（去空白、忽略大小写）。不做近似匹配——"这两句话
+            # 是不是同一件事"是语义判断，模糊匹配是同义词打地鼠的开始；而逐字
+            # 相同这一种既确定又恰好是实测撞上的那个形态。
+            duplicate = next(
+                (tid for tid, e in table.items() if _same_text(e.get("text"), text)), None
+            )
+            if duplicate is not None:
+                issues.append(
+                    f"悬而未决未记录：{duplicate} 已经是同一件事「{text}」"
+                    "（要改写它就先 resolve 掉再开新的）"
+                )
                 continue
             thread_id, seq = next_thread_id(seq)
             entry: dict = {"text": text}

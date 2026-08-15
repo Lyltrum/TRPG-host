@@ -39,6 +39,12 @@ export type TimelineMessage = {
 /** 一次检定的落库形状（`keeper.check` 的 payload）。 */
 export type CheckEventPayload = {
   player?: string
+  /**
+   * NPC 掷的那种（2026-08-15）。`npc` 与 `player` 是**两个键**，不复用一个
+   * ——复用正是 08-14 那个 bug 的形状：叙事写「州警扣下扳机」，卡片按
+   * `player` 渲染成「凌铭辉 · 射击」，而玩家身上根本没有枪。
+   */
+  npc?: string
   skill?: string
   rolled?: number
   target?: number
@@ -98,6 +104,16 @@ export const TIMELINE_EVENT_RENDERERS: Record<
   'keeper.check': (payload) => {
     const check = payload as CheckEventPayload
     if (check.rolled == null) return null
+    // 🔴 **NPC 掷的骰不上时间线**（守秘人在屏风后面掷，真人桌同理）。
+    //
+    // 这一条本可以渲染成「爬行者 #1 · 爪击 · 55/70」，但**实时通道推不出来**：
+    // `check.result` 的 payload 里 `playerId` 是必填的，NPC 没有玩家 id，
+    // 要让它实时可见得改 WS DTO + codegen + SDK + 前端，跨了整个契约层。
+    //
+    // 只在回放里渲染的话，就又变成 #82 那个形状——**同一件事两条路只有一条
+    // 认得**，刷新之后凭空多出一张卡片。宁可两条路都不显示，也不要一条有
+    // 一条没有。结果照常通过叙事到达玩家；事件仍然落库，复盘查得到。
+    if (check.npc) return null
     return { type: 'dice', sender: check.player, content: formatCheckLine(check) }
   },
   'keeper.luck_spend': (payload) => {

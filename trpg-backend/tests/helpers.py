@@ -83,13 +83,18 @@ async def join_room(
     return response.json()["data"]
 
 
-#: `party.update` / `keeper.busy` 是**环境事件**：每一轮都会发，跟被测行为无关
-#: （`exec/33 §5.4`）。按顺序读消息的用例只想要"下一条真正的游戏事件"。
+#: **环境事件**：每一轮都会发，跟被测行为无关（`exec/33 §5.4`）。按顺序读消息
+#: 的用例只想要"下一条真正的游戏事件"。
 #:
-#: 🔴 这个跳过是**故意的、且有边界**：这两个事件本身的契约由
-#: `tests/test_chat_ws.py` 显式守住（含失败路径上 busy 必须熄灭那条），
-#: 不是没人测。这里跳过只是为了别让每个用例都去数环境事件的条数。
-AMBIENT_WS_EVENTS = frozenset({"party.update", "keeper.busy"})
+#: 🔴 这个跳过是**故意的、且有边界**：这几个事件本身的契约都有用例显式守住
+#: （`tests/test_chat_ws.py` 守 party/busy 含失败路径上 busy 必须熄灭那条，
+#: `test_closure_reopen.py` 守 phase），不是没人测。这里跳过只是为了别让每个
+#: 用例都去数环境事件的条数。
+#:
+#: 🔴 **这是个「逐个列出的地方」**：新增一种每轮都发的推送就要回来加一行，
+#: 否则按顺序读消息的用例会把它当成剧情事件读走。2026-08-15 加
+#: `keeper.phase` 时当场打红三条——它们并没有坏，只是多收到一条消息。
+AMBIENT_WS_EVENTS = frozenset({"party.update", "keeper.busy", "keeper.phase"})
 
 
 def next_game_event(ws, *, skip=AMBIENT_WS_EVENTS):  # noqa: ANN001, ANN201

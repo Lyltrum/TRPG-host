@@ -594,6 +594,15 @@ export default function RoomPage() {
   const sceneModuleId = useGameStore((s) => s.sceneId)
   const moduleId = roomModuleId || sceneModuleId || null
   const [confirmEnd, setConfirmEnd] = useState(false)
+  /**
+   * 这一局走到哪一步了（`keeper.phase`，2026-08-15）。
+   *
+   * 🔴 补的是一条只有一半的链：closure 早就会把 phase 写成 `ending`/`finished`，
+   * 叙事纪律与字数上限也跟着变，**而前端此前一个字都收不到**。玩家侧的表现是
+   * ——他连说三次「结束了吧」，界面毫无变化，根本不知道结没结束（真人实测
+   * 2026-08-14）。空串 = 还没收到过（老房间/刚进来），那时什么都不显示。
+   */
+  const [keeperPhase, setKeeperPhase] = useState('')
   const [ending, setEnding] = useState(false)
   const [endError, setEndError] = useState('')
   const [confirmExit, setConfirmExit] = useState(false)
@@ -1051,6 +1060,9 @@ export default function RoomPage() {
       } else if (envelope.type === 'party.update') {
         // exec/33 §5.4：我自己的空间处境。逐人裁过再发，别处那组在哪不在里面。
         setParty(envelope.payload)
+      } else if (envelope.type === 'keeper.phase') {
+        // 这一局走到哪一步了。finished 时下面会显示「本局结束」并把收桌推到眼前。
+        setKeeperPhase(envelope.payload.phase)
       } else if (envelope.type === 'keeper.busy') {
         // 守秘人开始/结束这一轮。没发言的人靠它知道"他在忙"，而不是盯着黑屏。
         setKeeperBusy(envelope.payload.busy)
@@ -1717,6 +1729,34 @@ export default function RoomPage() {
           单人真机实测里玩家两次开口问「我现在在哪」：这个信息不是分头才需要的，
           是**每一局都需要的**。判据是那条老的——「功能写在某个实现里，换一个
           实现就悄悄没了」。数据一直都在（后端对所有人都推 party.update）。 */}
+      {/* 🔴 本局结束（2026-08-15）。跟会合确认同一档：**要当场做的动作**。
+          此前 keeper 判完 finished 之后界面上没有任何表示，玩家只能靠"再说话
+          会被拒"反推——那不是一个结局该有的样子。
+          房主这里直接收桌（生成复盘）；不是房主的人至少知道该等谁。 */}
+      {channel === 'dm' && keeperPhase === 'finished' && (
+        <div className="relative z-[1] px-3 pt-2 flex-shrink-0">
+          <div className="paper-grain relative bg-note text-ink border-l-[3px] border-rust px-3 py-2.5">
+            <div className="font-display text-sm mb-1">本局结束</div>
+            <p className="text-[11.5px] leading-[1.7] text-ink-soft mb-2">
+              故事到这里收场了。收桌之后可以在「我的游戏」里看复盘。
+            </p>
+            {endError && <p className="text-[11px] text-rust mb-2">{endError}</p>}
+            {isHost ? (
+              <button
+                type="button"
+                onClick={handleEndGame}
+                disabled={ending}
+                className="typed w-full py-2 bg-rust text-paper text-[11.5px] font-semibold disabled:opacity-60"
+              >
+                {ending ? '收桌中…' : '收桌并查看复盘'}
+              </button>
+            ) : (
+              <p className="typed text-[10.5px] text-ink-soft">等房主收桌。</p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 会合确认（exec/33）留在输入框上方：它是一个**要当场做的动作**，
           跟顶部那条纯状态不是一类东西，位置也该挨着手指。 */}
       {channel === 'dm' && party?.mergePendingAt && (

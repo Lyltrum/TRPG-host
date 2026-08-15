@@ -89,6 +89,9 @@ const PAYLOAD_VALIDATORS: {
     typeof p.cost === 'number' &&
     typeof p.luckRemaining === 'number',
   'keeper.busy': (p) => typeof p.busy === 'boolean',
+  // 2026-08-15：phase 必填；endingId 可为 null（开放式模组自然收尾时没有
+  // 预设结局），但**必须存在**——同 party.update 那三个位置字段的理由。
+  'keeper.phase': (p) => typeof p.phase === 'string' && 'endingId' in p,
   // exec/35：大家在休息
   'room.paused': (p) => typeof p.paused === 'boolean' && typeof p.byNickname === 'string',
   error: (p) => typeof p.code === 'string' && typeof p.message === 'string',

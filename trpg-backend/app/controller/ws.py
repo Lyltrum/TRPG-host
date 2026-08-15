@@ -66,6 +66,7 @@ from app.dto.ws import (
     ErrorPayload,
     GameStartPayload,
     KeeperBusyPayload,
+    KeeperPhasePayload,
     LuckDecidePayload,
     LuckOfferPayload,
     NarrationDeltaPayload,
@@ -246,6 +247,52 @@ async def _broadcast_keeper_busy(room_id: str, busy: bool) -> None:
     await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
 
 
+async def _push_keeper_phase(
+    db: AsyncSession,
+    websocket: WebSocket,
+    room_id: str,
+    *,
+    only_player_id: str | None = None,
+) -> None:
+    """把「这一局走到哪一步了」推给玩家（2026-08-15）。
+
+    🔴 **补的是一条只有一半的链**：`closure` 早就会把 phase 写成 `ending` /
+    `finished`，叙事纪律与字数上限也跟着变，**而前端一个字都收不到**。实测里
+    玩家连说三次「结束了吧」，界面毫无变化——他没法知道这一局到底结没结束。
+    """
+    from app.core.keeper.runtime.phase import load_ending_id, load_phase
+    from app.models.room import Room
+
+    room = await db.get(Room, room_id)
+    if room is None:
+        return
+    payload = KeeperPhasePayload(
+        phase=load_phase(room.keeper_state) or "", ending_id=load_ending_id(room.keeper_state)
+    )
+    envelope = ServerEnvelope(type="keeper.phase", payload=payload.model_dump(by_alias=True))
+    if only_player_id is not None:
+        await websocket.send_json(envelope.model_dump(by_alias=True))
+        return
+    await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
+
+
+async def _push_after_turn(
+    db: AsyncSession,
+    websocket: WebSocket,
+    room_id: str,
+    *,
+    only_player_id: str | None = None,
+) -> None:
+    """一回合结束（或重连补发）之后**要推给玩家的每一样东西**。
+
+    🔴 存在的理由是那条判据：**逐个列出的地方，加一项就漏一项**。位置这一条
+    此前散在四个调用点上，再加一条"对局阶段"就是四处各加一行，第五条必漏。
+    收成一个函数之后，加一样只改这里。
+    """
+    await _push_party_update(db, websocket, room_id, only_player_id=only_player_id)
+    await _push_keeper_phase(db, websocket, room_id, only_player_id=only_player_id)
+
+
 async def _push_party_update(
     db: AsyncSession,
     websocket: WebSocket,
@@ -336,7 +383,7 @@ async def _handle_merge_confirm(
     finally:
         action_lock_manager.release(room_id, lock_token)
     if changed:
-        await _push_party_update(db, websocket, room_id)
+        await _push_after_turn(db, websocket, room_id)
 
 
 async def _audience_at_speaker_location(
@@ -613,7 +660,7 @@ async def _handle_room_join(
     if player_id in await pending_decision_manager.player_ids_of_kind(
         db, room_id, MERGE_CONFIRM_KIND
     ):
-        await _push_party_update(db, websocket, room_id, only_player_id=player_id)
+        await _push_after_turn(db, websocket, room_id, only_player_id=player_id)
     return True
 
 
@@ -1146,7 +1193,7 @@ async def _auto_roll_ai_checks(db: AsyncSession, websocket: WebSocket, room_id: 
             for notice in outcome.check_requests:
                 await _broadcast_check_request(room_id, notice, db)
             # 位置可能刚变过（分头/会合/走到图外）——把每个人自己的处境推给他
-            await _push_party_update(db, websocket, room_id)
+            await _push_after_turn(db, websocket, room_id)
     finally:
         # 这条路有好几个 early return（队列空、没有 AI、掷骰失败），只能靠 finally 配对。
         await _broadcast_keeper_busy(room_id, False)
@@ -1294,7 +1341,7 @@ async def _run_turn(
         await _broadcast_keeper_busy(room_id, False)
         # 位置可能刚变过（分头/会合/走到图外）——把每个人自己的处境推给他
         with contextlib.suppress(Exception):
-            await _push_party_update(db, websocket, room_id)
+            await _push_after_turn(db, websocket, room_id)
 
 
 async def _handle_check_roll(
@@ -1394,7 +1441,7 @@ async def _deliver_check_outcome(
     for offer in outcome.player_offers:
         await _broadcast_luck_offer(room_id, offer, db)
     # 位置可能刚变过（分头/会合/走到图外）——把每个人自己的处境推给他
-    await _push_party_update(db, websocket, room_id)
+    await _push_after_turn(db, websocket, room_id)
     # 这位掷完了，排在他后面的 AI 检定该轮到了（exec/21 第三层）
     await _auto_roll_ai_checks(db, websocket, room_id)
 

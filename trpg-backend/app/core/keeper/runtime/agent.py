@@ -80,6 +80,7 @@ from app.core.keeper.narration.prompts import (
 )
 from app.core.keeper.narration.prose_discipline import (
     clip_narration,
+    inject_closure_guidance,
     inject_scene_transition_guidance,
     narration_limit,
     narration_max_tokens,
@@ -288,9 +289,11 @@ class KeeperAgent(Narrator):
         #
         # 这一步存在的理由是让收尾**判早了的代价变小**：从"对局不可撤回地结束"
         # 降成"多写一段终章"。代价小了，那道替 KP 做判断的机械前提才拿得掉。
+        reopened_from_ending = False
         if phase == PHASE_ENDING:
             if is_heartbeat or is_opening_ceremony:
                 return NarrationOutcome(text="")
+            reopened_from_ending = True
             deps_resume = KeeperDeps(
                 room_id=room_id,
                 player_id=context.player_id,
@@ -482,6 +485,32 @@ class KeeperAgent(Narrator):
             decision=decision,
             forced=classification.forced_labels(spotlight=bool(context.spotlight_nickname)),
         )
+
+        # 🔴 **玩家说"结束了吧"时，那句话不是"我们还想玩"**（2026-08-15）。
+        #
+        # 上面那条退回规则假设了"玩家继续说话 = 还想玩"。08-14 实测里它正好
+        # 反过来：玩家已经回城复命完毕，连说三次「可以结束了」「结束了吧」，
+        # 每一次都被判成还想玩，**对局就是结束不了**。那三句根本不是角色台词，
+        # 是他抬起头跟主持人讲话——**出戏的话被当成戏内发言喂进了裁决**。
+        #
+        # 判"这句是不是出戏想收场"是语义判断，交给裁决 LLM（新增第八格
+        # `wrap_up`，同 `confused` / `feasibility_question` 的先例）。代码只
+        # 消费它，而且**只在本轮确实是从 `ending` 退回来的时候消费**——
+        # 收尾门先得开过，玩家中途喊一句不算。判错的代价因此仍然很小。
+        #
+        # 按 `exec/20` 的口径：这是概率性改进（触发条件由 LLM 判），不说"已修复"。
+        if reopened_from_ending:
+            # 收束纪律：不管这一拍收不收得成，**都该按收场写**（铺尾声、不抛
+            # 新线索、给最后一次动作机会）。此前 `ending` 阶段除了放宽字数
+            # 一条纪律都没有，玩家收到的还是一段普通调查叙事。
+            decision = decision.model_copy(
+                update={"narration_guidance": inject_closure_guidance(decision.narration_guidance)}
+            )
+            if getattr(decision, "player_state", None) == "wrap_up":
+                await set_phase_impl(deps, PHASE_FINISHED)
+                logger.info(
+                    "keeper_closure_confirmed", room_id=room_id, player_id=context.player_id
+                )
 
         report, issues = await execute_side_effects(deps, decision, subject=KEEPER)
         pending_checks, pending_issues = await create_pending_checks(deps, decision, subject=KEEPER)

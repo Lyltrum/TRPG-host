@@ -81,11 +81,12 @@ class KeeperDecision(
         "question_to_kp",
         "feasibility_question",
         "physical_conflict",
+        "wrap_up",
         "normal",
     ] = Field(
         default="normal",
         description=(
             "玩家本轮发言的分类：迷茫求指引/怪话或元指令/明确行动/向守秘人问已知信息/"
-            "征询可行性或许可/对他人动手或强行突破/都不是"
+            "征询可行性或许可/对他人动手或强行突破/出戏地想收场/都不是"
         ),
     )

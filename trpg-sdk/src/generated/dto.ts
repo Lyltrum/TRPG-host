@@ -433,6 +433,7 @@ export interface CheckResultPayload {
   opposedTargetValue?: number | null;
   opposedResult?: string | null;
   opposedWon?: boolean | null;
+  opposedVerdict?: string | null;
   effectiveRollValue?: number | null;
   luckSpent?: number | null;
 }

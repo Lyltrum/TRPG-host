@@ -123,6 +123,28 @@ def resolve_opposed(actor: CheckOutcome, opponent: CheckOutcome) -> bool:
     return actor.target > opponent.target
 
 
+#: 对抗检定的三种结果。**`won: bool` 装不下它**——那正是 2026-08-14 实测里
+#: 出错的地方：玩家格斗 39/25 失败、米-戈 56/40 也失败，`resolve_opposed`
+#: 判 `won=False`（**判对了**），而给叙事的文本写的是「凌铭辉负」。
+#: 「负」被读成"对方赢了"，于是叙事让米-戈成功抓住玩家、造成 2 点伤害
+#: ——**双方都失败在 COC 里是僵持，防守方不白赚一次攻击。**
+#:
+#: 又一处「一份数据扮演两个角色」：`won=False` 同时表达"我输了"和"没人赢"。
+VERDICT_WIN = "胜"
+VERDICT_LOSE = "负"
+VERDICT_STALEMATE = "僵持"
+
+
+def opposed_verdict(actor: CheckOutcome, opponent: CheckOutcome) -> str:
+    """对抗检定的三态结论。`resolve_opposed` 的表达补全，不改它的判定。
+
+    两边都没掷过 → 僵持（维持现状）；其余按 `resolve_opposed` 的胜负。
+    """
+    if not actor.succeeded and not opponent.succeeded:
+        return VERDICT_STALEMATE
+    return VERDICT_WIN if resolve_opposed(actor, opponent) else VERDICT_LOSE
+
+
 def is_success(level: str) -> bool:
     """这次检定算不算成功。失败/大失败以外都算（含大成功与各档难度成功）。"""
     return level not in (LEVEL_FAIL, LEVEL_FUMBLE)

@@ -58,6 +58,15 @@ export type CheckEventPayload = {
     target?: number
     level?: string
     won?: boolean
+    /**
+     * 三态结论「胜 / 负 / 僵持」（2026-08-15）。
+     *
+     * 🔴 `won: boolean` 装不下"僵持"：实测里玩家格斗 39/25 失败、对手 56/40
+     * 也失败，后端判 `won=false`（判对了），卡片却只能显示"负"——那是在说谎，
+     * COC 里双方都失败是维持现状，没有人得手。**规则权威在后端**，这里不自己
+     * 按成功等级推断，缺就回落到 `won`（老事件没有这个字段）。
+     */
+    verdict?: string | null
   } | null
 }
 
@@ -75,7 +84,7 @@ export function formatCheckLine(payload: CheckEventPayload): string {
       : `${payload.rolled}/${target}`
   const opposed = payload.opposed?.opponent
     ? ` vs ${payload.opposed.opponent} ${payload.opposed.rolled}/${payload.opposed.target} · ${
-        payload.opposed.won ? '胜' : '负'
+        payload.opposed.verdict ?? (payload.opposed.won ? '胜' : '负')
       }`
     : ''
   return `${payload.skill ?? '检定'} · ${roll} · ${payload.level ?? ''}${opposed}`
@@ -140,6 +149,7 @@ export function checkResultToEventPayload(ws: {
   opposedRollValue?: number | null
   opposedTargetValue?: number | null
   opposedWon?: boolean | null
+  opposedVerdict?: string | null
 }): CheckEventPayload {
   return {
     skill: ws.skill,
@@ -154,6 +164,7 @@ export function checkResultToEventPayload(ws: {
           rolled: ws.opposedRollValue ?? undefined,
           target: ws.opposedTargetValue ?? undefined,
           won: ws.opposedWon ?? undefined,
+          verdict: ws.opposedVerdict ?? null,
         }
       : null,
   }

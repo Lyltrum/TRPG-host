@@ -546,6 +546,7 @@ async def _broadcast_check_result(
             opposed_target_value=notice.opposed_target,
             opposed_result=notice.opposed_level,
             opposed_won=notice.opposed_won,
+            opposed_verdict=notice.opposed_verdict,
             effective_roll_value=notice.effective_rolled,
             luck_spent=notice.luck_spent,
         )

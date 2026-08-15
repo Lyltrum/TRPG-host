@@ -407,6 +407,11 @@ class CheckResultPayload(CamelModel):
     opposed_target_value: int | None = None
     opposed_result: str | None = None
     opposed_won: bool | None = None
+    # 🔴 三态结论（2026-08-15）："胜"/"负"/"僵持"。`opposed_won: bool` 装不下
+    # 第三种——实测里双方都失败被写成「负」，前端卡片也只能显示"负"，那是在
+    # 说谎（COC 里双方都失败是维持现状，没有人得手）。
+    # None = 老客户端/普通检定，前端回落到 `opposed_won`，渲染与此前一致。
+    opposed_verdict: str | None = None
     # 幸运补正之后的有效出目与花掉的点数（2026-08-14 实测）。只改 `result` 而
     # 把 `roll_value` 原样留着，玩家看到的是「掷出 7、目标 5、成功」——说不通。
     # 两个都为 None = 这次没花幸运，前端渲染与此前一致。

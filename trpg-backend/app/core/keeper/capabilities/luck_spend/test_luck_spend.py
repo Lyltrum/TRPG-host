@@ -302,9 +302,18 @@ def test_the_notice_survives_a_round_trip() -> None:
     from dataclasses import MISSING, fields
 
     notice = _notice(rolled=68, target=60, level="失败", opposed=(50, 80, "成功", False))
-    # 🔴 补全的这四个字段里，`san_loss`/`san_remaining` 是**旧的**——它们从来
+    # 🔴 补全的这几个字段里，`san_loss`/`san_remaining` 是**旧的**——它们从来
     # 就没被这条测试真正守过，是上面那圈自检当场抓出来的。
-    notice = replace(notice, san_loss=3, san_remaining=52, effective_rolled=60, luck_spent=8)
+    # `opposed_verdict` 是 2026-08-15 加的，加进 `CheckResultNotice` 的当场
+    # 就被那圈自检拦下来了——这道自检**第二次**证明自己有用。
+    notice = replace(
+        notice,
+        san_loss=3,
+        san_remaining=52,
+        opposed_verdict="僵持",
+        effective_rolled=60,
+        luck_spent=8,
+    )
 
     for field in fields(CheckResultNotice):
         default = field.default if field.default is not MISSING else None

@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Users, Map, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll, EyeOff, Coffee, DoorOpen } from 'lucide-react'
+import { ArrowLeft, Users, Map, MapPin, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll, EyeOff, Coffee, DoorOpen } from 'lucide-react'
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react'
 import type { ChatMessage, PartyCharacter, PartyUpdatePayload } from 'trpg-sdk'
 import { useRoomStore } from '@/stores/room-store'
@@ -65,7 +65,8 @@ interface LuckOffer {
   deciding: boolean
 }
 
-// 地图结构化数据未接线：不展示假地点，避免砸信任（设计评测 P1）
+// 地图只接了"当前所在"（party.locationName），地点之间的连接关系仍未接线：
+// 不画假的路线图，避免砸信任（设计评测 P1）
 
 const DICE_OPTIONS = [
   { id: 'd100', label: 'D100' },
@@ -1277,8 +1278,33 @@ export default function RoomPage() {
           <div className="font-display text-sm text-text-primary tracking-[0.06em] truncate">
             {roomInfo?.moduleTitle || '对局中'}
           </div>
-          <div className="typed text-[10.5px] text-text-muted mt-px">
-            {roomInfo ? `${roomInfo.players.length} 位调查员` : '克苏鲁的呼唤'}
+          {/* 🔴 我在哪（exec/33 §5.4）。真人多人实测里系统把队友拖进了地下室，而
+              界面上**一处都没有位置信息**，于是没有任何人会发现——这条的作用是把
+              静默错误变成看得见、能当场纠正的错误。
+
+              🔴 **2026-08-14：条件从 `otherGroups > 0` 放宽成"有位置就显示"。**
+              原来只在真的分头时出现，理由是"全队在一起时它是噪声"——那个判断在
+              多人语境下成立，但它同时把**单人局**（otherGroups 恒为 0）整个排除掉了。
+              单人真机实测里玩家两次开口问「我现在在哪」：这个信息不是分头才需要的，
+              是**每一局都需要的**。判据是那条老的——「功能写在某个实现里，换一个
+              实现就悄悄没了」。数据一直都在（后端对所有人都推 party.update）。
+
+              🔴 **同日两次改版**：先从输入框上方的一整张纸条收成顶栏下的一行，
+              再并进这里的副标题——常驻状态不该占一整条横带。**同处的人**移进
+              「地图」面板；顶栏只留位置本身与"还有人在别处"这个分头信号。 */}
+          <div className="typed text-[10.5px] text-text-muted mt-px flex items-center gap-1 min-w-0">
+            <span className="flex-shrink-0">
+              {roomInfo ? `${roomInfo.players.length} 位调查员` : '克苏鲁的呼唤'}
+            </span>
+            {channel === 'dm' && party?.locationName && (
+              <>
+                <MapPin className="w-2.5 h-2.5 text-brass flex-shrink-0" strokeWidth={2.5} />
+                <span className="text-brass-bright truncate">{party.locationName}</span>
+                {party.otherGroups > 0 && (
+                  <span className="flex-shrink-0">· 另有 {party.otherGroups} 组在别处</span>
+                )}
+              </>
+            )}
           </div>
         </div>
         {/* 顶栏原本还有一个开「队友角色卡」的小人图标，与底部那个带文字的
@@ -1691,36 +1717,26 @@ export default function RoomPage() {
           单人真机实测里玩家两次开口问「我现在在哪」：这个信息不是分头才需要的，
           是**每一局都需要的**。判据是那条老的——「功能写在某个实现里，换一个
           实现就悄悄没了」。数据一直都在（后端对所有人都推 party.update）。 */}
-      {channel === 'dm' && party && party.locationName && (
+      {/* 会合确认（exec/33）留在输入框上方：它是一个**要当场做的动作**，
+          跟顶部那条纯状态不是一类东西，位置也该挨着手指。 */}
+      {channel === 'dm' && party?.mergePendingAt && (
         <div className="relative z-[1] px-3 pt-2 flex-shrink-0">
           <div className="paper-grain relative bg-note text-ink border-l-[3px] border-brass px-3 py-2">
-            <div className="text-[11.5px] leading-[1.6]">
-              <strong className="font-semibold">你在{party.locationName}</strong>
-              {party.companions.length > 1 && (
-                <span className="text-ink-soft">· 同处：{party.companions.join('、')}</span>
-              )}
-              {/* 分头相关的那一句仍然只在真的分头时出现——单人局说"另有 0 组"是噪声。 */}
-              {party.otherGroups > 0 && (
-                <span className="text-ink-soft">· 另有 {party.otherGroups} 组调查员在别处</span>
-              )}
+            <div className="flex items-center gap-2">
+              <span className="flex-1 text-[11.5px] leading-[1.6]">
+                你走到了{party.mergePendingAt}——和那边的人碰上了吗？
+                <em className="typed not-italic block text-[10px] text-ink-soft">
+                  没碰上就别点：在你确认之前，两边的消息是分开的。
+                </em>
+              </span>
+              <button
+                type="button"
+                onClick={handleConfirmMerge}
+                className="typed flex-shrink-0 bg-rust text-paper text-[11.5px] font-semibold px-2.5 py-1.5"
+              >
+                已会合
+              </button>
             </div>
-            {party.mergePendingAt && (
-              <div className="mt-1.5 flex items-center gap-2">
-                <span className="flex-1 text-[11.5px] leading-[1.6]">
-                  你走到了{party.mergePendingAt}——和那边的人碰上了吗？
-                  <em className="typed not-italic block text-[10px] text-ink-soft">
-                    没碰上就别点：在你确认之前，两边的消息是分开的。
-                  </em>
-                </span>
-                <button
-                  type="button"
-                  onClick={handleConfirmMerge}
-                  className="typed flex-shrink-0 bg-rust text-paper text-[11.5px] font-semibold px-2.5 py-1.5"
-                >
-                  已会合
-                </button>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -2091,19 +2107,44 @@ export default function RoomPage() {
         )}
       </BottomPanel>
 
-      {/* Panel: 地图——结构化地点未接线，不展示假数据 */}
+      {/* Panel: 地图。🔴 2026-08-14：这里原本整块是"结构化地图尚未接入"的占位，
+          文案写着「有『当前场景』状态后这里再显示真地点」——而那个状态早就有了
+          （后端推 party.update 带 locationName），只是没人回来接。**节点之间的
+          连接关系（exits 图）仍然没接**，所以这里只答"你在哪、跟谁一起"，
+          不画地图；余下那半仍然照实说。 */}
       <BottomPanel accent="#8f3628" paper="#cfc3a2" open={openPanel === 'map'} onClose={() => setOpenPanel(null)} title="地图">
-        <div className="survey flex flex-col items-center justify-center py-11 px-6 border border-ink/30 text-center">
-          <Map className="w-10 h-10 text-text-dim mb-3 opacity-60" />
-          <p className="text-sm text-text-primary font-medium mb-1.5">地点随叙事推进</p>
-          <p className="text-xs text-text-muted leading-relaxed">
-            结构化地图尚未接入。请以主持人频道的场景描写为准；
-            有「当前场景」状态后这里再显示真地点。
-          </p>
-          {roomInfo?.moduleTitle && (
-            <p className="text-[11px] text-text-dim mt-3 font-mono">{roomInfo.moduleTitle}</p>
-          )}
-        </div>
+        {party?.locationName ? (
+          <div className="flex flex-col gap-3">
+            <div className="survey border border-ink/30 px-4 py-4">
+              <div className="typed text-[10px] text-ink-soft mb-1.5">当前所在</div>
+              <div className="font-display text-lg text-ink leading-tight">{party.locationName}</div>
+              {party.companions.length > 1 && (
+                <div className="text-[11.5px] text-ink-soft mt-2 leading-[1.7]">
+                  同处：{party.companions.join('、')}
+                </div>
+              )}
+              {party.otherGroups > 0 && (
+                <div className="text-[11.5px] text-ink-soft mt-1 leading-[1.7]">
+                  另有 {party.otherGroups} 组调查员在别处
+                </div>
+              )}
+            </div>
+            <p className="text-[11px] text-text-muted leading-relaxed px-1">
+              地点之间的路线尚未接入，通往何处以主持人的场景描写为准。
+            </p>
+          </div>
+        ) : (
+          <div className="survey flex flex-col items-center justify-center py-11 px-6 border border-ink/30 text-center">
+            <Map className="w-10 h-10 text-text-dim mb-3 opacity-60" />
+            <p className="text-sm text-text-primary font-medium mb-1.5">地点随叙事推进</p>
+            <p className="text-xs text-text-muted leading-relaxed">
+              还没有确定的位置。请以主持人频道的场景描写为准。
+            </p>
+            {roomInfo?.moduleTitle && (
+              <p className="text-[11px] text-text-dim mt-3 font-mono">{roomInfo.moduleTitle}</p>
+            )}
+          </div>
+        )}
       </BottomPanel>
 
       {/* Panel: 速记 */}

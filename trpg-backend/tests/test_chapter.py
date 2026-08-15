@@ -251,7 +251,7 @@ async def test_background_task_reference_is_retained(room) -> None:
     """asyncio 只持弱引用——不自己存一份，任务可能被 GC 提前回收。"""
     factory, (room_id, player_id) = room
     agent = _agent_with(factory, _CountingClient())
-    agent._spawn_chapter_summary(room_id, [HistoryLine("阿福：我下楼")])
+    agent._spawn_chapter_summary(room_id, [HistoryLine("阿福：我下楼")], frozenset())
     assert len(agent._background) == 1
     for task in list(agent._background):
         await task
@@ -328,3 +328,58 @@ def test_a_group_with_too_little_to_say_does_not_burn_a_model_call() -> None:
         HistoryLine(f"只有他看见的第 {i} 行", _CELLAR) for i in range(MIN_LINES_PER_CHAPTER - 1)
     ]
     assert [audience for audience, _ in split_history_for_chapters(lines)] == [None]
+
+
+# ── 受众覆盖全场 = 本来就是公开的（2026-08-15 实测）───────────
+#
+# 🔴 原来的退化保证写着「未分头时返回的就是一条公开段」，**在真实单人局里
+# 不成立**：潜行/私密投递会给 narration 打上 audience，而单人局那个 audience
+# 就是全部在场玩家。08-14 那 28 轮每次摘要都成对出现（间隔 2–3 秒、内容近似
+# 但不完全相同）——2× LLM 调用，L2 记忆里还堆重复内容。
+
+
+def test_an_audience_covering_everyone_is_treated_as_public() -> None:
+    solo = frozenset({"p1"})
+    lines = [
+        HistoryLine("守秘人：门开了", audience=None),
+        HistoryLine("阿福：我进去", audience=solo),
+        HistoryLine("守秘人：里面很黑", audience=solo),
+        HistoryLine("阿福：点灯", audience=solo),
+    ]
+    groups = split_history_for_chapters(lines, everyone=solo)
+
+    assert len(groups) == 1, "单人局不该摘出两段给同一个人看"
+    audience, texts = groups[0]
+    assert audience is None
+    assert len(texts) == 4, "并进公开段的行一条都不能丢"
+
+
+def test_a_real_split_still_gets_its_own_chapter() -> None:
+    """🔴 对照组：真的分头时仍然各摘一段。
+
+    没有这一条，把整个分支改成"一律只出公开段"也会绿——那会让分头期间的
+    剧情整段丢掉，正是 2026-08-11 补这个功能要解决的问题。
+    """
+    everyone = frozenset({"p-hall", "p-cellar"})
+    lines = [
+        HistoryLine("守秘人：你们分头了", audience=None),
+        HistoryLine("阿福：我下地窖", audience=_CELLAR),
+        HistoryLine("守秘人：地窖很潮", audience=_CELLAR),
+        HistoryLine("阿福：我点灯", audience=_CELLAR),
+    ]
+    groups = split_history_for_chapters(lines, everyone=everyone)
+
+    assert len(groups) == 2
+    assert {a for a, _ in groups} == {None, _CELLAR}
+
+
+def test_without_a_roster_the_old_behaviour_is_kept() -> None:
+    """拿不到名单就不猜（显式降级）：行为与传 `everyone` 之前一致。"""
+    solo = frozenset({"p1"})
+    lines = [
+        HistoryLine("守秘人：门开了", audience=None),
+        HistoryLine("阿福：我进去", audience=solo),
+        HistoryLine("守秘人：里面很黑", audience=solo),
+        HistoryLine("阿福：点灯", audience=solo),
+    ]
+    assert len(split_history_for_chapters(lines)) == 2

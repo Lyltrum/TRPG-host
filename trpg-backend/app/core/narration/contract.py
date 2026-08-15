@@ -122,6 +122,12 @@ class CheckResultNotice:
     opposed_target: int | None = None
     opposed_level: str | None = None
     opposed_won: bool | None = None
+    # 🔴 三态结论（2026-08-15）。`opposed_won: bool` 装不下"僵持"——实测里
+    # 玩家格斗 39/25 失败、对手 56/40 也失败，代码判 `won=False`（判对了），
+    # 而文本写的是「凌铭辉负」，叙事把「负」读成"对方赢了"，让米-戈成功抓住
+    # 玩家造成 2 点伤害。**双方都失败在 COC 里是僵持，防守方不白赚一次攻击。**
+    # 取值见 `dice.VERDICT_*`。
+    opposed_verdict: str | None = None
     # 幸运补正之后的**有效出目**（2026-08-14 实测补的）。花幸运把出目压到
     # 目标值时，`level` 会改成"成功"而 `rolled`/`target` 原样保留——玩家于是
     # 看到「掷出 7、目标 5、成功」，卡面上无法自洽。

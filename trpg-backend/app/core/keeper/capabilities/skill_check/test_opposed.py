@@ -98,6 +98,48 @@ def test_actor_who_failed_never_wins() -> None:
     assert dice.resolve_opposed(_outcome(20, 30), _outcome(90, 80)) is True
 
 
+# ── 1b. 三态结论（2026-08-15）───────────────────────
+#
+# 🔴 `resolve_opposed` 一直是**对的**，坏的是表达：`won: bool` 装不下"僵持"。
+# 08-14 实测里玩家格斗 39/25 失败、米-戈 56/40 也失败，代码判 won=False，
+# 而给叙事的文本写的是「凌铭辉负」——「负」被读成"对方赢了"，叙事于是让
+# 米-戈成功抓住玩家、造成 2 点伤害。**双方都失败在 COC 里是僵持，防守方
+# 不白赚一次攻击。** 又一处「一份数据扮演两个角色」。
+
+
+def test_both_failing_is_a_stalemate_not_a_loss() -> None:
+    """正题：两边都没掷过 → 僵持，不是"主动方负"。"""
+    assert dice.opposed_verdict(_outcome(90, 70), _outcome(100, 70)) == dice.VERDICT_STALEMATE
+    # 复现实测那一掷：格斗 39/25 失败 vs 对手 56/40 失败
+    assert dice.opposed_verdict(_outcome(39, 25), _outcome(56, 40)) == dice.VERDICT_STALEMATE
+
+
+def test_a_real_loss_is_still_a_loss() -> None:
+    """🔴 对照组：对手真的成功了才是"负"。
+
+    没有这一条，把三态实现成"一律僵持"也会绿。
+    """
+    assert dice.opposed_verdict(_outcome(90, 70), _outcome(20, 70)) == dice.VERDICT_LOSE
+    # 平局（都成功、等级同、技能值同）判主动方负，不是僵持——那是**另一条**
+    # 规则（维持现状对防守方有利），跟"两边都没掷过"不是一回事。
+    assert dice.opposed_verdict(_outcome(60, 70), _outcome(60, 70)) == dice.VERDICT_LOSE
+
+
+def test_a_win_is_still_a_win() -> None:
+    assert dice.opposed_verdict(_outcome(20, 30), _outcome(90, 80)) == dice.VERDICT_WIN
+
+
+def test_the_verdict_never_contradicts_resolve_opposed() -> None:
+    """两个函数不许打架：判"胜"的当且仅当 `resolve_opposed` 为真。
+
+    它们是同一条规则的两种表达，分开写就会分开漂。
+    """
+    for actor in ((39, 25), (60, 70), (20, 30), (90, 70), (63, 60)):
+        for opponent in ((56, 40), (60, 70), (90, 80), (20, 70), (62, 50)):
+            a, o = _outcome(*actor), _outcome(*opponent)
+            assert (dice.opposed_verdict(a, o) == dice.VERDICT_WIN) is dice.resolve_opposed(a, o)
+
+
 # ── 2. 越界不夹紧 ───────────────────────────────────
 
 
@@ -215,6 +257,11 @@ async def test_opposed_roll_rolls_both_sides_and_reports_verdict() -> None:
     assert detail["opposed_target"] == 80
     assert 1 <= detail["opposed_rolled"] <= 100
     assert isinstance(detail["opposed_won"], bool)
+    assert detail["opposed_verdict"] in (
+        dice.VERDICT_WIN,
+        dice.VERDICT_LOSE,
+        dice.VERDICT_STALEMATE,
+    )
     # 两边的骰子都要出现在给玩家看的文本里
     assert "毒烟" in text and str(detail["opposed_rolled"]) in text
     assert deps.check_results and "对抗" in deps.check_results[0]

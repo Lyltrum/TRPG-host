@@ -168,19 +168,31 @@ async def roll_check_only(
         else None
     )
     won = dice.resolve_opposed(outcome, opponent_outcome) if opponent_outcome is not None else None
-    if opponent_outcome is not None:
-        verdict = "胜" if won else "负"
+    verdict = dice.opposed_verdict(outcome, opponent_outcome) if opponent_outcome else None
+    if opponent_outcome is not None and verdict is not None:
         # 🔴 结论放**句首**（2026-08-14 实测）。原来的写法是"…→ 成功；对手 …
         # → 极难成功。凌铭辉负。"——「成功」两个字在前、「负」一个字在最末，
         # 叙事模型抓了前者，写成了玩家赢（代码判的是输）。**代码判对了，是这
         # 句话的结构在误导它。** 同一件事只说一次结论，且先说。
+        #
+        # 🔴 **2026-08-15：结论从两态改成三态。** 同一局的另一处：玩家格斗
+        # 39/25 失败、米-戈 56/40 也失败，代码判 `won=False`（判对了），文本
+        # 写的却是「凌铭辉负」——「负」被读成"对方赢了"，叙事于是让米-戈成功
+        # 抓住玩家、造成 2 点伤害。**双方都失败在 COC 里是僵持，防守方不白赚
+        # 一次攻击。** `won: bool` 装不下三种结果，那是「一份数据扮演两个角色」。
+        headline = (
+            f"【对抗结果：{dice.VERDICT_STALEMATE}，谁都没得手】"
+            if verdict == dice.VERDICT_STALEMATE
+            else f"【对抗结果：{player.nickname}{verdict}】"
+        )
         text = (
-            f"【对抗结果：{player.nickname}{verdict}】"
+            f"{headline}"
             f"{player.nickname} 的{display_name}对抗检定（对手：{opposed_opponent}）："
             f"自己 d100={outcome.rolled}/{outcome.target} → {outcome.level}；"
             f"对手 d100={opponent_outcome.rolled}/{opponent_outcome.target}"
             f" → {opponent_outcome.level}。"
-            f"**以【对抗结果】为准，不要按各自的成功等级自行推断谁赢。**"
+            f"**以【对抗结果】为准，不要按各自的成功等级自行推断谁赢；"
+            f"僵持的意思是维持现状——没有人得手，不要替任何一方写出成功的结果。**"
         )
     else:
         text = (
@@ -202,6 +214,7 @@ async def roll_check_only(
         detail["opposed_target"] = opponent_outcome.target
         detail["opposed_level"] = opponent_outcome.level
         detail["opposed_won"] = won
+        detail["opposed_verdict"] = verdict
     return text, detail
 
 
@@ -222,6 +235,7 @@ def _detail_of(pending: PendingDecision, notice: CheckResultNotice) -> dict:
         detail["opposed_target"] = notice.opposed_target
         detail["opposed_level"] = notice.opposed_level
         detail["opposed_won"] = notice.opposed_won
+        detail["opposed_verdict"] = notice.opposed_verdict
     if notice.effective_rolled is not None:
         detail["effective_rolled"] = notice.effective_rolled
         detail["luck_spent"] = notice.luck_spent
@@ -251,8 +265,11 @@ async def _record_check(deps: KeeperDeps, detail: dict) -> None:
             "target": detail["opposed_target"],
             "level": detail["opposed_level"],
             "won": detail["opposed_won"],
+            # 🔴 三态一路带到落库 payload：掷骰卡片按它渲染，而 `won` 装不下
+            # "僵持"。缺了它，回放里僵持会显示成"负"——那是在说谎。
+            "verdict": detail.get("opposed_verdict"),
         }
-        verdict = "胜" if detail["opposed_won"] else "负"
+        verdict = detail.get("opposed_verdict") or ("胜" if detail["opposed_won"] else "负")
         summary = (
             f"{detail['player']} · {detail['skill']}对抗{detail['opposed_opponent']}："
             f"{detail['rolled']}/{detail['target']}（{detail['level']}） vs "
@@ -526,6 +543,7 @@ async def settle_skill_check(deps: KeeperDeps, pending: PendingDecision) -> Chec
         opposed_target=detail.get("opposed_target"),
         opposed_level=detail.get("opposed_level"),
         opposed_won=detail.get("opposed_won"),
+        opposed_verdict=detail.get("opposed_verdict"),
     )
 
 

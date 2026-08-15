@@ -144,6 +144,7 @@ def _revise(
     （2026-08-14 实测）。`pushed.rolled` 就是补正后的那个数。
     """
     opposed_won = notice.opposed_won
+    opposed_verdict = notice.opposed_verdict
     if notice.opposed_level is not None and notice.opposed_target is not None:
         opponent = dice.CheckOutcome(
             rolled=notice.opposed_rolled or 0,
@@ -151,6 +152,9 @@ def _revise(
             level=notice.opposed_level,
         )
         opposed_won = dice.resolve_opposed(pushed, opponent)
+        # 🔴 三态也要跟着重算：只重算 `won` 的话，花幸运把自己推成成功之后
+        # 结论还挂着"僵持"——那是**改了口径只改一半**的又一处。
+        opposed_verdict = dice.opposed_verdict(pushed, opponent)
     return CheckResultNotice(
         check_request_id=notice.check_request_id,
         kind=notice.kind,
@@ -166,6 +170,7 @@ def _revise(
         opposed_target=notice.opposed_target,
         opposed_level=notice.opposed_level,
         opposed_won=opposed_won,
+        opposed_verdict=opposed_verdict,
         effective_rolled=pushed.rolled,
         luck_spent=cost,
     )
@@ -190,6 +195,7 @@ def _notice_payload(notice: CheckResultNotice) -> dict:
         "opposed_target": notice.opposed_target,
         "opposed_level": notice.opposed_level,
         "opposed_won": notice.opposed_won,
+        "opposed_verdict": notice.opposed_verdict,
         "effective_rolled": notice.effective_rolled,
         "luck_spent": notice.luck_spent,
     }

@@ -132,3 +132,49 @@ describe('NPC 掷的骰不上时间线', () => {
     expect(message?.sender).toBe('凌铭辉')
   })
 })
+
+describe('对抗检定的三态结论', () => {
+  // 🔴 08-14 实测：玩家格斗 39/25 失败、米-戈 56/40 也失败，后端判 won=false
+  // （判对了），而卡片与叙事都只能说"负"——「负」被读成"对方赢了"，叙事让
+  // 米-戈成功抓住玩家造成 2 点伤害。**双方都失败在 COC 里是僵持。**
+  // `won: boolean` 装不下第三种，那是「一份数据扮演两个角色」。
+
+  it('僵持时显示僵持，不显示负', () => {
+    const line = formatCheckLine({
+      skill: '格斗：斗殴',
+      rolled: 39,
+      target: 25,
+      level: '失败',
+      opposed: { opponent: '米-戈 #4', rolled: 56, target: 40, level: '失败', won: false, verdict: '僵持' },
+    })
+    expect(line).toContain('僵持')
+    expect(line).not.toContain('负')
+  })
+
+  it('没有 verdict 的老事件回落到 won', () => {
+    // 规则权威在后端：前端**不**自己按成功等级推断，缺就用老字段渲染。
+    const line = formatCheckLine({
+      skill: '格斗：斗殴',
+      rolled: 39,
+      target: 25,
+      level: '失败',
+      opposed: { opponent: '米-戈 #4', rolled: 56, target: 40, level: '失败', won: false },
+    })
+    expect(line).toContain('负')
+  })
+
+  it('实时通道把 opposedVerdict 带进落库形状', () => {
+    const payload = checkResultToEventPayload({
+      skill: '格斗：斗殴',
+      rollValue: 39,
+      targetValue: 25,
+      result: '失败',
+      opposedOpponent: '米-戈 #4',
+      opposedRollValue: 56,
+      opposedTargetValue: 40,
+      opposedWon: false,
+      opposedVerdict: '僵持',
+    })
+    expect(payload.opposed?.verdict).toBe('僵持')
+  })
+})

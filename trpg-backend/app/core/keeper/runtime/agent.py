@@ -502,7 +502,9 @@ class KeeperAgent(Narrator):
             # + 分头那几组各自一段，落库时带受众，注入时按受众裁。
             # 此前是"只喂公开行"——安全但把分头期间的剧情整段丢掉，分头越久
             # 记忆里那段越空。
-            self._spawn_chapter_summary(room_id, history_lines)
+            # 🔴 传在场名单：受众覆盖全场的行**本来就是公开的**，不该再单独
+            # 摘一段（实测单人局每次摘要都出两份，2× LLM 调用 + L2 里重复）。
+            self._spawn_chapter_summary(room_id, history_lines, frozenset(p for p, _ in players))
             decision = decision.model_copy(
                 update={
                     "narration_guidance": inject_scene_transition_guidance(
@@ -1159,14 +1161,18 @@ class KeeperAgent(Narrator):
         )
         return "", segments
 
-    def _spawn_chapter_summary(self, room_id: str, history_lines: list[HistoryLine]) -> None:
+    def _spawn_chapter_summary(
+        self, room_id: str, history_lines: list[HistoryLine], everyone: frozenset[str]
+    ) -> None:
         """把摘要生成丢到后台。刻意不 await——它不在玩家等待路径上。"""
-        task = asyncio.create_task(self._summarize_chapter(room_id, history_lines))
+        task = asyncio.create_task(self._summarize_chapter(room_id, history_lines, everyone))
         # 存一份引用防止任务被 GC 提前回收（asyncio 只持弱引用）
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
-    async def _summarize_chapter(self, room_id: str, history_lines: list[HistoryLine]) -> None:
+    async def _summarize_chapter(
+        self, room_id: str, history_lines: list[HistoryLine], everyone: frozenset[str] = frozenset()
+    ) -> None:
         """整理一段梗概。任何失败都只记日志——它是记忆的锦上添花，不是主路径。
 
         分头时**每组各摘一段**（`split_history_for_chapters`），落库带受众。
@@ -1178,7 +1184,7 @@ class KeeperAgent(Narrator):
                 turns = await turns_since_last_chapter(db, room_id=room_id)
             if not should_summarize(scene_changed=True, turns_since_last=turns):
                 return
-            for audience, lines in split_history_for_chapters(history_lines):
+            for audience, lines in split_history_for_chapters(history_lines, everyone):
                 if not lines:
                     continue
                 text = await summarize_chapter(self._client, lines)

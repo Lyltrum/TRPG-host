@@ -153,6 +153,7 @@ MIN_LINES_PER_CHAPTER = 3
 
 def split_history_for_chapters(
     lines: list[HistoryLine],
+    everyone: frozenset[str] = frozenset(),
 ) -> list[tuple[frozenset[str] | None, list[str]]]:
     """把一段历史按受众拆成「每组各摘一段」的输入。
 
@@ -160,21 +161,42 @@ def split_history_for_chapters(
     行的话模型会摘出一段没有上下文的怪话。代价是公开内容在两段里重复出现，
     读起来啰嗦；**但那是文字冗余，不是泄密**，而泄密不可逆。
 
-    未分头时返回的就是一条公开段，与本功能上线前逐字一致（退化保证）。
+    ## 🔴 `everyone`：受众覆盖全场 = 它本来就是公开的（2026-08-15）
+
+    原来的 docstring 写着「未分头时返回的就是一条公开段（退化保证）」——
+    **那个保证在真实单人局里不成立**。实测 08-14 那 28 轮，每次章节摘要都
+    成对出现、间隔 2–3 秒、内容近似但不完全相同：
+
+        12:26:26 keeper.chapter（无 audience）
+        12:26:29 keeper.chapter（audience=[玩家]）
+
+    因为潜行/私密投递会给 narration 打上 audience，而单人局里那个 audience
+    就是**全部在场玩家**。于是"公开一段 + 那一组一段"——两段给同一个人看。
+    代价是每次摘要 2× LLM 调用，L2 记忆里还堆重复内容。
+
+    修法不是特判"只有一个人"，而是把判据说准：**受众等于全场时它就是公开的**，
+    那几行并进公开段。三人局里投递给全部三人的行同理。`everyone` 传空集就
+    退化成旧行为（调用方拿不到名单时不猜）。
     """
-    public = [line.text for line in lines if line.audience is None]
+    effective = [
+        HistoryLine(text=line.text, audience=None)
+        if line.audience is not None and everyone and line.audience >= everyone
+        else line
+        for line in lines
+    ]
+    public = [line.text for line in effective if line.audience is None]
     out: list[tuple[frozenset[str] | None, list[str]]] = []
     if public:
         out.append((None, public))
     seen: set[frozenset[str]] = set()
-    for line in lines:
+    for line in effective:
         if line.audience is None or line.audience in seen:
             continue
         seen.add(line.audience)
-        private_count = sum(1 for other in lines if other.audience == line.audience)
+        private_count = sum(1 for other in effective if other.audience == line.audience)
         if private_count < MIN_LINES_PER_CHAPTER:
             continue
-        out.append((line.audience, visible_history(lines, line.audience)))
+        out.append((line.audience, visible_history(effective, line.audience)))
     return out
 
 

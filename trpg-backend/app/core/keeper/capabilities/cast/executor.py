@@ -1,7 +1,12 @@
 """cast 能力的执行层：把「本轮台上有谁」记下来。
 
-白名单校验走 `resolve_npc_id`（跟 hp_changes / state_updates 同一个解析器）：
-编造的 id 不进状态，否则又回到自由文本当标识符。
+白名单校验走 `resolve_npc_ref`——**解析到形态那一层，不上溯本体**。
+
+🔴 2026-08-14 实测：裁决写 `["alan-devereux"]`，落库成了 `["main-npcs"]`。
+`alan-devereux` 是那个容器的一个形态，而 `resolve_npc_id` 按设计上溯到本体，
+于是「此刻台上是谁」永远只能答"主要NPC"——这片能力想解决的问题原样存在。
+血账仍走 `resolve_npc_id`（血是个体的，真·多形态的两种样子共用一条血），
+两个粒度的分工写在 `resolve_npc_ref` 的 docstring 里。
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ from app.core.keeper.capabilities.cast.state import (
     serialize_on_stage,
 )
 from app.core.keeper.contract.registry import TurnFacts
-from app.core.keeper.primitives.npcs import resolve_npc_id
+from app.core.keeper.primitives.npcs import resolve_npc_ref
 from app.core.keeper.runtime.deps import KeeperDeps, record_event
 from app.models.room import Room
 
@@ -35,7 +40,7 @@ async def execute_cast(
     issues: list[str] = []
     resolved: list[str] = []
     for label in raw:
-        npc_id = resolve_npc_id(deps.module, str(label).strip())
+        npc_id = resolve_npc_ref(deps.module, str(label).strip())
         if npc_id is None:
             issues.append(f"在场 NPC 未记录：剧本里没有「{label}」")
             continue

@@ -21,7 +21,7 @@ from app.core.keeper.primitives.npcs import (
     npc_ability_names,
     npc_check_target,
     npc_display_name,
-    resolve_npc_id,
+    resolve_npc_ref,
 )
 from app.core.keeper.primitives.skills import canonical_skill_name, resolve_skill_id
 from app.core.keeper.runtime.deps import (
@@ -354,7 +354,8 @@ async def _roll_for_npc(deps: KeeperDeps, check: object) -> list[str]:
     """
     label = str(getattr(check, "npc", "") or "").strip()
     ability = str(getattr(check, "ability", "") or "").strip()
-    npc_id = resolve_npc_id(deps.module, label)
+    # 解析到**形态**那一层：数据卡挂在形态上时要用它自己的数（`resolve_npc_ref`）
+    npc_id = resolve_npc_ref(deps.module, label)
     if npc_id is None:
         return [
             f"NPC 检定未发起：剧本名册里没有「{label}」"

@@ -111,3 +111,24 @@ describe('实时与回放走同一份文案', () => {
     )
   })
 })
+
+describe('NPC 掷的骰不上时间线', () => {
+  // 🔴 08-14 实测：叙事写「州警扣下扳机」，卡片却是「凌铭辉 · 射击」。
+  // 后端已改成把 NPC 的检定记在 `npc` 键上；前端这一半的判据是**两条路一致**
+  // ——实时推不出 NPC 卡片（`check.result` 的 playerId 必填），那回放也不许
+  // 凭空多出一张，否则又是 #82「同一件事两条路只有一条认得」。
+
+  it('带 npc 的检定不渲染成卡片', () => {
+    const render = TIMELINE_EVENT_RENDERERS['keeper.check']
+    expect(
+      render({ npc: '爬行者 #1', skill: '爪击', rolled: 55, target: 70, level: '成功' }),
+    ).toBeNull()
+  })
+
+  it('玩家的检定照常渲染', () => {
+    const render = TIMELINE_EVENT_RENDERERS['keeper.check']
+    const message = render({ player: '凌铭辉', skill: '侦察', rolled: 51, target: 51, level: '成功' })
+    expect(message).not.toBeNull()
+    expect(message?.sender).toBe('凌铭辉')
+  })
+})

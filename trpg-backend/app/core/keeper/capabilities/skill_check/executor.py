@@ -17,6 +17,12 @@ from app.core.keeper.capabilities.skill_check.guard import (
 )
 from app.core.keeper.contract.registry import PendingContext, TurnFacts
 from app.core.keeper.primitives import dice
+from app.core.keeper.primitives.npcs import (
+    npc_ability_names,
+    npc_check_target,
+    npc_display_name,
+    resolve_npc_id,
+)
 from app.core.keeper.primitives.skills import canonical_skill_name, resolve_skill_id
 from app.core.keeper.runtime.deps import (
     KeeperDeps,
@@ -309,6 +315,65 @@ async def publish_stealth_check_requests(
     return [], []
 
 
+async def _roll_for_npc(deps: KeeperDeps, check: object) -> list[str]:
+    """名册 NPC 自己掷一次。返回 issue 列表（成功时为空）。
+
+    ## 🔴 为什么必须有这条路
+
+    2026-08-14 实测：叙事写「州警扣下扳机」，掷骰卡片却是
+    **凌铭辉 · 射击：步枪/霰弹枪 5/42**——玩家身上根本没有枪。schema 里当时
+    只有 `player`，NPC 主动做的事没有任何合法写法，模型只能记到玩家头上。
+
+    ## 🔴 三道拒绝，一道都不能省
+
+    1. **不在名册**（即兴造出来的州警）→ 拒。这是用户拍板的不对称：有数据卡
+       才掷，没有就由叙事裁定，不让裁决器现编难度。
+    2. **没说是哪一项**（`ability` 空）→ 拒。数据卡整段就在它眼前，挑一项
+       不是难事；不挑就是它自己没想清楚拿什么掷。
+    3. **那一项取不出百分位** → 拒，并把这个 NPC 数据卡上**有哪些项**列进
+       issue。判据是那条老的：**加一道门必须同时给它配一条走得通的修法**。
+
+    三道都是"拒绝并说出来"，不是静默跳过——静默的话，模型下一轮还会照写。
+    """
+    label = str(getattr(check, "npc", "") or "").strip()
+    ability = str(getattr(check, "ability", "") or "").strip()
+    npc_id = resolve_npc_id(deps.module, label)
+    if npc_id is None:
+        return [
+            f"NPC 检定未发起：剧本名册里没有「{label}」"
+            "（即兴出来的人物没有数据卡，这一下由叙事直接裁定，不要掷骰）"
+        ]
+    name = npc_display_name(deps.module, npc_id)
+    if not ability:
+        options = npc_ability_names(deps.module, npc_id)
+        return [f"NPC 检定未发起：{name} 要掷哪一项没说（数据卡上有 {options}）"]
+    target = npc_check_target(deps.module, npc_id, ability)
+    if target is None:
+        options = npc_ability_names(deps.module, npc_id)
+        return [
+            f"NPC 检定未发起：{name} 的数据卡上取不出「{ability}」的百分位（可用的项：{options}）"
+        ]
+    outcome = dice.evaluate_check(dice.roll_d100(deps.rng), target)
+    summary = f"{name} · {ability}：{outcome.rolled}/{outcome.target} → {outcome.level}"
+    async with deps.session_factory() as db:
+        await record_event(
+            db,
+            deps,
+            "keeper.check",
+            {
+                # 🔴 `npc` 与 `player` 是**两个键**，不复用一个：掷骰卡片要能
+                # 一眼看出这是谁掷的，而复用 `player` 正是这次 bug 的形状。
+                "npc": name,
+                "skill": ability,
+                "rolled": outcome.rolled,
+                "target": outcome.target,
+                "level": outcome.level,
+            },
+        )
+    deps.check_results.append(summary)
+    return []
+
+
 async def create_pending_skill_checks(
     deps: KeeperDeps, decision: BaseModel, context: PendingContext
 ) -> tuple[list[PendingDecision], list[str]]:
@@ -321,6 +386,12 @@ async def create_pending_skill_checks(
     issues: list[str] = []
 
     for check in getattr(decision, "checks", ()):
+        # 🔴 **NPC 掷的那种不进待掷队列**（2026-08-15）：待掷队列的语义是
+        # "等某个玩家按下掷骰"，而州警开枪不该要玩家替他按一下按钮。这一支
+        # 服务端立刻掷完、直接进 check_results 给叙事，`pending` 一条不加。
+        if getattr(check, "npc", None):
+            issues.extend(await _roll_for_npc(deps, check))
+            continue
         # 技能指向 id 化（exec/17）：`skill_id` 应当是白名单里的技能 id 或
         # 属性 key。JSON mode 约束不到生成，所以模型仍可能写中文名——那条
         # 路径**保留但打点**（`resolve_skill_target` 本来就同时认 id 和

@@ -42,10 +42,40 @@ class CheckRequest(DecisionModel):
     所以 enum **约束不到生成**，只能靠 prompt 给表 + 代码校验。模型仍写中文名
     时代码会**显式回退**并打 `keeper_skill_id_fallback` warning——不是静默，
     日志能统计守规率，据此再决定要不要收紧成硬失败。
+
+    ## 🔴 `npc`：NPC 主动做的事也得有地方掷（2026-08-14 实测）
+
+    此前这个模型里**只有 `player`**，于是"州警开枪"没有任何合法写法。模型
+    只剩两条路：不掷，或者记在玩家头上。它选了后者——掷骰卡片上白纸黑字写着
+    **凌铭辉 · 射击：步枪/霰弹枪 5/42**，而叙事里扣扳机的是州警，玩家身上
+    根本没有枪（`equipment` 全程是 null）。同一拍里两个说法。
+
+    同「schema 表达不了的东西会从叙事里漏出去」那条判据的又一例。
+
+    🔴 **不对称是有意的**（用户 2026-08-15 拍板）：名册里有数据卡的 NPC 用
+    **它自己的数值**真掷；即兴造出来的 NPC（那个州警不在名册里）没有数值，
+    就**拒绝并记 issue**，由叙事直接裁定。不让裁决器现编一个目标值——那等于
+    把难度交给模型自己定，正是「能确定化的是判断的输入，不是判断本身」要
+    避免的。
     """
 
     skill_id: str = Field(description="技能 id 或属性 key，必须取自权威 id 表")
     player: str | None = None
+    npc: str | None = Field(
+        default=None,
+        description=(
+            "这次检定由**剧本名册里的 NPC** 掷时填它的 npc id（如 mi-go-4）；"
+            "玩家掷就留 null。填了 npc 就不要再填 player。"
+            "目标值取自它数据卡上的 `ability` 那一项，所以两个字段要一起给"
+        ),
+    )
+    ability: str | None = Field(
+        default=None,
+        description=(
+            "NPC 数据卡上的哪一项（如「爪击」「黑暗武器」「STR」），"
+            "**必须与数据卡上的写法一字不差**；玩家检定时留 null"
+        ),
+    )
     reason: str = ""
     opposed: OpposedTarget | None = Field(default=None, description="对抗检定时填；普通检定留 null")
 

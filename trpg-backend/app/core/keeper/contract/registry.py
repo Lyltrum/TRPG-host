@@ -75,6 +75,9 @@ class Capability(StrEnum):
     REQUEST_CHECK = "request_check"
     REQUEST_SAN_CHECK = "request_san_check"
     ADJUST_HP = "adjust_hp"
+    #: 「他身上多了/少了一件东西」。与 ADJUST_HP 分开：血是规则算出来的数，
+    #: 随身物品是**玩家自己写的清单**，改的是两种不同的东西。
+    CHANGE_EQUIPMENT = "change_equipment"
     UPDATE_STATE = "update_state"
     SET_SCENE = "set_scene"
     #: 「此刻藏着没」。与 SET_SCENE 分开而不是共用一条：玩家向守秘人提问那一轮

@@ -323,6 +323,19 @@ class TurnFacts:
     #: 那种轮次不该算内容还在推进（同族于「写了 ≠ 变了」）。
     clues_revealed_this_turn: bool = False
 
+    #: 本轮为**哪些玩家 id** 发起了潜行检定。`skill_check`（order=5）写，
+    #: `movement`（order=30）读。
+    #:
+    #: 🔴 存在理由：`hiding.hidden=true` 与 `checks:[stealth]` 是两条互不相干
+    #: 的路，于是回归实测里出现了**藏起来是白给的**——潜行检定被护栏吞掉，
+    #: 隐匿状态照样写进去，两次都是（第二次是贴到三步外的怪物旁边）。
+    #: 有了这个事实，`movement` 才能把"进入隐匿"这一步让给检定结算去做。
+    #:
+    #: 装的是**玩家 id 不是昵称**：`hiding.player` 与 `checks[].player` 都是
+    #: 模型写的自由文本，两边各自解析成 id 之后才谈得上比较——拿两个自由文本
+    #: 直接比就是同义词打地鼠（exec/17）。
+    stealth_check_players: set[str] = field(default_factory=set)
+
 
 #: 执行钩子：拿到本轮裁决，做完自己那部分副作用，返回 (执行报告, 问题清单)。
 #: 报告喂给叙事阶段（叙事必须知道"发生了什么"），问题清单是"裁决里不合法的项"

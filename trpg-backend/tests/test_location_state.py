@@ -554,12 +554,20 @@ async def test_player_location_key_is_reserved_from_state_updates(party) -> None
 
 
 async def test_check_guard_uses_each_players_own_location(party) -> None:
-    """🔴 分头后不能用房间级指针去卡另一个人的检定。
+    """🔴 分头后不能用房间级指针去判另一个人的检定。
 
     fixture 里 hall 标注了检定点 spot-hidden、cellar 没标注 checks（即兴层放行）。
-    阿福在 cellar、阿贵在 hall：
-    - 阿福掷「图书馆使用」→ 所在节点无 checks → 放行；
-    - 若按房间级指针（hall）判定，这一条会被 hall 的 checks 否掉。
+    阿福在 cellar、阿贵在 hall，两人都掷「图书馆使用」：
+    - 阿福所在节点无 checks → 属于即兴层，本来就没有"越界"可言；
+    - 阿贵所在的门厅标了 spot-hidden → 他这条是即兴，**拿不到揭示权**。
+
+    判定必须按**各自的位置**：若按房间级指针（cellar）判，阿贵那条就不会有
+    issue；若按另一个（hall）判，阿福那条会平白多一条。两个方向都会错。
+
+    🔴 **2026-08-15：断言从"阿贵那条被丢弃"改成"阿贵那条照掷但被点名"。**
+    护栏改成只拦揭示权之后，两条检定都会产生待掷记录——**按人判定这个不变式
+    没变，变的是判定的后果**。用 issue 里点的是哪个节点来区分，比数 pending
+    条数更贴近这条用例真正要守的东西。
     """
     deps, a_id, b_id = party
     deps.turn_player_ids = (a_id,)
@@ -577,10 +585,11 @@ async def test_check_guard_uses_each_players_own_location(party) -> None:
         }
     )
     pending, issues = await create_pending_checks(deps, decision)
-    assert [p.player_id for p in pending] == [a_id]
-    # 阿贵那条被他自己所在的门厅护栏否掉（门厅只标注了 spot-hidden）
-    assert len(issues) == 1
+    assert [p.player_id for p in pending] == [a_id, b_id], "两个人都该掷得出来"
+    # 只有阿贵那条越了界，而且点的是**他自己所在的**门厅
+    assert len(issues) == 1, issues
     assert "library-use" in issues[0] and "门厅" in issues[0]
+    assert all(p.reveals == () for p in pending), "两条都揭不开模组事实"
 
 
 # ── 位置的两个角色：可见性单元 vs 内容单位（2026-08-10 多人验证跑） ──

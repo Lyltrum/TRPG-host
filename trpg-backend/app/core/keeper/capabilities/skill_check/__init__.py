@@ -15,6 +15,7 @@
 from app.core.keeper.capabilities.skill_check.executor import (
     apply_skill_check,
     create_pending_skill_checks,
+    publish_stealth_check_requests,
     settle_skill_check,
 )
 from app.core.keeper.capabilities.skill_check.prompt import PROMPT_BLOCKS
@@ -23,13 +24,23 @@ from app.core.keeper.capabilities.skill_check.schema import (
     SkillCheckDecisionFields,
     audit_fields,
 )
-from app.core.keeper.contract.registry import KeeperCapability, PendingHook, SettleHook
+from app.core.keeper.contract.registry import (
+    ExecutorHook,
+    KeeperCapability,
+    PendingHook,
+    SettleHook,
+)
 
 CAPABILITY = KeeperCapability(
     name="skill_check",
     schema=SkillCheckDecisionFields,
     field_capabilities=FIELD_CAPABILITIES,
     prompt_blocks=PROMPT_BLOCKS,
+    # 🔴 order=5：这个执行钩子**什么都不改**，只把"本轮谁要掷潜行"发布到
+    # `TurnFacts`，好让 `movement`（order=30）把"进入隐匿"让给检定结算。
+    # 必须排在 movement 前面，也必须在执行阶段——待掷记录的创建整个排在
+    # 执行之后，等不到。
+    executors=(ExecutorHook(order=5, run=publish_stealth_check_requests),),
     # 排在 san_check 之前：待掷队列的顺序就是玩家看到卡片的顺序，与切分前
     # create_pending_checks 里"先 checks 后 san_checks"一致。
     pendings=(PendingHook(order=10, run=create_pending_skill_checks),),

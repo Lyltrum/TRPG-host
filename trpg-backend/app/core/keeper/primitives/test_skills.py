@@ -128,13 +128,19 @@ def test_guard_lets_through_the_annotated_id() -> None:
     assert issues == []
 
 
-def test_guard_still_blocks_a_genuinely_unannotated_skill() -> None:
-    """护栏不能放水成摆设——没标注的技能照样拦（设计 02 第一层）。"""
+def test_guard_still_withholds_reveal_rights_from_an_unannotated_skill() -> None:
+    """护栏不能放水成摆设——没标注的技能拿不到揭示权（设计 02 第一层）。
+
+    🔴 **2026-08-15：函数的返回值契约没动，动的是调用方怎么用它。** 原来这条
+    叫 `..._still_blocks_...`，因为返回的空列表当时意味着"这条检定整个丢弃"；
+    现在它意味着"照掷，但 `reveals` 为空"。**没标注 = 挖不出模组真相**这个
+    不变式一点没松，松的只是"顺带没收玩家掷骰的权利"那部分。
+    """
     allowed, issues = filter_checks_against_module(
         _module("spot-hidden"), ["library-use"], current_scene="书房", current_node_id="study"
     )
     assert allowed == []
-    assert issues and "未发起" in issues[0]
+    assert issues and "揭不开模组事实" in issues[0]
 
 
 def test_guard_accepts_any_option_of_a_multi_skill_check() -> None:

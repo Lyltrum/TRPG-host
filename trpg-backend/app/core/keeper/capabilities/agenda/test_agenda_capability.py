@@ -9,6 +9,7 @@ import asyncio
 import json
 import random
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,25 @@ from app.models.room import Character, Player, Room
 #: `parents[3]` 当场指错一层，症状只是一条用例**静默 skip**（全套照样绿）。
 _TESTS_DIR = next(p for p in Path(__file__).resolve().parents if p.name == "trpg-backend") / "tests"
 _FIXTURE_MODULE = _TESTS_DIR / "fixtures" / "keeper_module.json"
+
+
+#: fixture 的四个节点标题两两不同，「两处同名」那一支在它上面造不出来，所以
+#: 派生一份把 `cellar` 的标题改成跟 `hall` 一样。
+#: 🔴 **刻意在本文件里重造一份而不是从 movement 的测试导入**：能力之间不许
+#: 互相 import，测试也一样（架构测试守着这条）。五行的夹具，重复好过耦合。
+def _with_two_nodes_sharing_a_title():
+    module = load_module(_FIXTURE_MODULE)
+    return module.model_copy(
+        update={
+            "nodes": [
+                node.model_copy(update={"title": "门厅"}) if node.id == "cellar" else node
+                for node in module.nodes
+            ]
+        }
+    )
+
+
+_SAME_TITLE_MODULE = _with_two_nodes_sharing_a_title()
 
 _db_path = Path(tempfile.mkdtemp(prefix="trpg-keeper-agenda-test-")) / "agenda.db"
 _engine = create_async_engine(f"sqlite+aiosqlite:///{_db_path}", poolclass=NullPool)
@@ -407,15 +427,21 @@ async def test_repointing_off_an_improvised_location_while_the_scene_holds_is_bl
         assert (room.keeper_state or {}).get(CURRENT_NODE_KEY) == here, "指针不该被挪走"
 
 
-async def test_repointing_between_script_nodes_is_only_flagged_not_blocked(
+async def test_repointing_between_same_titled_nodes_is_only_flagged_not_blocked(
     deps: KeeperDeps,
 ) -> None:
-    """🔴 剧本节点之间那一支**只报不拦**：两个不同节点可以有同一个显示名
-    （`test_node_id_change_injects_even_when_scene_text_matches` 守着那条真实
-    需求）。语义上区分不开"错误改写"与"移动到同名的另一处"，硬拦会误伤。
+    """🔴 **两处同名**那一支只报不拦：玩家真的可以移动到另一处也叫这个名字的
+    地方（`test_node_id_change_injects_even_when_scene_text_matches` 守着那条
+    真实需求）。那时语义上区分不开"错误改写"与"合法移动"，硬拦会误伤。
 
     按 `exec/20` 的口径，这一半是概率性改进，不是保证。
+
+    🔴 **2026-08-15：样本换成真正同名的两个节点。** 原来这条用 `cellar`（地窖）
+    → `hall`（门厅）——**标题不同**，跟它自己 docstring 给的理由对不上。理由
+    只在"两处同名"时成立，而回归实测抓到的两次乱改**两端标题都不一样**，
+    那一档已经收成 block。样本不匹配理由 = 这条用例当时守的比它声称的宽。
     """
+    deps = replace(deps, module=_SAME_TITLE_MODULE)
     await execute_side_effects(
         deps,
         KeeperDecision(
@@ -435,6 +461,35 @@ async def test_repointing_between_script_nodes_is_only_flagged_not_blocked(
         room = await db.get(Room, deps.room_id)
         assert room is not None
         assert (room.keeper_state or {}).get(CURRENT_NODE_KEY) == "hall", "只报不拦，照常执行"
+
+
+async def test_repointing_between_differently_titled_nodes_is_blocked(
+    deps: KeeperDeps,
+) -> None:
+    """🔴 对照组：标题不同就没有"同名的另一处"这种解释，拦。
+
+    这一条是上面那条收窄之后**新长出来的一半**，实据见
+    `movement/test_movement_repoint.py`。
+    """
+    await execute_side_effects(
+        deps,
+        KeeperDecision(
+            current_node_id="cellar",
+            state_updates=[StateUpdate(subject="world", key=SCENE_NAME_KEY, value="地窖")],
+        ),
+    )
+    _report, issues = await execute_side_effects(
+        deps,
+        KeeperDecision(
+            current_node_id="hall",
+            state_updates=[StateUpdate(subject="world", key=SCENE_NAME_KEY, value="地窖")],
+        ),
+    )
+    assert any("未执行" in i and "人还在原地" in i for i in issues), issues
+    async with _session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        assert (room.keeper_state or {}).get(CURRENT_NODE_KEY) == "cellar", "拦下来就不许挪"
 
 
 async def test_moving_and_saying_so_is_allowed(deps: KeeperDeps) -> None:

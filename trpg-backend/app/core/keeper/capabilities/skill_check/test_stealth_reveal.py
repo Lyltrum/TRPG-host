@@ -149,6 +149,9 @@ async def _hidden_ids(room_id: str) -> set[str]:
 _LOSING_SEED = 1  # 潜行 20 vs 90 → 输
 _WINNING_SEED = 2  # 潜行 20 vs 5 → 赢
 _CON_LOSING_SEED = 4  # 体质 70 vs 90 → 输
+#: 无对手的普通潜行：潜行基础值 20，d100 掷出 18 → 成功 / 31 → 失败。
+_SOLO_SUCCESS_SEED = 1
+_SOLO_FAILURE_SEED = 3
 
 
 async def test_losing_a_stealth_contest_reveals_the_player() -> None:
@@ -174,8 +177,13 @@ async def test_winning_a_stealth_contest_keeps_the_player_hidden() -> None:
 
 
 async def test_a_plain_stealth_check_does_not_reveal_anyone() -> None:
-    """没有对手就没有"被谁发现"。普通潜行检定失败只是没藏好，不是暴露——
-    真正把他置入隐匿的是裁决器的 `hiding`，这条路径不该反过来撤销它。"""
+    """没有对手就没有"被谁发现"：已经藏好的人，普通潜行失败不该被掀开。
+
+    🔴 **2026-08-15 更新了理由。** 原来这条写的是"真正把他置入隐匿的是裁决器
+    的 `hiding`"——那句话现在不成立了，进入隐匿已经改由检定结算决定。留着这
+    条用例的新理由是**不对称**：无对手的失败只说明"这一次没藏得更好"，
+    不构成"有人看见了他"，所以既有的隐匿状态不动。掀开只认对抗输掉那一种。
+    """
     room_id, player_id = await _seed("STL300", hidden=True)
     deps = _deps(room_id, player_id, seed=_LOSING_SEED)
 
@@ -208,3 +216,49 @@ async def test_a_player_who_was_not_hiding_produces_no_noise() -> None:
 
     assert await _hidden_ids(room_id) == set()
     assert not any("被发现" in line for line in deps.check_results)
+
+
+# ── 进入隐匿也归结算（2026-08-15，回归实测）──────────────────
+#
+# 🔴 此前只有"输掉对抗 → 掀开"这一半是代码硬化的。"藏进去"走的是裁决的
+# `hiding` 字段，跟掷不掷骰**完全无关**——实测里潜行检定被护栏吞掉、隐匿状态
+# 照样落库，两次都是（第二次是贴到三步外的怪物旁边）。**藏起来是白给的。**
+# 又一次「一条规则只写了一个方向」。
+
+
+async def test_a_successful_solo_stealth_roll_enters_hiding() -> None:
+    """没有对手的普通潜行：掷过了才藏得住。"""
+    room_id, player_id = await _seed("STL600", hidden=False)
+    deps = _deps(room_id, player_id, seed=_SOLO_SUCCESS_SEED)
+
+    notice = await _settle(deps, _pending(room_id, player_id, skill="潜行", opposed_value=None))
+
+    assert notice.level not in ("失败", "大失败"), "种子选错了：这条用例需要掷成功"
+    assert await _hidden_ids(room_id) == {player_id}
+    assert any("进入隐匿" in line for line in deps.check_results)
+
+
+async def test_a_failed_solo_stealth_roll_does_not_enter_hiding() -> None:
+    """🔴 正题：掷失败就是**没藏住**，不能凭裁决写了 `hidden: true` 就算数。"""
+    room_id, player_id = await _seed("STL601", hidden=False)
+    deps = _deps(room_id, player_id, seed=_SOLO_FAILURE_SEED)
+
+    notice = await _settle(deps, _pending(room_id, player_id, skill="潜行", opposed_value=None))
+
+    assert notice.level in ("失败", "大失败"), "种子选错了：这条用例需要掷失败"
+    assert await _hidden_ids(room_id) == set(), "🔴 潜行没掷过，人却藏起来了"
+    # 叙事必须知道他没藏住，否则代码说他显眼、故事里他还猫着
+    assert any("没藏住" in line for line in deps.check_results)
+
+
+async def test_a_non_stealth_roll_never_touches_hiding() -> None:
+    """🔴 对照组：别的技能掷成功不该把人变成隐匿。
+
+    没有这一条，把 `_is_stealth_check` 那个判断整个删掉也可能碰巧绿。
+    """
+    room_id, player_id = await _seed("STL602", hidden=False)
+    deps = _deps(room_id, player_id, seed=_SOLO_SUCCESS_SEED)
+
+    await _settle(deps, _pending(room_id, player_id, skill="侦察", opposed_value=None))
+
+    assert await _hidden_ids(room_id) == set()

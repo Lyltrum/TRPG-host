@@ -84,7 +84,13 @@ def filter_checks_against_module(
     current_node_id: str | None = None,
     keeper_state: dict | None = None,
 ) -> tuple[list[str], list[str]]:
-    """返回 (保留的 skill_id 列表, issue 文案)。
+    """返回 (**有揭示权**的 skill_id 列表, issue 文案)。
+
+    🔴 **2026-08-15 起这个函数不再决定"掷不掷"，只决定"揭不揭得开"。**
+    调用方（`skill_check/executor.py::create_pending_skill_checks`）照常为每条
+    检定建待掷记录，只把没通过的那些的 `reveals` 置空。函数名与返回形状没动
+    ——变的是调用方怎么用它。理由与实据写在调用点，一句话版本：**要防的是
+    "即兴掷一把就把模组真相挖出来"，不是"不许即兴掷骰"**。
 
     仅在「能定位到当前节点且节点有可用的 checks[]」时强制命中模组标注；
     否则全部放行（即兴层，设计 02 第二层）。
@@ -120,7 +126,8 @@ def filter_checks_against_module(
             kept.append(skill_id)
         else:
             issues.append(
-                f"检定[{skill_id}]未发起：当前场景「{node.title}」模组标注检定点为"
-                f"{sorted(allowed)}，不允许即兴该技能（设计 02 第一层）"
+                f"检定[{skill_id}]照常掷出，但揭不开模组事实：当前场景"
+                f"「{node.title}」标注的检定点是 {sorted(allowed)}，"
+                f"这一条属于即兴（设计 02 第一层）"
             )
     return kept, issues

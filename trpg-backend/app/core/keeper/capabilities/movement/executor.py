@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from app.core.keeper.capabilities.movement.schema import PlayerMove as _Move
 from app.core.keeper.contract.registry import TurnFacts
-from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
+from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError, resolve_character
 from app.core.keeper.runtime.location_state import (
     IMPROVISED_ID_PREFIX,
     clear_current_node_impl,
@@ -15,6 +15,7 @@ from app.core.keeper.runtime.location_state import (
     move_player_impl,
     only_speakers_named,
     record_merges_since,
+    resolve_location,
     set_current_node_impl,
     set_stealth_impl,
     snapshot_locations,
@@ -79,20 +80,61 @@ async def _repoint_verdict(deps: KeeperDeps, node_id: str, facts: TurnFacts) -> 
     那么把指针挪到任何剧本节点都是错的，不存在"同名的另一处"这种解释。
     实测十次里有八次正是这一种（`loc-5` 温特公寓 → `investigation-start`）。
 
-    剩下那两次（剧本节点之间）只记 issue、不阻断——同 `_entity_name_in_key`
-    的先例：**代码判得了触发条件但判不准该不该拦时，报而不断**。它按
-    `exec/20` 的口径登记为概率性改进，别把它说成"已修复"。
+    ## 🔴 2026-08-15：第二个确定子集——**两端标题不同**
+
+    上面那句"语义上区分不开"当时是对的，但它把免死金牌发得太宽了。回归实测
+    又抓到两次，全是剧本节点之间：
+
+        场景「度假屋卧室」原样重写
+            + `bedroom-one`（卧室一）→ `master-bedroom`（主卧）
+        场景「度假屋外的森林」原样重写
+            + `forest-wandering`（森林漫步）→ `cabin-exterior`（度假屋外观）
+
+    两次的**两端标题都不一样**。而"移动到另一处也叫这个名字的地方"这条豁免，
+    前提正是**两处同名**——标题不同时它根本不成立，不存在需要保护的真实需求。
+    于是判据收成：**场景没变 + 两端标题不同 ⇒ 拦**；标题相同才留 warn
+    （那时确实分不清，仍按"报而不断"处理，`test_node_id_change_injects_even_
+    when_scene_text_matches` 守的就是这一支）。
+
+    🔴 **取不到标题就不拦**（`resolve_location` 返回 None）：那是缺数据，不是
+    证据。显式降级成 warn，不拿"查不到"当"不一样"用。
+
+    ## 🔴 为什么这条值得从 warn 升成 block
+
+    指针不是只影响显示。回归实测量出来它是**四条症状的同一个根因**：护栏按
+    玩家所在节点取 `checks[]`（指针错 ⇒ 查错白名单 ⇒ 检定被静默吞掉）、
+    `format_san_points` 按玩家所在节点注入理智检定点（指针错 ⇒ 整块不渲染 ⇒
+    模型眼前没有 SAN 提示）、顶栏位置提示直读指针、收尾门按节点数。
     """
     if not facts.scene_name_restated:
         return None
     async with deps.session_factory() as db:
         room = await db.get(Room, deps.room_id)
-        current = load_current_node_id(room.keeper_state if room is not None else None)
+        keeper_state = room.keeper_state if room is not None else None
+        current = load_current_node_id(keeper_state)
     if current is None or current == node_id:
         return None
     if current.startswith(IMPROVISED_ID_PREFIX) and not node_id.startswith(IMPROVISED_ID_PREFIX):
         return "block"
+    current_title = resolve_location(deps.module, keeper_state, current)
+    target_title = resolve_location(deps.module, keeper_state, node_id)
+    if current_title and target_title and current_title != target_title:
+        return "block"
     return "warn"
+
+
+async def _resolve_player_id(deps: KeeperDeps, label: str) -> str | None:
+    """昵称/角色名 → 玩家 id。解析不出返回 None（由后面那句照常报 issue）。
+
+    `facts.stealth_check_players` 装的是 id，所以比较之前两边都得落到 id 上
+    ——两个自由文本直接比就是同义词打地鼠（exec/17）。
+    """
+    async with deps.session_factory() as db:
+        try:
+            player, _character = await resolve_character(db, deps, label)
+        except KeeperToolError:
+            return None
+    return player.id
 
 
 async def execute_movement(
@@ -228,6 +270,28 @@ async def execute_movement(
 
     for change in getattr(decision, "hiding", ()):
         try:
+            # 🔴 **本轮要掷潜行的人，「进入隐匿」不在这里生效**（2026-08-15）。
+            #
+            # 回归实测抓到的形态：裁决同时写了 `checks:[stealth]` 和
+            # `hiding:[{hidden:true}]`，检定被护栏吞掉，而隐匿状态照样落库
+            # ——**藏起来是白给的**，两次都是，第二次是贴到三步外的怪物旁边。
+            # 病根不是护栏，是这两条路互不相干：掷不掷、成不成功，对"他藏没
+            # 藏住"没有任何影响。
+            #
+            # 改后由 `apply_skill_check` 按掷出来的结果决定进不进隐匿，这里
+            # 只负责**不要抢先替它下结论**。
+            #
+            # 🔴 只拦 `hidden=true`：现身/被发现是无条件的，不需要谁同意，也
+            # 不该因为"本轮碰巧掷了个潜行"就延后。同族于 `open_threads`
+            # 那条「进入由代码定，结束必须走 schema 字段」的不对称。
+            #
+            # 🔴 没有检定的 `hidden=true` 仍然立刻生效：没人看得见的时候躲起来
+            # 本来就不必掷（真人桌同理），那是 KP 有权直接给的。
+            if change.hidden:
+                hider = await _resolve_player_id(deps, change.player)
+                if hider is not None and hider in facts.stealth_check_players:
+                    report.append(f"{change.player} 是否藏住，等这一轮的潜行检定结果")
+                    continue
             report.append(await set_stealth_impl(deps, change.player, change.hidden))
         except KeeperToolError as exc:
             issues.append(f"潜行状态未执行：{exc}")

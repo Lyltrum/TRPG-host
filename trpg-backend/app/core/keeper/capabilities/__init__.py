@@ -20,6 +20,7 @@ from app.core.keeper.capabilities.cast import CAPABILITY as CAST
 from app.core.keeper.capabilities.closure import CAPABILITY as CLOSURE
 from app.core.keeper.capabilities.clue_reveal import CAPABILITY as CLUE_REVEAL
 from app.core.keeper.capabilities.health import CAPABILITY as HEALTH
+from app.core.keeper.capabilities.inventory import CAPABILITY as INVENTORY
 from app.core.keeper.capabilities.luck_spend import CAPABILITY as LUCK_SPEND
 from app.core.keeper.capabilities.madness import CAPABILITY as MADNESS
 from app.core.keeper.capabilities.movement import CAPABILITY as MOVEMENT
@@ -59,6 +60,7 @@ CAPABILITIES: tuple[KeeperCapability, ...] = (
     OPEN_THREADS,
     PRESENCE,
     CAST,
+    INVENTORY,
 )
 
 

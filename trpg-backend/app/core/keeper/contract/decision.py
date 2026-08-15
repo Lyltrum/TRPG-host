@@ -33,6 +33,7 @@ from app.core.keeper.capabilities.cast.schema import CastDecisionFields
 from app.core.keeper.capabilities.closure.schema import ClosureDecisionFields
 from app.core.keeper.capabilities.clue_reveal.schema import ClueRevealDecisionFields
 from app.core.keeper.capabilities.health.schema import HealthDecisionFields
+from app.core.keeper.capabilities.inventory.schema import InventoryDecisionFields
 from app.core.keeper.capabilities.madness.schema import MadnessDecisionFields
 from app.core.keeper.capabilities.movement.schema import MovementDecisionFields
 from app.core.keeper.capabilities.open_threads.schema import OpenThreadsDecisionFields
@@ -46,6 +47,7 @@ from app.core.keeper.contract.registry import DecisionModel
 class KeeperDecision(
     AgendaDecisionFields,
     CastDecisionFields,
+    InventoryDecisionFields,
     ClosureDecisionFields,
     ClueRevealDecisionFields,
     HealthDecisionFields,

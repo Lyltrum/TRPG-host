@@ -3,7 +3,7 @@
 覆盖三件事：
 1. 并发写不丢键（JSON 列整体重新赋值，读-改-写必须串行）；
 2. 主体收口（exec/24 §8.2）——subject 必须解析成剧本里的 id，未知一律拒绝；
-3. 世界级键里混进实体名时**记 issue 不阻断**（阻断会把守秘人想记的整条丢掉）。
+3. 键收进白名单（`exec/40` ④）——自由键写不进去，拒绝时必须给出走得通的修法。
 """
 
 import asyncio
@@ -124,27 +124,35 @@ async def _derived(deps: KeeperDeps) -> dict:
 async def test_update_state_concurrent_calls_keep_all_keys(deps: KeeperDeps) -> None:
     """🔴 SDK 会并行执行同一轮的多个工具调用（真实 DeepSeek 冒烟实测：一轮里
     三次 update_state 只留下最后一个键）。write_lock 必须让三个并发调用的键
-    全部存活——去掉锁这个测试会红（lost update）。"""
+    全部存活——去掉锁这个测试会红（lost update）。
+
+    键换成白名单内的（`exec/40` ④ 收口之后自由键写不进去了）——这条测的是
+    **并发写不丢键**，用哪几个键不是它的命题。
+    """
     await asyncio.gather(
-        update_state_impl(deps, "场景", "门厅"),
-        update_state_impl(deps, "线索", "脚印"),
-        update_state_impl(deps, "时间", "傍晚"),
+        update_state_impl(deps, "当前场景", "门厅"),
+        update_state_impl(deps, "游戏内时间", "第1天 傍晚"),
+        update_state_impl(deps, "态度", "警觉", "butler-public"),
     )
     async with _session_factory() as db:
         room = await db.get(Room, deps.room_id)
         assert room is not None
-        assert room.keeper_state == {"场景": "门厅", "线索": "脚印", "时间": "傍晚"}
+        assert room.keeper_state == {
+            "当前场景": "门厅",
+            "游戏内时间": "第1天 傍晚",
+            "butler-public.态度": "警觉",
+        }
 
 
 async def test_update_state_merges_and_persists(deps: KeeperDeps) -> None:
     await update_state_impl(deps, "当前场景", "门厅")
-    await update_state_impl(deps, "已获线索", "脚印")
+    await update_state_impl(deps, "态度", "警觉", "butler-public")
     await update_state_impl(deps, "当前场景", "地下室")  # 覆盖同名旧值
 
     async with _session_factory() as db:
         room = await db.get(Room, deps.room_id)
         assert room is not None
-        assert room.keeper_state == {"当前场景": "地下室", "已获线索": "脚印"}
+        assert room.keeper_state == {"当前场景": "地下室", "butler-public.态度": "警觉"}
     assert len(await _events(deps, "keeper.state")) == 3
 
 
@@ -258,15 +266,79 @@ async def test_unknown_subject_is_refused(deps: KeeperDeps) -> None:
         await update_state_impl(deps, "态度", "警觉", "不存在的人")
 
 
-async def test_entity_name_hidden_in_a_world_key_is_recorded_not_blocked(
-    deps: KeeperDeps,
-) -> None:
-    """🔴 `管家态度` 这种把主体塞进 key 的写法：**记 issue，不阻断**。
+async def test_entity_name_hidden_in_a_world_key_is_now_blocked(deps: KeeperDeps) -> None:
+    """🔴 `管家态度` 这种把主体塞进 key 的写法：**2026-08-16 起硬拦**。
 
-    阻断会把守秘人想记的东西整条丢掉，而它可能只是措辞习惯。留痕让"还有多少
-    条没挂对主体"变成可统计的量，将来要硬化时有据可依。
+    这条原来叫 `..._is_recorded_not_blocked`，断言的是"记 issue 但照样写进去"，
+    理由是「判不准该不该拦时报而不断」。它的 docstring 当时就写着**"将来要
+    硬化时有据可依"**——现在数据有了：全库扫描出模型自己发明的 29 种键，
+    其中一半是在给代码已有的账本造影子（`阿贵位置`／`已获线索`／`已购物品`）。
+
+    而且这里本来就不属于"判不准"：键在不在白名单里是个确定的判断，不是语义
+    猜测。**报而不断适用于判不准的那一半，不适用于判得准的这一半。**
+
+    修法是走得通的（这是加门的前提）：改成 `subject=butler-public, key=态度`。
     """
-    line, issue = await update_state_impl(deps, "管家态度", "警觉", "world")
-    assert issue is not None
-    assert "butler-public" in issue
-    assert "管家态度 = 警觉" in line  # 照样写进去了
+    with pytest.raises(KeeperToolError) as exc:
+        await update_state_impl(deps, "管家态度", "警觉", "world")
+    assert "new_threads" in str(exc.value), "拒绝时必须说清楚该往哪儿写"
+
+    # 挂对主体的写法照常可用
+    line, _issue = await update_state_impl(deps, "态度", "警觉", "butler-public")
+    assert "警觉" in line
+
+
+# ── 键收进白名单（exec/40 ④，2026-08-16）──────────────
+
+
+async def test_invented_world_keys_are_refused_with_a_way_out(deps: KeeperDeps) -> None:
+    """🔴 模型自己发明的世界级键一律拒绝，**但必须给出走得通的修法**。
+
+    这几个键名不是编的——是全库扫描出来的真实样本（29 种发明键里的一部分）。
+    """
+    for key in ("委托进度", "包裹状态", "钥匙", "金属盒内容", "侦察大失败后果"):
+        with pytest.raises(KeeperToolError) as exc:
+            await update_state_impl(deps, key, "随便什么值", "world")
+        message = str(exc.value)
+        assert "new_threads" in message, f"{key} 的拒绝没告诉模型该往哪儿写"
+
+
+async def test_shadow_ledgers_are_refused(deps: KeeperDeps) -> None:
+    """🔴 最该拦的一类：给代码已有账本造第二份。
+
+    `阿贵位置` 旁边就是代码的 `玩家位置`、`已获线索` 旁边就是事实账本 L1、
+    `已购物品` 旁边就是 inventory。而代码那几份对模型是**不可见的**
+    （`visible_keeper_state` 滤掉保留键），所以它只能自己记一份——两份账
+    谁也不认识谁，而它那份永远不会被任何代码路径清掉。
+    """
+    # 🔴 这几个**不是**保留键，所以在收口之前一路畅通无阻地写了进去
+    for key in ("阿贵位置", "已获线索", "已购物品"):
+        assert key not in deps.reserved_state_keys, f"{key} 要是保留键，这条用例就白写了"
+        with pytest.raises(KeeperToolError) as exc:
+            await update_state_impl(deps, key, "随便什么值", "world")
+        assert "局面块" in str(exc.value), f"{key} 应该被告知系统已经记了这一份"
+
+    # 对照：`在场NPC` 本来就是保留键，走更早那条更具体的拒绝路径
+    with pytest.raises(KeeperToolError, match="由系统记账"):
+        await update_state_impl(deps, "在场NPC", "科比特", "world")
+
+
+async def test_entity_keys_are_narrowed_too(deps: KeeperDeps) -> None:
+    """🔴 实体级的键同样要收。
+
+    `subject` 有 id 只解决了"挂在谁身上"，`key` 仍是自由文本——实测同一个 NPC
+    身上并存过 `态度`／`对lmh的态度`／`对张家豪的态度` 三种写法。
+    """
+    with pytest.raises(KeeperToolError):
+        await update_state_impl(deps, "对张家豪的态度", "警觉", "butler-public")
+    # 白名单内的照常
+    line, _ = await update_state_impl(deps, "态度", "警觉", "butler-public")
+    assert "butler-public.态度" in line
+
+
+async def test_the_two_world_keys_still_work(deps: KeeperDeps) -> None:
+    """退化证明：收口不许把正常记账一起拦掉。"""
+    for key, value in (("当前场景", "地下室"), ("游戏内时间", "第2天 夜晚")):
+        line, issue = await update_state_impl(deps, key, value, "world")
+        assert issue is None
+        assert value in line

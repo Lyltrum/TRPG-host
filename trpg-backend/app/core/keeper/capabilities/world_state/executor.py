@@ -24,6 +24,34 @@ logger = structlog.get_logger()
 
 WORLD_SUBJECT = "world"
 
+#: 世界级状态里**唯一允许的两个键**（`exec/40` ④，2026-08-16）。
+#:
+#: 🔴 收口的理由不是省空间，是**结清**与**唯一账本**。全库扫描下来，模型自己
+#: 发明过 29 种键，其中一半是在给代码已经管着的东西造第二份账：`阿贵位置`
+#: 旁边就是代码的 `玩家位置`、`已获线索` 旁边就是事实账本 L1、`已购物品`
+#: 旁边就是 inventory。而这些代码账本对模型是**不可见的**（`visible_keeper_state`
+#: 会滤掉保留键），于是它只能自己记一份——两份账谁也不认识谁，而且它那份
+#: 永远不会被任何代码路径清掉。
+#:
+#: 另一半是即兴的持续处境（`包裹状态`、`委托进度`）——那些有正经去处：
+#: `new_threads`，有 id、会被 `resolved_threads` 结清、代码数得清。
+WORLD_KEY_WHITELIST = frozenset({SCENE_NAME_KEY, GAME_TIME_KEY})
+
+#: 挂在实体（NPC id / 节点 id）上的状态允许的键。
+#:
+#: 🔴 实体级的键**同样要收**：`subject` 有了 id 只解决了"挂在谁身上"，`key`
+#: 仍是自由文本。实测同一个 NPC 身上并存过 `态度`／`对lmh的态度`／`对张家豪的态度`
+#: 三种写法——这正是「不要用自由文本当标识符」那条判据说的同义词打地鼠。
+ENTITY_KEY_WHITELIST = frozenset({"态度", "状态", "进度"})
+
+#: 被拒绝时告诉模型该往哪儿写。**加一道门必须同时给它配一条走得通的修法**——
+#: 只说"不许写"的话，模型下一轮换个键名再试一遍，而我们什么都没改善。
+_REJECTION_HINT = (
+    "会持续影响后续的处境写 new_threads（有 id、可以被 resolved_threads 结清）；"
+    "位置/线索/物品/NPC 是否在场/疯狂/生命值都由系统记账并已经摆在局面块里，"
+    "不要在这里再记一份；只影响这一段叙事的细节直接写进 narration_guidance"
+)
+
 
 def resolve_state_subject(module: ScenarioModule, label: str) -> str | None:
     """把裁决器写的主体解析成剧本里的 id。解析不出返回 None。
@@ -73,6 +101,15 @@ async def update_state_impl(
     if key in deps.reserved_state_keys:
         raise KeeperToolError(f"状态键 {key!r} 由系统记账，不能通过 state_updates 写入")
     resolved = resolve_state_subject(deps.module, subject)
+    # 🔴 键收进白名单（`exec/40` ④）。放在 subject 解析**之后**：报错要说清楚
+    # 是"世界级不许这个键"还是"实体级不许这个键"，两者的白名单不一样。
+    if resolved is not None:
+        allowed = WORLD_KEY_WHITELIST if resolved == WORLD_SUBJECT else ENTITY_KEY_WHITELIST
+        if key not in allowed:
+            raise KeeperToolError(
+                f"状态键 {key!r} 不在允许的清单里（允许：{'／'.join(sorted(allowed))}）。"
+                f"{_REJECTION_HINT}"
+            )
     if resolved is None:
         # 未知 id 一律拒绝，与 NPC/节点/议程/密级的处理一致：白名单外的东西
         # 不进状态，否则又回到"自由文本当标识符"。

@@ -1,7 +1,7 @@
 """线索账本 L1（exec/14 P4）。
 
-核心断言是计划里那条：**合成一局 300+ 事件的对局，第 3 轮拿到的线索在
-第 200 轮之后仍然可用**——即账本活过 `HISTORY_LIMIT` 的滑动窗口。
+核心断言是计划里那条：**合成一局超过整个历史窗口的对局，第 3 轮拿到的线索
+在窗口滚完之后仍然可用**——即账本活过 `HISTORY_LIMIT` 的滑动窗口。
 """
 
 from __future__ import annotations
@@ -108,10 +108,14 @@ async def test_same_fact_via_two_paths_is_recorded_once(room) -> None:
 
 @pytest.mark.asyncio
 async def test_ledger_survives_the_history_window(room) -> None:
-    """🔴 P4 的核心断言：第 3 轮拿到的线索，在 300+ 事件之后仍然读得到。
+    """🔴 P4 的核心断言：第 3 轮拿到的线索，在窗口滚完之后仍然读得到。
 
-    历史重放是 `HISTORY_LIMIT`（200）条的**滑动窗口**，几十小时的战役会把
-    开头挤出去。账本读全量、不设 limit，正是为了不受它影响。
+    历史重放是 `HISTORY_LIMIT` 条的**滑动窗口**，几十小时的战役会把开头挤
+    出去。账本读全量、不设 limit，正是为了不受它影响。
+
+    🔴 灌多少条**从 `HISTORY_LIMIT` 推导**，不写死一个数（2026-08-16 把窗口
+    从 200 调到 400 时，写死的 300 当场让下面那条对照用例失效——它测的是
+    "超过窗口"，而 300 已经不超过了）。
     """
     factory, (room_id, player_id) = room
 
@@ -122,9 +126,9 @@ async def test_ledger_survives_the_history_window(room) -> None:
         )
         await db.commit()
 
-    # 之后灌 300 条普通事件，远超窗口
+    # 之后灌满一整个窗口再多一些，确保最早那条被挤出去
     async with factory() as db:
-        for i in range(300):
+        for i in range(HISTORY_LIMIT + 50):
             db.add(
                 Event(
                     room_id=room_id,
@@ -143,9 +147,12 @@ async def test_ledger_survives_the_history_window(room) -> None:
 
 @pytest.mark.asyncio
 async def test_history_window_really_would_have_dropped_it(room) -> None:
-    """反证：同一批事件下，按窗口取最近 200 条确实已经看不到最早那条。
+    """反证：同一批事件下，按窗口取最近 `HISTORY_LIMIT` 条确实看不到最早那条。
 
     没有这条对照，上面那个断言可能只是"窗口没满"而不是"账本起了作用"。
+
+    🔴 条数同样从 `HISTORY_LIMIT` 推导。这条用例的**全部意义**就是"窗口确实
+    满了"，写死一个数等于让它随时可能变成自证的假绿。
     """
     from sqlalchemy import select
 
@@ -161,7 +168,7 @@ async def test_history_window_really_would_have_dropped_it(room) -> None:
         )
         await db.commit()
     async with factory() as db:
-        for i in range(300):
+        for i in range(HISTORY_LIMIT + 50):
             db.add(
                 Event(
                     room_id=room_id,

@@ -9,7 +9,11 @@ from pathlib import Path
 
 from app.core.coc7.content import build_coc7_ruleset
 from app.core.keeper.contract.module_loader import load_module
-from app.core.keeper.narration.prompts import build_adjudicator_instructions, render_skill_reference
+from app.core.keeper.narration.prompts import (
+    build_adjudicator_instructions,
+    build_narrator_instructions,
+    render_skill_reference,
+)
 from app.core.keeper.primitives.skills import resolve_skill_id, skill_id_catalog
 
 _FIXTURE_MODULE = str(Path(__file__).parent / "fixtures" / "keeper_module.json")
@@ -80,3 +84,37 @@ def test_resolve_skill_id_refuses_chinese_names() -> None:
     assert resolve_skill_id(ruleset, "") is None
     # id 本身大小写不敏感（模型偶尔写 Spot-Hidden）
     assert resolve_skill_id(ruleset, "Spot-Hidden") == "侦察"
+
+
+# ── 前缀缓存：system prompt 必须逐字节稳定（2026-08-16）────────────
+
+
+def test_the_system_prompt_is_byte_identical_across_builds() -> None:
+    """🔴 前缀缓存的前提：同一个模组建几次，system prompt 都要一模一样。
+
+    裁决的 system prompt 是 20.6k–34.4k 字符、每次调用一字不变，而
+    `KeeperAgent` 按模组缓存（`room_aware.py`）⇒ **玩同一个模组的所有房间
+    共用同一份**。这是 provider 端前缀缓存最理想的形状。
+
+    它的失效方式是**静默**的：往里塞一个房间名、一个时间戳、一个玩家昵称，
+    跨房间缓存当场归零，而不会有任何东西变红。这条就是那个守门人——
+    往 `build_adjudicator_instructions` 里掺任何随调用变化的东西，它会红。
+    """
+    module = load_module(_FIXTURE_MODULE)
+    ruleset = build_coc7_ruleset()
+
+    assert build_adjudicator_instructions(module, ruleset) == build_adjudicator_instructions(
+        module, ruleset
+    )
+    assert build_narrator_instructions(module) == build_narrator_instructions(module)
+
+
+def test_a_second_load_of_the_same_module_builds_the_same_prompt() -> None:
+    """🔴 上一条挡不住的那一半：模组**重新加载**之后也得一样。
+
+    只比较同一个 module 对象的两次构建，`id(module)` 或加载时间戳混进 prompt
+    都发现不了——而进程重启、换个房间解析同一个模组走的正是重新加载这条路。
+    """
+    first = build_adjudicator_instructions(load_module(_FIXTURE_MODULE), build_coc7_ruleset())
+    second = build_adjudicator_instructions(load_module(_FIXTURE_MODULE), build_coc7_ruleset())
+    assert first == second

@@ -54,6 +54,8 @@ from typing import Any, Literal
 
 import structlog
 
+from app.core.llm_usage import log_call_usage
+
 logger = structlog.get_logger(__name__)
 
 TapeMode = Literal["off", "record", "replay"]
@@ -414,6 +416,9 @@ class _TapedCompletions:
             return replayed
 
         response = await self._inner.create(**kwargs)
+        # 观测：这次调用的 token 账与前缀缓存命中情况。只在真实调用之后记——
+        # 回放出来的假响应没有 usage，记了也是假的。
+        log_call_usage(kind=tape_kind, response=response)
         _record_if_needed(
             session,
             response,

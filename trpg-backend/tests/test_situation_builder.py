@@ -34,6 +34,7 @@ _PRIVATE_CHAPTER = "他一个人撬开了地下室的木箱"
 
 def _builder() -> SituationBuilder:
     return SituationBuilder(
+        room_id="room-under-test",
         visible_state={"当前场景": "门厅"},
         history_lines=[
             HistoryLine(f"守秘人：{_PUBLIC}。", None),

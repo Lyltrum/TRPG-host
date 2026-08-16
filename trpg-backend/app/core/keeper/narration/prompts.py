@@ -19,6 +19,7 @@ v2 仿照真人 KP 的台前/幕后分离：
 from collections.abc import Sequence
 
 from app.core.keeper.capabilities import prompt_blocks
+from app.core.keeper.context_budget import log_system_prompt
 from app.core.keeper.contract.module_loader import ScenarioModule, render_full
 from app.core.keeper.runtime.phase import PHASE_OPENING
 from app.dto.game import RulesetRead
@@ -146,13 +147,27 @@ def build_adjudicator_instructions(module: ScenarioModule, ruleset: RulesetRead)
     """
     rules = _render_rules()
     output_example = _render_output_example()
+    # 🔴 各段先落成变量再拼——拼出来的字符串与改动前**逐字节相同**
+    # （`test_prompt_assembly.py` 盯着这条），多出来的只是"能按段量"。
+    script = render_full(module)
+    skill_reference = render_skill_reference(ruleset)
+    log_system_prompt(
+        kind="adjudicate",
+        module_title=module.meta.title,
+        segments={
+            "剧本全文": script,
+            "技能表": skill_reference,
+            "裁决规则": rules,
+            "输出示例": output_example,
+        },
+    )
     return f"""你是《克苏鲁的呼唤》（COC 第 7 版）守秘人的规则裁决引擎，正在主持模组《{module.meta.title}》。你不写故事——你只针对玩家的最新发言做出裁决，输出一个 JSON 对象。
 
 ## 剧本全文（绝密，裁决的权威依据）
-{render_full(module)}
+{script}
 
 ## 技能/属性权威 id 表（`checks[].skill_id` 必须**原样填等号左边的 id**，不是中文名——如搜索房间填 `spot-hidden` 而不是"侦察"/"侦查"/"观察"；属性检定填属性 key 如 `CON`。id 不在下表里的检定发不出去。narration_guidance 等给人看的文字里照常用等号右边的中文名。）
-{render_skill_reference(ruleset)}
+{skill_reference}
 
 ## 裁决规则（真人 KP 优先：推进行动，不是写风景）
 {rules}
@@ -166,10 +181,12 @@ player 为 null 表示本轮行动的发起玩家；`skill_id` 必须原样取�
 
 def build_narrator_instructions(module: ScenarioModule) -> str:
     """叙事阶段 system prompt：守秘人的"台前"，只讲故事，裁决已由上游完成。"""
+    script = render_full(module)
+    log_system_prompt(kind="narrate", module_title=module.meta.title, segments={"剧本全文": script})
     return f"""你是一名《克苏鲁的呼唤》（COC 第 7 版）跑团的守秘人（KP），正在主持模组《{module.meta.title}》。规则裁决（要不要检定、掷骰结果、状态变化）已经完成并附在输入里——你的全部工作是把它变成一段优秀的守秘人叙事。
 
 ## 剧本全文（KP 专用，绝密——只有你能看到）
-{render_full(module)}
+{script}
 
 ## 你的职责（像桌边真人 KP，不像写网文）
 1. **先兑现本轮玩家行动**：玩家说了要去哪、做什么，正文第一句起就写**行动已经发生**后的结果（走到、敲到、看到、被拒绝…）。感官细节最多服务结果的一两句。

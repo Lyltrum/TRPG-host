@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.keeper.capabilities import situation_blocks, visible_keeper_state
+from app.core.keeper.context_budget import log_turn_input
 from app.core.keeper.contract.module_loader import ScenarioModule
 from app.core.keeper.memory.chapter import Chapter, load_chapters, render_chapters, visible_chapters
 from app.core.keeper.memory.fact_ledger import render_ledger, revealed_fact_ids
@@ -44,6 +45,8 @@ from app.dto.game import RulesetRead
 class SituationBuilder:
     """整轮不变的那部分局面块。`render()` 负责每次调用变的那部分。"""
 
+    #: 只给上下文预算观测用（`keeper/context_budget.py`）——组装本身不读它。
+    room_id: str
     #: 已经滤掉代码记账键的世界状态笔记。
     visible_state: dict | None
     history_lines: list[HistoryLine]
@@ -88,22 +91,41 @@ class SituationBuilder:
         两件事正交，所以是两个参数而不是一个。`audience=None` 恰好只在裁决
         那一拍出现，拿它兼职判断会在下一个"守秘人视角的叙事"上悄悄失效。
         """
+        history = visible_history(self.history_lines, audience)
+        chapters = render_chapters(visible_chapters(self.chapters, audience))
+        blocks = self.capability_blocks if keeper_view else self.narrator_capability_blocks
+        party_sheet = self.party_sheet if keeper_view else ""
+        # 观测：这一轮各段有多大。**只记数字不记内容**（段落里有剧本正文），
+        # 判据与理由见 `keeper/context_budget.py`。
+        log_turn_input(
+            room_id=self.room_id,
+            keeper_view=keeper_view,
+            segments={
+                "世界状态笔记": "\n".join(f"{k}{v}" for k, v in (self.visible_state or {}).items()),
+                "在场名单": "\n".join(self.roster),
+                "阶段": self.phase_status,
+                "事实账本L1": ledger,
+                "分段摘要L2": chapters,
+                "历史窗口L3": "\n".join(history),
+                "角色卡": party_sheet,
+                "本轮原话": utterance,
+            },
+            blocks=blocks,
+        )
         return format_turn_input(
             self.visible_state,
-            visible_history(self.history_lines, audience),
+            history,
             self.roster,
             nickname,
             utterance,
             phase_status=self.phase_status,
             ledger_status=ledger,
-            chapters_status=render_chapters(visible_chapters(self.chapters, audience)),
-            capability_blocks=(
-                self.capability_blocks if keeper_view else self.narrator_capability_blocks
-            ),
+            chapters_status=chapters,
+            capability_blocks=blocks,
             is_heartbeat=self.is_heartbeat,
             is_opening_ceremony=self.is_opening_ceremony,
             phase=self.phase,
-            party_sheet=self.party_sheet if keeper_view else "",
+            party_sheet=party_sheet,
         )
 
     def for_keeper(self, *, nickname: str, utterance: str) -> str:
@@ -149,6 +171,7 @@ async def build_situation(
         # 渲染钩子拿不到 db。按 `players` 的顺序取，名册怎么排它就怎么排。
         party = await load_party_characters(db, room_id=room_id, players=players)
     return SituationBuilder(
+        room_id=room_id,
         # 代码记账的键一律不原样喂给模型，判据与"state_updates 不许写"同源。
         visible_state=visible_keeper_state(keeper_state),
         history_lines=history_lines,

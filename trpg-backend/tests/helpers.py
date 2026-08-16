@@ -94,7 +94,9 @@ async def join_room(
 #: 🔴 **这是个「逐个列出的地方」**：新增一种每轮都发的推送就要回来加一行，
 #: 否则按顺序读消息的用例会把它当成剧情事件读走。2026-08-15 加
 #: `keeper.phase` 时当场打红三条——它们并没有坏，只是多收到一条消息。
-AMBIENT_WS_EVENTS = frozenset({"party.update", "keeper.busy", "keeper.phase"})
+AMBIENT_WS_EVENTS = frozenset(
+    {"party.update", "keeper.busy", "keeper.phase", "character.may_have_changed"}
+)
 
 
 def next_game_event(ws, *, skip=AMBIENT_WS_EVENTS):  # noqa: ANN001, ANN201

@@ -193,6 +193,31 @@ class KeeperPhasePayload(CamelModel):
     ending_id: str | None
 
 
+class CharacterMayHaveChangedPayload(CamelModel):
+    """`character.may_have_changed` 推送：这一拍结束了，自己那张卡重拉一次。
+
+    🔴 **名字是故意这么起的**：它**不声称任何东西真的变了**，只声称"现在是
+    重读的安全点"。有一个字段说"谁变了"就必须有人算得出来，而算不出来——
+    改角色卡的路径散在 `write_stat`（HP/SAN）、幸运消费、`inventory` 的装备
+    增删里，各写各的。
+
+    ## 为什么需要它（2026-08-16 真机）
+
+    前端「什么时候重拉角色卡」原来是**逐个列出**的两处：`san.check.result`
+    一处、`character.stat_changed`（HP）一处。于是：
+
+    - **幸运消费**没人配 → 玩家花掉 3 点，界面上那个数字一局不变；
+    - **装备变化**（第十片能力，前一天刚加的）也没人配 → 同样不变。
+
+    「加一项就漏一项」，而且两头都不会变红：后端扣得好好的，前端渲染得也好好
+    的。所以修的是**形状**不是那两个分支——挂进 `_push_after_turn` 这个唯一的
+    回合结束出口，以后任何一片能力改了角色卡都自动覆盖，不用记得配一条 if。
+
+    代价是每回合每人多一次 `GET .../characters/{id}`。一个回合本来就是十几秒
+    级的多次 LLM 往返，这一次读可以忽略；换来的是**不会再漏第三样**。
+    """
+
+
 class RoomPausePayload(CamelModel):
     """`room.pause` 客户端事件：暂停 / 恢复（`exec/35`）。
 

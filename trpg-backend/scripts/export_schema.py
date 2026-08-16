@@ -113,6 +113,7 @@ _MODELS: list[type[BaseModel]] = [
     ws.CheckRequestPayload,
     ws.CheckResultPayload,
     ws.KeeperPhasePayload,
+    ws.CharacterMayHaveChangedPayload,
     ws.SanCheckRequestPayload,
     ws.SanCheckResultPayload,
     ws.ClueGrantedPayload,

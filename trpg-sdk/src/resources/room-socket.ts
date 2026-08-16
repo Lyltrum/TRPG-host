@@ -92,6 +92,9 @@ const PAYLOAD_VALIDATORS: {
   // 2026-08-15：phase 必填；endingId 可为 null（开放式模组自然收尾时没有
   // 预设结局），但**必须存在**——同 party.update 那三个位置字段的理由。
   'keeper.phase': (p) => typeof p.phase === 'string' && 'endingId' in p,
+  // 空 payload：它带的信息就是"这个事件到了"。没有字段可校验，也不该有——
+  // 有一个字段说"谁变了"就必须有人算得出来，而改角色卡的路径散在好几片能力里。
+  'character.may_have_changed': () => true,
   // exec/35：大家在休息
   'room.paused': (p) => typeof p.paused === 'boolean' && typeof p.byNickname === 'string',
   error: (p) => typeof p.code === 'string' && typeof p.message === 'string',

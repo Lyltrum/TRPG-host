@@ -40,12 +40,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 from sqlalchemy.pool import NullPool  # noqa: E402
 
-#: 默认轮次：覆盖「隐式搜查（该触发检定）」「元问题（该给引导）」
+#: 默认轮次：覆盖「开场（该建场不该掷）」「元问题（该给引导）」「明确搜查（该触发检定）」
 #: 🔴 **回放测试直接 import 这个常量**，不再各存一份——两边漂了的症状是
 #: 请求指纹对不上，而那时人会以为是 prompt 变了，去重录一盘同样对不上的磁带。
+#:
+#: 🔴 **第三轮是 2026-08-16 重录时补的**：前两轮再也掷不出检定了，而这不是回归——
+#: 第一轮被开场纪律吃掉（开场那一拍只建场、不发检定），第二轮是元问题该给引导。
+#: 原来那两轮能录到结算纯属第一轮抢跑，抢跑本身正是我们后来治掉的毛病。
+#: 补一轮**明确的搜查动作**，让「结算叙事」这条路径重新有一个不靠运气的来源。
 DEFAULT_ROUNDS = [
     "我仔细查看四周，有什么不对劲的地方吗？",
     "我现在该做什么？",
+    "我蹲下来，仔细查看地毯上那串泥脚印，看看它到底通向哪里。",
 ]
 
 #: 掷骰种子。**录制与回放必须用同一个**：结算叙事的 prompt 里带着掷出的点数，
@@ -108,6 +114,11 @@ async def _run(module_path: Path, out_path: Path, rounds: list[str]) -> int:
     from app.core.llm_tape import recording
     from app.core.narration.contract import NarrationContext
     from app.models.room import Character, Player, Room
+
+    # 🔴 `module_probe.probe` 顶层 `from parallel import ...`——要求它自己的目录
+    # 先进 sys.path，否则整条 import 在这里就炸（2026-08-16 重录时撞到：文档里
+    # 写的那条命令根本跑不起来）。
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "module_probe"))
     from scripts.module_probe.probe import load_api_key
 
     module = load_module(module_path)

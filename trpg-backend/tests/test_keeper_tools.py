@@ -134,8 +134,11 @@ async def test_execute_side_effects_runs_hp_and_state(deps: KeeperDeps) -> None:
     )
     report, issues = await execute_side_effects(deps, decision)
     assert issues == []
-    assert len(report) == 2
-    assert "10 → 7" in report[0]
+    # 🔴 按**内容**断言，不数条数（2026-08-16）：换了场景又给不出剧本节点时，
+    # 现在会顺手建一个有 id 的即兴落点（见 `movement/executor.py`），报告因此
+    # 多出几行。这条用例守的是「HP 和 state 两件事都跑到了」，条数是脚手架。
+    assert any("10 → 7" in line for line in report)
+    assert any("当前场景 = 书房" in line for line in report)
     assert len(deps.check_results) == 1  # HP 变动的可见性记录
     assert len(await _events(deps, "keeper.hp")) == 1  # 留痕落库
     assert len(await _events(deps, "keeper.state")) == 1

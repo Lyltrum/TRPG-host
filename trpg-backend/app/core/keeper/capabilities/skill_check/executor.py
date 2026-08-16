@@ -11,6 +11,11 @@ import structlog
 from pydantic import BaseModel
 
 from app.core.coc7.rules import evaluate_skill_base
+from app.core.keeper.capabilities.skill_check.attempts import (
+    CHECK_ATTEMPTS_KEY,
+    load_attempts,
+    record_attempt,
+)
 from app.core.keeper.capabilities.skill_check.guard import (
     filter_checks_against_module,
     find_node_for_scene,
@@ -37,7 +42,7 @@ from app.core.keeper.runtime.location_state import (
 )
 from app.core.keeper.runtime.pending import PendingDecision
 from app.core.narration.contract import CheckResultNotice
-from app.models.room import Character
+from app.models.room import Character, Room
 
 logger = structlog.get_logger()
 
@@ -419,7 +424,7 @@ async def create_pending_skill_checks(
             logger.warning("keeper_skill_id_fallback", raw=check.skill_id)
         try:
             player, character = await resolve_character(context.db, deps, check.player)
-            display_name, _target = resolve_skill_target(deps, character, check.skill_id)
+            display_name, target_value = resolve_skill_target(deps, character, check.skill_id)
         except KeeperToolError as exc:
             issues.append(f"检定[{check.skill_id}]未能发起：{exc}")
             continue
@@ -512,6 +517,7 @@ async def create_pending_skill_checks(
                 reveals=reveals,
                 opposed_opponent=opposed_opponent,
                 opposed_value=opposed_value,
+                target=target_value,
             )
         )
     return pending, issues
@@ -548,11 +554,40 @@ async def settle_skill_check(deps: KeeperDeps, pending: PendingDecision) -> Chec
     )
 
 
+async def _tally_attempt(
+    deps: KeeperDeps, pending: PendingDecision, notice: CheckResultNotice
+) -> None:
+    """记一笔「这一处掷过这个技能」。判据与理由见 `attempts.py`。
+
+    只在**站在某个地点上**时记：人在图外（指针为空）时没有地方可挂，不硬编一个。
+    技能用 `pending.skill`——它是待掷记录里那个名字，跟局面块里列出来的同源。
+    """
+    from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
+
+    skill = (pending.skill or "").strip()
+    if not skill:
+        return
+    async with deps.write_lock, deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            return
+        state = dict(room.keeper_state or {})
+        here = state.get(CURRENT_NODE_KEY)
+        if not here:
+            return
+        state[CHECK_ATTEMPTS_KEY] = record_attempt(
+            load_attempts(state), str(here), skill, succeeded=dice.is_success(notice.level)
+        )
+        room.keeper_state = state
+        await db.commit()
+
+
 async def apply_skill_check(
     deps: KeeperDeps, pending: PendingDecision, notice: CheckResultNotice
 ) -> None:
     """把掷出来的结果落到世界上。**输入只有落过库的那两样**，理由见 `SettleHook`。"""
     await _record_check(deps, _detail_of(pending, notice))
+    await _tally_attempt(deps, pending, notice)
     # 🔴 exec/19 #46 的另一半：「被发现 → 解除隐匿」此前只在 prompt 里请模型
     # 自觉写回 `hidden: false`（离开地点那一半早已代码硬化）。潜行**对抗**输掉
     # 是代码判得了的——判定权就不该留在模型手里（exec/20 §2.7 给的硬化方向）。

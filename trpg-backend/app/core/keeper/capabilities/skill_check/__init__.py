@@ -12,6 +12,10 @@
 "这个行动该不该掷、拿哪个值掷、对手怎么比"。
 """
 
+from app.core.keeper.capabilities.skill_check.attempts import (
+    CHECK_ATTEMPTS_KEY,
+    format_attempts,
+)
 from app.core.keeper.capabilities.skill_check.executor import (
     apply_skill_check,
     create_pending_skill_checks,
@@ -29,6 +33,7 @@ from app.core.keeper.contract.registry import (
     KeeperCapability,
     PendingHook,
     SettleHook,
+    SituationBlock,
 )
 
 CAPABILITY = KeeperCapability(
@@ -45,5 +50,11 @@ CAPABILITY = KeeperCapability(
     # create_pending_checks 里"先 checks 后 san_checks"一致。
     pendings=(PendingHook(order=10, run=create_pending_skill_checks),),
     settlers=(SettleHook(kind="skill", run=settle_skill_check, apply=apply_skill_check),),
+    # 🔴 **只给裁决器**：这块是写给"要不要再要一次检定"那个判断看的，
+    # 叙事读到它只会把次数念给玩家听（同理智检定点那块的理由）。
+    situations=(
+        SituationBlock(order=46, heading="重复检定", render=format_attempts, keeper_only=True),
+    ),
+    reserved_state_keys=(CHECK_ATTEMPTS_KEY,),
     audit=audit_fields,
 )

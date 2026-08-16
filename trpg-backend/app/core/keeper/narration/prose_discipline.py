@@ -295,6 +295,48 @@ _CLOSURE_GUIDANCE_PREFIX = (
 )
 
 
+#: 🔴 **命中剧本结局那条路，一条纪律都没有**（2026-08-16 真机补）。
+#:
+#: 上一批把开放式收尾（`story_ran_its_course`）接通了四块，而**剧本结局
+#: （`ending_reached`）这条路一块都没接**——它不经过 `ending` 阶段，于是
+#: `inject_closure_guidance` 永远不注入。命中结局那一拍，叙事拿到的唯一变化是
+#: **字数上限放宽**。实测结果：玩家把凶手交给警察、门被推开、有人去封绳——
+#: 读起来像下一拍还会继续，因为**对叙事来说这确实就是普通一拍**。真正的终止
+#: 只发生在下一次发言，而那是一句硬邦邦的系统提示。
+#:
+#: 🔴 **跟收束纪律是两段，不复用**：
+#: - 收束（`ending`）是**可撤回**的中间态 ⇒ 要"留最后一次动作机会"；
+#: - 终章（`finished`）**已经落幕**，再留动作机会就是自相矛盾——那一拍之后
+#:   任何行动都会被硬拒。
+_FINALE_GUIDANCE_PREFIX = (
+    "【终章·代码注入】本轮就是这一局的**最后一段**，之后不再有任何回合。"
+    "①把这一趟的结果交代清楚：牵涉的人各自落到什么下场、调查员此刻处境如何、"
+    "那些没解决的东西以什么形式留在世上；"
+    "②**不要再留动作机会、不要问玩家接下来做什么**——故事到此为止；"
+    "③不抛新线索、新 NPC、新悬念；余韵可以有，钩子不要；"
+    "④不要提结局编号、阶段名这类机制词，玩家只该读到故事。"
+)
+
+#: 剧本自己写的落幕。模组作者写了这一局该怎么收，**此前从没被点名喂给叙事**
+#: ——它只躺在系统 prompt 最末尾那份剧本全文的「═══ 结局 ═══」里，跟另外几条
+#: 没命中的结局并排。「整条链都在，就是没人能用到」的又一处。
+_FINALE_SCRIPT_TEMPLATE = "【剧本写好的落幕，按它收（可以改写文笔，不要改结果）】\n{text}"
+
+
+def inject_finale_guidance(guidance: str, ending_text: str | None = None) -> str:
+    """命中剧本预设结局：这一拍要写成终章，并带上剧本写好的落幕。"""
+    parts = [_FINALE_GUIDANCE_PREFIX]
+    script = (ending_text or "").strip()
+    if script:
+        parts.append(_FINALE_SCRIPT_TEMPLATE.format(text=script))
+    g = (guidance or "").strip()
+    if g and _FINALE_GUIDANCE_PREFIX not in g:
+        parts.append(g)
+    elif g:
+        return g
+    return "\n".join(parts)
+
+
 def inject_closure_guidance(guidance: str) -> str:
     g = (guidance or "").strip()
     if _CLOSURE_GUIDANCE_PREFIX in g:

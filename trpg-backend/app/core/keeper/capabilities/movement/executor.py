@@ -249,12 +249,36 @@ async def execute_movement(
         #
         # 正确语义是**清空**：人在剧本节点之外的地方，护栏退化到即兴层放行。
         # 与 #37 同族——空间状态是地基，宁可承认不知道，不可拿旧值硬撑。
-        try:
-            cleared = await clear_current_node_impl(deps)
-            if cleared:
-                report.append(cleared)
-        except KeeperToolError as exc:
-            issues.append(f"场景指针清空未执行：{exc}")
+        #
+        # 🔴 **但"清空"不等于"哪儿都不是"**（2026-08-16 真机）：实测那一拍模型
+        # 同时写了 `current_node_id=null` 和 `new_location=null`，于是玩家从图上
+        # 掉下去、也没有任何即兴地点顶上。后果是链式的——顶栏位置没东西可显示；
+        # `无进展轮数` 的判据是「去了新节点或揭开新线索」，而人不在任何节点上
+        # ⇒ 离开图期间**任何进展都不算进展**（实测涨到 7，包含玩家亲眼看见
+        # 核心恐怖的那一拍）。
+        #
+        # 落点需要的**名字**这一轮已经有了：模型刚写下「当前场景」。规则要求它
+        # 这时走 `new_location`，它没走——而 `create_improvised_location_impl`
+        # 的注释早就写着「id 是代码刚分配的，模型写不出来，这条通路只能由代码
+        # 接上」。**能用代码确定性补上的一律代码补**，别指望 prompt 自觉。
+        #
+        # 只在**有名字**时补：没声明场景名就仍旧老老实实清空（那时确实不知道
+        # 人在哪，编一个名字就是拿自由文本当地基）。
+        declared = (getattr(facts, "scene_name_declared", None) or "").strip()
+        if declared:
+            try:
+                created_id, line = await create_improvised_location_impl(deps, declared, None)
+                report.append(line)
+                report.append(await set_current_node_impl(deps, created_id))
+            except KeeperToolError as exc:
+                issues.append(f"即兴落点未建立：{exc}")
+        else:
+            try:
+                cleared = await clear_current_node_impl(deps)
+                if cleared:
+                    report.append(cleared)
+            except KeeperToolError as exc:
+                issues.append(f"场景指针清空未执行：{exc}")
 
     # 🔴 被**逐人点名**挪动的人（`moves` / `new_location.movers` 都归到这里）。
     # 会合确认要靠它区分「他自己说要过去」和「他被推断过去」——见

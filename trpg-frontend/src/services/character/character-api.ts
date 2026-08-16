@@ -8,6 +8,7 @@ import type {
 import type { BackgroundDetail, GenerationMethod } from '@/data/character-model';
 import { useRoomStore } from '@/stores/room-store';
 import { getAuthToken, sdk } from '../api-client';
+import { resolveSystemId } from './ruleset-api';
 
 // 真实建卡流程对接：POST 建草稿 → PATCH 填数据 → POST complete 完成。
 
@@ -170,6 +171,18 @@ function requireAuthToken(): string {
 /** 我的卡库，最近更新的在前。 */
 export async function listMyTemplates(): Promise<CharacterTemplate[]> {
   return sdk.characterTemplates.list(requireAuthToken());
+}
+
+/**
+ * 这个规则系统下**能用**的常用卡（建卡向导的挑卡浮层）。
+ *
+ * 🔴 过滤条件送去后端，不在这里筛：判据是后端那条「这张常用卡不适用于本房间的
+ * 规则系统」，前端再实现一遍就是同一条规则落两处。此前浮层列的是全部卡，玩家
+ * 点到用不了的那张只会拿到一个报错。
+ */
+export async function listUsableTemplates(): Promise<CharacterTemplate[]> {
+  const token = requireAuthToken();
+  return sdk.characterTemplates.list(token, await resolveSystemId());
 }
 
 /**

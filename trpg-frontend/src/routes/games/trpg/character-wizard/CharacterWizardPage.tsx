@@ -7,7 +7,7 @@ import { useRoomStore } from '@/stores/room-store'
 import { useRuleset } from '@/hooks/useRuleset'
 import {
   createDraftFromTemplate,
-  listMyTemplates,
+  listUsableTemplates,
   quickBuildCharacter,
 } from '@/services/character/character-api'
 import { translateCharacterValidationError } from '@/services/character/ruleset-api'
@@ -100,7 +100,7 @@ export default function CharacterWizardPage() {
 
   useEffect(() => {
     let cancelled = false
-    listMyTemplates()
+    listUsableTemplates()
       .then((list) => {
         if (!cancelled) setTemplates(list)
       })

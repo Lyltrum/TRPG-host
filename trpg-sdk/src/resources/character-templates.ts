@@ -18,10 +18,16 @@ export class CharacterTemplatesResource {
     return { headers: { Authorization: `Bearer ${token}` } };
   }
 
-  /** GET /api/v1/me/character-templates — 我的卡库列表 */
-  list(token: string): Promise<CharacterTemplate[]> {
+  /**
+   * GET /api/v1/me/character-templates — 我的卡库列表
+   *
+   * `systemId` 给了就只返回这个规则系统下能用的那些（建卡向导的挑卡浮层用）。
+   * 不给则返回全部（「我的调查员」那一页）。
+   */
+  list(token: string, systemId?: string): Promise<CharacterTemplate[]> {
+    const query = systemId ? `?systemId=${encodeURIComponent(systemId)}` : '';
     return this.client.get<CharacterTemplate[]>(
-      '/me/character-templates',
+      `/me/character-templates${query}`,
       this.authenticated(token)
     );
   }

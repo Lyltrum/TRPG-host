@@ -6,7 +6,7 @@
 
 from typing import NoReturn
 
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.controller.dependencies import extract_bearer_token, get_current_user
@@ -40,6 +40,8 @@ def _raise_service_error(exc: Exception) -> NoReturn:
         character_service.CharacterTemplateNotFoundError | character_service.CharacterNotFoundError,
     ):
         raise AppException(ErrorCode.NOT_FOUND, str(exc), status.HTTP_404_NOT_FOUND) from exc
+    if isinstance(exc, character_service.CharacterTemplateLimitReachedError):
+        raise AppException(ErrorCode.CONFLICT, str(exc), status.HTTP_409_CONFLICT) from exc
     if isinstance(exc, character_service.CharacterTemplateNotEditableError):
         raise AppException(
             ErrorCode.VALIDATION_ERROR, str(exc), status.HTTP_422_UNPROCESSABLE_CONTENT
@@ -73,11 +75,17 @@ async def _require_user_id(authorization: str | None, db: AsyncSession) -> str:
 
 @router.get("/character-templates", response_model=ApiResponse[list[CharacterTemplateRead]])
 async def list_character_templates(
-    authorization: str | None = Header(default=None), db: AsyncSession = Depends(get_db)
+    system_id: str | None = Query(default=None, alias="systemId"),
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[list[CharacterTemplateRead]]:
-    """GET /api/v1/me/character-templates —— 我的卡库列表。"""
+    """GET /api/v1/me/character-templates —— 我的卡库列表。
+
+    `systemId` 给了就只返回这个规则系统下能用的那些（建卡向导的挑卡浮层用）：
+    列出用不了的卡等于请玩家去点一个必然报错的选项。
+    """
     user_id = await _require_user_id(authorization, db)
-    templates = await character_service.list_character_templates(db, user_id)
+    templates = await character_service.list_character_templates(db, user_id, system_id)
     return ApiResponse.ok(templates)
 
 

@@ -48,6 +48,9 @@ interface PendingCheck {
   id: string
   kind: 'skill' | 'san'
   skill: string | null
+  // 这次要过的数。理智检定没有（它比的是当前 SAN，掷那一刻才算得准）；
+  // 老事件也可能没有，所以是可空的——缺了就只显示技能名，跟改动前一样。
+  targetValue: number | null
   rolling: boolean
 }
 
@@ -950,7 +953,13 @@ export default function RoomPage() {
         setTyping(false)
         const isSelf = envelope.payload.playerId === playerId
         if (isSelf) {
-          setPendingCheck({ id: envelope.payload.checkRequestId, kind: 'skill', skill: envelope.payload.skill, rolling: false })
+          setPendingCheck({
+            id: envelope.payload.checkRequestId,
+            kind: 'skill',
+            skill: envelope.payload.skill,
+            targetValue: envelope.payload.targetValue ?? null,
+            rolling: false,
+          })
         }
         setMessages(prev => [...prev, {
           type: 'system',
@@ -963,7 +972,7 @@ export default function RoomPage() {
         setTyping(false)
         const isSelf = envelope.payload.playerId === playerId
         if (isSelf) {
-          setPendingCheck({ id: envelope.payload.checkRequestId, kind: 'san', skill: null, rolling: false })
+          setPendingCheck({ id: envelope.payload.checkRequestId, kind: 'san', skill: null, targetValue: null, rolling: false })
         }
         setMessages(prev => [...prev, {
           type: 'system',
@@ -1855,7 +1864,13 @@ export default function RoomPage() {
               `//` 不是注释，是**会被渲染出来的文本**。 */}
           <div className="paper-grain relative flex items-center gap-2.5 bg-dossier text-ink border-l-4 border-double border-rust px-3 py-2.5 shadow-[0_2px_0_rgba(0,0,0,.4),0_8px_16px_rgba(0,0,0,.42)]">
             <span className="flex-1 text-[12.5px] font-semibold">
+              {/* 🔴 掷之前就把要过的数说出来（2026-08-16 真机）：这个数本来就
+                  印在玩家自己的角色卡上，藏着没有任何收益，而卡片上只写技能名
+                  时新手不知道自己在赌什么。缺值就退回只显示名字。 */}
               守秘人请求：{pendingCheck.skill ? `${pendingCheck.skill}检定` : '理智检定'}
+              {pendingCheck.targetValue !== null && (
+                <span className="text-ink-soft"> · 需要 ≤{pendingCheck.targetValue}</span>
+              )}
               {!pendingCheck.rolling && <em className="typed not-italic block text-[10px] text-ink-soft mt-0.5">点击掷骰</em>}
             </span>
             <button

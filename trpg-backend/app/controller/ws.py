@@ -543,7 +543,10 @@ def _check_request_envelope(
         CheckRequestPayload(
             player_id=notice.player_id,
             skill=notice.skill or "",
-            target_value=None,
+            # 🔴 2026-08-16：这里此前写死 `None` 且没有注释，于是掷骰卡片上
+            # 只有技能名——玩家掷之前不知道自己要过多少。字段一直在契约里、
+            # `check.result` 那边也一直在填，**只有请求这一侧没人写**。
+            target_value=notice.target,
             check_request_id=notice.check_request_id,
             reason=notice.reason or None,
         ),
@@ -679,7 +682,38 @@ async def _handle_room_join(
         db, room_id, MERGE_CONFIRM_KIND
     ):
         await _push_after_turn(db, websocket, room_id, only_player_id=player_id)
+    await _resend_keeper_phase(db, websocket, room_id, player_id)
     return True
+
+
+async def _resend_keeper_phase(
+    db: AsyncSession, websocket: WebSocket, room_id: str, player_id: str
+) -> None:
+    """重连补发「这一局走到哪一步了」。
+
+    🔴 **2026-08-16 真机：这一局真的结束了，而玩家永远看不到。** `keeper.phase`
+    只在阶段变化那一刻广播过一次；重连握手一条都不补，前端 `keeperPhase` 停在
+    初值空串，「本局结束」那条横幅的条件 `keeperPhase === 'finished'` 永远不成立。
+    触发条件是刷新页面 / 掉线 / 换设备——**一旦发生就再也看不到收尾**，而收尾
+    正是这两轮的主验收项。
+
+    🔴 **这是我上一批亲手挖的坑**：把 `keeper.phase` 挂进 `_push_after_turn`
+    时没数它有几个出口，而重连路径上的那次调用被关在「这个玩家挂着会合确认卡」
+    这个**跟阶段毫无关系**的条件里。「这一局结不结束」和「有没有待决定项」
+    共用了一个开关。
+
+    补发的判据不是"哪几种阶段要发"（那又是逐个列出），而是：**客户端自己
+    重建不出来、而服务端有值**——所以 phase 写过就发。没写过（大厅、还没开局）
+    一条都不发，`test_reconnect_sends_nothing_extra_when_the_queue_is_empty`
+    守的那条"握手逐字不变"因此仍然成立。
+    """
+    from app.core.keeper.runtime.phase import load_phase
+    from app.models.room import Room
+
+    room = await db.get(Room, room_id)
+    if room is None or load_phase(room.keeper_state) is None:
+        return
+    await _push_keeper_phase(db, websocket, room_id, only_player_id=player_id)
 
 
 async def _resend_pending_checks(

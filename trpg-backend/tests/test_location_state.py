@@ -316,14 +316,50 @@ async def test_a_bogus_node_id_clears_the_pointer_instead_of_keeping_a_lie(party
     assert location_of(state, a_id) is None and location_of(state, b_id) is None
 
 
-async def test_declaring_a_scene_with_no_node_id_also_clears(party) -> None:
-    """exec/19 #48 原本那一支：换了场景但剧本里没有对应节点 → 承认不知道。"""
+async def test_declaring_a_scene_with_no_node_id_lands_on_an_improvised_place(party) -> None:
+    """换了场景但剧本里没有对应节点 → **落到一个有 id 的即兴地点**。
+
+    🔴 **2026-08-16 改口径**（真机）。原来这里是"承认不知道"、指针清空。
+    实测那一拍模型同时写了 `current_node_id=null` 与 `new_location=null`，
+    玩家于是**哪儿都不是**：顶栏没位置可显示；`无进展轮数` 的判据是"去了新节点
+    或揭开新线索"，人不在任何节点上 ⇒ 离开图期间任何进展都不算进展（实测涨到
+    7，包含玩家亲眼看见核心恐怖的那一拍）。
+
+    `exec/19 #48` 那句「宁可承认不知道，不可拿旧值硬撑」防的是**拿旧值硬撑**
+    ——这里没有拿旧值，用的是模型这一轮刚写下的场景名。而 `exec/31 #72` 当初的
+    结论正是「即兴地点缺的是 id」，id 本来就该由代码给（`create_improvised_
+    location_impl` 的注释：「id 是代码刚分配的，模型写不出来，这条通路只能由
+    代码接上」）。**能用代码确定性补上的一律代码补。**
+
+    没有场景名时仍旧清空——那时确实不知道人在哪，见下面那条。
+    """
     deps, a_id, _b_id = party
     await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
     decision = KeeperDecision.model_validate(
         {"state_updates": [{"key": "当前场景", "value": "墓地石堆旁"}]}
     )
     await execute_side_effects(deps, decision)
+    state = await _state(deps)
+    landed = location_of(state, a_id)
+    assert landed is not None and landed.startswith("loc-"), landed
+    assert load_improvised_locations(state)[landed]["name"] == "墓地石堆旁"
+    # 🔴 旧指针不许留着——原判据「不可拿旧值硬撑」在这里仍然成立
+    assert landed != "hall"
+
+
+async def test_a_bad_node_id_with_no_scene_name_still_clears(party) -> None:
+    """没有场景名可用时仍旧清空：那时**确实**不知道人在哪。
+
+    编一个名字就是拿自由文本当地基，比承认不知道更糟。这条守的是上一条那个
+    新分支**没有**把清空整个吃掉。
+    """
+    deps, a_id, _b_id = party
+    await execute_side_effects(deps, KeeperDecision(current_node_id="hall"))
+    # NPC id，不是节点 id；且本轮没有声明「当前场景」
+    _report, issues = await execute_side_effects(
+        deps, KeeperDecision(current_node_id="butler-public")
+    )
+    assert any("butler-public" in i for i in issues)
     assert location_of(await _state(deps), a_id) is None
 
 
@@ -348,7 +384,9 @@ async def test_clearing_only_moves_the_speakers_not_the_whole_room(party) -> Non
     await execute_side_effects(deps, decision)
 
     state = await _state(deps)
-    assert location_of(state, a_id) is None, "走出去的人该被清掉"
+    # 2026-08-16：走出去的人现在**落到一个有 id 的即兴地点**，不再是 None。
+    # 这条用例守的是它后面那两句（别人不受影响、分头还在），那两句一个字没改。
+    assert location_of(state, a_id) == "loc-1", "走出去的人该有自己的落点"
     assert location_of(state, b_id) == "cellar", "🔴 留在地窖的人不该被连带清空"
     assert is_party_split(state, [a_id, b_id]) is True, "分头状态必须还在"
 

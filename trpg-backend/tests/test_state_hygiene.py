@@ -173,6 +173,11 @@ async def test_scene_change_without_a_node_clears_the_pointer() -> None:
 
     裁决器**做对了**（找不到对应节点就留空，不编造 id），错在代码把"没说"
     当成了"没变"。
+
+    🔴 **2026-08-16 改口径**：不许留旧值这一条没变，但"清空成什么都没有"变成
+    了"落到一个有 id 的即兴地点"。真机实测「哪儿都不是」的后果是链式的——顶栏
+    没位置可显示、`无进展轮数` 再也归不了零。名字这一轮已经有了（模型刚写下
+    「当前场景」），id 本来就该由代码给。详见 `movement/executor.py` 那段注释。
     """
     deps, _a, _b = await _seed("HYG005", {CURRENT_NODE_KEY: "cellar"})
     await execute_side_effects(
@@ -180,8 +185,10 @@ async def test_scene_change_without_a_node_clears_the_pointer() -> None:
         KeeperDecision(state_updates=[StateUpdate(key="当前场景", value="镇上的警察局")]),
     )
     state = await _state(deps.room_id)
-    assert CURRENT_NODE_KEY not in state
     assert state["当前场景"] == "镇上的警察局"
+    # 🔴 原判据「不留旧值」仍然成立
+    assert state.get(CURRENT_NODE_KEY) != "cellar"
+    assert str(state.get(CURRENT_NODE_KEY, "")).startswith("loc-")
 
 
 async def test_scene_change_with_a_node_keeps_the_pointer() -> None:

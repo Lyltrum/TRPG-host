@@ -980,3 +980,62 @@ def test_pausing_twice_is_a_noop(sync_client: TestClient) -> None:
 
     assert first["payload"]["paused"] is True
     assert second["payload"]["paused"] is False
+
+
+def test_reconnect_resends_the_keeper_phase(sync_client: TestClient) -> None:
+    """🔴 **2026-08-16 真机：这一局真的结束了，而玩家永远看不到。**
+
+    `keeper.phase` 只在阶段变化那一刻广播过一次；重连握手一条都不补，前端
+    `keeperPhase` 停在初值空串，「本局结束」那条横幅的条件永远不成立。触发条件
+    是刷新页面 / 掉线 / 换设备——**一旦发生就再也看不到收尾**。
+
+    这是上一批自己挖的坑：把 `keeper.phase` 挂进 `_push_after_turn` 时没数它有
+    几个出口，而重连路径上那次调用被关在「这个玩家挂着会合确认卡」这个**跟阶段
+    毫无关系**的条件里。
+
+    **变异检验**：把 `_resend_keeper_phase` 那一行调用删掉，这条当场红。
+    """
+
+    from sqlalchemy import select
+
+    from app.core.keeper.runtime.phase import PHASE_FINISHED, PHASE_KEY
+    from app.models.room import Room
+    from conftest import TestSessionLocal  # 测试库跟 app.core.db.engine 不是同一个
+
+    token = register_and_login(sync_client, "phase_resend")
+    room = create_room(sync_client, token)
+
+    async def _finish() -> None:
+        async with TestSessionLocal() as db:
+            row = (
+                await db.execute(select(Room).where(Room.room_code == room["roomCode"]))
+            ).scalar_one_or_none()
+            assert row is not None
+            row.keeper_state = {**(row.keeper_state or {}), PHASE_KEY: PHASE_FINISHED}
+            await db.commit()
+
+    asyncio.run(_finish())
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+        # 🔴 **再握一次手，然后读到第二条 session.bound 为止**——不要直接
+        # `receive_json()` 等那条推送。没有它的时候直接读会**永久挂住**，而
+        # 「测试挂住比失败更糟：变异体必须让测试红，不能让它挂」。第一版就是
+        # 那么写的，拿掉补发之后整个文件跑不完（我当场撞到）。
+        ws.send_json(
+            {
+                "type": "room.join",
+                "playerId": room["playerId"],
+                "payload": {"reconnectToken": room["reconnectToken"]},
+            }
+        )
+        before_second_handshake = []
+        while True:
+            envelope = ws.receive_json()
+            if envelope["type"] == "session.bound":
+                break
+            before_second_handshake.append(envelope)
+
+    phases = [e for e in before_second_handshake if e["type"] == "keeper.phase"]
+    assert phases, f"重连没有补发对局阶段，只收到 {[e['type'] for e in before_second_handshake]}"
+    assert phases[0]["payload"]["phase"] == PHASE_FINISHED

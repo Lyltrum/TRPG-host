@@ -132,9 +132,18 @@ class PendingDecision:
         reveals: tuple[str, ...] = (),
         opposed_opponent: str | None = None,
         opposed_value: int | None = None,
+        target: int | None = None,
         decision_id: str | None = None,
     ) -> PendingDecision:
-        """造一项掷骰决定。**payload 的形状只在这里拼**，别处一律走属性读。"""
+        """造一项掷骰决定。**payload 的形状只在这里拼**，别处一律走属性读。
+
+        `target`：这次要过的数。**掷之前就告诉玩家**（2026-08-16）——
+        `CheckRequestPayload.target_value` 这个字段一直存在、`check.result`
+        那边也一直在填，唯独 `check.request` 这边写死 `None` 且没有注释，
+        前端卡片于是只写「守秘人请求：XX检定」。玩家掷之前不知道自己要过多少，
+        而这个数本来就印在他自己的角色卡上，藏着没有任何收益。
+        理智检定不带（它比的是当前 SAN，掷的那一刻才算得准）。
+        """
         return cls(
             decision_id=decision_id or str(uuid.uuid4()),
             kind=kind,
@@ -149,6 +158,7 @@ class PendingDecision:
                 "reveals": list(reveals),
                 "opposed_opponent": opposed_opponent,
                 "opposed_value": opposed_value,
+                "target": target,
             },
         )
 
@@ -287,6 +297,7 @@ def to_notice(pending: PendingDecision) -> CheckRequestNotice:
         player_nickname=pending.player_nickname,
         skill=pending.skill,
         reason=pending.reason,
+        target=pending.payload.get("target"),
     )
 
 

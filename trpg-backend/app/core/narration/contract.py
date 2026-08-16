@@ -100,6 +100,8 @@ class CheckRequestNotice:
     player_nickname: str
     skill: str | None  # kind="san" 时为 None
     reason: str = ""
+    #: 这次要过的数。理智检定为 None——它比的是当前 SAN，掷那一刻才算得准。
+    target: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

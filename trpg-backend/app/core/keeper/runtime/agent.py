@@ -81,6 +81,7 @@ from app.core.keeper.narration.prompts import (
 from app.core.keeper.narration.prose_discipline import (
     clip_narration,
     inject_closure_guidance,
+    inject_finale_guidance,
     inject_scene_transition_guidance,
     narration_limit,
     narration_max_tokens,
@@ -312,9 +313,15 @@ class KeeperAgent(Narrator):
         if phase == PHASE_FINISHED:
             if is_heartbeat or is_opening_ceremony:
                 return NarrationOutcome(text="")
-            return NarrationOutcome(
-                text=f"本局已结束（结局：{ending_id or '—'}）。感谢各位调查员。"
-            )
+            # 🔴 **不要把 `ending_id` 印给玩家**（2026-08-16 真机）：那是内部
+            # slug（实测印出来的是 `ending-adventure-options`）。`phase.py` 的
+            # `format_phase_status` 印 id 是对的——那份是给**裁决器**看的局面块，
+            # 它就该按 id 认结局。两处此前共用了一个格式，而受众完全不同。
+            # 这个仓库为「label 泄漏内部 id」红过一次，同一个病换了个位置。
+            #
+            # 也不必在这里复述结局：终章由命中结局那一拍的叙事写完了
+            # （`inject_finale_guidance`），这句只是**之后**任何行动的挡板。
+            return NarrationOutcome(text="本局已结束。感谢各位调查员。")
 
         # 开场仪式或首次进入：模组有 opening 且尚未记阶段 → 初始化为 opening
         # （设计 05：game.start 后第一轮即开场仪式，不干等玩家）
@@ -511,6 +518,25 @@ class KeeperAgent(Narrator):
                 logger.info(
                     "keeper_closure_confirmed", room_id=room_id, player_id=context.player_id
                 )
+
+        # 🔴 命中**剧本预设结局**的那一拍要写成终章（2026-08-16 真机）。
+        # 上面那一支只覆盖开放式收尾——它要求先进过 `ending` 阶段再退回来，而
+        # `ending_reached` 这条路 `progression` 当轮直接置 finished，**不经过
+        # `ending`**，于是一条纪律都注入不到。同一件事两条路，此前只接通了一条。
+        # 顺带把剧本写好的那段落幕点名喂进去：它此前只躺在系统 prompt 末尾的
+        # 剧本全文里，跟没命中的那几条结局并排，等于没喂。
+        hit_ending = next(
+            (e for e in self._module.endings if e.id == getattr(decision, "ending_reached", None)),
+            None,
+        )
+        if hit_ending is not None:
+            decision = decision.model_copy(
+                update={
+                    "narration_guidance": inject_finale_guidance(
+                        decision.narration_guidance, hit_ending.text
+                    )
+                }
+            )
 
         report, issues = await execute_side_effects(deps, decision, subject=KEEPER)
         pending_checks, pending_issues = await create_pending_checks(deps, decision, subject=KEEPER)

@@ -23,6 +23,7 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7.content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys, situation_blocks
+from app.core.keeper.capabilities.san_check.executor import create_pending_san_checks
 from app.core.keeper.capabilities.san_check.schema import SanCheckRequest
 from app.core.keeper.capabilities.san_check.state import (
     SAN_POINTS_FIRED_KEY,
@@ -33,10 +34,12 @@ from app.core.keeper.capabilities.san_check.state import (
 from app.core.keeper.capabilities.world_state.schema import StateUpdate
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import ScenarioModule
+from app.core.keeper.contract.registry import PendingContext
 from app.core.keeper.runtime.deps import KeeperDeps
 from app.core.keeper.runtime.location_state import PLAYER_LOCATION_KEY
 from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY, SCENE_NAME_KEY
 from app.core.keeper.runtime.turn_executor import execute_side_effects
+from app.models.event import Event
 from app.models.room import Character, Player, Room
 
 _MODULE = ScenarioModule.model_validate(
@@ -325,3 +328,114 @@ async def test_two_identical_checks_in_one_turn_only_consume_one_annotation(solo
     _report, issues = await execute_side_effects(deps, KeeperDecision(san_checks=[same, same]))
     assert load_fired_san_points(await _keeper_state(deps)) == [san_point_ref("shrine", 1)]
     assert len(issues) == 1, issues
+
+
+# ── 一拍之内只掷一次理智（2026-08-16 真机，`exec/38 #86`）───────────
+
+
+async def _submit(deps: KeeperDeps, text: str) -> None:
+    """记一条玩家发言——「一拍」的起点就是它。"""
+    async with _session_factory() as db:
+        db.add(
+            Event(
+                room_id=deps.room_id,
+                player_id=deps.player_id,
+                event_type="action.submit",
+                payload={"utterance": text},
+            )
+        )
+        await db.commit()
+
+
+async def _san_rolled(deps: KeeperDeps) -> None:
+    """记一次已经掷出的理智检定（`san_check_only` 落的就是这个事件）。"""
+    async with _session_factory() as db:
+        db.add(
+            Event(
+                room_id=deps.room_id,
+                player_id=deps.player_id,
+                event_type="keeper.san",
+                payload={"player": "阿福", "rolled": 8, "target": 70, "loss": 1, "san": 69},
+            )
+        )
+        await db.commit()
+
+
+async def _pending_san(deps: KeeperDeps) -> tuple[list, list[str]]:
+    decision = KeeperDecision(
+        san_checks=[SanCheckRequest(loss_on_success="0", loss_on_failure="1D6", reason="目睹")]
+    )
+    async with _session_factory() as db:
+        return await create_pending_san_checks(
+            deps, decision, PendingContext(db=db, keeper_state=None, current_scene=None)
+        )
+
+
+async def test_the_first_san_check_after_a_player_speaks_goes_through(solo) -> None:
+    """一句话之后的**第一次**理智检定照常发起——门拦的不是"掷理智"。"""
+    deps = solo
+    await _submit(deps, "我打开手电筒看一下里面有什么")
+    pending, issues = await _pending_san(deps)
+    assert len(pending) == 1
+    assert issues == []
+
+
+async def test_a_second_san_check_in_the_same_beat_is_refused(solo) -> None:
+    """🔴 **2026-08-16 真机的复现**：一句话引发了三次理智检定。
+
+    玩家说完「我打开手电筒看一下里面有什么」之后**一个字都没再说**，系统跑了
+    3 次裁决、3 次理智检定，第三次失败扣 6 点，**当场触发一次本不该有的临时性
+    疯狂**。放大器是结算叙事——每掷完一批骰子就有一次结算叙事，而它本身又是
+    一次完整裁决，可以再开新的 `san_checks`。
+
+    规则 3 的「同一来源不重复检定」是**写着的**；根因是"已经为这个来源掷过了"
+    这条信息从来没进过模型的上下文（模组标注的有记账，模型自判的记账是零）。
+
+    **变异检验**：把 `create_pending_san_checks` 里那道 `san_already_rolled_
+    this_beat` 判断删掉，这条当场红。
+    """
+    deps = solo
+    await _submit(deps, "我打开手电筒看一下里面有什么")
+    await _san_rolled(deps)  # 这一拍的第一次，已经掷完了
+
+    pending, issues = await _pending_san(deps)
+    assert pending == [], "同一拍的第二次理智检定必须被拦下"
+    assert len(issues) == 1 and "已经掷过理智" in issues[0], issues
+
+
+async def test_the_next_utterance_opens_a_new_beat(solo) -> None:
+    """🔴 门必须有一条走得通的路：玩家再动一次就能再掷。
+
+    没有这一条，这道门就从"不重复检定"变成"一局只掷一次理智"——那比原来的
+    bug 更糟。真的情境升级了，下一拍照样掷得出来。
+    """
+    deps = solo
+    await _submit(deps, "我打开手电筒看一下里面有什么")
+    await _san_rolled(deps)
+    assert (await _pending_san(deps))[0] == []
+
+    await _submit(deps, "我后退一步，把门带上")
+    pending, issues = await _pending_san(deps)
+    assert len(pending) == 1, "新的一拍必须能重新掷"
+    assert issues == []
+
+
+async def test_two_sources_in_one_adjudication_still_roll_twice(solo) -> None:
+    """拦的是**链条上的第二次裁决**，不是同一次裁决里的第二条。
+
+    一进屋同时看见尸体和怪物是 COC 里正当的两次检定，别把它们也吞掉。
+    """
+    deps = solo
+    await _submit(deps, "我推门进去")
+    decision = KeeperDecision(
+        san_checks=[
+            SanCheckRequest(loss_on_success="0", loss_on_failure="1D3", reason="尸体"),
+            SanCheckRequest(loss_on_success="1", loss_on_failure="1D6", reason="那个东西"),
+        ]
+    )
+    async with _session_factory() as db:
+        pending, issues = await create_pending_san_checks(
+            deps, decision, PendingContext(db=db, keeper_state=None, current_scene=None)
+        )
+    assert len(pending) == 2, "同一次裁决里的多个来源各掷一次"
+    assert issues == []

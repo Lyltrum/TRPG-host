@@ -291,6 +291,25 @@ async def _push_after_turn(
     """
     await _push_party_update(db, websocket, room_id, only_player_id=only_player_id)
     await _push_keeper_phase(db, websocket, room_id, only_player_id=only_player_id)
+    await _push_character_may_have_changed(websocket, room_id, only_player_id=only_player_id)
+
+
+async def _push_character_may_have_changed(
+    websocket: WebSocket,
+    room_id: str,
+    *,
+    only_player_id: str | None = None,
+) -> None:
+    """「现在是重读角色卡的安全点」。不查库——它不声称任何东西真的变了。
+
+    理由见 `CharacterMayHaveChangedPayload`：改角色卡的路径散在好几片能力里，
+    而前端原来是逐个事件配一条重拉，幸运和装备两样都漏了。
+    """
+    envelope = ServerEnvelope(type="character.may_have_changed", payload={})
+    if only_player_id is not None:
+        await websocket.send_json(envelope.model_dump(by_alias=True))
+        return
+    await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
 
 
 async def _push_party_update(

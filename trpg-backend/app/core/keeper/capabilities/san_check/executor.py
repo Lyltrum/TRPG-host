@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import structlog
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.keeper.capabilities.san_check.state import (
     SAN_POINTS_FIRED_KEY,
@@ -28,6 +30,7 @@ from app.core.keeper.runtime.deps import (
 from app.core.keeper.runtime.madness_state import MADNESS_LOSS_THRESHOLD, enter_madness
 from app.core.keeper.runtime.pending import PendingDecision
 from app.core.narration.contract import CheckResultNotice
+from app.models.event import Event
 from app.models.room import Room
 
 logger = structlog.get_logger()
@@ -150,6 +153,28 @@ async def san_check_impl(
     return text
 
 
+async def san_already_rolled_this_beat(db: AsyncSession, room_id: str) -> bool:
+    """这一句玩家发言引发的链条里，是不是已经掷过理智了。
+
+    「一拍」= 最后一条 `action.submit` 之后到现在。一次玩家发言可以引发**多次
+    裁决**：每掷完一批骰子就有一次结算叙事，而结算叙事本身又是一次完整裁决，
+    可以再开新的 `san_checks`（见 `agent._after_check`）。
+    """
+    last_utterance = (
+        await db.execute(
+            select(Event.created_at)
+            .where(Event.room_id == room_id, Event.event_type == "action.submit")
+            .order_by(Event.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    stmt = select(Event.id).where(Event.room_id == room_id, Event.event_type == "keeper.san")
+    if last_utterance is not None:
+        stmt = stmt.where(Event.created_at > last_utterance)
+    return (await db.execute(stmt.limit(1))).scalar_one_or_none() is not None
+
+
 async def create_pending_san_checks(
     deps: KeeperDeps, decision: BaseModel, context: PendingContext
 ) -> tuple[list[PendingDecision], list[str]]:
@@ -157,10 +182,43 @@ async def create_pending_san_checks(
 
     玩家合法性预检复用 `resolve_character`（跟 `san_check_impl` 同一套解析
     逻辑，保证"能不能掷"的判断口径一致）；找不到的玩家跳过并记 issue。
+
+    ## 🔴 一拍之内只掷一次理智（2026-08-16 真机，`exec/38 #86`）
+
+    实测：玩家说了一句「我打开手电筒看一下里面有什么」之后**一个字都没再说**，
+    系统跑了 3 次裁决、3 次理智检定，第三次 90/63 失败扣 6 点，**当场触发一次
+    本不该有的临时性疯狂**。
+
+    规则 3 里「同一来源不重复检定」**是写着的**，模型没遵守——但根因不是它不
+    听话：**"已经为这个来源掷过了"这条信息从来没进过它的上下文。**模组标注的
+    理智检定点有记账（`SAN_POINTS_FIRED_KEY`），而模型**自己判断**该掷的那些
+    记账是零。这一局的模组标注恰好是 0 条 ⇒ 全部走自判 ⇒ 全部没有记账。
+    「有消费方但没有数据」的又一处。
+
+    🔴 **门不去认「来源」**：`reason` 是自由文本，「目击曼-巴加里」和「那东西
+    又靠近了」认不出是同一个来源——那正是「不要用自由文本当标识符」。而实测
+    数据给了一条不用认来源的分界线：**4 次检定里该掷的 2 次各自跟在一句新的
+    玩家发言后面，失控的 2 次都是同一句话引发的第 2、3 次裁决。**按这条拦，
+    真实数据上误伤为零。
+
+    规则里那条「除非情境升级」的豁免也是这么被绕过的：**"它又朝你挪近半尺"
+    正是模型自己上一拍写的叙事**——它拿自己的输出满足自己的例外条件，那个
+    条件永远成立。判据用了一个模型自己能左右的量。
+
+    代价很小：拦掉之后玩家下一次发言就能再掷（真的升级了，下一拍照样掷得出），
+    而放过去的代价是一次凭空的疯狂。同一轮裁决里**多个来源**照旧可以各掷一次
+    （拦的是链条上的第二次裁决，不是同一次裁决里的第二条）。
     """
+    requests = list(getattr(decision, "san_checks", ()))
+    if requests and await san_already_rolled_this_beat(context.db, deps.room_id):
+        return [], [
+            f"这一拍已经掷过理智检定了，本次的 {len(requests)} 次不再发起"
+            "（同一来源不重复检定；玩家下一次行动之后可以再掷）"
+        ]
+
     pending: list[PendingDecision] = []
     issues: list[str] = []
-    for san in getattr(decision, "san_checks", ()):
+    for san in requests:
         try:
             player, _character = await resolve_character(context.db, deps, san.player)
         except KeeperToolError as exc:

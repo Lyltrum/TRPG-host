@@ -102,6 +102,7 @@ export type {
   CharacterStatChangedPayload,
   // 分组变更协议与空间处境（exec/33 §5）
   KeeperPhasePayload,
+  CharacterMayHaveChangedPayload,
   PartyUpdatePayload,
   KeeperBusyPayload,
   // 幸运消费（exec/26 #66，exec/34 第 4 步）
@@ -146,6 +147,7 @@ import type {
   GameEndedPayload,
   KeeperBusyPayload,
   KeeperPhasePayload,
+  CharacterMayHaveChangedPayload,
   LuckOfferPayload,
   NarrationDeltaPayload,
   NarrationPushPayload,
@@ -205,6 +207,10 @@ export type ServerToClientEvent =
   // 🔴 补的是一条只有一半的链——closure 早就会把 phase 写成 ending/finished，
   // 叙事纪律与字数上限也跟着变，而前端此前一个字都收不到。
   | { type: 'keeper.phase'; payload: KeeperPhasePayload }
+  // 2026-08-16：这一拍结束了，自己那张卡重拉一次。**不声称任何东西真的变了**
+  // ——只声称"现在是重读的安全点"。前端原来逐个事件配重拉（SAN 一处、HP 一处），
+  // 幸运消费和装备变化两样都漏了；挂在回合结束那个唯一出口上就不会再漏第三样。
+  | { type: 'character.may_have_changed'; payload: CharacterMayHaveChangedPayload }
   // exec/33 §5.4：守秘人正在别处忙（分头时叙事逐组生成，没轮到的那组此前是黑屏）
   | { type: 'keeper.busy'; payload: KeeperBusyPayload }
   // exec/34 第 4 步：骰子已经停下、结果还没生效——问他要不要花幸运推成成功。

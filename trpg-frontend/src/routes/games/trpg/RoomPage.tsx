@@ -1028,13 +1028,11 @@ export default function RoomPage() {
         if (checkRequestId) {
           setPendingCheck(prev => (prev && prev.id === checkRequestId ? null : prev))
         }
-        // 角色卡的 San 此前一直是建卡快照，从不随检定结果更新（真人实测
-        // 09-#4）——sanRemaining 后端早就带了，只是没人读。
-        // 不本地增量改，重拉一次——服务端才是权威，掉线期间错过的广播这样
-        // 也能一并归位（sanRemaining 仍然带在广播里，用来渲染下面的提示）。
-        if (rollerId === playerId && typeof sanRemaining === 'number') {
-          reloadCharacterRef.current()
-        }
+        // 🔴 重拉不在这里做了（2026-08-16）：改由 `character.may_have_changed`
+        // 统一触发。这里曾是**逐个列出**的两处之一（另一处是 HP），于是幸运
+        // 消费和装备变化两样都没人配——玩家花掉 3 点幸运，界面上那个数字一局
+        // 不变。`sanRemaining` 仍然读，它用来渲染下面那条提示。
+        void sanRemaining
       } else if (envelope.type === 'character.stat_changed') {
         // HP 变更的结构化广播（真人实测 09-#4/#6）：此前 HP 变化只被拼进
         // 叙事正文当纯文本、混在守秘人的话里（09-#6 指出这不该是它说的话）。
@@ -1047,6 +1045,10 @@ export default function RoomPage() {
         if (isSelf) {
           // 重拉角色卡：新的 HP 与上限（hpMax）都从这一次读接口来，两个数字
           // 同源同帧，不会出现分子已更新、分母还是旧的那种半拍。
+          //
+          // 🔴 这一次是**为了快**，不是为了对：回合结束的
+          // `character.may_have_changed` 已经兜住了正确性。掉血是这局里最需要
+          // 当场看见的一个数，不该等到这一拍走完。
           reloadCharacterRef.current()
         }
         const label = prevHp !== undefined && prevHp !== hp
@@ -1057,6 +1059,12 @@ export default function RoomPage() {
           content: reason ? `🎲 ${label}（${reason}）` : `🎲 ${label}`,
           time: now,
         }])
+      } else if (envelope.type === 'character.may_have_changed') {
+        // 🔴 角色卡刷新的**唯一**入口（2026-08-16 真机）。此前是逐个事件各配
+        // 一条重拉（SAN 一处、HP 一处），于是幸运消费和装备变化两样都漏了：
+        // 玩家花掉 3 点幸运，界面上那个数字一局不变，刷新页面才对。
+        // 「加一项就漏一项」——所以修的是形状，不是再补两个 if。
+        reloadCharacterRef.current()
       } else if (envelope.type === 'party.update') {
         // exec/33 §5.4：我自己的空间处境。逐人裁过再发，别处那组在哪不在里面。
         setParty(envelope.payload)

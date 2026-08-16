@@ -15,6 +15,8 @@ e2e/tests/discussion-chat.e2e.ts，那边有完整的双客户端覆盖；这里
 app.state 上（而不是模块内部单例）正是为了让测试不需要 monkeypatch。
 """
 
+import asyncio
+import time
 from collections.abc import Iterator
 
 import pytest
@@ -248,6 +250,72 @@ def test_action_lock_semantics() -> None:
     assert manager.try_acquire("room-1") is not None, "过期的锁必须能被抢占（防永久锁死）"
 
     manager.release("room-does-not-exist", "any-token")  # 释放不存在的锁是无害空操作
+
+
+def test_renew_only_extends_your_own_lock() -> None:
+    """续期只对自己的锁生效，绝不把别人的锁续到自己名下。"""
+    manager = RoomActionLockManager()
+
+    token = manager.try_acquire("room-1")
+    assert token is not None
+    assert manager.renew("room-1", token) is True
+
+    # 锁不存在
+    assert manager.renew("room-2", token) is False
+    # token 不匹配：自己超时之后锁被别人拿走了
+    manager._locks["room-1"] = (time.monotonic() + 60.0, "someone-else")
+    assert manager.renew("room-1", token) is False
+    assert manager._locks["room-1"][1] == "someone-else", "续期失败时一个字都不许改"
+
+
+@pytest.mark.asyncio
+async def test_a_slow_turn_keeps_the_lock_instead_of_expiring() -> None:
+    """🔴 `exec/38 #83` 的复现：**一拍跑得比超时还久，锁不许过期。**
+
+    真机撞到的形态：玩家提交后整拍跑了 229 秒，而超时是 60 秒。他等不住补发
+    一句，那一刻锁早已过期 ⇒ 第二句被当成新回合受理 ⇒ 两个「读状态→跑 AI→
+    写回」循环并发跑，各产出一段互相矛盾的叙事。锁防的那件事失效了，而没有
+    任何地方报错。
+
+    这里把超时压到 0.3 秒、活儿跑 1 秒（三倍多），断言期间没有第二个人拿得到锁。
+    **变异检验**：把 `held` 里的 `create_task(self._keepalive(...))` 删掉，
+    这条当场红。
+    """
+    manager = RoomActionLockManager()
+    manager.LOCK_TIMEOUT_SECONDS = 0.3  # 心跳间隔由它推导 ⇒ 0.1 秒一跳
+
+    token = manager.try_acquire("room-1")
+    assert token is not None
+
+    stolen: list[str] = []
+    async with manager.held("room-1", token):
+        for _ in range(10):  # 总共 1 秒，是超时的三倍多
+            await asyncio.sleep(0.1)
+            other = manager.try_acquire("room-1")
+            if other is not None:
+                stolen.append(other)
+
+    assert not stolen, f"慢的那一拍期间锁被抢走了 {len(stolen)} 次——续期没生效"
+    assert manager.try_acquire("room-1") is not None, "跑完必须释放，否则房间锁死"
+
+
+@pytest.mark.asyncio
+async def test_the_lock_still_expires_when_the_holder_is_gone() -> None:
+    """续期不能把超时兜底废掉：持锁的协程没了，锁必须照常过期。
+
+    这正是超时存在的理由——`held` 的 finally 走不到（进程内异常逃逸、任务被
+    吞）时，房间不能永久锁死。这里直接模拟"没有人在续期的一把锁"。
+    """
+    manager = RoomActionLockManager()
+    manager.LOCK_TIMEOUT_SECONDS = 0.2
+
+    token = manager.try_acquire("room-1")
+    assert token is not None
+    assert manager.try_acquire("room-1") is None
+
+    await asyncio.sleep(0.35)  # 没有任何人续期
+    assert manager.try_acquire("room-1") is not None, "无人续期的锁必须过期"
+    del token
 
 
 # ── check.roll / san.check.roll（两段式玩家掷骰，feat/keeper-agent）────

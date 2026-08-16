@@ -375,13 +375,12 @@ async def _handle_merge_confirm(
     if lock_token is None:
         await _send_error(websocket, "ACTION_IN_PROGRESS", "守秘人正在处理其他玩家的行动，请稍候")
         return
-    try:
-        changed = await confirm_merge_impl(db, room_id, player_id)
-    except KeeperToolError as exc:
-        await _send_error(websocket, "MERGE_CONFIRM_FAILED", str(exc))
-        return
-    finally:
-        action_lock_manager.release(room_id, lock_token)
+    async with action_lock_manager.held(room_id, lock_token):
+        try:
+            changed = await confirm_merge_impl(db, room_id, player_id)
+        except KeeperToolError as exc:
+            await _send_error(websocket, "MERGE_CONFIRM_FAILED", str(exc))
+            return
     if changed:
         await _push_after_turn(db, websocket, room_id)
 
@@ -884,7 +883,7 @@ async def _handle_clarify(
     if lock_token is None:
         await _send_error(websocket, "CONFLICT", "守秘人正忙，稍后再试")
         return
-    try:
+    async with action_lock_manager.held(room_id, lock_token):
         # 澄清本身是玩家说的话：落库 + 按受众广播，跟别的发言一条路
         # （历史、replay、per-audience 裁剪因此天然成立）。
         # ⚠️ 不并入收集窗口——它不开新的一轮，它重跑旧的那一轮。
@@ -932,8 +931,6 @@ async def _handle_clarify(
             await _send_error(websocket, "CONFLICT", "现在没有可以纠正的回合")
             return
         await _run_turn(db, websocket, room_id, submissions, clarification=clarification)
-    finally:
-        action_lock_manager.release(room_id, lock_token)
 
 
 async def _handle_pause(
@@ -1023,10 +1020,18 @@ async def _handle_action_submit(
         # 真人桌上不存在"你这句无效、请重说"——你说出口的话在空气里，KP 最多说
         # "等一下，我先处理完张三"。所以这里回的是**回执**不是错误。
         # 谁来处理？当前持锁的那个循环跑完一轮后会回来看缓冲（见下面的 while）。
-        await _send_error(websocket, "QUEUED", "守秘人正在回应其他人，你的话已记下")
+        #
+        # 🔴 文案不说"其他人"（`exec/38 #83`）：锁改成续期之后，**单人局**第一次
+        # 走得到这一支——玩家等不住补发一句，等的正是**他自己上一句**。原来那句
+        # "守秘人正在回应其他人"在单人局里是句假话，而这一支恰恰是他最需要一句
+        # 真话的时刻。改成同时对单人局与多人局都成立的说法。
+        await _send_error(websocket, "QUEUED", "守秘人还在处理上一轮，你这句已经记下了")
         return
 
-    try:
+    # 🔴 `held` 而不是 `try/finally: release`：整条循环可以跑很久（真机撞到过
+    # 单拍 229 秒），锁必须跟着一起活着，否则等不住补发一句的玩家会开出第二个
+    # 并发循环（`exec/38 #83`）。缓冲照旧不清——见 `held` 退出后没有 drain。
+    async with action_lock_manager.held(room_id, lock_token):
         # 一次持锁可以连跑多轮：本轮跑完若缓冲里又攒下了话，直接接着开下一轮。
         # 🔴 循环条件是**同步**的，`is_collecting` 为假到 finally 里 release 之间
         # 没有任何 await——asyncio 单线程下这就是原子的，不会出现"刚判空就有人
@@ -1048,10 +1053,8 @@ async def _handle_action_submit(
             # 守秘人可能给 AI 发了检定：它没有连接、点不了那个按钮，得替它掷。
             # 放在锁内：resolve_check 同样是"读状态→跑 AI→写回"，不能并发。
             await _auto_roll_ai_checks(db, websocket, room_id)
-    finally:
-        # 只释放锁。**不要在这里 drain**——缓冲里可能正排着别人的话，清掉就是
-        # 把他们的发言吞了（这正是 exec/19 #36 的病灶）。
-        action_lock_manager.release(room_id, lock_token)
+    # `held` 退出只释放锁。**不要在这里 drain**——缓冲里可能正排着别人的话，
+    # 清掉就是把他们的发言吞了（这正是 exec/19 #36 的病灶）。
 
 
 async def _join_ai_players(db: AsyncSession, websocket: WebSocket, room_id: str) -> None:
@@ -1369,48 +1372,48 @@ async def _handle_check_roll(
         await _send_error(websocket, "ACTION_IN_PROGRESS", "守秘人正在处理其他玩家的行动，请稍候")
         return
 
-    await _broadcast_keeper_busy(room_id, True)
-    try:
-        narrator = websocket.app.state.narrator
+    async with action_lock_manager.held(room_id, lock_token):
+        await _broadcast_keeper_busy(room_id, True)
         try:
-            # 🔴 骰值先落地、叙事随后（真人实测反馈「反馈太慢」）。
-            # 掷骰是纯代码毫秒级，紧跟其后的结算叙事是 10 秒级的 LLM 往返——
-            # 原来两件事跑完才一次性广播，玩家点完「投掷」得盯着屏幕十几秒
-            # 才看得到自己掷了多少。真人桌上骰子是当场停下的。
-            # ⚠️ 回调推过的这几条要记下来，下面别再广播一遍。
-            pushed: set[str] = set()
+            narrator = websocket.app.state.narrator
+            try:
+                # 🔴 骰值先落地、叙事随后（真人实测反馈「反馈太慢」）。
+                # 掷骰是纯代码毫秒级，紧跟其后的结算叙事是 10 秒级的 LLM 往返——
+                # 原来两件事跑完才一次性广播，玩家点完「投掷」得盯着屏幕十几秒
+                # 才看得到自己掷了多少。真人桌上骰子是当场停下的。
+                # ⚠️ 回调推过的这几条要记下来，下面别再广播一遍。
+                pushed: set[str] = set()
 
-            async def _push_result(notice: CheckResultNotice) -> None:
-                await _broadcast_check_result(room_id, notice, db)
-                pushed.add(notice.check_request_id)
+                async def _push_result(notice: CheckResultNotice) -> None:
+                    await _broadcast_check_result(room_id, notice, db)
+                    pushed.add(notice.check_request_id)
 
-            outcome = await narrator.resolve_check(
-                room_id, player_id, check_request_id, _push_result
-            )
-        except NotImplementedError:
-            # 非 keeper 模式（Fallback/DeepSeekNarrator）没有"待掷检定"这个
-            # 概念，明确告知发起者，而不是让请求悬空等不到任何回应。
-            await _send_error(websocket, "NOT_IMPLEMENTED", "服务端权威掷骰本期尚未实现")
-            return
-        except ValueError as exc:
-            # KeeperToolError（ValueError 子类）：id 不存在/已被结算/掷错了人。
-            await _send_error(websocket, "CHECK_NOT_PENDING", str(exc))
-            return
-        except Exception as exc:  # 与 action.submit 同理：外部服务失败面宽，故意宽捕获
-            # 此时骰子可能已经掷出并落库（结算叙事的 LLM 调用失败在掷骰之后）
-            # ——结果没广播成，但 keeper.check 事件在历史里，玩家重发一条
-            # action.submit 后裁决器能看到结果并续上，不会丢骰。
-            logger.warning("resolve_check_failed", room_id=room_id, error=str(exc))
-            await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
-            return
+                outcome = await narrator.resolve_check(
+                    room_id, player_id, check_request_id, _push_result
+                )
+            except NotImplementedError:
+                # 非 keeper 模式（Fallback/DeepSeekNarrator）没有"待掷检定"这个
+                # 概念，明确告知发起者，而不是让请求悬空等不到任何回应。
+                await _send_error(websocket, "NOT_IMPLEMENTED", "服务端权威掷骰本期尚未实现")
+                return
+            except ValueError as exc:
+                # KeeperToolError（ValueError 子类）：id 不存在/已被结算/掷错了人。
+                await _send_error(websocket, "CHECK_NOT_PENDING", str(exc))
+                return
+            except Exception as exc:  # 与 action.submit 同理：外部服务失败面宽，故意宽捕获
+                # 此时骰子可能已经掷出并落库（结算叙事的 LLM 调用失败在掷骰之后）
+                # ——结果没广播成，但 keeper.check 事件在历史里，玩家重发一条
+                # action.submit 后裁决器能看到结果并续上，不会丢骰。
+                logger.warning("resolve_check_failed", room_id=room_id, error=str(exc))
+                await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
+                return
 
-        await _deliver_check_outcome(db, websocket, room_id, player_id, outcome, pushed)
-    finally:
-        # 🔴 只关不开是错的（2026-08-10 验证跑抓到：序列出现「开→关→关→开」）。
-        # 结算叙事恰恰是最需要指示器的那十几秒——那时全房间只看得见一个骰子数字
-        # 然后是十几秒静默。开在下面 try 的入口，这里配对关掉。
-        await _broadcast_keeper_busy(room_id, False)
-        action_lock_manager.release(room_id, lock_token)
+            await _deliver_check_outcome(db, websocket, room_id, player_id, outcome, pushed)
+        finally:
+            # 🔴 只关不开是错的（2026-08-10 验证跑抓到：序列出现「开→关→关→开」）。
+            # 结算叙事恰恰是最需要指示器的那十几秒——那时全房间只看得见一个骰子数字
+            # 然后是十几秒静默。开在上面 try 的入口，这里配对关掉。
+            await _broadcast_keeper_busy(room_id, False)
 
 
 async def _deliver_check_outcome(
@@ -1466,35 +1469,35 @@ async def _handle_luck_decide(
         await _send_error(websocket, "ACTION_IN_PROGRESS", "守秘人正在处理其他玩家的行动，请稍候")
         return
 
-    await _broadcast_keeper_busy(room_id, True)
-    try:
-        narrator = websocket.app.state.narrator
+    async with action_lock_manager.held(room_id, lock_token):
+        await _broadcast_keeper_busy(room_id, True)
         try:
-            pushed: set[str] = set()
+            narrator = websocket.app.state.narrator
+            try:
+                pushed: set[str] = set()
 
-            async def _push_result(notice: CheckResultNotice) -> None:
-                await _broadcast_check_result(room_id, notice, db)
-                pushed.add(notice.check_request_id)
+                async def _push_result(notice: CheckResultNotice) -> None:
+                    await _broadcast_check_result(room_id, notice, db)
+                    pushed.add(notice.check_request_id)
 
-            outcome = await narrator.resolve_player_offer(
-                room_id, player_id, payload.decision_id, payload.accepted, _push_result
-            )
-        except NotImplementedError:
-            await _send_error(websocket, "NOT_IMPLEMENTED", "幸运消费本期尚未实现")
-            return
-        except ValueError as exc:
-            # KeeperToolError：id 不存在/已被处理/不是他的决定/幸运不够了。
-            await _send_error(websocket, "LUCK_DECISION_FAILED", str(exc))
-            return
-        except Exception as exc:  # 同 check.roll：外部服务失败面宽，故意宽捕获
-            logger.warning("resolve_luck_failed", room_id=room_id, error=str(exc))
-            await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
-            return
+                outcome = await narrator.resolve_player_offer(
+                    room_id, player_id, payload.decision_id, payload.accepted, _push_result
+                )
+            except NotImplementedError:
+                await _send_error(websocket, "NOT_IMPLEMENTED", "幸运消费本期尚未实现")
+                return
+            except ValueError as exc:
+                # KeeperToolError：id 不存在/已被处理/不是他的决定/幸运不够了。
+                await _send_error(websocket, "LUCK_DECISION_FAILED", str(exc))
+                return
+            except Exception as exc:  # 同 check.roll：外部服务失败面宽，故意宽捕获
+                logger.warning("resolve_luck_failed", room_id=room_id, error=str(exc))
+                await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
+                return
 
-        await _deliver_check_outcome(db, websocket, room_id, player_id, outcome, pushed)
-    finally:
-        await _broadcast_keeper_busy(room_id, False)
-        action_lock_manager.release(room_id, lock_token)
+            await _deliver_check_outcome(db, websocket, room_id, player_id, outcome, pushed)
+        finally:
+            await _broadcast_keeper_busy(room_id, False)
 
 
 @router.websocket("/ws/{room_id}")

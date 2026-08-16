@@ -341,3 +341,33 @@ def test_exemption_lists_only_shrink() -> None:
     assert not stale, "以下豁免已经不需要了，请从清单里删掉：\n" + "\n".join(
         f"  {a}  →  {b}" for a, b in sorted(stale)
     )
+
+
+def test_the_action_lock_is_only_released_by_held() -> None:
+    """🔴 拿了房间锁就必须走 `held()`，不许自己写 `try/finally: release()`。
+
+    理由在 `service/action_lock.py` 的模块 docstring：`held()` 把**续期**和
+    **释放**绑在同一个构造里。自己写 finally 拿到的是一把 60 秒后会自己松开
+    的锁——而真机撞到过单拍 229 秒（`exec/38 #83`），那时第二个并发循环会被
+    放进来，两段互相矛盾的叙事一起产出，**没有任何地方报错**。
+
+    这条守的不是今天这 6 处（它们已经改完了），是**第 7 处**。持锁的地方是
+    典型的「逐个列出的地方，加一项就漏一项」：加一个新入口时，`release` 是
+    显眼的、续期是看不见的，光靠人记不住。
+    """
+    offenders: list[str] = []
+    for path in APP.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute) or node.attr != "release":
+                continue
+            # `held` 自己那句是 `self.release(...)`，不匹配这个名字。
+            value = node.value
+            if isinstance(value, ast.Name) and value.id.endswith("action_lock_manager"):
+                offenders.append(f"{_module_name(path)}:{node.lineno}")
+
+    assert not offenders, (
+        "这些地方直接释放了房间锁，等于没有续期——改用 "
+        "`async with action_lock_manager.held(room_id, token):`：\n"
+        + "\n".join(f"  {o}" for o in offenders)
+    )

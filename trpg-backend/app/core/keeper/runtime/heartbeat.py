@@ -224,6 +224,22 @@ async def maybe_fire_room(
     if token is None:
         return False
 
+    async with action_lock_manager.held(room_id, token):
+        return await _narrate_heartbeat(
+            session_factory, narrator, room_id, player_id, nickname, spotlighted, now
+        )
+
+
+async def _narrate_heartbeat(
+    session_factory: async_sessionmaker[AsyncSession],
+    narrator: Narrator,
+    room_id: str,
+    player_id: str,
+    nickname: str,
+    spotlighted: bool,
+    now: float,
+) -> bool:
+    """心跳那一拍本身。拆出来只为让持锁那层是干净的 `async with`。"""
     try:
         context = NarrationContext(
             utterance=HEARTBEAT_UTTERANCE,
@@ -260,8 +276,6 @@ async def maybe_fire_room(
     except Exception as exc:  # noqa: BLE001 — ticker 不能因单房失败退出
         logger.warning("keeper_heartbeat_failed", room_id=room_id, error=str(exc))
         return False
-    finally:
-        action_lock_manager.release(room_id, token)
 
 
 async def scan_once(

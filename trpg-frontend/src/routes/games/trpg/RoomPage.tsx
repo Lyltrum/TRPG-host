@@ -1081,7 +1081,7 @@ export default function RoomPage() {
         if (!queued) setTyping(false)
         const friendly =
           queued
-            ? '守秘人正在回应其他人，你的话已记下'
+            ? '守秘人还在处理上一轮，你这句已经记下了'
             : envelope.payload.code === 'ACTION_IN_PROGRESS'
             ? '守秘人正在处理其他玩家的行动，请稍候再试'
             : envelope.payload.code === 'INTERNAL_ERROR'

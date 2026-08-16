@@ -103,8 +103,8 @@ def test_the_block_lists_points_regardless_of_where_the_party_stands() -> None:
 def test_the_block_never_names_the_node() -> None:
     """🔴 **只给数值，不给标题**：标题本身就是剧透。
 
-    林中屋那条标注叫「揭穿伪装与战斗开始」，光是列出来就等于提前告诉模型
-    剧本要发生什么。夹具这条叫「石堆神龛」，同理不许出现。
+    遭遇类节点的标题往往把即将发生的事直接写在上面，光是列出来就等于提前
+    告诉模型剧本要发生什么。夹具这条叫「石堆神龛」，同理不许出现。
     """
     for state in (_state(node="road"), _state(node="shrine"), {}):
         text = format_san_points(_MODULE, state, (("p1", "阿福"),))

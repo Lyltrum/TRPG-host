@@ -208,6 +208,44 @@ async def test_join_returns_existing_character_id_for_reconnect(client: AsyncCli
     assert rejoined["characterId"] == character_id
 
 
+async def test_identity_says_whether_i_am_the_host(client: AsyncClient) -> None:
+    """🔴 房主身份由服务端给，前端不许自己猜。
+
+    在此之前前端是按**入口**猜的：建房那条路写死 true、加入那两条路写死 false。
+    于是「换设备重进」（走的是加入那条路）的真房主拿到 false，开始游戏的按钮
+    根本不显示——真机撞到过。
+    """
+    host_token = await register(client)
+    room = await create_room(client, host_token)
+    assert room["isHost"] is True
+
+    guest_token = await register(client)
+    guest = await join_room(client, room["roomCode"], guest_token)
+    assert guest["isHost"] is False
+
+    # 🔴 关键那一跑：房主换台设备重进，走的是跟访客同一条 join 路径。
+    host_again = await join_room(client, room["roomCode"], host_token)
+    assert host_again["playerId"] == room["playerId"]
+    assert host_again["isHost"] is True
+
+
+async def test_the_new_host_is_the_host_when_he_comes_back(client: AsyncClient) -> None:
+    """转让房主之后，接手的人重进要认得出自己是房主。"""
+    host_token = await register(client)
+    room = await create_room(client, host_token)
+    guest_token = await register(client)
+    guest = await join_room(client, room["roomCode"], guest_token)
+
+    await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/host",
+        json={"playerId": guest["playerId"]},
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    assert (await join_room(client, room["roomCode"], guest_token))["isHost"] is True
+    assert (await join_room(client, room["roomCode"], host_token))["isHost"] is False
+
+
 async def test_list_my_rooms_query_count_does_not_grow_with_rooms(
     client: AsyncClient, sql_counter: list[str]
 ) -> None:

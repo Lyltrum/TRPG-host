@@ -140,11 +140,14 @@ export default function LobbyPage() {
     }
     // 🔴 房主这条确认一直写着「所有成员将被移出」，而代码只是 navigate 回首页
     // ——房间还活着、别人还在里面等。文案说的事现在真的会发生了。
-    if (isHost && roomId) {
+    if (roomId && playerId) {
       try {
-        await disbandRoom(roomId)
+        // 🔴 非房主这条以前**一个请求都不发**，只是 navigate 回首页——人已经走了，
+        // 大厅里还挂着他的名字和一张卡，剩下的人以为在等他，而"全员就绪"永远
+        // 凑不齐。真机撞到过。
+        await (isHost ? disbandRoom(roomId) : kickPlayer(roomId, playerId))
       } catch (err) {
-        setError(friendlyErrorMessage(err, '解散房间失败'))
+        setError(friendlyErrorMessage(err, isHost ? '解散房间失败' : '离开房间失败'))
         return
       }
     }

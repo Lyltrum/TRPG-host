@@ -130,7 +130,9 @@ export class RoomsResource {
   }
 
   /**
-   * DELETE /api/v1/rooms/{roomId}/players/{playerId} — 房主把某个人移出房间
+   * DELETE /api/v1/rooms/{roomId}/players/{playerId} — 把某个人移出房间
+   *
+   * 房主踢别人，或者本人自己退出（大厅的「离开房间」走的就是这条）。
    *
    * 🔴 **只在大厅阶段**。对局中踢人要连带处理他的位置、待掷队列里挂着的骰子、
    * 分组、正在等他确认的会合——而"开局之后想把人赶走"是社交问题，不是软件问题。

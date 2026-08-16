@@ -129,6 +129,36 @@ async def test_a_player_from_another_room_cannot_be_kicked(client: AsyncClient) 
     ]
 
 
+async def test_a_player_can_walk_out_by_himself(client: AsyncClient) -> None:
+    """🔴 真机撞到的：非房主点「离开房间」只是前端 navigate 回首页，一个请求
+    都不发——人已经走了，大厅里还挂着他的名字，剩下的人以为在等他。"""
+    room, guest = await _room_with_two(client)
+
+    response = await client.delete(
+        f"{ROOMS_BASE}/{room['roomId']}/players/{guest['playerId']}",
+        headers=reconnect(guest["reconnectToken"]),
+    )
+
+    assert response.status_code == 200, response.text
+    assert [p["playerId"] for p in await _players(client, room["roomCode"])] == [room["playerId"]]
+
+
+async def test_one_guest_cannot_throw_out_another(client: AsyncClient) -> None:
+    """🔴 放开"自己退出"之后最容易写歪的地方：条件写成"目标不是房主"就够了，
+    于是任何访客都能互相踢。抓手是**操作者**，不是目标。"""
+    room, guest = await _room_with_two(client)
+    other_token = await register(client)
+    other = await join_room(client, room["roomCode"], other_token, nickname="阿贵")
+
+    response = await client.delete(
+        f"{ROOMS_BASE}/{room['roomId']}/players/{other['playerId']}",
+        headers=reconnect(guest["reconnectToken"]),
+    )
+
+    assert response.status_code == 403
+    assert len(await _players(client, room["roomCode"])) == 3
+
+
 # ── 转让房主 ─────────────────────────────────────
 
 

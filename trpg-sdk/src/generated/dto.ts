@@ -1035,6 +1035,7 @@ export interface RoomCreateResult {
   roomCode: string;
   reconnectToken: string;
   playerId: string;
+  isHost: boolean;
   characterId?: string | null;
 }
 

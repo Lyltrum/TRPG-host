@@ -32,6 +32,7 @@ from app.core.keeper.capabilities.agenda.schema import AgendaDecisionFields
 from app.core.keeper.capabilities.cast.schema import CastDecisionFields
 from app.core.keeper.capabilities.closure.schema import ClosureDecisionFields
 from app.core.keeper.capabilities.clue_reveal.schema import ClueRevealDecisionFields
+from app.core.keeper.capabilities.established.schema import EstablishedDecisionFields
 from app.core.keeper.capabilities.health.schema import HealthDecisionFields
 from app.core.keeper.capabilities.inventory.schema import InventoryDecisionFields
 from app.core.keeper.capabilities.madness.schema import MadnessDecisionFields
@@ -54,6 +55,7 @@ class KeeperDecision(
     MadnessDecisionFields,
     MovementDecisionFields,
     OpenThreadsDecisionFields,
+    EstablishedDecisionFields,
     ProgressionDecisionFields,
     SanCheckDecisionFields,
     SkillCheckDecisionFields,

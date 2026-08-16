@@ -92,4 +92,19 @@ def format_established(context) -> str:  # noqa: ANN001 — SituationContext，�
     table = load_established(context.keeper_state)
     if not table:
         return ""
-    return "\n".join(f"- {entry['text']}" for _fact_id, entry in sorted(table.items()))
+    # 🔴 **带 id 列出来**（2026-08-16 真机调整）：第一版只渲染文本，实测同一件事
+    # 被记了两遍（`fact-1 点燃了地下室的煤油` / `fact-2 点燃了地下室，火势已起`，
+    # 分别来自相邻的两拍）。悬而未决那一片天然没这个毛病，因为它必须显示 `thread-N`
+    # 供 `resolved_threads` 引用——**id 顺带承担了"这条已经有了"的信号**。
+    # 这一片没有结清动作，所以 id 的唯一作用就是这个，但它确实是必要的。
+    rows = sorted(table.items(), key=lambda kv: _order_of(kv[0]))
+    return "\n".join(f"- {fact_id}｜{entry['text']}" for fact_id, entry in rows)
+
+
+def _order_of(fact_id: str) -> tuple[int, str]:
+    """按 `fact-N` 的数字排，不是按字符串——不然 fact-10 会排在 fact-2 前面。"""
+    if fact_id.startswith(FACT_ID_PREFIX):
+        suffix = fact_id[len(FACT_ID_PREFIX) :]
+        if suffix.isdigit():
+            return (int(suffix), "")
+    return (10**9, fact_id)

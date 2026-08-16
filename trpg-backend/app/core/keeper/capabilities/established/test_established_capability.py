@@ -187,3 +187,31 @@ def test_malformed_rows_are_dropped_whole(deps: KeeperDeps) -> None:
 def test_next_id_is_pure() -> None:
     assert next_fact_id(0) == ("fact-1", 1)
     assert next_fact_id(7) == ("fact-8", 8)
+
+
+def test_the_block_shows_ids_so_the_model_can_tell_what_already_exists() -> None:
+    """🔴 局面块必须带 `fact-N`（2026-08-16 真机调出来的）。
+
+    第一版只渲染文本，实测同一件事被记了两遍——`fact-1 点燃了地下室的煤油`
+    与 `fact-2 点燃了地下室，火势已起`，分别来自相邻的两拍。
+
+    悬而未决那一片天然没这个毛病：它**必须**显示 `thread-N` 供
+    `resolved_threads` 引用，**id 于是顺带承担了"这条已经有了"的信号**。
+    这一片没有结清动作，所以 id 的唯一作用就是这个——但它确实是必要的。
+    """
+    state = {ESTABLISHED_KEY: {"fact-1": {"text": "木屋烧毁了"}}}
+    assert "fact-1" in format_established(_context(state))
+
+
+def test_facts_are_listed_in_numeric_order() -> None:
+    """按 `fact-N` 的数字排，不是按字符串——否则 fact-10 会排在 fact-2 前面，
+    而这一块是给模型读的"已经有哪些"，顺序乱了它更容易重复记。"""
+    state = {
+        ESTABLISHED_KEY: {
+            "fact-10": {"text": "第十件"},
+            "fact-2": {"text": "第二件"},
+            "fact-1": {"text": "第一件"},
+        }
+    }
+    text = format_established(_context(state))
+    assert text.index("第一件") < text.index("第二件") < text.index("第十件")

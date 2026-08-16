@@ -552,14 +552,26 @@ class KeeperAgent(Narrator):
         scene_changed = has_scene_changed(keeper_state, after_state, turn_player_ids)
         # 分段摘要 L2（exec/14 P4.2）：场景切换 = 天然的章节边界。**后台**整理，
         # 玩家等的是叙事，不该为"整理笔记"多等几秒；失败只记日志不影响这轮。
+        # 🔴 **摘要的调用点跟场景切换解绑**（2026-08-16）：它原来挂在下面那个
+        # `if scene_changed` 里，于是 `should_summarize` 新加的兜底上限**永远
+        # 走不到**——不换场景就一次都不摘，那段剧情滚出 L3 之后再也重建不了。
+        # 这正是「两件事共用一个开关」那条判据（`keeper.phase` 已经栽过一次）：
+        # 过渡拍的注入确实只该在换场景时做，而摘要有它自己的判据。
+        #
+        # 摘要**按受众分段**（2026-08-11 补上 P5.2d 的残留缺口）：公开的一段
+        # + 分头那几组各自一段，落库时带受众，注入时按受众裁。
+        # 此前是"只喂公开行"——安全但把分头期间的剧情整段丢掉，分头越久
+        # 记忆里那段越空。
+        # 🔴 传在场名单：受众覆盖全场的行**本来就是公开的**，不该再单独
+        # 摘一段（实测单人局每次摘要都出两份，2× LLM 调用 + L2 里重复）。
+        if not is_heartbeat and not is_opening_ceremony:
+            self._spawn_chapter_summary(
+                room_id,
+                history_lines,
+                frozenset(p for p, _ in players),
+                scene_changed=scene_changed,
+            )
         if scene_changed and not is_heartbeat and not is_opening_ceremony:
-            # 摘要**按受众分段**（2026-08-11 补上 P5.2d 的残留缺口）：公开的一段
-            # + 分头那几组各自一段，落库时带受众，注入时按受众裁。
-            # 此前是"只喂公开行"——安全但把分头期间的剧情整段丢掉，分头越久
-            # 记忆里那段越空。
-            # 🔴 传在场名单：受众覆盖全场的行**本来就是公开的**，不该再单独
-            # 摘一段（实测单人局每次摘要都出两份，2× LLM 调用 + L2 里重复）。
-            self._spawn_chapter_summary(room_id, history_lines, frozenset(p for p, _ in players))
             decision = decision.model_copy(
                 update={
                     "narration_guidance": inject_scene_transition_guidance(
@@ -1217,16 +1229,32 @@ class KeeperAgent(Narrator):
         return "", segments
 
     def _spawn_chapter_summary(
-        self, room_id: str, history_lines: list[HistoryLine], everyone: frozenset[str]
+        self,
+        room_id: str,
+        history_lines: list[HistoryLine],
+        everyone: frozenset[str],
+        *,
+        scene_changed: bool = True,
     ) -> None:
-        """把摘要生成丢到后台。刻意不 await——它不在玩家等待路径上。"""
-        task = asyncio.create_task(self._summarize_chapter(room_id, history_lines, everyone))
+        """把摘要生成丢到后台。刻意不 await——它不在玩家等待路径上。
+
+        `scene_changed` 透传给 `should_summarize`：换场景是一条触发路径，
+        距上次太久是另一条（兜底）。默认 True 保住既有调用方的行为。
+        """
+        task = asyncio.create_task(
+            self._summarize_chapter(room_id, history_lines, everyone, scene_changed=scene_changed)
+        )
         # 存一份引用防止任务被 GC 提前回收（asyncio 只持弱引用）
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
     async def _summarize_chapter(
-        self, room_id: str, history_lines: list[HistoryLine], everyone: frozenset[str] = frozenset()
+        self,
+        room_id: str,
+        history_lines: list[HistoryLine],
+        everyone: frozenset[str] = frozenset(),
+        *,
+        scene_changed: bool = True,
     ) -> None:
         """整理一段梗概。任何失败都只记日志——它是记忆的锦上添花，不是主路径。
 
@@ -1237,7 +1265,9 @@ class KeeperAgent(Narrator):
         try:
             async with self._session_factory() as db:
                 turns = await turns_since_last_chapter(db, room_id=room_id)
-            if not should_summarize(scene_changed=True, turns_since_last=turns):
+            # 🔴 用真实的 `scene_changed`，不再写死 True。写死的时候，兜底那条
+            # 路径就算被调到也会被"当成换了场景"，两条判据分不开。
+            if not should_summarize(scene_changed=scene_changed, turns_since_last=turns):
                 return
             for audience, lines in split_history_for_chapters(history_lines, everyone):
                 if not lines:

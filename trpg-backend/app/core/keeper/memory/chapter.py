@@ -36,7 +36,12 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.keeper.memory.history import HistoryLine, is_visible_to, visible_history
+from app.core.keeper.memory.history import (
+    HISTORY_LIMIT,
+    HistoryLine,
+    is_visible_to,
+    visible_history,
+)
 from app.models.event import Event
 
 logger = structlog.get_logger()
@@ -46,12 +51,41 @@ EVENT_TYPE = "keeper.chapter"
 #: 两次摘要之间至少要积累这么多轮，才允许在场景切换时再摘一次。
 MIN_TURNS_BETWEEN_CHAPTERS = 12
 
+#: L3 窗口大约覆盖多少拍。一拍产生 2-3 条事件（玩家原话 + 叙事，有检定时更多），
+#: 取 2.5 折算。
+_BEATS_COVERED_BY_L3 = HISTORY_LIMIT / 2.5
+
+#: 🔴 **兜底上限**：距上次摘要超过这么多拍，**不管场景变没变**都要摘一次。
+#:
+#: 没有它的时候，摘要只在场景切换时触发（`should_summarize` 取的是交集），于是
+#: **长时间待在同一个场景 = 零摘要**——地下室搜半小时、审一个 NPC 审二十轮都会
+#: 撞上，而那段剧情滚出 L3 之后**再也没人能重建它**（L1 靠 id 重渲、L3 原文还在
+#: 库里，只有 L2 是一次性的）。
+#:
+#: **从 `HISTORY_LIMIT` 推导，不写死一个数**：写死的话，哪天有人调大/调小历史
+#: 窗口，这里的安全边际会静默失效——而失效的表现是"某几段剧情没了"，不会有
+#: 任何东西变红。留 3 倍余量。
+CHAPTER_HARD_CEILING = int(_BEATS_COVERED_BY_L3 / 3)
+
 #: 一段摘要的字数上限——它要长期常驻上下文，不能自己变成新的上下文负担。
 CHAPTER_MAX_CHARS = 120
 
 
 def should_summarize(*, scene_changed: bool, turns_since_last: int) -> bool:
-    """纯函数，方便单测与调参。见模块 docstring 的取交集理由。"""
+    """纯函数，方便单测与调参。
+
+    两条路，取并集：
+
+    - **换了场景，且积累够了轮数**——原来的判据，一段戏完整了就摘（见模块
+      docstring 的取交集理由：只按场景会在玩家来回踱步时疯狂触发，只按轮数会
+      把一段完整的戏拦腰截断）。
+    - **距上次超过 `CHAPTER_HARD_CEILING` 拍**——兜底，不管场景变没变。
+
+    🔴 第二条是 2026-08-16 补的。只有第一条时，**不换场景就永远不摘**，
+    那段剧情滚出 L3 之后再也生成不出来。见 `CHAPTER_HARD_CEILING` 的说明。
+    """
+    if turns_since_last >= CHAPTER_HARD_CEILING:
+        return True
     return scene_changed and turns_since_last >= MIN_TURNS_BETWEEN_CHAPTERS
 
 

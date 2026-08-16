@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { Trash2 } from 'lucide-react'
 import ShellPage from '@/shared/components/ShellPage'
 import { useRuleset } from '@/hooks/useRuleset'
 import {
@@ -7,7 +8,7 @@ import {
   emptyBackgroundDetail,
   type BackgroundDetail,
 } from '@/data/character-model'
-import { fetchMyTemplate, updateMyTemplate } from '@/services/character/character-api'
+import { deleteMyTemplate, fetchMyTemplate, updateMyTemplate } from '@/services/character/character-api'
 import { friendlyErrorMessage } from '@/services/api-client'
 
 /**
@@ -78,6 +79,9 @@ export default function MyCharacterDetailPage() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [saved, setSaved] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
 
   useEffect(() => {
     if (!templateId) return
@@ -160,6 +164,20 @@ export default function MyCharacterDetailPage() {
       setSaveError(friendlyErrorMessage(err, '保存失败'))
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!templateId) return
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      await deleteMyTemplate(templateId)
+      navigate('/home/characters')
+    } catch (err) {
+      setDeleteError(friendlyErrorMessage(err, '删除失败'))
+      setDeleting(false)
+      setConfirmingDelete(false)
     }
   }
 
@@ -304,6 +322,36 @@ export default function MyCharacterDetailPage() {
             >
               {saving ? '保存中…' : saved ? '已保存' : '保存修改'}
             </button>
+
+            {/* 删除入口。此前只有列表页有，于是从详情页想删得先退回去再找那一行。
+                二次确认同列表页：卡库里的卡是玩家攒下来的，误删没有撤销。 */}
+            {deleteError && (
+              <p className="text-[11.5px] text-rust-dark text-center">{deleteError}</p>
+            )}
+            {confirmingDelete ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void handleDelete()}
+                  disabled={deleting}
+                  className="press flex-1 py-2.5 text-[12.5px] font-bold bg-rust text-[#fff5ea] disabled:opacity-60"
+                >
+                  {deleting ? '删除中…' : '确认删除'}
+                </button>
+                <button
+                  onClick={() => setConfirmingDelete(false)}
+                  className="press flex-1 py-2.5 text-[12.5px] font-bold bg-card text-text-muted"
+                >
+                  取消
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmingDelete(true)}
+                className="press w-full py-2.5 flex items-center justify-center gap-1.5 text-[12.5px] font-bold bg-card text-text-muted"
+              >
+                <Trash2 className="w-[14px] h-[14px]" /> 删除这张卡
+              </button>
+            )}
           </>
         )}
       </div>

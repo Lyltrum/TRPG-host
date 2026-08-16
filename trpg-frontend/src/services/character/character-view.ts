@@ -68,7 +68,7 @@ export function toCompletedCharacter(
 }
 
 /**
- * 卡库列表项的副标题：「私家侦探 · 32 岁 · 存于 8/13」。
+ * 卡库列表项的副标题：「私家侦探 · 32 岁 · 更新于 8/13」。
  *
  * 卡库页与建卡向导的选择浮层**共用这一份**——两处显示的是同一份数据的同一种
  * 摘要，各写一份就是「两处必须一致」，改一处漏一处不会有任何东西变红。
@@ -88,15 +88,21 @@ export function templateSubtitle(template: CharacterTemplate): string {
     roleName && roleName !== template.name ? roleName : null,
     typeof data.occupation === 'string' ? data.occupation : null,
     typeof data.age === 'number' ? `${data.age} 岁` : null,
-    templateSavedOn(template.createdAt),
+    templateSavedOn(template.updatedAt),
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(' · ') : '调查员';
 }
 
-/** 「存于 8/13」。日期是职业年龄都撞车时（同一个调查员存了两次）最后的分辨手段。 */
-function templateSavedOn(createdAt: string): string | null {
-  const parsed = Date.parse(createdAt);
+/**
+ * 「更新于 8/13」。日期是职业年龄都撞车时（同一个调查员存了两次）最后的分辨手段。
+ *
+ * 🔴 读 `updatedAt` 而不是 `createdAt`：列表就是按 `updatedAt` 倒序排的
+ * （后端 `list_character_templates`）。用另一个时间戳当副标题，排序看起来就是
+ * 乱的——改过的卡跳到最前面，副标题上的日期却还是当初存进来那天。
+ */
+function templateSavedOn(updatedAt: string): string | null {
+  const parsed = Date.parse(updatedAt);
   if (Number.isNaN(parsed)) return null;
   const d = new Date(parsed);
-  return `存于 ${d.getMonth() + 1}/${d.getDate()}`;
+  return `更新于 ${d.getMonth() + 1}/${d.getDate()}`;
 }

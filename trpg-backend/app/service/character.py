@@ -10,7 +10,8 @@ import contextlib
 import random
 from dataclasses import asdict
 
-from sqlalchemy import select, update
+import structlog
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.background_writer import BackgroundWriter
@@ -34,6 +35,13 @@ from app.core.coc7.rules import (
     validate_age,
     validate_character_with_occupation,
 )
+from app.core.config import get_settings
+from app.core.equipment_check import (
+    EquipmentChecker,
+    clamp_items,
+    rejection_message,
+)
+from app.core.equipment_check import build_prompt as build_equipment_prompt
 from app.dto.character import (
     AgeAdjustmentResult,
     AttributePoolRollView,
@@ -63,6 +71,8 @@ from app.service.room import (
     require_ruleset,
 )
 
+logger = structlog.get_logger()
+
 
 class CharacterTemplateNotFoundError(ValueError):
     """常用卡不存在、或不属于这个账号、或规则系统对不上。
@@ -77,6 +87,14 @@ class CharacterTemplateNotEditableError(ValueError):
 
     显式拒绝而不是静默丢弃：静默丢弃的话，前端以为改上去了、界面也显示改了，
     刷新一下又变回原样——这种 bug 前后端两头都不会变红。
+    """
+
+
+class CharacterTemplateLimitReachedError(ValueError):
+    """卡库已满（`TEMPLATE_LIMIT`）。
+
+    单独一个错误类而不是复用 `CharacterTemplateNotFoundError`：这条要让玩家
+    看懂"删几张就能继续"，混进"这张卡你用不了"里他只会以为坏了。
     """
 
 
@@ -350,6 +368,83 @@ async def _resolve_ruleset(db: AsyncSession, room: Room) -> RulesetRead:
     return build_coc7_ruleset()
 
 
+async def _module_era_and_tone(
+    db: AsyncSession, scenario_id: str | None
+) -> tuple[str | None, str | None]:
+    """房间选的模组的年代与基调。取不到就 `(None, None)`。
+
+    🔴 只返回这两个标量，绝不返回 `ScenarioModule` 本身——同
+    `core/equipment_check.py` 的保密边界那一段：调用方拿不到剧本，就不可能把
+    谜底喂进审核请求里。
+
+    走 `resolve_module` 而不是 `resolve_structured_path`：**导入的模组没有文件
+    路径**，只按路径找会让所有导入模组的年代恒为空，审核于是对它们永远宽松。
+    """
+    from pathlib import Path
+
+    from app.core.keeper.contract.catalog import default_modules_dir
+    from app.core.keeper.contract.source import resolve_module
+
+    settings = get_settings()
+    modules_dir = (
+        Path(settings.keeper_modules_dir).expanduser().resolve()
+        if settings.keeper_modules_dir
+        else default_modules_dir()
+    )
+    try:
+        resolved = await resolve_module(db, modules_dir, scenario_id)
+    except Exception as exc:  # noqa: BLE001 — 模组坏了不该连累建卡
+        logger.warning("equipment_check_module_failed", error=str(exc))
+        return None, None
+    if resolved is None:
+        return None, None
+    return resolved.module.meta.era, resolved.module.meta.tone
+
+
+async def _equipment_issues(
+    db: AsyncSession, room: Room, character: Character
+) -> list[ValidationIssue]:
+    """装备合理性：这几件东西，这个人在这个时代这个地方拿得到吗？
+
+    判据与 prompt 都在 `core/equipment_check.py`，这一层只做"取素材 + 调一次 +
+    翻译成 `ValidationIssue`"。
+
+    🔴 **没配 key / 调用失败 = 放行**，不是拦截。硬拦的对象是"判断结果为不合理"，
+    不是"判断没跑成"——把可用性押给第三方服务不叫严格。CI 与 e2e 不配 key，
+    走的正是这条路径。
+    """
+    items = clamp_items([item for item in (character.equipment or []) if isinstance(item, str)])
+    if not items:
+        return []
+    api_key = get_settings().deepseek_api_key
+    if not api_key:
+        return []
+
+    era, tone = await _module_era_and_tone(db, room.scenario_id)
+    verdict = await EquipmentChecker(api_key).check(
+        build_equipment_prompt(
+            equipment=items,
+            occupation=character.occupation,
+            age=character.age,
+            residence=character.residence,
+            birthplace=character.birthplace,
+            credit_rating=(character.skills or {}).get("credit-rating"),
+            era=era,
+            tone=tone,
+        )
+    )
+    if verdict is None:
+        return []
+    return [
+        ValidationIssue(
+            code="EQUIPMENT_IMPLAUSIBLE",
+            field="equipment",
+            message=rejection_message(rejected),
+        )
+        for rejected in verdict.rejected
+    ]
+
+
 async def complete_character(
     db: AsyncSession, room_id: str, character_id: str, reconnect_token: str | None
 ) -> None:
@@ -388,6 +483,7 @@ async def complete_character(
         allocated_attributes=character.allocated_attributes,
         occupation_not_found=not_found,
     )
+    issues += await _equipment_issues(db, room, character)
     if issues:
         raise CharacterInvalidError(issues)
 
@@ -840,20 +936,43 @@ def character_to_template_data(character: Character) -> dict:
     return data
 
 
-async def list_character_templates(db: AsyncSession, user_id: str) -> list[CharacterTemplateRead]:
-    """我的卡库，最近更新的在前。"""
+#: 一个账号最多存多少张常用卡。
+#:
+#: 上限存在的理由是**挡住脚本和误操作刷出上万张**，不是管理玩家——自己和朋友
+#: 玩的量级离 50 很远。挡在这里而不是前端：前端拦不住直接打接口的调用方，而
+#: "卡库能不能再存一张"是规则不是展示。
+TEMPLATE_LIMIT = 50
+
+
+async def list_character_templates(
+    db: AsyncSession, user_id: str, system_id: str | None = None
+) -> list[CharacterTemplateRead]:
+    """我的卡库，最近更新的在前。
+
+    `system_id` 给了就只返回**这个规则系统下能用的**那些。
+
+    🔴 过滤在后端做，不让前端自己筛：`create_character_draft` 里那条
+    「这张常用卡不适用于本房间的规则系统」才是权威判据，前端再实现一遍就是
+    同一条规则落两处——两边哪天漂了，症状是浮层里明明列着的卡一点就报错。
+    真机撞到的正是这个：挑卡浮层把 COC7 之外的卡也列了出来。
+    """
+    query = select(UserCharacterTemplate).where(UserCharacterTemplate.user_id == user_id)
+    if system_id is not None:
+        query = query.where(UserCharacterTemplate.system_id == system_id)
     rows = (
-        (
-            await db.execute(
-                select(UserCharacterTemplate)
-                .where(UserCharacterTemplate.user_id == user_id)
-                .order_by(UserCharacterTemplate.updated_at.desc())
-            )
-        )
-        .scalars()
-        .all()
+        (await db.execute(query.order_by(UserCharacterTemplate.updated_at.desc()))).scalars().all()
     )
     return [_to_template_read(row) for row in rows]
+
+
+async def count_character_templates(db: AsyncSession, user_id: str) -> int:
+    return (
+        await db.scalar(
+            select(func.count())
+            .select_from(UserCharacterTemplate)
+            .where(UserCharacterTemplate.user_id == user_id)
+        )
+    ) or 0
 
 
 async def create_character_template(
@@ -863,6 +982,9 @@ async def create_character_template(
 
     只收 `character_id`：`system_id` 与建卡态都由后端从那张卡（和它所在的
     房间）读出来，前端不参与决定"存什么"。
+
+    🔴 **只有新存那条路数上限**，`overwrite_character_template`（更新已有那张）
+    不数——它不产生新行，卡在上限的人否则连改都改不了。
     """
     character = await db.get(Character, payload.character_id)
     if character is None:
@@ -870,6 +992,8 @@ async def create_character_template(
     room = await db.get(Room, character.room_id)
     if room is None or room.system_id is None:
         raise CharacterNotFoundError("这张角色卡不属于任何已选定规则系统的房间")
+    if await count_character_templates(db, user_id) >= TEMPLATE_LIMIT:
+        raise CharacterTemplateLimitReachedError(f"卡库最多存 {TEMPLATE_LIMIT} 张，删掉一些再存吧")
 
     template = UserCharacterTemplate(
         user_id=user_id,

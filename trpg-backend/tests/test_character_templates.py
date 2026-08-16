@@ -10,6 +10,7 @@
 **模板是复制一份新的**，不是同一个调查员带着成长回来（那是战役，另一件事）。
 """
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -579,3 +580,83 @@ async def test_editing_background_detail_keeps_keys_the_client_does_not_know(
     detail = response.json()["data"]["data"]["background_detail"]
     assert detail["ideology"] == "改过的信条"
     assert detail["somethingNewLater"] == "别人写的"
+
+
+# ── 挑卡浮层的过滤 & 卡库上限（2026-08-16，P2 那五条里的两条）────────
+
+
+async def test_listing_can_be_narrowed_to_one_ruleset(client: AsyncClient) -> None:
+    """🔴 挑卡浮层此前把用不了的卡也列出来，点下去必然报错。
+
+    过滤走后端：判据（`create_character_draft` 那条「不适用于本房间的规则系统」）
+    只有一处，前端再实现一遍就是同一条规则落两处。
+    """
+    token = await register(client)
+    room = await _room_with_module(client, token)
+    saved = await _save_template(client, token, await _built_character(client, room))
+    system_id = saved["systemId"]
+
+    same = await client.get(TEMPLATES_BASE, params={"systemId": system_id}, headers=bearer(token))
+    assert [t["templateId"] for t in same.json()["data"]] == [saved["templateId"]]
+
+    other = await client.get(
+        TEMPLATES_BASE,
+        params={"systemId": "00000000-0000-0000-0000-0000000000fe"},
+        headers=bearer(token),
+    )
+    assert other.json()["data"] == []
+
+    # 不带这个参数时行为不变——「我的调查员」那一页要看到全部
+    everything = await client.get(TEMPLATES_BASE, headers=bearer(token))
+    assert [t["templateId"] for t in everything.json()["data"]] == [saved["templateId"]]
+
+
+async def test_the_library_stops_at_the_cap(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """卡库有上限（挡脚本/误操作刷出上万张，不是管理玩家）。
+
+    把上限压到 2 来测，不真存 50 张——那要 50 次建卡，跑得慢而且测的是同一件事。
+    """
+    from app.service import character as character_service
+
+    monkeypatch.setattr(character_service, "TEMPLATE_LIMIT", 2)
+    token = await register(client)
+    room = await _room_with_module(client, token)
+
+    for i in range(2):
+        await _save_template(client, token, await _built_character(client, room), name=f"卡{i}")
+
+    character_id = await _built_character(client, room)
+    refused = await client.post(
+        TEMPLATES_BASE,
+        json={"name": "第三张", "characterId": character_id},
+        headers=bearer(token),
+    )
+
+    assert refused.status_code == 409, refused.text
+    assert "删掉一些" in refused.json()["error"]["message"]
+
+
+async def test_the_cap_never_blocks_updating_a_card_you_already_have(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 满了之后**改**已有那张必须照常——上限数的是行数，而覆盖不产生新行。
+
+    只在 create 那条路上数就自然成立；哪天有人把检查提到公共入口，这条会变红。
+    """
+    from app.service import character as character_service
+
+    monkeypatch.setattr(character_service, "TEMPLATE_LIMIT", 1)
+    token = await register(client)
+    room = await _room_with_module(client, token)
+    saved = await _save_template(client, token, await _built_character(client, room))
+
+    updated = await client.put(
+        f"{TEMPLATES_BASE}/{saved['templateId']}",
+        json={"characterId": await _built_character(client, room, name="改过的名字")},
+        headers=bearer(token),
+    )
+
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["data"]["data"]["name"] == "改过的名字"

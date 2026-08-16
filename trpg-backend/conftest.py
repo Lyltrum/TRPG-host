@@ -90,6 +90,26 @@ def _no_background_writer() -> Generator[None, None, None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_equipment_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """🔴 同上，第四次：装备合理性校验也别让开发机的 `.env` 决定要不要打真实 API。
+
+    它跟背景生成器的区别在于**没有 `app.state` 开关**——`complete_character` 直接
+    读 `get_settings().deepseek_api_key`，于是配了 key 的机器上**每一条建卡用例**
+    都会真发一次请求（`BUILT_CHARACTER` 本来就带着两件装备）。症状很难认：单跑
+    那条用例是绿的，全套跑就随机红一条，因为红不红取决于模型这次怎么判——
+    2026-08-16 加这个功能时当场撞到，`test_full_character_build_flow_marks_player_ready`
+    单跑通过、全套失败。
+
+    要验校验本身的用例自己把它装回来（见 `tests/test_equipment_check.py::_install`）。
+    """
+    from app.core.config import get_settings
+    from app.service import character as character_service
+
+    without_key = get_settings().model_copy(update={"deepseek_api_key": None})
+    monkeypatch.setattr(character_service, "get_settings", lambda: without_key)
+
+
+@pytest.fixture(autouse=True)
 async def _prepare_database() -> AsyncGenerator[None, None]:
     """每个测试函数跑之前把库清空重灌，保证测试之间互不影响（不用手动在每个
     测试里管理数据库状态）。autouse=True 表示不需要在测试函数参数里显式声明

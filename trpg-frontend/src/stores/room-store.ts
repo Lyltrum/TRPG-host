@@ -29,6 +29,7 @@ interface RoomState {
     roomCode: string
     playerId: string
     reconnectToken: string
+    isHost: boolean
     characterId?: string | null
   }) => void
   setModuleId: (moduleId: string) => void
@@ -37,7 +38,6 @@ interface RoomState {
   removePlayer: (playerId: string) => void
   setPlayerReady: (playerId: string, ready: boolean) => void
   setConnected: (connected: boolean) => void
-  setHost: (host: boolean) => void
   setCreateForm: (data: { roomName?: string; maxPlayers?: number }) => void
   reset: () => void
 }
@@ -65,12 +65,16 @@ export const useRoomStore = create<RoomState>()(
       createFormRoomName: '',
       createFormMaxPlayers: DEFAULT_MAX_PLAYERS,
       setRoom: (code, players) => set({ roomCode: code, players }),
-      setRoomIdentity: ({ roomId, roomCode, playerId, reconnectToken, characterId }) =>
+      setRoomIdentity: ({ roomId, roomCode, playerId, reconnectToken, isHost, characterId }) =>
         set((state) => ({
           roomId,
           roomCode,
           playerId,
           reconnectToken,
+          // 🔴 房主身份以**服务端返回的为准**，页面不许按入口猜。此前建房页写死
+          // true、加入的两条路写死 false——「换设备重进」走的正是加入那条路，
+          // 于是真房主拿到 false，「开始游戏」的按钮根本不显示（真机撞到）。
+          isHost,
           // characterId 以**服务端返回的为准**（PR #110 review [1]）：join 现在会
           // 带上"这个房间里属于我的角色卡 id"。在此之前它只在建卡那一刻由客户端
           // 自己存着——换台设备就永远拿不回来，已经建完卡的人重连后会显示成
@@ -100,7 +104,6 @@ export const useRoomStore = create<RoomState>()(
           ),
         })),
       setConnected: (connected) => set({ isConnected: connected }),
-      setHost: (host) => set({ isHost: host }),
       setCreateForm: (data) =>
         set((state) => ({
           createFormRoomName: data.roomName ?? state.createFormRoomName,

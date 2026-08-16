@@ -28,7 +28,6 @@ export default function InviteLandingPage() {
   const loginToStore = useAuthStore((s) => s.login)
   const setRoomIdentity = useRoomStore((s) => s.setRoomIdentity)
   const setModuleId = useRoomStore((s) => s.setModuleId)
-  const setHost = useRoomStore((s) => s.setHost)
   const setScene = useGameStore((s) => s.setScene)
 
   const [preview, setPreview] = useState<{ roomName?: string; moduleTitle?: string | null } | null>(null)
@@ -66,7 +65,6 @@ export default function InviteLandingPage() {
       }
       const room = await joinRoomByCode(code, name || undefined)
       setRoomIdentity(room)
-      setHost(false)
       // 访客拿不到选模组页的 sceneId：从房间预览补 moduleId（前情/开场依赖）
       try {
         const info = await getRoomInfo(room.roomCode || code)

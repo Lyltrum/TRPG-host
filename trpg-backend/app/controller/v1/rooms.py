@@ -253,7 +253,10 @@ async def kick_player(
     reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[None]:
-    """DELETE /api/v1/rooms/{roomId}/players/{playerId} —— 房主在大厅移出玩家。"""
+    """DELETE /api/v1/rooms/{roomId}/players/{playerId} —— 大厅移出玩家。
+
+    房主踢别人，或者本人自己退出（前端「离开房间」）。
+    """
     try:
         await room_service.kick_player(db, room_id, player_id, reconnect_token)
     except (

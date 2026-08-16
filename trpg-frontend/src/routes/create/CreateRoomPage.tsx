@@ -22,7 +22,6 @@ export default function CreateRoomPage() {
   const setRoomIdentity = useRoomStore((s) => s.setRoomIdentity)
   const setStoreModuleId = useRoomStore((s) => s.setModuleId)
   const setCreateForm = useRoomStore((s) => s.setCreateForm)
-  const setHost = useRoomStore((s) => s.setHost)
   const savedRoomName = useRoomStore((s) => s.createFormRoomName)
   const savedMaxPlayers = useRoomStore((s) => s.createFormMaxPlayers)
   const [roomName, setRoomName] = useState(savedRoomName || '')
@@ -63,7 +62,6 @@ export default function CreateRoomPage() {
       }
       await selectModule(room.roomId, hit.id)
       setStoreModuleId(hit.id)
-      setHost(true)
       navigate('/room/lobby')
     } catch (err) {
       setCreateError(friendlyErrorMessage(err, '创建房间失败'))

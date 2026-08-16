@@ -137,6 +137,7 @@ async def _room_identity(db: AsyncSession, room: Room, player: Player) -> RoomCr
         room_code=room.room_code,
         reconnect_token=player.reconnect_token,
         player_id=player.id,
+        is_host=player.is_host,
         character_id=character.id if character is not None else None,
     )
 
@@ -522,9 +523,18 @@ async def _require_member(db: AsyncSession, room: Room, player_id: str) -> Playe
 async def kick_player(
     db: AsyncSession, room_id: str, target_player_id: str, reconnect_token: str | None
 ) -> None:
-    """房主在大厅把某个人移出房间。"""
+    """把某个人移出大厅——房主踢别人，或者**本人自己退出**。
+
+    🔴 **自己退出也走这条**：在此之前前端的「离开房间」对非房主是纯前端导航，
+    一个请求都不发——人已经走了，大厅里还挂着他的名字和一张角色卡，剩下的人
+    看着以为在等他，而"全员就绪"永远凑不齐。授权口径抄 `set_player_away`
+    （本人或房主），不给自己退出单开一条端点：两者要做的事一模一样，分成两条
+    只会变成「加一条规则要落两处」。
+    """
     room = await find_room_by_id(db, room_id)
-    await _require_host(db, room, reconnect_token)
+    actor = await require_room_member(db, room.id, reconnect_token)
+    if actor.id != room.host_player_id and actor.id != target_player_id:
+        raise RoomAuthorizationError("只有房主能把别人移出房间")
     if room.phase != "Lobby":
         raise RoomConflictError("只有大厅阶段可以移出玩家")
     target = await _require_member(db, room, target_player_id)

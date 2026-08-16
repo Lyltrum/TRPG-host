@@ -68,6 +68,11 @@ class RoomCreateResult(CamelModel):
     room_code: str
     reconnect_token: str
     player_id: str
+    # 🔴 我在这个房间里是不是房主。**必填、由服务端给**：在此之前前端是自己
+    # 猜的——建房那条路写死 true、加入那两条路写死 false，于是「换设备重进」
+    # 和「转让房主之后」两种情况下真房主拿到的是 false，开始游戏的按钮根本
+    # 不显示。房主身份在 `players.is_host` 上，服务端本来就知道答案。
+    is_host: bool
     # 这个房间里属于我的角色卡 id，还没建卡时为 None。
     #
     # 加它是为了让**换设备重连**真正可用（PR #110 review [1]）：客户端靠它才知道

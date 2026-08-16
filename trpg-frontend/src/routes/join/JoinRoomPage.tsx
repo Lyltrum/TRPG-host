@@ -14,7 +14,6 @@ export default function JoinRoomPage() {
   const setRoomIdentity = useRoomStore((s) => s.setRoomIdentity)
   const setModuleId = useRoomStore((s) => s.setModuleId)
   const setScene = useGameStore((s) => s.setScene)
-  const setHost = useRoomStore((s) => s.setHost)
   const [roomCode, setRoomCode] = useState('')
   const [error, setError] = useState('')
   const [joining, setJoining] = useState(false)
@@ -30,7 +29,6 @@ export default function JoinRoomPage() {
     try {
       const room = await joinRoomByCode(code, nickname || undefined)
       setRoomIdentity(room)
-      setHost(false)
       // 访客拿不到选模组页的 sceneId：从房间预览补 moduleId（前情/开场依赖）
       try {
         const preview = await getRoomInfo(room.roomCode || code)

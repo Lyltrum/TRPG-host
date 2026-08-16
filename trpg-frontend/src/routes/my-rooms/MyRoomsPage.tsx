@@ -5,7 +5,6 @@ import ShellPage from '@/shared/components/ShellPage'
 import {
   listMyRooms,
   joinRoomByCode,
-  getRoomInfo,
   deleteRoom,
   type MyRoomSummary,
 } from '@/services/room'
@@ -87,7 +86,6 @@ export default function MyRoomsPage() {
   const navigate = useNavigate()
   const nickname = useAuthStore((s) => s.nickname)
   const setRoomIdentity = useRoomStore((s) => s.setRoomIdentity)
-  const setHost = useRoomStore((s) => s.setHost)
   const [rooms, setRooms] = useState<MyRoomSummary[] | null>(null)
   const [error, setError] = useState('')
   const [resumingCode, setResumingCode] = useState<string | null>(null)
@@ -125,11 +123,10 @@ export default function MyRoomsPage() {
     setResumingCode(room.roomCode)
     setError('')
     try {
-      const identity = await joinRoomByCode(room.roomCode, nickname || undefined)
-      const info = await getRoomInfo(room.roomCode)
-      const me = info.players.find((p) => p.playerId === identity.playerId)
-      setRoomIdentity(identity)
-      setHost(me?.isHost ?? false)
+      // 房主身份直接从 join 的返回里拿。原来是再拉一次房间预览、从玩家列表里
+      // 找自己 —— 多一次请求，而且 `?? false` 意味着预览里没找到自己时会**静默**
+      // 把真房主降成访客。
+      setRoomIdentity(await joinRoomByCode(room.roomCode, nickname || undefined))
       // 按房间阶段回到对应的页面。原来只区分 InGame / 其它，Building 阶段
       // （已经过了大厅、正在建卡）会被送回大厅——而大厅的"开始游戏"在这个阶段
       // 必然被后端 409 拒绝，用户就卡在那儿了。房间状态机是

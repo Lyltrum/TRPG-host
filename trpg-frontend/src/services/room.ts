@@ -111,8 +111,8 @@ export async function endGame(roomId: string): Promise<void> {
 
 // ── 房间成员管理（2026-08-12）──────────────────────────────
 
-// 房主在大厅把某个人移出房间。**只在大厅阶段**——开局之后想把人赶走是社交
-// 问题，不是软件问题（后端也挡）。
+// 把某个人移出大厅：房主踢别人，或者**本人自己退出**（大厅的「离开房间」）。
+// **只在大厅阶段**——开局之后想把人赶走是社交问题，不是软件问题（后端也挡）。
 export async function kickPlayer(roomId: string, playerId: string): Promise<void> {
   await sdk.rooms.kickPlayer(roomId, playerId, requireReconnectToken());
 }

@@ -1,0 +1,36 @@
+# 🔴 **版权红线第一条**：第三方模组正文一律不进镜像。它们通过 compose 的
+# 只读卷挂进容器（`./模组资料:/data/modules:ro`），打进镜像等于随镜像分发。
+模组资料/
+docs/
+
+# 本地开发数据库：里面有真实账号、对局记录，而且它不在 git 里。
+*.db
+*.db-journal
+app.db
+
+# 密钥
+.env
+.env.*
+!.env.example
+
+# 各语言的依赖与产物——镜像里会重新装/重新构建，拷进去只会拖慢构建，
+# 还可能把宿主机的平台相关产物（macOS 的 .node）带进 Linux 容器。
+**/node_modules/
+**/dist/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+
+# 磁带：真实模组的磁带里含剧本正文（同版权红线）
+trpg-backend/tapes/
+
+# e2e 产物与临时库
+e2e/artifacts/
+e2e/*.db
+
+.git/
+.github/
+*.md

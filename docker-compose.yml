@@ -1,0 +1,111 @@
+# AIDM 一份可部署的产物：Postgres + 后端 + nginx（前端静态文件 + 反代）。
+#
+# 起：  docker compose up -d --build
+# 看：  docker compose logs -f backend
+# 停：  docker compose down          （数据留着）
+#       docker compose down -v       （连数据一起删——不可撤回）
+#
+# 🔴 **`restart: unless-stopped` 就是「进程守护」那一条**。不需要另外配
+# launchd/systemd：容器崩了 Docker 自己拉起来，机器重启后也会自动恢复。
+
+services:
+  # ── 数据库 ────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aidm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 里设一个数据库密码}
+      POSTGRES_DB: ${POSTGRES_DB:-aidm}
+    volumes:
+      # 🔴 命名卷，不是容器内路径。少了这一行，`docker compose down` 之后
+      # 所有对局记录、角色卡、账号全没——「换 Postgres 是为了别丢数据」
+      # 这件事本身就靠这一行成立。
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      # 没有健康检查的话，migrate 会撞上"还没起来"的库，表现成随机失败。
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aidm} -d ${POSTGRES_DB:-aidm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # 默认**不对外暴露端口**。要用 psql 连进去调试时再打开这两行。
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
+  # ── 迁移：一次性任务，不是常驻服务 ──────────────────────────
+  #
+  # 🔴 单独拆出来，而不是塞进后端容器的启动脚本：容器可能被拉起多份
+  # （重启、扩容），并发跑迁移会互相踩。这个服务跑完就退出，后端等它
+  # `completed_successfully` 再起。
+  migrate:
+    build:
+      context: ./trpg-backend
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aidm}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-aidm}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── 后端 ──────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./trpg-backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aidm}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-aidm}
+
+      # 同源部署，浏览器不会发跨域请求；留空即可。要让别的域名直连后端
+      # 时再往这里加。
+      CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+
+      # 🔴 一个账号一天能烧多少次 LLM 调用。内测时把它调小——这是唯一
+      # 会真金白银出血的开关（`app/core/llm_quota.py`）。
+      LLM_DAILY_CALL_QUOTA: ${LLM_DAILY_CALL_QUOTA:-500}
+
+      # 守秘人一拍要跑多跳调用，60 秒会在正常裁决中途放另一个玩家插进来。
+      ACTION_LOCK_TIMEOUT_SECONDS: ${ACTION_LOCK_TIMEOUT_SECONDS:-180}
+
+      # 生产不开 /docs。
+      ENABLE_DOCS: ${ENABLE_DOCS:-false}
+
+      KEEPER_MODULES_DIR: /data/modules
+      MODULE_IMPORT_DIR: /data/module-import
+    volumes:
+      # 🔴 **版权红线：模组正文只挂卷，绝不进镜像。** 这两个目录里全是
+      # 第三方模组的正文与中间产物，打进镜像等于把它们随镜像分发出去。
+      - ./模组资料:/data/modules:ro
+      - module-import:/data/module-import
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      # 冷启动要建连接池、读规则数据，给它一段不算失败的窗口。
+      start_period: 30s
+
+  # ── 前端 + 反代 ───────────────────────────────────────────
+  web:
+    build:
+      # 🔴 上下文是仓库根：前端用 `file:../trpg-sdk` 依赖 SDK，
+      # 上下文设成 trpg-frontend/ 的话那条相对路径指到上下文外面。
+      context: .
+      dockerfile: trpg-frontend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - backend
+
+volumes:
+  db-data:
+  module-import:

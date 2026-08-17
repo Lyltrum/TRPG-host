@@ -23,7 +23,21 @@ const BACKEND_PORT = 8000;
  * 用它覆盖。⚠️ 反过来说：`.env` 里把它钉成 127.0.0.1 会让这条派生失效。
  */
 function defaultApiBaseUrl(): string {
-  const { protocol, hostname } = window.location;
+  const { protocol, hostname, host } = window.location;
+
+  // 🔴 生产构建 = 同源部署：nginx 同时发前端静态文件、反代 /api 与 /ws
+  // （见仓库根的 `docker-compose.yml`）。这时后端**没有单独的对外端口**，
+  // 拼上 :8000 会打到一个根本没开的端口上。
+  //
+  // 用 `host`（含端口）而不是 `hostname`：部署在 `example.com:8443` 这种
+  // 非标准端口上时，丢掉端口同样连不上。
+  //
+  // 判据用 Vite 内置的 `PROD` 而不是"端口是不是 9877"之类的猜测——它在
+  // `vite build` 时为真、`vite dev` 时为假，跟"哪种部署形态"精确对应。
+  if (import.meta.env.PROD) {
+    return `${protocol}//${host}/api/v1`;
+  }
+
   return `${protocol}//${hostname}:${BACKEND_PORT}/api/v1`;
 }
 

@@ -6,9 +6,12 @@
 ## 仓库与分支
 
 - **路径**：`/Users/apple/Developer/work/AIDM_ALL/TRPG-master`
-- **GitHub**：`Lyltrum/TRPG-master`（fork/自有实验向）
-- **主实验分支**：`feat/keeper-agent`（不开 PR 到 upstream、不碰 `main`，除非用户明确要求）
-- **结构**：`trpg-backend/`（FastAPI）· `trpg-frontend/`（Vite React）· `trpg-sdk/` · `e2e/` · `docs/keeper-design/` · `模组资料/`（**gitignore，版权**）
+- **GitHub**：`origin` = `Lyltrum/TRPG-host`（**私有**，只有 `main` 一条分支）。
+  2026-08-07 起仓库收进私有、不再对接团队线；`upstream`（`1024XEngineer/TRPG-master`）
+  仍在 remote 列表里但**一律不碰**。
+- **分支**：单分支 `main` 直接提交（原 `feat/keeper-agent` 已改名合并进来）。
+  另有 `docs/api-reference` 与 `frontend-mock-design` 两条**无远端副本**的本地分支，别删。
+- **结构**：`trpg-backend/`（FastAPI）· `trpg-frontend/`（Vite React）· `trpg-sdk/` · `e2e/` · `docs/keeper-design/`（**gitignore**）· `模组资料/`（**gitignore，版权**）
 
 ## 版权红线（硬）
 
@@ -33,7 +36,10 @@
 
 **前端选模组 → `selectModule(scenario_id)` → 房间 `scenario_id` → Keeper 按 catalog 加载 structured。**
 
-权威目录：`trpg-backend/app/core/keeper/contract/catalog.py`（固定 UUID，与前端 `trpg-frontend/src/config/games.ts` 的 `SCENARIO_REGISTRY.id` **必须一致**）。
+内置模组的权威目录：`trpg-backend/app/core/keeper/contract/catalog.py`（固定 UUID，与前端 `trpg-frontend/src/config/games.ts` 的 `SCENARIO_REGISTRY.id` **必须一致**）。
+
+🔴 **内置只是两个来源之一**：用户导入的模组走 `contract/source.py` 这道接缝解析
+（`exec/29` 第 1 步）。主持侧不知道模组从哪来——加东西时别只改 catalog 那一条路。
 
 | id 后缀 | 标题 | structured 文件 |
 |---------|------|-----------------|
@@ -77,17 +83,25 @@
   背景）/ 显示名换角色名 / 技能 ±5 / 掷骰广播拆两拍 / 角色卡进 KP 局面块 /
   待掷落库 + 重连补发 / 输入锁
 - ✅ **exec/24 §8.1 §8.2**：待掷检定落库、世界状态自由键收口到主体 id
-- ✅ **CI 覆盖本分支**（2026-08-01）：四个 workflow 的 `push.branches` 加了
-  `feat/keeper-agent`——这条分支不开 PR，push 是唯一触发点
-- ✅ **exec/27 架构重构五阶段全完成**（2026-08-02）：`keeper/` 按能力垂直切成
-  八片 + 八个注册钩子，`agent.py` 1391→925 行。**加一片能力 = 新建一个目录 +
-  在 `capabilities/__init__` 注册一行**，编排层一行不改。
+- ✅ **CI 覆盖 `main`**：四个 workflow 按路径过滤器触发。⚠️ `push.branches` 里
+  还留着已经不存在的 `feat/keeper-agent`（死配置，没害处）
+- ✅ **exec/27 架构重构五阶段全完成**（2026-08-02）：`keeper/` 按能力垂直切片
+  （**当前 16 片**）+ 十个注册钩子。**加一片能力 = 新建一个目录 + 在
+  `capabilities/__init__` 注册一行**，编排层一行不改。
   🔴 **动 keeper 代码前先读 `trpg-backend/app/core/keeper/ARCHITECTURE.md`**
   （新人入口：目录各是什么 / 加功能动哪里 / 依赖方向为什么这样，有一致性测试
-  盯着不会跟代码漂）。
-- ❌ 未做：`exec/24` schema v4 章节层级 / 分层注入 / `needs_entities`（等真接
-  战役模组）；`exec/08` 完整 V 函数；`exec/20` 那十几条硬化；前端 UI v2
-- 冒烟：`e2e/scripts/sim-human-playability.py`
+  盯着钩子表不跟代码漂）。
+- ✅ **exec/28 真流式叙事**、**exec/33 多人分头**、**exec/34 待玩家决定队列**、
+  **exec/35 桌上自救**、**exec/36 疯狂与悬而未决**、**exec/37 成员管理与中途进出**、
+  **exec/40 记忆系统四条**（L3 窗口 200→400、摘要不再只在换场景时触发、
+  `keeper_state` 键收白名单、第 11 片能力 `established`）
+- ❌ 未做：`exec/24` schema v4 章节层级 / 分层注入（阈值实测 124 个顶层节点，
+  现有最大模组 31，短期不必做，见 `exec/41`）；`exec/08` 完整 V 函数；
+  `exec/20` 那一批概率性改进的硬化；**部署那一层整个没写**（限流 / 进程守护 /
+  Postgres / Docker，见项目 `CLAUDE.md`）
+- ❌ **迁移没有 CI 守护**：测试建表走 `create_all` 不经过 alembic，「迁移能不能
+  跑通」只能手工验
+- 冒烟：`e2e/scripts/sim-human-playability.py`；真机多人：`e2e/scripts/mp-playtest.py`
 
 ## 测试与产物
 
@@ -103,7 +117,7 @@
   建本地分支、跑测试都可以直接做，**推送不行**。授权不向下延伸：这一轮同意推
   不等于这条分支后续默认同意，每次重新问。
 - 🔴 **不要主动催推送**。做完一轮交付就停在本地，用户想推时会自己说。
-- 推之前确认 remote 是 `origin`（`Lyltrum/TRPG-master`），**不碰 `upstream`**。
+- 推之前确认 remote 是 `origin`（`Lyltrum/TRPG-host`），**不碰 `upstream`**。
 - **不要** force-push / 改写历史抹版权（用户未要求时）。
 
 ## 协作注意

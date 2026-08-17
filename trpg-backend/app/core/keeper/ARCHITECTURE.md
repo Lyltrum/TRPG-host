@@ -21,35 +21,39 @@ keeper/
 │   ├── decision.py     KeeperDecision —— 由各能力的字段片段组装成一份
 │   ├── registry.py     能力注册表的机制（钩子的形状）· 叶子
 │   ├── module_loader.py 结构化剧本的加载与建模
-│   └── catalog.py      模组目录（scenario_id → structured 路径）
+│   ├── catalog.py      内置模组目录（scenario_id → structured 路径）
+│   └── source.py       模组来源接缝：内置 catalog 与导入模组共用一个接口
 │
 ├── primitives/     规则原语：能力都要用、又不属于任何一个能力
 │   ├── dice.py         1d100 · COC7 成功等级
 │   ├── skills.py       技能 id 白名单
 │   └── npcs.py         NPC 实体寻址（把模型写的名字解析成白名单 id）
 │
-├── capabilities/   🔴 一个能力一个目录，新人只读这一个
+├── capabilities/   🔴 一个能力一个目录，新人只读这一个（当前 16 片）
 │   ├── skill_check/  san_check/  health/  movement/  madness/  presence/
 │   ├── world_state/  clue_reveal/  agenda/  progression/  open_threads/
-│   └── closure/      luck_spend/  cast/
+│   └── closure/      luck_spend/  cast/  inventory/  established/
 │
 ├── runtime/        编排与共享运行时状态（能力无关）
 │   ├── agent.py        KeeperAgent 门面（实现 Narrator 接口）
 │   ├── turn_executor.py 两条执行路径，纯由注册表驱动
 │   ├── turn_policy.py  分类与代码强制（那条 if/elif 顺序即语义）
 │   ├── llm_calls.py    三次模型往返的全部旋钮
+│   ├── narration_stream.py 流式叙事的编排（切边界 · 纪律层 · 泄密守门 · 长度）
 │   ├── decision_log.py 裁决留痕
 │   ├── deps.py         一轮的依赖包 + 角色卡读写
 │   ├── phase.py        对局阶段（共享状态）
 │   ├── location_state.py / scene_state.py  谁在哪（共享状态）
 │   ├── madness_state.py 谁在疯（共享状态：进入由 san_check 写、解除由 madness 写）
+│   ├── progress_state.py 走到哪了：已揭开配对 / 已触发议程 / 去过的节点（共享状态）
 │   ├── pending.py      两段式待掷队列
 │   └── heartbeat.py    世界心跳
 │
 ├── memory/         三层记忆：fact_ledger(L1) · chapter(L2) · history(L3)
 ├── access/         view(subject)：subject.py（主体与权限）· leak_guard.py
-└── narration/      给模型看的文本：situation · prompts · prose_discipline
-                    · narration_hints · sheet_digest
+├── narration/      给模型看的文本：situation · prompts · prose_discipline
+│                   · narration_hints · sheet_digest · party_sheet · prose_stream
+└── context_budget.py  上下文预算观测（只记数字不记内容——版权）
 ```
 
 ## 三、加一个功能，动哪里

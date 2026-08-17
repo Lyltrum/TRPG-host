@@ -99,8 +99,10 @@
   现有最大模组 31，短期不必做，见 `exec/41`）；`exec/08` 完整 V 函数；
   `exec/20` 那一批概率性改进的硬化；**部署那一层整个没写**（限流 / 进程守护 /
   Postgres / Docker，见项目 `CLAUDE.md`）
-- ❌ **迁移没有 CI 守护**：测试建表走 `create_all` 不经过 alembic，「迁移能不能
-  跑通」只能手工验
+- ✅ **迁移已有 CI 守护**（2026-08-17）：测试建表走 `create_all` 不经过 alembic，
+  所以单独一个 job 守——空库 `upgrade head` 在 **SQLite 与 Postgres 各跑一遍**
+  + `alembic check`（迁移建的表必须跟模型一致）。带数据的那两条搬迁另有
+  `tests/test_migrations_with_data.py`：**空库会从它们旁边绕过去**
 - 冒烟：`e2e/scripts/sim-human-playability.py`；真机多人：`e2e/scripts/mp-playtest.py`
 
 ## 测试与产物

@@ -95,6 +95,13 @@ services:
 
   # ── 前端 + 反代 ───────────────────────────────────────────
   web:
+    # 🔴 **显式镜像名，且两个变体不能同名。** compose 默认按
+    # `<项目名>-<服务名>` 生成 tag，于是 HTTPS 覆盖层那份 Caddy 镜像会把这份
+    # nginx 镜像**顶掉**——之后再用基础 compose 起，跑起来的是 Caddy，而它
+    # 没有 AIDM_DOMAIN 就崩溃重启。实测踩到过，症状是 web 反复 Restarting、
+    # 日志报 `unrecognized global option: encode`（空域名让 Caddyfile 的
+    # 站点块塌成一个裸 `{`）。「一份数据扮演两个角色」的又一处。
+    image: trpg-aidm-web:nginx
     build:
       # 🔴 上下文是仓库根：前端用 `file:../trpg-sdk` 依赖 SDK，
       # 上下文设成 trpg-frontend/ 的话那条相对路径指到上下文外面。

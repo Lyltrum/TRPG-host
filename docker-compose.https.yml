@@ -27,6 +27,10 @@
 
 services:
   web:
+    # 🔴 跟基础那份**不同名**。同名的话两个变体会互相顶掉：构建了这份之后
+    # 再用基础 compose 起，跑起来的会是 Caddy，而它拿不到 AIDM_DOMAIN
+    # 就崩溃重启（Caddyfile 的站点块塌成裸 `{`）。
+    image: trpg-aidm-web:caddy
     build:
       context: .
       dockerfile: trpg-frontend/Dockerfile.caddy

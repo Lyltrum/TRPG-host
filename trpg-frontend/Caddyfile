@@ -23,7 +23,13 @@
 # 签一张本地证书，不去碰 Let's Encrypt。这让 HTTPS 与 WSS 整条链路在
 # 没有域名、没有公网的情况下也能真跑一遍。
 # 生产填真实域名时走正常 ACME，这里不用改。
-{$AIDM_DOMAIN} {
+#
+# 🔴 **`:localhost` 那个默认值不能省。** 变量为空时 `{$AIDM_DOMAIN}` 会展开成
+# 空串，整个站点块塌成一个裸 `{`，于是里面的 `encode` 被当成全局选项，Caddy
+# 拒绝启动并**无限重启**——报的错（`unrecognized global option: encode`）跟
+# 真正的原因（域名没设）看不出关系，极难查。实测踩到过。
+# 正常路径上 compose 的 `:?` 会先拦住空值；这里是它漏过去时的兜底。
+{$AIDM_DOMAIN:localhost} {
 	encode gzip zstd
 
 	# ── WebSocket ──────────────────────────────────────────

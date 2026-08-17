@@ -33,6 +33,7 @@
 from __future__ import annotations
 
 import random
+import re
 from dataclasses import dataclass
 
 from app.core.coc7.content import build_coc7_ruleset
@@ -52,6 +53,41 @@ _LUCK_KEY = "LUCK"
 #: 兴趣点摊给几项技能。全摊到所有技能上会出一张"每项 +2"的糊卡；只摊一两项
 #: 又会顶上限白丢点数。
 _INTEREST_SKILL_COUNT = 6
+
+#: 占位技能：`外语①②③` / `艺术与手艺①②③` / `学识①②③` 这类，**技能名里的
+#: 内容要玩家自己指定**（哪门语言、哪种手艺）。随机塞给玩家会得到一张写着
+#: 「外语③ 45」却没人知道是什么语言的卡。
+#:
+#: 🔴 用后缀扫，不逐个列——加 `外语④` 时自动被覆盖。已经指定过内容的那些
+#: （`carpentry` 木工、`illusion` 魔术）不带数字后缀，天然不受影响。
+_PLACEHOLDER_SKILL_SUFFIX = re.compile(r"-\d+$")
+
+#: 超出 COC7 常规年代的技能：**这是一张逐个列出的手工清单**。
+#:
+#: 判据是语义的（"这项技能出现在一张常规调查员卡上是否荒谬"），扫不出来——
+#: `pilot-spacecraft` 跟 `pilot-aircraft`、`pilot-boat` 在数据上毫无区别，
+#: 差别只在于 1920s/现代的芝加哥没有航天器。所以**加新技能时要回来看一眼**。
+#:
+#: ⚠️ 它跟 `NON_ALLOCATABLE_SKILL_IDS` 是**两件事，别合并**：那个是规则明文
+#: 禁止加点（克苏鲁神话），这个只是"不适合随机塞给玩家"——玩家手动建卡时
+#: 照样选得到，真要跑科幻变体局也不拦着。
+#:
+#: 实测（2026-08-17，40 张一键建卡）：不排除的话「驾驶：航天器」会出现在
+#: **10% 的卡**上，是真机第一张卡就撞到的那一项。
+_OUT_OF_ERA_SKILL_IDS = frozenset({"pilot-spacecraft"})
+
+
+def _unsuitable_for_random_pick(skill_id: str) -> bool:
+    """这项技能**不适合被随机分配**（职业技能与明确候选槽不受影响）。
+
+    只作用于"随便挑一项"的那两条路：职业的任意自选槽、兴趣点的取材。
+    职业本身指定的技能（`occupation.skill_ids`）和写明了 `candidate_skill_ids`
+    的槽都绕过这里——那些是模组/职业作者的选择，不是随机的产物。
+    """
+    return (
+        skill_id in _OUT_OF_ERA_SKILL_IDS or _PLACEHOLDER_SKILL_SUFFIX.search(skill_id) is not None
+    )
+
 
 #: 默认年龄。COC7 的年龄修正在 20–39 岁区间内为零，于是「分配值」与「有效值」
 #: 两份属性完全相同——生成器因此不需要维护年龄修正那套双份记账
@@ -116,12 +152,15 @@ def _pick_slot_skills(
     picked: list[str] = []
     taken = set(occupation.skill_ids)
     for slot in occupation.choice_slots:
+        # 🔴 写明了候选的槽**原样尊重**：那是职业作者挑的，哪怕里面有占位技能
+        # 也是有意的。只有「任意一项」那种槽才走下面的过滤。
         candidates = slot.candidate_skill_ids or [
             s.id
             for s in ruleset.skills
             if s.id not in taken
             and s.id not in NON_ALLOCATABLE_SKILL_IDS
             and s.id != "credit-rating"
+            and not _unsuitable_for_random_pick(s.id)
         ]
         available = [c for c in candidates if c not in taken]
         for _ in range(min(slot.count, len(available))):
@@ -216,8 +255,14 @@ def _allocate_skills(
     # 于是职业池超支、溢出又转回兴趣池，两边都对不上账。
     interest_budget = attributes.get("INT", 0) * 2
     chosen = set(occupation_targets) | {"credit-rating"}
+    # 🔴 **两条随机取材的路都要过同一道过滤**（这里 + `_pick_slot_skills`）。
+    # 只接一条的话，「一份规则有几个出口就要落几处」那条又会兑现一次。
     candidates = [
-        s.id for s in ruleset.skills if s.id not in chosen and s.id not in NON_ALLOCATABLE_SKILL_IDS
+        s.id
+        for s in ruleset.skills
+        if s.id not in chosen
+        and s.id not in NON_ALLOCATABLE_SKILL_IDS
+        and not _unsuitable_for_random_pick(s.id)
     ]
     if interest_budget > 0 and candidates:
         # 挑几项当"个人爱好"：全摊到所有技能上会摊出一张每项 +2 的糊卡，

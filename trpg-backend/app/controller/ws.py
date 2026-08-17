@@ -544,15 +544,53 @@ async def _run_opening_ceremony(
     return text
 
 
+async def _current_san_of(db: AsyncSession | None, player_id: str) -> int | None:
+    """这名玩家此刻的理智值。拿不到就 None——**卡片少一个数字不该打断一次检定**。
+
+    读法跟结算那半**共用 `deps.current_stat`**（`san_check/executor.py` 用的
+    同一个），不另写「从 attributes 取 POW」之类的近似——那就是「一份判据落
+    两处」，迟早分叉。`current_stat` 读的是 `derived_stats` 里的当前值，
+    建卡写进去的上限被备份成 `SAN_MAX`，所以这里拿到的是掉过之后的真实值。
+    """
+    if db is None:
+        return None
+    # 函数内 import，跟本文件里 `KeeperToolError` 等几处同一个理由：
+    # ws 层不在模块顶层依赖 keeper 内部实现。
+    from sqlalchemy import select
+
+    from app.core.keeper.runtime.deps import KeeperToolError, current_stat
+    from app.models.room import Character
+
+    # 「一个玩家在一个房间只有一张卡」已经由唯一约束保证（迁移 e2b91f4c7a56），
+    # 所以这里不需要 ORDER BY 去挑"哪张算数"。
+    character = await db.scalar(select(Character).where(Character.player_id == player_id))
+    if character is None:
+        return None
+    try:
+        return current_stat(character, "SAN")
+    except KeeperToolError:
+        # 角色卡没有 SAN 数据（建卡未完成等）。**不伪造**一个数字。
+        return None
+
+
 def _check_request_envelope(
     notice: CheckRequestNotice,
+    *,
+    current_san: int | None,
 ) -> tuple[SanCheckRequestPayload | CheckRequestPayload, str]:
-    """待掷通知 → (payload, 事件类型)。首发广播与重连补发共用同一份组装。"""
+    """待掷通知 → (payload, 事件类型)。首发广播与重连补发共用同一份组装。
+
+    🔴 `current_san` 是**必需的关键字参数**，不给默认值。此前这里硬写着
+    `current_san=None`，于是整条链都在（DTO 有字段、推送发得出、SDK 有类型、
+    前端在读），**只有值从来没填过**——2026-08-17 真机才发现玩家看到的理智值
+    永远是空。给它一个默认值就是同一个坑再挖一遍：漏传是静默的，
+    而必需参数漏传当场红。
+    """
     if notice.kind == "san":
         return (
             SanCheckRequestPayload(
                 player_id=notice.player_id,
-                current_san=None,
+                current_san=current_san,
                 check_request_id=notice.check_request_id,
                 reason=notice.reason or None,
             ),
@@ -585,7 +623,9 @@ async def _broadcast_check_request(
 
     `db=None` 时退化成全房间广播——只留给拿不到会话的调用点，现在没有。
     """
-    payload, event_type = _check_request_envelope(notice)
+    payload, event_type = _check_request_envelope(
+        notice, current_san=await _current_san_of(db, notice.player_id)
+    )
     envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))
     await _send_to_colocated(db, room_id, notice.player_id, envelope.model_dump(by_alias=True))
 
@@ -772,7 +812,9 @@ async def _resend_pending_checks(
         if not await _may_see(pending.player_id):
             continue
         notice = to_notice(pending)
-        payload, event_type = _check_request_envelope(notice)
+        payload, event_type = _check_request_envelope(
+            notice, current_san=await _current_san_of(db, notice.player_id)
+        )
         envelope = ServerEnvelope(type=event_type, payload=payload.model_dump(by_alias=True))
         await websocket.send_json(envelope.model_dump(by_alias=True))
     # 幸运卡同理——它同样只在骰子停下那一刻推过一次，而且**它挂着的时候整轮

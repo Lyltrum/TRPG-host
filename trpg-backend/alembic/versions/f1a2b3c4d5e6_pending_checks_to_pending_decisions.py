@@ -9,6 +9,7 @@ Revision ID: f1a2b3c4d5e6
 Revises: c4d81e9a37b2
 """
 
+import json
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -49,27 +50,66 @@ def upgrade() -> None:
 
     # 🔴 搬数据而不是丢：队列里可能正挂着某个房间等玩家掷的骰子，
     # 丢了就是「玩家等一张永远不来的卡片」——那正是当初落库要解决的死锁。
-    # `reveals` 在老表里已经是 JSON 列，这里直接嵌进 payload。
-    op.execute(
+    #
+    # 🔴 **在 Python 侧拼 payload，不用数据库的 JSON 函数。** 第一版写的是
+    # SQLite 的 `json_object()` / `json()`，在 Postgres 上直接炸
+    # （`UndefinedFunctionError`——PG 那边叫 `json_build_object`，签名还不一样）。
+    # 迁移不经过测试（测试建表走 `create_all`），所以这个错在 SQLite 上跑了
+    # 十几次都没人发现，直到第一次真的往 Postgres 上迁。
+    # 这里改成方言无关：读出来、在 Python 里拼、参数化写回去，两种库同一条路。
+    bind = op.get_bind()
+    rows = bind.execute(
         sa.text(
             """
-            INSERT INTO pending_decisions
-                (decision_id, room_id, kind, player_id, player_nickname, reason,
-                 payload, created_at)
             SELECT check_request_id, room_id, kind, player_id, player_nickname, reason,
-                   json_object(
-                       'skill', skill,
-                       'loss_on_success', loss_on_success,
-                       'loss_on_failure', loss_on_failure,
-                       'reveals', json(COALESCE(reveals, '[]')),
-                       'opposed_opponent', opposed_opponent,
-                       'opposed_value', opposed_value
-                   ),
-                   created_at
+                   skill, loss_on_success, loss_on_failure, reveals,
+                   opposed_opponent, opposed_value, created_at
             FROM pending_checks
             """
         )
-    )
+    ).mappings()
+
+    for row in rows:
+        raw_reveals = row["reveals"]
+        # 老表里 `reveals` 是 JSON 列：SQLite 给回字符串，PG 给回已解析的对象。
+        # 两种都要接住——**不要 `?? []` 式的静默兜底**，只在真的没有时才给空表。
+        if raw_reveals is None:
+            reveals: object = []
+        elif isinstance(raw_reveals, str):
+            reveals = json.loads(raw_reveals)
+        else:
+            reveals = raw_reveals
+
+        bind.execute(
+            sa.text(
+                """
+                INSERT INTO pending_decisions
+                    (decision_id, room_id, kind, player_id, player_nickname, reason,
+                     payload, created_at)
+                VALUES
+                    (:decision_id, :room_id, :kind, :player_id, :player_nickname, :reason,
+                     :payload, :created_at)
+                """
+            ).bindparams(sa.bindparam("payload", type_=sa.JSON())),
+            {
+                "decision_id": row["check_request_id"],
+                "room_id": row["room_id"],
+                "kind": row["kind"],
+                "player_id": row["player_id"],
+                "player_nickname": row["player_nickname"],
+                "reason": row["reason"],
+                "payload": {
+                    "skill": row["skill"],
+                    "loss_on_success": row["loss_on_success"],
+                    "loss_on_failure": row["loss_on_failure"],
+                    "reveals": reveals,
+                    "opposed_opponent": row["opposed_opponent"],
+                    "opposed_value": row["opposed_value"],
+                },
+                "created_at": row["created_at"],
+            },
+        )
+
     op.drop_table("pending_checks")
 
 

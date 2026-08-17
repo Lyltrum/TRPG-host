@@ -32,22 +32,34 @@ def upgrade() -> None:
 
     先清脏数据：同一 (room_id, player_id) 只留 `updated_at` 最新的那行——那正是
     队伍面板和守秘人当前认的那张（dict 覆盖，后写的胜出），删旧的不会改变现在
-    桌上生效的卡。`events.character_id` 指向被删行的记录一并置空（它可空）。
+    桌上生效的卡。`check_results.character_id` 指向被删行的记录一并置空（它可空）。
+
+    🔴 **这段清理代码原先写的是 `events.character_id`，而那一列根本不存在**
+    （`character_id` 在 `check_results` 上）。它没被发现是因为**只有存在重复卡
+    时才会执行**——空的 `stale` 直接跳过整段，于是开发库和测试都从它旁边绕了
+    过去。第一次真的喂给它重复数据（迁 Postgres 时造的样本）就当场炸了。
+    「造的样本没走到被测分支 = 没测」的又一个实例。
     """
+    # 🔴 用窗口函数挑「每组留哪一行」，不用 `GROUP BY` + 裸 `SELECT id`。
+    # 原写法在 SQLite 上跑得通（它对 GROUP BY 外的列很宽松，随便挑一行给你），
+    # 在 Postgres 上直接炸：`column "c.id" must appear in the GROUP BY clause`。
+    # 而且那份宽松本身就是个坑——`updated_at` 撞平的时候「随便挑一行」意味着
+    # 保留哪张卡是**不确定的**。`ROW_NUMBER` 顺带把这一点定死了（撞平时按 id
+    # 取大的），两种库拿到同一个结果。
     conn = op.get_bind()
     stale = (
         conn.execute(
             sa.text(
                 """
-            SELECT id FROM characters
-            WHERE id NOT IN (
-                SELECT id FROM characters c
-                WHERE c.updated_at = (
-                    SELECT MAX(c2.updated_at) FROM characters c2
-                    WHERE c2.room_id = c.room_id AND c2.player_id = c.player_id
-                )
-                GROUP BY c.room_id, c.player_id
-            )
+            SELECT id FROM (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY room_id, player_id
+                           ORDER BY updated_at DESC, id DESC
+                       ) AS rn
+                FROM characters
+            ) ranked
+            WHERE rn > 1
             """
             )
         )
@@ -56,9 +68,9 @@ def upgrade() -> None:
     )
     if stale:
         conn.execute(
-            sa.text("UPDATE events SET character_id = NULL WHERE character_id IN :ids").bindparams(
-                sa.bindparam("ids", value=tuple(stale), expanding=True)
-            )
+            sa.text(
+                "UPDATE check_results SET character_id = NULL WHERE character_id IN :ids"
+            ).bindparams(sa.bindparam("ids", value=tuple(stale), expanding=True))
         )
         conn.execute(
             sa.text("DELETE FROM characters WHERE id IN :ids").bindparams(

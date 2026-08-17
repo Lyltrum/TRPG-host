@@ -67,6 +67,80 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
+  # 迁移守护：这是本仓库**最后一个没有 CI 的结构性缺口**（2026-08-17 补上）。
+  #
+  # 为什么单独一个 job、而且必须连 Postgres 一起起：
+  #
+  # 1. **测试根本不跑迁移。** pytest 建表走 `create_all`（直接读模型），所以
+  #    迁移写错了，全套 2000+ 用例照样全绿——唯一会撞上的是真正启动后端的人。
+  # 2. **本地只有 SQLite，生产是 Postgres。** 2026-08-17 第一次真往 PG 上迁，
+  #    一口气暴露三个 bug：SQLite 专有的 `json_object()`、`GROUP BY` + 裸
+  #    `SELECT id`（PG 严格模式拒绝）、以及引用了一个**根本不存在的列**。
+  #    前两个是方言差异，只有在 PG 上跑才看得见。
+  # 3. **`alembic check` 守的是另一件事**：迁移建出来的表 vs 模型声明的表。
+  #    这两份知识分叉时**两边都不会变红**（测试用模型那份，生产用迁移那份），
+  #    正是这个项目反复吃亏的形状。加这一步时它当场就抓到三处 nullable 漂移。
+  migrations:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: trpg-backend
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: trpg
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: trpg
+        ports:
+          - 5432:5432
+        # 没有健康检查的话，下面第一条 alembic 命令会撞上"还没起来"的库，
+        # 表现成随机失败——比没有这个 job 更糟（红得没有规律，人会开始忽略它）。
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "trpg-backend/uv.lock"
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # ── SQLite：开发用的那条路 ──────────────────────────────
+      - name: Migrate a fresh SQLite database
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./ci-migrate.db
+        run: uv run alembic upgrade head
+
+      - name: Model and migrations must agree (SQLite)
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./ci-migrate.db
+        run: uv run alembic check
+
+      # ── Postgres：生产用的那条路 ────────────────────────────
+      - name: Migrate a fresh Postgres database
+        env:
+          DATABASE_URL: postgresql+asyncpg://trpg:ci@127.0.0.1:5432/trpg
+        run: uv run alembic upgrade head
+
+      - name: Model and migrations must agree (Postgres)
+        env:
+          DATABASE_URL: postgresql+asyncpg://trpg:ci@127.0.0.1:5432/trpg
+        run: uv run alembic check
+
   # 漂移检查（issue #75 决策 3）：重新跑一遍完整的 DTO -> JSON Schema -> TS
   # 生成管线，用 git diff 确认 trpg-sdk/src/generated/ 跟刚生成的结果一致。
   # 不一致说明有人改了后端 DTO（或手改了生成产物）却没有重新跑 codegen。

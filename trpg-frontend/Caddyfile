@@ -1,0 +1,64 @@
+# Caddy：前端静态文件 + 反代后端 + **自动 HTTPS**。
+#
+# 跟 `nginx.conf` 是二选一的关系（那份走纯 HTTP，这份走 HTTPS），
+# 用哪个由启动时叠不叠 `docker-compose.https.yml` 决定。
+#
+# ## 为什么是 Caddy 而不是 nginx + certbot
+#
+# 证书 90 天到期，续期靠定时任务——而**续期失败是静默的**，到点了全站直接
+# 打不开。这类"平时看不出、到点炸"的东西正是这个项目反复吃亏的形状。
+# Caddy 把申请与续期做进了进程本身，等于把这颗定时炸弹从系统里移除。
+
+# 🔴 想收「证书快到期」的提醒邮件，就把下面两行的注释去掉、填上邮箱。
+# **不能写成 `email {$ACME_EMAIL}` 靠环境变量传**：变量为空时这条指令的参数
+# 个数是 0，Caddy 会拒绝启动（`wrong argument count`）——Caddyfile 没有
+# 条件语法，空值不会被当成"不设置"。
+#
+# 不填也完全可以：证书照常签发，Caddy 自己续期，提醒邮件本来就只是兜底。
+# {
+# 	email you@example.com
+# }
+
+# 🔴 本地验收用：把 AIDM_DOMAIN 设成 localhost 时，Caddy 用**内部 CA**
+# 签一张本地证书，不去碰 Let's Encrypt。这让 HTTPS 与 WSS 整条链路在
+# 没有域名、没有公网的情况下也能真跑一遍。
+# 生产填真实域名时走正常 ACME，这里不用改。
+{$AIDM_DOMAIN} {
+	encode gzip zstd
+
+	# ── WebSocket ──────────────────────────────────────────
+	# 🔴 **不需要写 Upgrade / Connection 头**。Caddy 的 reverse_proxy 自己
+	# 识别 WebSocket 握手并透传——nginx 那份里手写的那几行在这里是多余的，
+	# 照抄过来反而可能出错。
+	#
+	# 也不需要调 read timeout：Caddy 的反代**默认不设**响应超时，
+	# 守秘人那种单拍 200 多秒的长回合天然不会被掐断（nginx 默认 60 秒会，
+	# 所以那边必须显式写 proxy_read_timeout）。
+	handle /ws/* {
+		reverse_proxy backend:8000
+	}
+
+	# ── REST ───────────────────────────────────────────────
+	handle /api/* {
+		reverse_proxy backend:8000 {
+			# 流式叙事要立刻推给玩家，不要攒在反代里。
+			flush_interval -1
+		}
+	}
+
+	# ── 前端静态文件 ────────────────────────────────────────
+	handle {
+		root * /srv
+
+		# 🔴 SPA 回退。前端是 BrowserRouter（真实路径），直接访问
+		# /home/my-rooms 或扫码进 /join/ABC123 时磁盘上没有同名文件——
+		# 而那两条恰恰是别人拿到链接后的第一跳。
+		try_files {path} /index.html
+		file_server
+	}
+
+	# 带 hash 的构建产物可以长缓存；index.html 绝不能，
+	# 否则发新版之后老页面会一直拿着旧的资源清单。
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+}

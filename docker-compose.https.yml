@@ -1,0 +1,59 @@
+# HTTPS 覆盖层：把 web 从「nginx + 纯 HTTP」换成「Caddy + 自动证书」。
+#
+# 用法（两个 -f 都要，顺序不能反）：
+#
+#   docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+#
+# 需要在 .env 里加：
+#   AIDM_DOMAIN=aidm.example.com     # 必填，且 A 记录已经指向这台机器
+#   ACME_EMAIL=you@example.com       # 可选，证书到期提醒
+#
+# ## 为什么 HTTPS 对这个项目是功能开关，不是安全洁癖
+#
+# 1. **WebSocket**：HTTPS 页面**不允许**连 `ws://`（混合内容，浏览器直接
+#    阻断）。而对局全在 WS 上——所以要么全 HTTP，要么全 HTTPS，没有中间态。
+# 2. **语音输入**：`useSpeechInput.ts` 用的 `SpeechRecognition` 要求安全
+#    上下文。`http://` + IP 不算，`https://` 和 `localhost` 才算。
+#    也就是说局域网开局时朋友手机上的语音输入本来就用不了，这一层顺带修好。
+#
+# ## 本地怎么验（没有域名也能验）
+#
+#   AIDM_DOMAIN=localhost docker compose -f docker-compose.yml \
+#       -f docker-compose.https.yml up -d --build
+#
+# Caddy 对 `localhost` 用**内部 CA** 签本地证书，不碰 Let's Encrypt。
+# HTTPS 与 WSS 整条链路因此在没有公网的情况下也能真跑一遍；唯一验不到的
+# 是「向 Let's Encrypt 申请真证书」那一步。
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: trpg-frontend/Dockerfile.caddy
+    environment:
+      # `:?` = 没设就直接拒绝启动。少了它 Caddy 会给一个空站点名，
+      # 症状是"起来了但怎么访问都 404"，比启动失败难查得多。
+      AIDM_DOMAIN: ${AIDM_DOMAIN:?请在 .env 里设 AIDM_DOMAIN（真实域名，或本地验收用 localhost）}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    # 🔴 `!override` 不能省。compose 合并多个文件时 `ports` 是**追加**而不是
+    # 替换——不加这个标签，基础文件里的 `8080:80` 会一起留着，等于在 443
+    # 之外又开了一个纯 HTTP 入口。（实测确认过：第一版就多出了 8080。）
+    ports: !override
+      # 🔴 **80 必须是 80**，不能改成别的。Let's Encrypt 的 HTTP-01 验证
+      # 固定打 80 端口，改了就永远签不下来证书。
+      # Caddy 还会用它把 http:// 自动 308 到 https://。
+      - "80:80"
+      - "443:443"
+      # QUIC / HTTP3。不需要可以删掉，不影响证书与 WSS。
+      - "443:443/udp"
+    volumes:
+      # 🔴🔴 **这一行漏了会被 Let's Encrypt 限流锁住。**
+      # 证书存在 /data 里。不持久化的话，每次 `up`/重启都会重新申请一次，
+      # 而同一个域名**每周只能签 5 次**——超了就是几天签不出证书，
+      # 全站打不开，且只能干等速率窗口过去。
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

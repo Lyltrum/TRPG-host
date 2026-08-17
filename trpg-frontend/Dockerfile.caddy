@@ -1,0 +1,33 @@
+# 前端镜像的 HTTPS 版：跟 `Dockerfile` 同一套构建，只把运行时的 nginx 换成 Caddy。
+#
+# 🔴 构建上下文同样是**仓库根**（前端用 `file:../trpg-sdk` 依赖 SDK）。
+
+FROM node:22-slim AS builder
+
+WORKDIR /src
+
+# SDK 先构建——前端吃的是它的 dist/，不是 src/。
+COPY trpg-sdk/package.json trpg-sdk/package-lock.json ./trpg-sdk/
+RUN cd trpg-sdk && npm ci
+
+COPY trpg-sdk ./trpg-sdk
+RUN cd trpg-sdk && npm run build
+
+COPY trpg-frontend/package.json trpg-frontend/package-lock.json ./trpg-frontend/
+RUN cd trpg-frontend && npm ci
+
+COPY trpg-frontend ./trpg-frontend
+
+# 这里同样**不设** VITE_API_BASE_URL：生产构建下 `api-client.ts` 会派生成
+# 同源地址。HTTPS 下它得到 `https://域名/api/v1`，SDK 再把 `^http` 换成 `ws`
+# 正好得到 `wss://域名` —— 整条链天然是对的，不用为 HTTPS 改任何前端代码。
+RUN cd trpg-frontend && npm run build
+
+
+FROM caddy:2.8-alpine AS runtime
+
+COPY --from=builder /src/trpg-frontend/dist /srv
+COPY trpg-frontend/Caddyfile /etc/caddy/Caddyfile
+
+# 80 是 ACME HTTP-01 验证要用的（端口号不可改），443 是正经流量。
+EXPOSE 80 443

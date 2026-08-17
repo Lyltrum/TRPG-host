@@ -217,6 +217,36 @@ docker compose down                 # 停掉（数据留着）
 > 🔴 **内测前把 `LLM_DAILY_CALL_QUOTA` 调小**（默认 500 是「接上了但不挡路」）。
 > 一局 34 拍约 200 次调用——这是唯一一个配错了会真金白银出血的开关。
 
+### HTTPS（可选，但上公网就是必须的）
+
+叠一个覆盖层，把 nginx 换成 **Caddy + 自动证书**：
+
+```bash
+# .env 里加：AIDM_DOMAIN=aidm.example.com（A 记录已指向这台机器）
+docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+```
+
+**对这个项目来说 HTTPS 不是安全洁癖，是功能开关**，两件事会直接坏掉：
+
+1. **WebSocket**：HTTPS 页面**不允许**连 `ws://`（混合内容，浏览器直接阻断），
+   而对局全在 WS 上——所以要么全 HTTP，要么全 HTTPS，没有中间态。
+2. **语音输入**：`SpeechRecognition` 要求安全上下文，`http://` + IP 不算。
+   也就是说局域网开局时朋友手机上的语音输入本来就用不了，这一层顺带修好。
+
+前端代码**不用为 HTTPS 改任何东西**：`api-client.ts` 派生出 `https://域名/api/v1`，
+SDK 再把 `^http` 换成 `ws`，正好得到 `wss://域名`。
+
+没有域名也能先验一遍——Caddy 对 `localhost` 用内部 CA 签本地证书，不碰 Let's Encrypt：
+
+```bash
+AIDM_DOMAIN=localhost docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+curl -k https://localhost/api/v1/health
+```
+
+> 🔴 **80 端口必须是 80**（ACME HTTP-01 验证固定打这个端口），且
+> `caddy-data` 卷必须持久化——证书存在里面，不持久化的话每次重启都重新申请，
+> 而同一个域名**每周只能签 5 次**，超了会有几天签不出证书。
+
 ## 环境变量
 
 ### 后端 `trpg-backend/.env`

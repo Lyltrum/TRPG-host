@@ -76,17 +76,38 @@ _PLACEHOLDER_SKILL_SUFFIX = re.compile(r"-\d+$")
 #: **10% 的卡**上，是真机第一张卡就撞到的那一项。
 _OUT_OF_ERA_SKILL_IDS = frozenset({"pilot-spacecraft"})
 
+#: 战斗技能里**允许**被随机挑中的两项：闪避人人都在躲，斗殴是不需要受训的
+#: 打架。其余（冲锋枪、矛、链锯、炮术……）都是**专门训练**的产物，
+#: 当成一个调查员的"随机个人爱好"太出戏。
+#:
+#: 🔴 按 `category == "combat"` 扫，不逐个列武器——加一件新武器自动被覆盖。
+#: 这里存的是**例外白名单**，比列出十七件武器短得多，也不会漏。
+#:
+#: ⚠️ 只挡随机取材。职业指定的战斗技能（军人的步枪、拳手的斗殴）走的是
+#: `occupation.skill_ids`，一点不受影响——**该有枪的职业照样有枪**。
+#:
+#: 实测（2026-08-17，40 张一键建卡）：不挡的话战斗技能占随机加点的 18–21%，
+#: 最常见的是「射击：冲锋枪」。
+_COMBAT_CATEGORY = "combat"
+_COMBAT_SKILLS_OK_AT_RANDOM = frozenset({"dodge", "fighting-brawl"})
 
-def _unsuitable_for_random_pick(skill_id: str) -> bool:
+
+def _unsuitable_for_random_pick(skill: SkillSpec) -> bool:
     """这项技能**不适合被随机分配**（职业技能与明确候选槽不受影响）。
 
     只作用于"随便挑一项"的那两条路：职业的任意自选槽、兴趣点的取材。
     职业本身指定的技能（`occupation.skill_ids`）和写明了 `candidate_skill_ids`
     的槽都绕过这里——那些是模组/职业作者的选择，不是随机的产物。
+
+    🔴 收 `SkillSpec` 而不是 `skill_id`：三条判据里有一条要看 `category`，
+    而从 id 前缀去猜类别（`fighting-` / `firearm-`）就是「用自由文本当标识符」
+    的老毛病——加一件叫 `crossbow` 的武器立刻漏掉。
     """
-    return (
-        skill_id in _OUT_OF_ERA_SKILL_IDS or _PLACEHOLDER_SKILL_SUFFIX.search(skill_id) is not None
-    )
+    if skill.id in _OUT_OF_ERA_SKILL_IDS:
+        return True
+    if _PLACEHOLDER_SKILL_SUFFIX.search(skill.id) is not None:
+        return True
+    return skill.category == _COMBAT_CATEGORY and skill.id not in _COMBAT_SKILLS_OK_AT_RANDOM
 
 
 #: 默认年龄。COC7 的年龄修正在 20–39 岁区间内为零，于是「分配值」与「有效值」
@@ -160,7 +181,7 @@ def _pick_slot_skills(
             if s.id not in taken
             and s.id not in NON_ALLOCATABLE_SKILL_IDS
             and s.id != "credit-rating"
-            and not _unsuitable_for_random_pick(s.id)
+            and not _unsuitable_for_random_pick(s)
         ]
         available = [c for c in candidates if c not in taken]
         for _ in range(min(slot.count, len(available))):
@@ -262,7 +283,7 @@ def _allocate_skills(
         for s in ruleset.skills
         if s.id not in chosen
         and s.id not in NON_ALLOCATABLE_SKILL_IDS
-        and not _unsuitable_for_random_pick(s.id)
+        and not _unsuitable_for_random_pick(s)
     ]
     if interest_budget > 0 and candidates:
         # 挑几项当"个人爱好"：全摊到所有技能上会摊出一张每项 +2 的糊卡，

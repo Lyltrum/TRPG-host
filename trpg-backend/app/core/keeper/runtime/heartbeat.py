@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.keeper.runtime.pending import ROLL_KINDS, pending_decision_manager
+from app.core.llm_quota import quota_subject
 from app.core.narration.contract import NarrationContext, Narrator
 from app.models.event import Event
 from app.models.room import Player, Room
@@ -224,7 +225,14 @@ async def maybe_fire_room(
     if token is None:
         return False
 
-    async with action_lock_manager.held(room_id, token):
+    # 心跳是唯一**没有触发者**却照样烧钱的一拍，不给它记账就等于在闸门上留个
+    # 洞——而它恰恰是最容易跑飞的那条路（没人说话时它自己会一直动）。算在这一拍
+    # 聚光的那名玩家账上：他就是这拍的主角，比记在房主头上更贴近"谁在玩"。
+    async with session_factory() as db:
+        spotlight = await db.get(Player, player_id)
+        subject = spotlight.user_id if spotlight is not None else None
+
+    async with action_lock_manager.held(room_id, token), quota_subject(subject):
         return await _narrate_heartbeat(
             session_factory, narrator, room_id, player_id, nickname, spotlighted, now
         )

@@ -43,6 +43,8 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory
+from app.core.errors import ErrorCode
+from app.core.llm_quota import QuotaExceeded, quota_subject
 from app.core.narration.contract import (
     CheckRequestNotice,
     CheckResultNotice,
@@ -96,6 +98,23 @@ logger = structlog.get_logger()
 
 _UNAUTHORIZED_CLOSE_CODE = 4401
 _NOT_FOUND_CLOSE_CODE = 4404
+
+
+async def _send_turn_failure(websocket: WebSocket, exc: Exception) -> None:
+    """一轮跑砸了，告诉玩家。**额度用完和服务器出错不是一回事。**
+
+    🔴 三处宽捕获（action.submit / check.roll / 幸运消费）原本都直接发
+    `INTERNAL_ERROR「请稍后重试」`。配额闸门加上之后，那句话对"今天额度用完了"
+    是**误导**——玩家会照着提示一直重试，而每次重试都再记一次账，越试越深。
+    「加一道门，必须同时给它配一条走得通的修法」：这里就是那条修法。
+
+    收成一个函数而不是在三处各写一遍 if：这是"逐个列出的地方"，加第四处时
+    照抄的人会自动抄到这个区分。`test_ws_quota.py` 钉住了三处都走它。
+    """
+    if isinstance(exc, QuotaExceeded):
+        await _send_error(websocket, ErrorCode.RATE_LIMITED.value, exc.message)
+        return
+    await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
 
 
 async def _send_error(websocket: WebSocket, code: str, message: str) -> None:
@@ -1362,15 +1381,17 @@ async def _run_turn(
             outcome = await narrator.narrate(context)
         except Exception as exc:  # 外部服务的失败面（网络/超时/API 错）就是宽的，故意宽捕获
             logger.warning("narrator_failed", room_id=room_id, error=str(exc))
-            await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
+            await _send_turn_failure(websocket, exc)
             # 聊天区不能静默：补一条可见兜底，避免玩家以为断线
-            with contextlib.suppress(Exception):  # 兜底广播失败也不再抛
-                await _broadcast_narration(
-                    db,
-                    room_id,
-                    initiator_id,
-                    "守秘人整理思路时卡了一下。请用一句更明确的行动再说一次。",
-                )
+            # ⚠️ 额度用完时**不发**这句：「再说一次」正是最不该给的建议。
+            if not isinstance(exc, QuotaExceeded):
+                with contextlib.suppress(Exception):  # 兜底广播失败也不再抛
+                    await _broadcast_narration(
+                        db,
+                        room_id,
+                        initiator_id,
+                        "守秘人整理思路时卡了一下。请用一句更明确的行动再说一次。",
+                    )
             return
         # 玩家行动重置心跳节流（路线 6）
         try:
@@ -1458,7 +1479,7 @@ async def _handle_check_roll(
                 # ——结果没广播成，但 keeper.check 事件在历史里，玩家重发一条
                 # action.submit 后裁决器能看到结果并续上，不会丢骰。
                 logger.warning("resolve_check_failed", room_id=room_id, error=str(exc))
-                await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
+                await _send_turn_failure(websocket, exc)
                 return
 
             await _deliver_check_outcome(db, websocket, room_id, player_id, outcome, pushed)
@@ -1545,7 +1566,7 @@ async def _handle_luck_decide(
                 return
             except Exception as exc:  # 同 check.roll：外部服务失败面宽，故意宽捕获
                 logger.warning("resolve_luck_failed", room_id=room_id, error=str(exc))
-                await _send_error(websocket, "INTERNAL_ERROR", "守秘人暂时无法回应，请稍后重试")
+                await _send_turn_failure(websocket, exc)
                 return
 
             await _deliver_check_outcome(db, websocket, room_id, player_id, outcome, pushed)
@@ -1568,6 +1589,13 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
 
     await websocket.accept()
     bound_player_id: str | None = None
+    #: LLM 配额算在谁头上（`app/core/llm_quota.py`）。在 `room.join` 时查一次
+    #: 存下来——它在整条连接里不会变，每条消息再查一遍是白费一次查询。
+    #:
+    #: 🔴 **绑在这个循环上，不是绑在五个回合入口上。** 所有消息都在这一个任务里
+    #: 顺序处理，所以这里 `with` 一次就覆盖了全部 handler——包括明天新增的那个。
+    #: 逐个入口去绑正是这个项目反复吃亏的形状（加一项就漏一项）。
+    bound_user_id: str | None = None
 
     try:
         while True:
@@ -1588,7 +1616,7 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
 
             # 每条消息各开一个短 session，处理完立刻释放——WebSocket 在两条消息
             # 之间等待（receive_json 阻塞）时不持有任何数据库连接。
-            async with async_session_factory() as db:
+            async with async_session_factory() as db, quota_subject(bound_user_id):
                 try:
                     if event_type == "room.join":
                         join_payload = RoomJoinPayload.model_validate(raw_payload)
@@ -1596,6 +1624,11 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                             db, websocket, room_id, player_id, join_payload.reconnect_token
                         ):
                             bound_player_id = player_id
+                            bound_user_id = (
+                                await room_service.user_id_of_player(db, player_id)
+                                if player_id
+                                else None
+                            )
                         else:
                             return
                         continue

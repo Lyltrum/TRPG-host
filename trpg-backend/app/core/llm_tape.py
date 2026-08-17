@@ -54,6 +54,7 @@ from typing import Any, Literal
 
 import structlog
 
+from app.core.llm_quota import enforce_quota
 from app.core.llm_usage import log_call_usage
 
 logger = structlog.get_logger(__name__)
@@ -415,6 +416,10 @@ class _TapedCompletions:
         if replayed is not None:
             return replayed
 
+        # 🔴 闸门在**真实调用之前**，且在回放之后——回放不花钱，记它等于把
+        # 测试跑成用户的额度。
+        await enforce_quota(kind=tape_kind)
+
         response = await self._inner.create(**kwargs)
         # 观测：这次调用的 token 账与前缀缓存命中情况。只在真实调用之后记——
         # 回放出来的假响应没有 usage，记了也是假的。
@@ -533,6 +538,10 @@ class _LiveStreamCall(StreamCall):
         self._params = params
 
     async def __aiter__(self) -> AsyncIterator[str]:
+        # 🔴 闸门在这里而不是 `stream()` 里：`stream()` 是同步的，只是**攒好了
+        # 参数**，真正发出去是在这一行。挂在构造处会让"取消了没迭代"的调用
+        # 也被计费，也会让异常从一个同步函数里抛出来。
+        await enforce_quota(kind=self._tape_kind)
         stream = await self._inner.create(**self._kwargs, stream=True)
         async for chunk in stream:
             if not chunk.choices:

@@ -113,6 +113,16 @@ class Settings(BaseSettings):
             return self.keeper_heartbeat_enabled
         return self.app_env == "development"
 
+    # 一个账号一个 UTC 日历日能发多少次 LLM 调用（`app/core/llm_quota.py`）。
+    #
+    # 🔴 **默认 500 是"接上了但不挡路"，不是"还没做"。** 闸门每次调用都真的走
+    # 一遍——计数、落库、比对都在跑，只是这个数高到自己开发测试撞不到（一局
+    # 34 拍约 200 次调用，一天跑两局才刚够到）。要内测时把它调小即可，改的是
+    # 一个环境变量，不是去接一条从没跑过的代码路径。
+    #
+    # 配 0 或负数 = 显式关闭闸门（跑批量脚本时用），见 `enforce_quota`。
+    llm_daily_call_quota: int = 500
+
     # ⚠️ 测试专用（issue #107）：让叙事生成人为延迟 N 秒后再返回，生产永远保持 0。
     # 存在的理由：无 key 时的占位叙事同步秒回，action.submit 的房间锁窗口只有
     # 微秒级，e2e 两个客户端"同时提交"永远压不中 ACTION_IN_PROGRESS——锁的

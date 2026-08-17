@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app.controller import ws as ws_controller
+from app.core import llm_quota
 from app.core.db import Base, get_db
 from app.core.seed import ensure_seed_content
 from app.main import app
@@ -56,6 +57,12 @@ app.dependency_overrides[get_db] = override_get_db
 # 工厂也重绑到测试库，否则 WS 测试里 HTTP 请求写进的是内存测试库、WS 路由却
 # 去空的真实库里查 player，必然查不到而关连接。
 ws_controller.async_session_factory = TestSessionLocal  # type: ignore[assignment]
+
+# 同样的理由，LLM 配额闸门（app/core/llm_quota.py）也自己开 session——而且它是
+# **故意**不搭调用方那趟车的（记账不能跟着业务事务一起回滚，钱已经花了）。
+# 不重绑的话，跑测试会把计数写进本地开发库 app.db：既污染真实数据，又让用例
+# 之间互相串（配额是累计的，上一条用例烧掉的数下一条还看得见）。
+llm_quota.async_session_factory = TestSessionLocal  # type: ignore[assignment]
 
 # 表只建一次。此前 `_prepare_database` 每条用例都跑一遍 create_all/drop_all，
 # 实测单次 57ms + 43ms，乘以 1561 条 = **全套 314s 里的 156s**，而绝大多数用例

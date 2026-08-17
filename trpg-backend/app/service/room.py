@@ -371,6 +371,17 @@ async def get_player(db: AsyncSession, player_id: str) -> Player | None:
     return await db.get(Player, player_id)
 
 
+async def user_id_of_player(db: AsyncSession, player_id: str) -> str | None:
+    """这名玩家背后的账号（LLM 配额算在谁头上）。
+
+    可能是 `None`，而且那**不是异常**：AI 玩家没有账号，早期建的房间里也有
+    没绑账号的历史 player 行。配额层把 `None` 当成"没人认领"并记一条 WARNING，
+    见 `app/core/llm_quota.py`。
+    """
+    player = await db.get(Player, player_id)
+    return player.user_id if player is not None else None
+
+
 async def set_player_ready(db: AsyncSession, player_id: str, ready: bool) -> None:
     """WS player.ready 事件：切换大厅准备状态。"""
     player = await db.get(Player, player_id)

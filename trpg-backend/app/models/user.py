@@ -7,9 +7,9 @@ service/character.py）。
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Uuid
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, Integer, String, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -79,6 +79,50 @@ class UserCharacterTemplate(Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class LlmDailyUsage(Base):
+    """一个账号在一个 UTC 日历日里发了多少次 LLM 调用。
+
+    ## 为什么按「调用次数」而不是「回合数」或「token 数」
+
+    - **回合数**不反映成本：一个守秘人回合是 3–8 次调用（裁决 + 叙事 + 可能的
+      摘要 + 结算那一拍），按回合计会把差着一倍的两轮算成一样。
+    - **token 数**最准，但它只有在**调用返回之后**才知道，而闸门必须在调用
+      **之前**关上——那正是要防的那一笔钱。次数是唯一"事前可判"的量。
+
+    ## 为什么带 `day` 而不是滚动窗口
+
+    滚动窗口要留每次调用的时间戳（一天几千行）并按时间聚合；日历日只要一行、
+    一个整数。配额的用途是"别让一个账号把当天额度烧光"，不是精确限速。
+
+    🔴 **UTC 日，不是本地日。** 服务器时区变了、跨夏令时了，本地日会让某一天
+    变成 23 或 25 小时，配额跟着缩水或翻倍。同 `UtcDatetime` 那次的判据。
+
+    唯一约束 `(user_id, day)` 是**必须的**：记账走 UPDATE→（没命中再）INSERT，
+    没有唯一约束的话两个并发请求会各插一行，此后每次 UPDATE 只命中其中一行，
+    计数**永远差一半**且不会有任何东西变红。
+    """
+
+    __tablename__ = "llm_daily_usage"
+    __table_args__ = (UniqueConstraint("user_id", "day", name="uq_llm_usage_user_day"),)
+
+    id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("users.id"), nullable=False, index=True
+    )
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

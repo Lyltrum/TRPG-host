@@ -19,7 +19,7 @@ from app.models.content import (
 from app.models.event import CheckResult, Event, PendingDecisionRow
 from app.models.replay import ModuleImportJob, RoomSession, RoomSummary
 from app.models.room import Character, Note, Player, Room
-from app.models.user import User, UserCharacterTemplate, UserSession
+from app.models.user import LlmDailyUsage, User, UserCharacterTemplate, UserSession
 
 __all__ = [
     "ChatMessage",
@@ -29,6 +29,7 @@ __all__ = [
     "Event",
     "Game",
     "GameSystem",
+    "LlmDailyUsage",
     "ModuleAsset",
     "ModuleCheckpoint",
     "ModuleImportJob",

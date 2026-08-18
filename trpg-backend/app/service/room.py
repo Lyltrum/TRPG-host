@@ -315,12 +315,21 @@ async def select_module(
 ) -> None:
     """房主选定模组。"""
     room = await find_room_by_id(db, room_id)
-    await _require_host(db, room, reconnect_token)
+    host = await _require_host(db, room, reconnect_token)
     if room.phase != "Lobby":
         raise RoomConflictError("只能在大厅阶段选择模组")
 
     scenario = await db.get(Scenario, payload.module_id)
     if scenario is None:
+        raise ModuleNotFoundError("模组不存在")
+    # 🔴 归属规则要落在**每一个出口**上（2026-08-18 真机顺手查出来的）。
+    # `list_modules` 的说明写着「这只管谁能拿它开新局」——而开新局就是这个动作，
+    # 它此前只校验了"模组存在"。于是列表里看不见别人导入的模组，拿着 id 却照样
+    # 开得起来。同族判据：**一份数据有几个出口，规则就要落几处**。
+    #
+    # 🔴 报「模组不存在」而不是「无权使用」：后者等于替对方确认"这个 id 是有效
+    # 的、只是不属于你"。同 `list_modules` 那条——连标题都不该露出去。
+    if scenario.owner_user_id is not None and scenario.owner_user_id != host.user_id:
         raise ModuleNotFoundError("模组不存在")
 
     room.scenario_id = scenario.id

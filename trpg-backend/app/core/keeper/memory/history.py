@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.core.keeper.primitives import dice
 from app.models.event import Event
 
 # 全量重放 events 的上限条数。
@@ -52,6 +53,49 @@ class HistoryLine:
 
     text: str
     audience: frozenset[str] | None = None
+
+
+#: 对抗三态 → 给叙事看的一句话。
+#:
+#: 🔴 **只给结论，不给两边的出目与成功等级**（2026-08-18）。这不是省事，
+#: 是「保密靠拿不到，不是请你别说」：两次真机写反的形态一模一样——玩家自己
+#: 成功、对手成功等级更高 ⇒ 判负，而叙事眼里那句「结果**成功**」压过了一切，
+#: 于是把输写成了赢。数字对后续叙事没有价值（复述骰子本来就不该），而它是
+#: 已证实的误导源。玩家侧的可见性由 `check.result` 这条 WS 事件保证，
+#: 前端卡片照旧显示双方的出目——两件事分属两个出口，不要混。
+_OPPOSED_LINE = {
+    dice.VERDICT_WIN: "{player}在{skill}对抗中赢了{opponent}。",
+    dice.VERDICT_LOSE: "{player}在{skill}对抗中输给了{opponent}——{opponent}压过了他。",
+    dice.VERDICT_STALEMATE: "{player}和{opponent}的{skill}对抗僵持不下，谁都没得手，维持原状。",
+}
+
+
+def _render_check(payload: dict) -> str:
+    """一次检定在历史窗口里的样子。
+
+    🔴 **对抗必须渲染结论**（2026-08-18 真机，同一个 bug 的第二、三次）。
+    此前这里只渲染玩家自己那一半（`rolled`/`target`/`level`），`opposed` 整块
+    ——包括 `verdict`——**一个字都没进去**。而 `settle_skill_check` 里那段精心
+    组装的三态文本（结论提句首 + 明写"不要按成功等级自行推断"）写进的是
+    `deps.check_results`，**那个字段从头到尾没有任何读取方**。
+
+    ⇒ 两跑写反**不是模型不遵守，是对抗结论根本没送到它眼前**。`exec/20 §1.20`
+    当时判成"prompt 手段已用尽、只能靠状态化硬化"，那是**拿错了度量对象**：
+    量的是"代码组装了什么"，不是"叙事真正收到了什么"。
+    """
+    player = payload.get("player", "")
+    skill = payload.get("skill", "")
+    opposed = payload.get("opposed")
+    if isinstance(opposed, dict):
+        template = _OPPOSED_LINE.get(str(opposed.get("verdict")))
+        if template is not None:
+            return template.format(
+                player=player, skill=skill, opponent=opposed.get("opponent", "对手")
+            )
+    return (
+        f"{player}进行了一次{skill}检定，掷出{payload.get('rolled', '?')}，"
+        f"目标{payload.get('target', '?')}，结果{payload.get('level', '')}。"
+    )
 
 
 def is_visible_to(recorded: frozenset[str] | None, viewer: frozenset[str] | None) -> bool:
@@ -128,14 +172,7 @@ def history_lines_from_events(events: list[Event], nicknames: dict[str, str]) ->
             # prose_discipline.py 的 _FAKE_STAT_LOG_LEAK）——模型照猫画虎
             # 模仿了这里看到的模板。改成普通叙述句，不留可逐字复刻的模板。
             # ⑦⑧ 定稿：检定过程与结果、HP/SAN 一律公开 → 受众恒为 None
-            lines.append(
-                HistoryLine(
-                    f"{payload.get('player', '')}进行了一次{payload.get('skill', '')}"
-                    f"检定，掷出{payload.get('rolled', '?')}，目标"
-                    f"{payload.get('target', '?')}，结果{payload.get('level', '')}。",
-                    None,
-                )
-            )
+            lines.append(HistoryLine(_render_check(payload), None))
         elif event.event_type == "keeper.san":
             lines.append(
                 HistoryLine(

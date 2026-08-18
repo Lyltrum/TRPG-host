@@ -58,7 +58,7 @@ async def mark_agenda_fired_impl(deps: KeeperDeps, event_ids: list[str]) -> str:
 
 
 async def execute_agenda_fired(
-    deps: KeeperDeps, decision: BaseModel, _facts: TurnFacts
+    deps: KeeperDeps, decision: BaseModel, facts: TurnFacts
 ) -> tuple[list[str], list[str]]:
     """注册进执行阶段的钩子：先校验 id 合法性，再交给 `mark_agenda_fired_impl`。
 
@@ -79,6 +79,8 @@ async def execute_agenda_fired(
     if valid_ids:
         try:
             report.append(await mark_agenda_fired_impl(deps, valid_ids))
+            # 剧本议程真的发生了 = 世界往前走了一步（`closure` 读它算停滞）。
+            facts.world_advanced_this_turn = True
         except KeeperToolError as exc:
             issues.append(f"议程事件未执行：{exc}")
     return report, issues

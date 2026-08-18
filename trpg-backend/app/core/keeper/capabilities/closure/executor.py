@@ -46,6 +46,7 @@ from app.core.keeper.capabilities.closure.remaining import (
     unrevealed_pair_count,
 )
 from app.core.keeper.contract.registry import TurnFacts
+from app.core.keeper.runtime.beat import happened_this_beat
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError, record_event
 from app.core.keeper.runtime.location_state import load_player_locations
 from app.core.keeper.runtime.phase import (
@@ -63,8 +64,14 @@ from app.core.keeper.runtime.progress_state import (
 )
 from app.models.room import Room
 
+#: 每拍一条的进展留痕。它有两个用途：可审计（这一拍到底算不算推进），
+#: 以及给「一拍只计一次」当游标。
+PROGRESS_EVENT = "keeper.progress"
 
-async def _record_progress(deps: KeeperDeps, *, clues_revealed: bool) -> list[str]:
+
+async def _record_progress(
+    deps: KeeperDeps, *, clues_revealed: bool, world_advanced: bool
+) -> list[str]:
     """记「去过的节点」，并顺手维护「无进展轮数」。返回本轮新去的那些。
 
     🔴 **回合级**，不挂在每个写位置的函数上：位置有三条写入路径
@@ -86,21 +93,33 @@ async def _record_progress(deps: KeeperDeps, *, clues_revealed: bool) -> list[st
             visited.extend(newly)
             current_state[VISITED_NODES_KEY] = serialize_visited_nodes(visited)
 
-        # 进展的口径只有这两样，因为只有它们是**代码确定性可判**的：去了新地方、
-        # 揭开了新线索。"剧情有没有推进"是语义，不进这个计数。
-        if newly or clues_revealed:
+        # 进展的口径只收**代码确定性可判**的那几样：去了新地方、揭开了新线索、
+        # 世界往前走了一步（议程触发 / 既成事实 / 悬而未决开合，见
+        # `TurnFacts.world_advanced_this_turn`）。"剧情有没有推进"是语义，
+        # 不进这个计数。
+        #
+        # 🔴 **`world_advanced` 是 2026-08-18 补的第三样。** 那一局 19 拍里
+        # 目睹了枪杀、拿到主线线索、触发了绑架议程、开合了 4 条悬而未决，
+        # 按原来两样的口径**一样都不算进展**，那个数一路涨到 15——而超过
+        # `STALL_PUSH_THRESHOLD` 之后局面块会从"参考"升级成"本轮硬要求：
+        # 给推力"。于是整局都在告诉模型"这桌人在原地打转"。
+        advanced = bool(newly) or clues_revealed or world_advanced
+        if advanced:
             current_state[STALLED_TURNS_KEY] = 0
-        else:
+        elif not await happened_this_beat(db, deps.room_id, PROGRESS_EVENT):
+            # 🔴 **一拍只计一次**（2026-08-18）：一次玩家发言会引发多次裁决——
+            # 每掷完一批骰子就有一次结算叙事，而它本身又是一次完整裁决。原来
+            # 每次执行都 +1，于是**每次检定把这个数推高 2**，越认真检定的局
+            # 越像在打转，而这个信号的语义恰恰是相反的那件事。
             current_state[STALLED_TURNS_KEY] = load_stalled_turns(current_state) + 1
 
         room.keeper_state = current_state
         if newly:
             await record_event(db, deps, "keeper.visited", {"node_ids": newly})
-        else:
-            # 🔴 `record_event` 里那次 commit 此前是**唯一**的提交点，于是"没去新
-            # 地方"这一支直接返回、什么都不落库。加了停滞计数之后那一支也有东西
-            # 要写了——恰恰是最需要写的那一支（原地打转的每一轮）。
-            await db.commit()
+        # 🔴 这条事件**也是**上面那个「一拍只计一次」的游标：它落库之后，同一拍
+        # 里后续的执行就能看见"这一拍已经算过了"。`record_event` 只写库不推 WS，
+        # 所以它不进 `AMBIENT_WS_EVENTS` 那张逐个列出的表。
+        await record_event(db, deps, PROGRESS_EVENT, {"advanced": advanced})
     return newly
 
 
@@ -111,7 +130,11 @@ async def execute_closure(
     issues: list[str] = []
 
     try:
-        newly = await _record_progress(deps, clues_revealed=bool(facts.clues_revealed_this_turn))
+        newly = await _record_progress(
+            deps,
+            clues_revealed=bool(facts.clues_revealed_this_turn),
+            world_advanced=bool(facts.world_advanced_this_turn),
+        )
     except KeeperToolError as exc:
         issues.append(f"到过的地方未记账：{exc}")
         newly = []

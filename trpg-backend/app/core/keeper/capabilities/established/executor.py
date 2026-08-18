@@ -55,6 +55,11 @@ async def execute_established(
         room.keeper_state = state
         await db.commit()
 
+    # 记下一条永久后果 = 世界往前走了一步。`closure`(85) 拿它算「无进展轮数」
+    # ——那个数原来只认「去新节点 / 揭新线索」，于是这一类推进全被算成打转。
+    if report:
+        facts.world_advanced_this_turn = True
+
     if len(table) > ESTABLISHED_SOFT_LIMIT:
         # 观测，不是限流：条数失控说明模型在拿这张表当便签本，那时该查的是
         # "它把什么塞进来了"，而不是给这张表加裁剪。

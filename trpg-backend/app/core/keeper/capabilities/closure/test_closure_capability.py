@@ -50,6 +50,7 @@ from app.core.keeper.runtime.progress_state import (
     load_stalled_turns,
     load_visited_nodes,
 )
+from app.models.event import Event
 from app.models.room import Character, Player, Room
 
 _TESTS_DIR = next(p for p in Path(__file__).resolve().parents if p.name == "trpg-backend") / "tests"
@@ -289,6 +290,13 @@ async def test_recording_the_same_place_twice_is_a_no_op() -> None:
 # ── 无进展轮数 ───────────────────────────────────────
 
 
+async def _utterance(room_id: str, text: str) -> None:
+    """开新的一拍。「一拍」= 最后一条 `action.submit` 之后（`runtime/beat.py`）。"""
+    async with _session_factory() as db:
+        db.add(Event(room_id=room_id, event_type="action.submit", payload={"utterance": text}))
+        await db.commit()
+
+
 async def test_stalled_turns_count_up_when_nothing_new_happens() -> None:
     """🔴 前三份记账全是存量（还剩多少），回答不了「是不是在原地打转」——
     而真人 KP 判断收尾时数的正是后者。玩家可以一直偏离主线，存量永远不见底。"""
@@ -296,8 +304,52 @@ async def test_stalled_turns_count_up_when_nothing_new_happens() -> None:
         "CLS800", {PLAYER_LOCATION_KEY: "p1@hall", VISITED_NODES_KEY: "hall"}
     )
     for expected in (1, 2, 3):
+        await _utterance(room_id, f"我又站着不动第 {expected} 次")
         await execute_closure(_deps(room_id, player_id), KeeperDecision(), TurnFacts())
         assert load_stalled_turns(await _state_of(room_id)) == expected
+
+
+async def test_one_beat_only_counts_once_however_many_adjudications_it_takes() -> None:
+    """🔴 **2026-08-18 真机**：19 拍里这个数一度到 15。
+
+    一次玩家发言会引发多次裁决——每掷完一批骰子就有一次结算叙事，而它本身
+    又是一次完整裁决。原来每次执行都 +1，于是**每次检定把这个数推高 2**：
+    越认真检定的局越像在原地打转，而这个信号的语义恰恰相反。
+
+    **变异检验**：把 `_record_progress` 里那句 `elif not await
+    happened_this_beat(...)` 改回 `else`，这条当场红（会数到 3）。
+    """
+    room_id, player_id = await _seed(
+        "CLS801", {PLAYER_LOCATION_KEY: "p1@hall", VISITED_NODES_KEY: "hall"}
+    )
+    await _utterance(room_id, "我打开手电筒看一下里面有什么")
+    for _ in range(3):  # 一拍里的三次裁决（首轮 + 两次结算叙事）
+        await execute_closure(_deps(room_id, player_id), KeeperDecision(), TurnFacts())
+    assert load_stalled_turns(await _state_of(room_id)) == 1
+
+    await _utterance(room_id, "我再往里走两步")
+    await execute_closure(_deps(room_id, player_id), KeeperDecision(), TurnFacts())
+    assert load_stalled_turns(await _state_of(room_id)) == 2, "新的一拍要照常算"
+
+
+async def test_the_world_moving_forward_counts_as_progress() -> None:
+    """🔴 **2026-08-18 真机**：那一局目睹了枪杀、拿到主线线索、触发了绑架议程、
+    开合了 4 条悬而未决，按「去新节点 / 揭新线索」两样的口径**一样都不算进展**。
+
+    `world_advanced_this_turn` 由 `open_threads`(55)/`established`(56)/
+    `agenda`(60) 发布——它们都在 `closure`(85) 之前跑完。
+
+    **变异检验**：把 `advanced` 里的 `or world_advanced` 去掉，这条当场红。
+    """
+    room_id, player_id = await _seed(
+        "CLS802",
+        {PLAYER_LOCATION_KEY: "p1@hall", VISITED_NODES_KEY: "hall", STALLED_TURNS_KEY: "6"},
+    )
+    await _utterance(room_id, "我把日志交给警察")
+    await execute_closure(
+        _deps(room_id, player_id), KeeperDecision(), TurnFacts(world_advanced_this_turn=True)
+    )
+    assert load_stalled_turns(await _state_of(room_id)) == 0
 
 
 async def test_going_somewhere_new_resets_the_stall_counter() -> None:

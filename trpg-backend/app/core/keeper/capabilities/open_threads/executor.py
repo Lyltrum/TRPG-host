@@ -27,7 +27,7 @@ def _same_text(left: str | None, right: str | None) -> bool:
 
 
 async def execute_open_threads(
-    deps: KeeperDeps, decision: BaseModel, _facts: TurnFacts
+    deps: KeeperDeps, decision: BaseModel, facts: TurnFacts
 ) -> tuple[list[str], list[str]]:
     """先关后开，一次写库。
 
@@ -96,6 +96,12 @@ async def execute_open_threads(
         room.keeper_state = {**state, OPEN_THREADS_KEY: table, OPEN_THREADS_SEQ_KEY: seq}
         # 留痕**也是**这里唯一的 commit（record_event 负责提交，同 agenda）。
         await record_event(db, deps, "keeper.threads", {"opened": opened, "resolved": resolved})
+
+    # 开出一条新处境、或者了结一条老的，都算世界往前走了一步。`closure`(85)
+    # 读它算「无进展轮数」——那个数原来只认「去新节点 / 揭新线索」，于是这一类
+    # 推进全被算成原地打转（2026-08-18 真机）。
+    if report:
+        facts.world_advanced_this_turn = True
 
     if len(table) > OPEN_THREADS_SOFT_LIMIT:
         # 只报，不裁剪：局面块必须全量列出，藏起来的模型看不见就会重开一条。

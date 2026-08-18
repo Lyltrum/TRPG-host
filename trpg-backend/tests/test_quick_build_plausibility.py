@@ -180,3 +180,79 @@ def test_weapon_skills_only_come_from_explicit_occupation_slots(base_by_id) -> N
 
     assert not leaked, f"武器专精从随机取材漏了出来：{leaked[:5]}"
     assert from_slots > 0, "一张卡都没从职业槽拿到武器——过滤过头了，该有枪的职业也没枪了"
+
+
+# ── 核心技能加权（2026-08-18 两局真机） ────────────────────────────
+
+#: 分布断言用的样本量。比 `_SAMPLE` 大：这里断的是比例，不是"一次都不许出现"。
+#: 种子固定 ⇒ 每次跑同一批卡，**不会因为随机而闪红**。
+_WEIGHT_SAMPLE = 200
+
+#: 「这张卡查得了案吗」的最低标准：这四项里至少点过一项。
+_INVESTIGATIVE_CORE = ("spot-hidden", "listen", "library-use", "psychology")
+
+
+def _pointed(sheet, skill_id: str, base_by_id: dict[str, object]) -> bool:
+    base = base_by_id.get(skill_id)
+    value = (sheet.skills or {}).get(skill_id, 0)
+    return value > base if isinstance(base, int) else value > 0
+
+
+def test_core_skills_are_favoured_by_random_interest(base_by_id) -> None:
+    """🔴 兴趣点得偏向「COC 调查员十有八九会点的那几项」。
+
+    **起点是两局真机**（2026-08-18）：守秘人反复要求侦察、聆听、追踪、话术，
+    而一键建出来的卡这几项全是基础值 —— 目标值 5 或 10，第二局五次检定成功
+    一次。根因是兴趣点在**全部**非职业技能里等概率 `rng.sample`，
+    `乘骑`/`炮术` 和 `侦察` 一样容易被选中。
+
+    实测（300 张）：加权前侦察 46%、加权后 69%。这里的门槛取 60%，
+    卡在两者之间 —— 把权重改回 1 会当场变红。
+    """
+    pointed = sum(
+        _pointed(roll_character_sheet(seed=seed), "spot-hidden", base_by_id)
+        for seed in range(_WEIGHT_SAMPLE)
+    )
+    rate = pointed / _WEIGHT_SAMPLE
+    assert rate >= 0.60, f"侦察只有 {rate:.0%} 的卡点过，兴趣点没有偏向核心技能"
+
+
+def test_almost_every_sheet_can_actually_investigate(base_by_id) -> None:
+    """一张「四项调查核心一项都没点」的卡，玩调查模组时寸步难行。
+
+    加权前 10%，加权后 1%。门槛取 5%。
+    """
+    blind = [
+        seed
+        for seed in range(_WEIGHT_SAMPLE)
+        if not any(
+            _pointed(roll_character_sheet(seed=seed), sid, base_by_id)
+            for sid in _INVESTIGATIVE_CORE
+        )
+    ]
+    rate = len(blind) / _WEIGHT_SAMPLE
+    assert rate <= 0.05, f"{rate:.0%} 的卡四项调查核心一项都没点（种子 {blind[:5]}…）"
+
+
+def test_the_weighting_is_never_a_floor(base_by_id) -> None:
+    """🔴 **是加权，不是保底**（用户 2026-08-18 拍板的那一半）。
+
+    保底能把覆盖率钉到 100%，代价是每张一键卡长得一模一样；而一键建卡是
+    **起点不是终点**（生成完还能从准备页回向导里自己调）。所以这条守的是
+    反方向：**不许**有人把它"改进"成人人都有侦察。
+
+    两个断言缺一不可：核心技能必须有卡**没有**它，非核心技能必须有卡**有**它。
+
+    🔴 **验它的时候别拿"把权重开到很大"当变异体**：核心表有十来项在抢
+    `_INTEREST_SKILL_COUNT` 个名额，权重再大侦察也有一半几率落选 —— 那不是保底。
+    真正的变异体是**代码硬塞**（`interest_targets[-1] = "spot-hidden"`），
+    那个当场让这条红。
+    """
+    sheets = [roll_character_sheet(seed=seed) for seed in range(_WEIGHT_SAMPLE)]
+
+    without_core = [s for s in sheets if not _pointed(s, "spot-hidden", base_by_id)]
+    assert without_core, "每张卡都有侦察 —— 这是保底，不是加权"
+
+    # 对照：一项**不在**核心表里的普通技能仍然抽得到，说明池子没被核心表垄断
+    with_plain = [s for s in sheets if _pointed(s, "ride", base_by_id)]
+    assert with_plain, "非核心技能一张卡都没抽到 —— 加权把池子压死了"

@@ -91,6 +91,53 @@ _OUT_OF_ERA_SKILL_IDS = frozenset({"pilot-spacecraft"})
 _COMBAT_CATEGORY = "combat"
 _COMBAT_SKILLS_OK_AT_RANDOM = frozenset({"dodge", "fighting-brawl"})
 
+#: 兴趣点随机取材时**权重更高**的技能：一个 COC 调查员十有八九会点的那几项。
+#:
+#: 🔴 **是加权，不是保底**（2026-08-18 用户拍板）：保底能把覆盖率钉到 100%，
+#: 代价是每张一键卡长得一模一样。而一键建卡是**起点不是终点**——生成完还能从
+#: 准备页回向导里自己调（`handleEditCharacter`），所以宁可留下个性。
+#:
+#: 实测（2026-08-18，两局真机 + 300 张采样）：不加权时兴趣点是在**全部**非职业
+#: 技能里 `rng.sample`，`乘骑`/`炮术` 和 `侦察` 等概率 ⇒ 侦察只有 42% 的卡点过，
+#: 12% 的卡「侦察/聆听/图书馆使用/心理学」一项都没有。而守秘人两局里反复要求
+#: 侦察、聆听、追踪、话术——玩家掷的是没点过的技能，目标值 5 或 10。
+#:
+#: ⚠️ 跟上面两张表方向相反：那两张是**排除**（不适合随机塞给玩家），这张是
+#: **偏向**（更该塞给玩家）。三张都只作用于随机取材，职业技能一概不受影响。
+_CORE_SKILL_IDS = frozenset(
+    {
+        # 调查核心
+        "spot-hidden",
+        "listen",
+        "library-use",
+        "psychology",
+        # 社交：四项挑一项就够用，但一项都没有会在 NPC 面前完全失能
+        "persuade",
+        "fast-talk",
+        "charm",
+        "intimidate",
+        # 常用行动
+        "stealth",
+        "first-aid",
+        "track",
+    }
+)
+
+#: 核心技能在随机取材里的权重倍数。
+#:
+#: 🔴 **这个数是量出来的，不是拍的**（2026-08-18，每档 300 张）。兴趣点只挑
+#: `_INTEREST_SKILL_COUNT` 项，而核心表有十来项在互相竞争，所以权重要给足才看得出：
+#:
+#:     权重   侦察   调查四项全无   社交四项全无   乘骑(对照)
+#:     ×1     46%       10%           18%          16%
+#:     ×3     52%        6%            9%          14%
+#:     ×10    69%        1%            3%          11%
+#:     ×20    74%        1%            2%           9%
+#:
+#: 取 ×10：真正要治的是「这张卡一项调查技能都没有」（10% → 1%），而对照组
+#: `乘骑` 仍有 11% ⇒ 卡还是各不相同。再往上收益只剩几个百分点。
+_CORE_SKILL_WEIGHT = 10
+
 
 def _unsuitable_for_random_pick(skill: SkillSpec) -> bool:
     """这项技能**不适合被随机分配**（职业技能与明确候选槽不受影响）。
@@ -288,7 +335,18 @@ def _allocate_skills(
     if interest_budget > 0 and candidates:
         # 挑几项当"个人爱好"：全摊到所有技能上会摊出一张每项 +2 的糊卡，
         # 只摊一两项又会顶上限白丢点数。
-        interest_targets = rng.sample(candidates, k=min(_INTEREST_SKILL_COUNT, len(candidates)))
+        # 🔴 **加权无放回抽样**（Efraimidis–Spirakis）：给每项算一个
+        # `random() ** (1/权重)` 的键，取最大的几项。权重越大键越大 ⇒ 越容易
+        # 被选中，但**不保证**被选中——这正是"只加权不保底"要的形状。
+        # 不用"把核心技能在池子里重复三遍再 sample"：那样会抽到重复项，
+        # 还得循环补齐，反而更长。
+        keys = {
+            sid: rng.random() ** (1 / (_CORE_SKILL_WEIGHT if sid in _CORE_SKILL_IDS else 1))
+            for sid in candidates
+        }
+        interest_targets = sorted(candidates, key=lambda sid: keys[sid], reverse=True)[
+            : min(_INTEREST_SKILL_COUNT, len(candidates))
+        ]
         _spend_points(interest_budget, interest_targets, skills, by_id, attributes)
     return skills
 

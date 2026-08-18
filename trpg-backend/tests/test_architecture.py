@@ -371,3 +371,56 @@ def test_the_action_lock_is_only_released_by_held() -> None:
         "`async with action_lock_manager.held(room_id, token):`：\n"
         + "\n".join(f"  {o}" for o in offenders)
     )
+
+
+def test_the_ws_layer_never_reads_the_room_directly() -> None:
+    """🔴 `controller/ws.py` 里不许直接 `db.get(Room, ...)`，一律走 `_fresh_room`。
+
+    理由在 `_fresh_room` 的 docstring：一条 WS 消息的 session 在这一拍开始前就
+    读过 Room，而这一拍的写发生在 narrator 自己的 session 里；`expire_on_commit=
+    False` + identity map ⇒ 之后每一次 `db.get` 都拿到**一拍之前**的快照。
+    2026-08-18 真机：整局 20 条 `keeper.phase` 一条 `finished` 都没有。
+
+    这条守的不是今天这 4 处（已经改完了），是**第 5 处**。它是典型的「逐个
+    列出的地方，加一项就漏一项」——新加一个"回合结束要推给玩家的东西"时，
+    `db.get(Room, ...)` 是最顺手的写法，而它错在哪儿一点都不显眼。
+    """
+    path = APP / "controller" / "ws.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        # 只认 `<something>.get(Room, ...)`；`_fresh_room` 自己那句在豁免名单里
+        if not isinstance(func, ast.Attribute) or func.attr != "get":
+            continue
+        if not node.args or not isinstance(node.args[0], ast.Name):
+            continue
+        if node.args[0].id != "Room":
+            continue
+        offenders.append(str(node.lineno))
+
+    allowed = _fresh_room_lineno(tree)
+    stray = [line for line in offenders if int(line) != allowed]
+    assert not stray, (
+        "这些地方直接读了 Room，会拿到这一拍之前的状态——改用 `_fresh_room(db, room_id)`：\n"
+        + "\n".join(f"  ws.py:{line}" for line in stray)
+    )
+
+
+def _fresh_room_lineno(tree: ast.Module) -> int:
+    """`_fresh_room` 自己那一句 `db.get(Room, ...)` 的行号（唯一豁免）。"""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_fresh_room":
+            for inner in ast.walk(node):
+                if (
+                    isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Attribute)
+                    and inner.func.attr == "get"
+                    and inner.args
+                    and isinstance(inner.args[0], ast.Name)
+                    and inner.args[0].id == "Room"
+                ):
+                    return inner.lineno
+    raise AssertionError("`_fresh_room` 不见了 —— 它是 ws.py 唯一允许读 Room 的地方")

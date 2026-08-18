@@ -266,6 +266,46 @@ async def _broadcast_keeper_busy(room_id: str, busy: bool) -> None:
     await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
 
 
+async def _fresh_room(db: AsyncSession, room_id: str):
+    """读**这一拍执行完之后**的房间状态。
+
+    🔴 **ws.py 里不许直接 `db.get(Room, ...)`**，一律走这里（`test_architecture`
+    有 AST 守护钉着）。
+
+    ## 为什么（2026-08-18 真机，两局都撞到）
+
+    一条 WS 消息的形状是这样的：
+
+        async with async_session_factory() as db:      # 这条消息自己的 session
+            room = await room_service.find_room_by_id(db, room_id)   # ① 进 identity map
+            await _ingest_utterance(db, ...)           # ② record_event 里 commit 了
+            await _run_turn(db, ...)                   # ③ narrator 用**自己的**
+                                                       #    session 写 keeper_state 并提交
+            await _push_after_turn(db, ...)            # ④ 又在**同一个** db 上读
+
+    `db.get()` 先查 identity map，命中就**不发 SQL**；而 `core/db.py` 有意设了
+    `expire_on_commit=False`（②那次 commit 因此不会让对象失效）。于是 ④ 读到的
+    是 ① 那一刻的快照 —— **整整落后一拍**。
+
+    实测后果三样，一样比一样重：
+      - `party.update` 的位置落后一拍（下一拍会自己纠正）；
+      - `keeper.phase` 落后一拍，**而这一条不会自己纠正**：`finished` 那一拍
+        后面没有下一拍了。第二局库里已经是 `finished`/`truth`，整局 20 条
+        `keeper.phase` 一条 `finished` 都没有，玩家屏幕永远停在「调查中」；
+      - `_audience_at_speaker_location` 拿它算**投递受众与隐匿名单** ⇒ 这一拍
+        刚移动过的人，检定卡按**移动前**的同处关系投递（分头局的隔离泄漏）。
+
+    🔴 **重连之所以是好的，恰恰因为它是新 session** —— 08-16 修「重连不补发
+    `keeper.phase`」时那一半是对的，但它把这第二个根因盖住了两天。
+
+    `populate_existing=True` 就够：②那次 commit 已经把事务关掉了，重新 SELECT
+    拿得到新值（三种候选修法都在真实形状下验过，见 `test_ws_reads_fresh_state`）。
+    """
+    from app.models.room import Room
+
+    return await db.get(Room, room_id, populate_existing=True)
+
+
 async def _push_keeper_phase(
     db: AsyncSession,
     websocket: WebSocket,
@@ -280,9 +320,8 @@ async def _push_keeper_phase(
     玩家连说三次「结束了吧」，界面毫无变化——他没法知道这一局到底结没结束。
     """
     from app.core.keeper.runtime.phase import load_ending_id, load_phase
-    from app.models.room import Room
 
-    room = await db.get(Room, room_id)
+    room = await _fresh_room(db, room_id)
     if room is None:
         return
     payload = KeeperPhasePayload(
@@ -353,9 +392,9 @@ async def _push_party_update(
 
     from app.core.keeper.runtime.location_state import group_players
     from app.core.keeper.runtime.pending import MERGE_CONFIRM_KIND, pending_decision_manager
-    from app.models.room import Player, Room
+    from app.models.room import Player
 
-    room = await db.get(Room, room_id)
+    room = await _fresh_room(db, room_id)
     if room is None:
         return
     keeper_state = room.keeper_state
@@ -441,9 +480,9 @@ async def _audience_at_speaker_location(
 
     from app.core.keeper.runtime.location_state import group_players, load_hidden_players
     from app.core.keeper.runtime.pending import MERGE_CONFIRM_KIND, pending_decision_manager
-    from app.models.room import Player, Room
+    from app.models.room import Player
 
-    room = await db.get(Room, room_id)
+    room = await _fresh_room(db, room_id)
     keeper_state = room.keeper_state if room is not None else None
     if private or player_id in load_hidden_players(keeper_state):
         return [player_id]
@@ -563,7 +602,14 @@ async def _current_san_of(db: AsyncSession | None, player_id: str) -> int | None
 
     # 「一个玩家在一个房间只有一张卡」已经由唯一约束保证（迁移 e2b91f4c7a56），
     # 所以这里不需要 ORDER BY 去挑"哪张算数"。
-    character = await db.scalar(select(Character).where(Character.player_id == player_id))
+    # 🔴 `populate_existing`：同 `_fresh_room` 的理由 —— 一条消息里这个函数会被
+    # 调用多次（一拍两个检定就够了），而中间那次结算会在**另一个** session 里改
+    # SAN。不加的话第二次拿到的是第一次那个旧对象。
+    character = await db.scalar(
+        select(Character)
+        .where(Character.player_id == player_id)
+        .execution_options(populate_existing=True)
+    )
     if character is None:
         return None
     try:
@@ -767,9 +813,8 @@ async def _resend_keeper_phase(
     守的那条"握手逐字不变"因此仍然成立。
     """
     from app.core.keeper.runtime.phase import load_phase
-    from app.models.room import Room
 
-    room = await db.get(Room, room_id)
+    room = await _fresh_room(db, room_id)
     if room is None or load_phase(room.keeper_state) is None:
         return
     await _push_keeper_phase(db, websocket, room_id, only_player_id=player_id)

@@ -518,6 +518,7 @@ async def create_pending_skill_checks(
                 opposed_opponent=opposed_opponent,
                 opposed_value=opposed_value,
                 target=target_value,
+                node=node_id,
             )
         )
     return pending, issues
@@ -561,6 +562,12 @@ async def _tally_attempt(
 
     只在**站在某个地点上**时记：人在图外（指针为空）时没有地方可挂，不硬编一个。
     技能用 `pending.skill`——它是待掷记录里那个名字，跟局面块里列出来的同源。
+
+    🔴 **地点取的是发起那一刻的，不是结算这一刻的**（2026-08-18 真机）。
+    同 `reveals` 的先例：待掷期间场景会变。实测一拍之内两次力量检定——同一个
+    对手、同一次拉扯——被记进了两个不同节点，因为中间那次结算叙事改了
+    `当前场景节点`。记账键不稳到连「同一拍」都保不住时，架在它上面的门
+    （少于 2 次不提、只列当前这一处）就全都不可靠。
     """
     from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
 
@@ -572,7 +579,10 @@ async def _tally_attempt(
         if room is None:
             return
         state = dict(room.keeper_state or {})
-        here = state.get(CURRENT_NODE_KEY)
+        # 显式降级：这个字段是 2026-08-18 加的，升级那一刻**已经在队列里**的
+        # 待掷记录没有它。那时退回旧口径（结算时的位置）——精度差一点，
+        # 但不至于整条记账断掉。
+        here = pending.node or state.get(CURRENT_NODE_KEY)
         if not here:
             return
         state[CHECK_ATTEMPTS_KEY] = record_attempt(

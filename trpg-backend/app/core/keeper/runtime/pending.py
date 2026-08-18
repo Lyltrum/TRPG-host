@@ -133,6 +133,7 @@ class PendingDecision:
         opposed_opponent: str | None = None,
         opposed_value: int | None = None,
         target: int | None = None,
+        node: str | None = None,
         decision_id: str | None = None,
     ) -> PendingDecision:
         """造一项掷骰决定。**payload 的形状只在这里拼**，别处一律走属性读。
@@ -159,6 +160,7 @@ class PendingDecision:
                 "opposed_opponent": opposed_opponent,
                 "opposed_value": opposed_value,
                 "target": target,
+                "node": node,
             },
         )
 
@@ -270,6 +272,18 @@ class PendingDecision:
         在创建待掷记录时就绑定，而不是结算时再去查——待掷期间场景可能已经变了。
         """
         return tuple(self.payload.get("reveals") or ())
+
+    @property
+    def node(self) -> str | None:
+        """发起这次检定时玩家站在哪个节点上。
+
+        跟 `reveals` 同一个理由，也同一个先例：**待掷期间场景会变**。
+        2026-08-18 真机量到的：一拍之内两次力量检定（同一个对手、同一次拉扯）
+        被记进了两个不同节点——中间那次结算叙事把 `当前场景节点` 改掉了，而
+        `_tally_attempt` 读的是"结算那一刻"的值。记账键因此不稳定到连
+        「同一拍」都保不住，任何架在它上面的门都不可靠。
+        """
+        return self.payload.get("node")
 
     @property
     def opposed_opponent(self) -> str | None:

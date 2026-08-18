@@ -18,6 +18,7 @@ from app.core.keeper.capabilities.skill_check.attempts import (
 )
 from app.core.keeper.contract.module_loader import ScenarioModule
 from app.core.keeper.contract.registry import SituationContext
+from app.core.keeper.runtime.pending import PendingDecision
 from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
 
 _MODULE = ScenarioModule.model_validate(
@@ -90,6 +91,19 @@ def test_the_block_says_what_to_do_not_just_the_number() -> None:
     assert "不要再要同一个检定" in text
     # 走得通的出路必须写出来——否则这条就变成"卡死玩家"
     assert "情境实质改变" in text
+
+
+def test_the_roll_remembers_where_it_was_started() -> None:
+    """发起那一刻的地点要绑在待掷记录上（记账真的用它，见 `test_attempt_node.py`）。"""
+    pending = PendingDecision.roll(
+        kind="skill",
+        room_id="room-1",
+        player_id="p-1",
+        player_nickname="周砚",
+        skill="力量",
+        node="hall",
+    )
+    assert pending.node == "hall"
 
 
 def test_a_bad_record_never_breaks_the_block() -> None:

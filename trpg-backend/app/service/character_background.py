@@ -28,17 +28,26 @@ logger = structlog.get_logger()
 _TOP_SKILLS = 6
 
 
-def _module_setting(scenario_id: str | None) -> tuple[str | None, str | None]:
-    """按房间选的模组取 `meta.era` / `meta.tone`。取不到就 (None, None)。
+async def module_era_and_tone(
+    db: AsyncSession, scenario_id: str | None
+) -> tuple[str | None, str | None]:
+    """房间选的模组的年代与基调。取不到就 `(None, None)`。
 
-    🔴 只读这两个标量字段，绝不返回 `ScenarioModule` 本身——调用方拿不到剧本，
-    就不可能不小心把谜底喂进背景里（同 `background_writer` 模块 docstring）。
+    🔴 只返回这两个标量，绝不返回 `ScenarioModule` 本身——调用方拿不到剧本，
+    就不可能不小心把谜底喂进请求里（同 `background_writer` 与
+    `core/equipment_check.py` 的保密边界那一段）。
+
+    🔴 走 `resolve_module` 而不是 `resolve_structured_path`：**导入的模组没有
+    文件路径**，只按路径找会让所有导入模组的年代恒为空。
+
+    🔴 **写背景与装备审核共用这一个**：两处都在回答同一个问题，各写一份就会像
+    2026-08-18 之前那样——审核那份走了接缝、写背景那份还停在按路径找。
 
     模组目录是 gitignored 的第三方内容，CI 和全新 clone 上都不存在；那时这里
-    静默返回 (None, None)，生成器退回通用的年代设定。
+    返回 (None, None)，调用方退回通用的年代设定。
     """
-    from app.core.keeper.contract.catalog import default_modules_dir, resolve_structured_path
-    from app.core.keeper.contract.module_loader import load_module
+    from app.core.keeper.contract.catalog import default_modules_dir
+    from app.core.keeper.contract.source import resolve_module
 
     settings = get_settings()
     modules_dir = (
@@ -46,15 +55,14 @@ def _module_setting(scenario_id: str | None) -> tuple[str | None, str | None]:
         if settings.keeper_modules_dir
         else default_modules_dir()
     )
-    path = resolve_structured_path(modules_dir, scenario_id)
-    if path is None:
-        return None, None
     try:
-        meta = load_module(path).meta
+        resolved = await resolve_module(db, modules_dir, scenario_id)
     except Exception as exc:  # noqa: BLE001 — 模组坏了不该连累建卡
-        logger.warning("background_module_setting_failed", error=str(exc))
+        logger.warning("module_era_and_tone_failed", error=str(exc))
         return None, None
-    return meta.era, meta.tone
+    if resolved is None:
+        return None, None
+    return resolved.module.meta.era, resolved.module.meta.tone
 
 
 def _named_top_skills(skills: dict[str, int]) -> list[tuple[str, int]]:
@@ -87,7 +95,7 @@ async def generate_background(
         return None
 
     room = await db.get(Room, room_id)
-    era, tone = _module_setting(room.scenario_id if room is not None else None)
+    era, tone = await module_era_and_tone(db, room.scenario_id if room is not None else None)
 
     background = await writer.write(
         build_prompt(

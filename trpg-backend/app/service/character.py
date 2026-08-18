@@ -63,7 +63,7 @@ from app.dto.character import (
 from app.dto.game import RulesetRead
 from app.models.room import Character, Player, Room
 from app.models.user import UserCharacterTemplate
-from app.service.character_background import generate_background
+from app.service.character_background import generate_background, module_era_and_tone
 from app.service.room import (
     RoomAuthorizationError,
     find_room_by_id,
@@ -368,39 +368,6 @@ async def _resolve_ruleset(db: AsyncSession, room: Room) -> RulesetRead:
     return build_coc7_ruleset()
 
 
-async def _module_era_and_tone(
-    db: AsyncSession, scenario_id: str | None
-) -> tuple[str | None, str | None]:
-    """房间选的模组的年代与基调。取不到就 `(None, None)`。
-
-    🔴 只返回这两个标量，绝不返回 `ScenarioModule` 本身——同
-    `core/equipment_check.py` 的保密边界那一段：调用方拿不到剧本，就不可能把
-    谜底喂进审核请求里。
-
-    走 `resolve_module` 而不是 `resolve_structured_path`：**导入的模组没有文件
-    路径**，只按路径找会让所有导入模组的年代恒为空，审核于是对它们永远宽松。
-    """
-    from pathlib import Path
-
-    from app.core.keeper.contract.catalog import default_modules_dir
-    from app.core.keeper.contract.source import resolve_module
-
-    settings = get_settings()
-    modules_dir = (
-        Path(settings.keeper_modules_dir).expanduser().resolve()
-        if settings.keeper_modules_dir
-        else default_modules_dir()
-    )
-    try:
-        resolved = await resolve_module(db, modules_dir, scenario_id)
-    except Exception as exc:  # noqa: BLE001 — 模组坏了不该连累建卡
-        logger.warning("equipment_check_module_failed", error=str(exc))
-        return None, None
-    if resolved is None:
-        return None, None
-    return resolved.module.meta.era, resolved.module.meta.tone
-
-
 async def _equipment_issues(
     db: AsyncSession, room: Room, character: Character
 ) -> list[ValidationIssue]:
@@ -420,7 +387,7 @@ async def _equipment_issues(
     if not api_key:
         return []
 
-    era, tone = await _module_era_and_tone(db, room.scenario_id)
+    era, tone = await module_era_and_tone(db, room.scenario_id)
     verdict = await EquipmentChecker(api_key).check(
         build_equipment_prompt(
             equipment=items,

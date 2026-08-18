@@ -20,7 +20,8 @@
 
 ## 🔴 只吃元数据，不吃剧本正文
 
-喂给模型的模组信息只有 `meta.era` 和 `meta.tone`，理由与 `background_writer`
+喂给模型的模组信息只有 `meta.era`（`tone` 2026-08-18 撤掉，理由见
+`service/character_background.module_era`），理由与 `background_writer`
 完全相同：版权红线（第三方模组正文不得离开 `模组资料/`），以及**建卡阶段的
 玩家不该知道谜底**。参数表就是这个功能的保密边界。
 
@@ -114,7 +115,6 @@ def build_prompt(
     birthplace: str | None,
     credit_rating: int | None,
     era: str | None,
-    tone: str | None,
 ) -> str:
     """组装审核输入。
 
@@ -129,7 +129,6 @@ def build_prompt(
         # 信用评级同时代表"买得起什么"和"什么阶层"，是身份那一类判断的主要依据。
         f"信用评级：{credit_rating if credit_rating is not None else '未填写'}",
         f"故事的时代：{era or '未说明'}",
-        f"故事的基调：{tone or '未说明'}",
         "",
         "随身装备清单：",
     ]

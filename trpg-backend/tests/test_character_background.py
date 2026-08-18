@@ -134,23 +134,36 @@ def test_to_detail_drops_empty_fields_and_never_writes_injuries() -> None:
 
 
 def test_prompt_carries_no_scenario_content() -> None:
-    """🔴 保密边界就是这个参数表：模组只进来 era/tone 两个标量。"""
+    """🔴 保密边界就是这个参数表：模组只进来 `era` **一个**标量。
+
+    2026-08-18 撤掉了 `tone`：那个字段的原生语义是 KP 侧的（`render_overview`
+    把它跟绝密真相并排渲进守秘人 prompt），六份模组里《追书人》往里写了谜底，
+    而这里的产出玩家直接看得到。判据见 `character_background.module_era`。
+    """
     prompt = build_prompt(
         name="凌铭辉",
         occupation="记者",
         age=30,
         top_skills=[("侦察", 70)],
         era="1920 年代",
-        tone="调查悬疑",
     )
     assert "1920 年代" in prompt
     assert "侦察 70" in prompt
 
 
+def test_the_prompt_has_no_slot_for_kp_facing_tone() -> None:
+    """🔴 保密靠**拿不到**，不是靠调用方记得别传。
+
+    参数表里没有 `tone` 这个口子 —— 想把它塞进来会当场 TypeError，而不是
+    悄悄多出一行喂给玩家侧的模型。
+    """
+    import inspect
+
+    assert "tone" not in inspect.signature(build_prompt).parameters
+
+
 def test_prompt_falls_back_when_the_module_has_no_era() -> None:
-    prompt = build_prompt(
-        name="凌铭辉", occupation="记者", age=30, top_skills=[], era=None, tone=None
-    )
+    prompt = build_prompt(name="凌铭辉", occupation="记者", age=30, top_skills=[], era=None)
     assert "1920 年代美国新英格兰" in prompt
 
 

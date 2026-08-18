@@ -6,7 +6,11 @@
 而装备审核那份两天前就已经走了 `resolve_module` 接缝。同一个问题两份取值、
 其中一份是旧写法，正是「改了口径只改一半」。
 
-修法是两处共用 `character_background.module_era_and_tone`。
+修法是两处共用 `character_background.module_era`。
+
+🔴 **2026-08-18 晚又收窄了一次**：它原来同时返回 `meta.tone`，而那个字段是
+KP 侧的（跟绝密真相并排渲进守秘人 prompt），六份模组里有一份往里写了谜底。
+玩家侧的两个消费方现在只拿得到 `era`。
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from sqlalchemy.pool import NullPool
 from app.core.config import Settings
 from app.core.db import Base
 from app.models.content import Game, GameSystem, ImportedModule, Scenario
-from app.service.character_background import module_era_and_tone
+from app.service.character_background import module_era
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "keeper_module.json"
 
@@ -76,16 +80,15 @@ async def test_imported_module_still_has_an_era(imported_only) -> None:
     factory, scenario_id, meta = imported_only
 
     async with factory() as db:
-        era, tone = await module_era_and_tone(db, scenario_id)
+        era = await module_era(db, scenario_id)
 
     assert era == meta["era"], "导入的模组没有文件路径，取值必须走接缝而不是按路径找"
-    assert tone == meta["tone"]
 
 
 async def test_unknown_scenario_degrades_to_none(imported_only) -> None:
-    """取不到就 `(None, None)`——建卡不该因为模组解析不出来而失败。"""
+    """取不到就 `None`——建卡不该因为模组解析不出来而失败。"""
     factory, _scenario_id, _meta = imported_only
 
     async with factory() as db:
-        assert await module_era_and_tone(db, str(uuid.uuid4())) == (None, None)
-        assert await module_era_and_tone(db, None) == (None, None)
+        assert await module_era(db, str(uuid.uuid4())) is None
+        assert await module_era(db, None) is None

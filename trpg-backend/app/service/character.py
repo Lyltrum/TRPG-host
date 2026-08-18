@@ -63,7 +63,7 @@ from app.dto.character import (
 from app.dto.game import RulesetRead
 from app.models.room import Character, Player, Room
 from app.models.user import UserCharacterTemplate
-from app.service.character_background import generate_background, module_era_and_tone
+from app.service.character_background import generate_background, module_era
 from app.service.room import (
     RoomAuthorizationError,
     find_room_by_id,
@@ -387,7 +387,7 @@ async def _equipment_issues(
     if not api_key:
         return []
 
-    era, tone = await module_era_and_tone(db, room.scenario_id)
+    era = await module_era(db, room.scenario_id)
     verdict = await EquipmentChecker(api_key).check(
         build_equipment_prompt(
             equipment=items,
@@ -397,7 +397,6 @@ async def _equipment_issues(
             birthplace=character.birthplace,
             credit_rating=(character.skills or {}).get("credit-rating"),
             era=era,
-            tone=tone,
         )
     )
     if verdict is None:

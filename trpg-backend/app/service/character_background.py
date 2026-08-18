@@ -6,7 +6,7 @@ create_ai_player`），而 `character` 已经 import 了 `ai_player`，反过来
 就成环了。
 
 这一层只做"取素材 + 调一次生成器 + 翻译成落库形状"，不含任何 prompt——prompt
-在 `core/background_writer.py`，那里也写着为什么模组只给 era/tone。
+在 `core/background_writer.py`，那里也写着为什么模组只给 era。
 """
 
 from __future__ import annotations
@@ -28,14 +28,23 @@ logger = structlog.get_logger()
 _TOP_SKILLS = 6
 
 
-async def module_era_and_tone(
-    db: AsyncSession, scenario_id: str | None
-) -> tuple[str | None, str | None]:
-    """房间选的模组的年代与基调。取不到就 `(None, None)`。
+async def module_era(db: AsyncSession, scenario_id: str | None) -> str | None:
+    """房间选的模组的**年代与地点**。取不到就 `None`。
 
-    🔴 只返回这两个标量，绝不返回 `ScenarioModule` 本身——调用方拿不到剧本，
+    🔴 只返回这**一个**标量，绝不返回 `ScenarioModule` 本身——调用方拿不到剧本，
     就不可能不小心把谜底喂进请求里（同 `background_writer` 与
     `core/equipment_check.py` 的保密边界那一段）。
+
+    🔴 **`meta.tone` 曾经也在这儿，2026-08-18 撤掉了。** 那个字段的原生语义是
+    **KP 侧的**——`render_overview` 把它跟 `【KP 真相（绝密）】` 并排渲进守秘人
+    的 system prompt，模组作者因此往里写执导笔记。实测六份里《追书人》的 tone
+    是 95 字，直接写着「核心是揭开一个自愿离开人类社会者的真相」「『他过得很
+    满足』带来的怪异感」——而这两个调用方的产出（角色背景、装备审核理由）
+    **玩家直接看得到**。
+
+    这就是「一份数据扮演两个角色」，且两个角色分居保密边界两侧。修法不是过滤
+    （判据只能是长度或关键词，正是「对着一个样本调判据」），是**让玩家侧根本
+    读不到它**——`era` 讲的是时代与地点，那本来就是玩家知道的东西。
 
     🔴 走 `resolve_module` 而不是 `resolve_structured_path`：**导入的模组没有
     文件路径**，只按路径找会让所有导入模组的年代恒为空。
@@ -44,7 +53,7 @@ async def module_era_and_tone(
     2026-08-18 之前那样——审核那份走了接缝、写背景那份还停在按路径找。
 
     模组目录是 gitignored 的第三方内容，CI 和全新 clone 上都不存在；那时这里
-    返回 (None, None)，调用方退回通用的年代设定。
+    返回 `None`，调用方退回通用的年代设定。
     """
     from app.core.keeper.contract.catalog import default_modules_dir
     from app.core.keeper.contract.source import resolve_module
@@ -58,11 +67,11 @@ async def module_era_and_tone(
     try:
         resolved = await resolve_module(db, modules_dir, scenario_id)
     except Exception as exc:  # noqa: BLE001 — 模组坏了不该连累建卡
-        logger.warning("module_era_and_tone_failed", error=str(exc))
-        return None, None
+        logger.warning("module_era_failed", error=str(exc))
+        return None
     if resolved is None:
-        return None, None
-    return resolved.module.meta.era, resolved.module.meta.tone
+        return None
+    return resolved.module.meta.era
 
 
 def _named_top_skills(skills: dict[str, int]) -> list[tuple[str, int]]:
@@ -95,7 +104,7 @@ async def generate_background(
         return None
 
     room = await db.get(Room, room_id)
-    era, tone = await module_era_and_tone(db, room.scenario_id if room is not None else None)
+    era = await module_era(db, room.scenario_id if room is not None else None)
 
     background = await writer.write(
         build_prompt(
@@ -104,7 +113,6 @@ async def generate_background(
             age=age,
             top_skills=_named_top_skills(skills),
             era=era,
-            tone=tone,
         )
     )
     if background is None:

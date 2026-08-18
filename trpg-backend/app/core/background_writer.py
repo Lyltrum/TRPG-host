@@ -8,7 +8,7 @@
 
 ## 🔴 只吃元数据，不吃剧本正文
 
-喂给模型的模组信息只有 `meta.era` 和 `meta.tone`（时代与基调）。`kp_truth`、
+喂给模型的模组信息只有 `meta.era`（时代与地点）。`meta.tone`、`kp_truth`、
 `nodes`、`facts` 一概不碰——一来版权红线（第三方模组正文不得离开
 `模组资料/`），二来**建卡阶段的玩家不该知道谜底**，让写背景的模型读了剧本，
 它写出来的"重要之人"就可能正好是凶手。
@@ -119,22 +119,24 @@ def build_prompt(
     age: int,
     top_skills: list[tuple[str, int]],
     era: str | None,
-    tone: str | None,
 ) -> str:
     """组装写背景用的输入。
 
-    🔴 参数表就是这个功能的保密边界：这里**没有** `ScenarioModule`，只有时代与
-    基调两个标量。想加剧本内容进来时，先回去读模块 docstring。
+    🔴 参数表就是这个功能的保密边界：这里**没有** `ScenarioModule`，只有时代
+    这一个标量。想加剧本内容进来时，先回去读模块 docstring。
+
+    🔴 **`tone` 2026-08-18 撤掉了**：它的原生语义是 KP 侧的（跟绝密真相并排
+    渲进守秘人 prompt），六份模组里有一份往里写了谜底。判据见
+    `service/character_background.module_era`。
     """
     skill_text = "、".join(f"{n} {v}" for n, v in top_skills) or "（没有突出的技能）"
-    setting_parts = [p for p in (era, tone) if p]
-    setting = "；".join(setting_parts) if setting_parts else "1920 年代美国新英格兰"
+    setting = era or "1920 年代美国新英格兰"
     return (
         f"角色名：{name}\n"
         f"职业：{occupation}\n"
         f"年龄：{age}\n"
         f"最擅长的技能：{skill_text}\n"
-        f"故事的时代与基调：{setting}\n\n"
+        f"故事的时代与地点：{setting}\n\n"
         "请为这个调查员写背景。"
     )
 

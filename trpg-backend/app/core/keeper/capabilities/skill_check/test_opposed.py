@@ -9,7 +9,7 @@
 这里验证：
 1. `dice.resolve_opposed` 的三条判定顺序（等级 → 技能值 → 平局判主动方负）；
 2. 目标值越界**跳过整条检定并记 issue**，不悄悄夹紧；
-3. 结算时对手侧真的掷了骰，结果进 detail / check_results；
+3. 结算时对手侧真的掷了骰，结果进 detail 与 `keeper.check` 的落库 payload；
 4. 不传 opposed 时整条路径与此前逐字一致（退化保证）。
 """
 
@@ -264,7 +264,6 @@ async def test_opposed_roll_rolls_both_sides_and_reports_verdict() -> None:
     )
     # 两边的骰子都要出现在给玩家看的文本里
     assert "毒烟" in text and str(detail["opposed_rolled"]) in text
-    assert deps.check_results and "对抗" in deps.check_results[0]
 
 
 async def test_plain_check_is_unchanged_when_no_opposed_given() -> None:

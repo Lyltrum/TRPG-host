@@ -161,9 +161,10 @@ async def test_losing_a_stealth_contest_reveals_the_player() -> None:
     notice = await _settle(deps, _pending(room_id, player_id, skill="潜行", opposed_value=90))
 
     assert notice.opposed_won is False, "种子选错了：这条用例需要主动方输"
+    # 🔴 状态本身就是叙事的载体：局面块「各自所在」按「隐匿中」渲染，下一轮它
+    # 自然读得到。2026-08-18 之前这里还断言过一句本轮文本，而那句话写进的
+    # `deps.check_results` 从来没有读取方。
     assert await _hidden_ids(room_id) == set(), "🔴 潜行对抗输了，人还挂在隐匿里"
-    # 叙事那一拍必须知道他暴露了，否则代码改了状态、故事里他还藏着
-    assert any("被发现" in line for line in deps.check_results)
 
 
 async def test_winning_a_stealth_contest_keeps_the_player_hidden() -> None:
@@ -215,7 +216,6 @@ async def test_a_player_who_was_not_hiding_produces_no_noise() -> None:
     await _settle(deps, _pending(room_id, player_id, skill="潜行", opposed_value=90))
 
     assert await _hidden_ids(room_id) == set()
-    assert not any("被发现" in line for line in deps.check_results)
 
 
 # ── 进入隐匿也归结算（2026-08-15，回归实测）──────────────────
@@ -235,7 +235,6 @@ async def test_a_successful_solo_stealth_roll_enters_hiding() -> None:
 
     assert notice.level not in ("失败", "大失败"), "种子选错了：这条用例需要掷成功"
     assert await _hidden_ids(room_id) == {player_id}
-    assert any("进入隐匿" in line for line in deps.check_results)
 
 
 async def test_a_failed_solo_stealth_roll_does_not_enter_hiding() -> None:
@@ -247,8 +246,6 @@ async def test_a_failed_solo_stealth_roll_does_not_enter_hiding() -> None:
 
     assert notice.level in ("失败", "大失败"), "种子选错了：这条用例需要掷失败"
     assert await _hidden_ids(room_id) == set(), "🔴 潜行没掷过，人却藏起来了"
-    # 叙事必须知道他没藏住，否则代码说他显眼、故事里他还猫着
-    assert any("没藏住" in line for line in deps.check_results)
 
 
 async def test_a_non_stealth_roll_never_touches_hiding() -> None:

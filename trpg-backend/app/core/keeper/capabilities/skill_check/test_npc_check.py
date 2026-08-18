@@ -231,7 +231,17 @@ async def test_the_recorded_check_says_which_npc_rolled(deps: KeeperDeps) -> Non
 
 
 async def test_the_narration_is_told_who_rolled(deps: KeeperDeps) -> None:
-    """叙事那一拍要知道这是谁掷的，否则代码判了、故事里还是玩家在开枪。"""
+    """叙事那一拍要知道这是谁掷的，否则代码判了、故事里还是玩家在开枪。
+
+    🔴 **探针换了，行为没换**（2026-08-18）：此前断言的是 `deps.check_results`，
+    而那个字段没有任何读取方；叙事真正读到的是**历史窗口**。换过来当场发现新
+    载体漏了这一半——`_render_check` 只认 `player`，NPC 那条会渲染成「进行了
+    一次拍击检定」，**主语没了**，正是 `#79` 要防的"州警开枪被记成玩家射击"。
+
+    **变异检验**：把 `_render_check` 里的 `payload.get("npc")` 去掉，这条当场红。
+    """
+    from app.core.keeper.memory.history import _render_check
+
     await create_pending_checks(
         deps,
         KeeperDecision(
@@ -239,7 +249,10 @@ async def test_the_narration_is_told_who_rolled(deps: KeeperDeps) -> None:
         ),
     )
 
-    assert any("爬行者 #1" in line and "拍击" in line for line in deps.check_results)
+    payload = (await _checks(deps))[0]
+    line = _render_check(payload)
+    assert line.startswith("爬行者 #1"), f"叙事看到的这句话没有主语：{line}"
+    assert "拍击" in line
 
 
 # ── 三道拒绝 ────────────────────────────────────

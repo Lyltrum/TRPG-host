@@ -209,8 +209,10 @@ async def test_adjust_player_hp_damage_and_floor() -> None:
 
     text = await adjust_hp_impl(deps, -99, "致命打击")
     assert "→ 0" in text and "倒地" in text
-    # 两次 HP 变动都进了可见性记录——掷骰/伤害的可见性不靠模型自觉
-    assert len(deps.check_results) == 2
+    # 两次 HP 变动都进了结构化广播——伤害的可见性不靠模型自觉，走
+    # `character.stat_changed`，前端渲染成独立的系统提示（2026-07-28 起）。
+    # 此前这里断言的 `deps.check_results` 是那次改造留下的空容器，没有读取方。
+    assert len(deps.stat_changes) == 2
 
     async with _session_factory() as db:
         character = await db.get(Character, (await _character_id(room_id)))

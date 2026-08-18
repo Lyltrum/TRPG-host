@@ -60,7 +60,6 @@ async def adjust_hp_impl(
             {"player": player.nickname, "delta": delta, "hp": new_value, "reason": reason},
         )
     status = "（已倒地/濒死）" if new_value == 0 else ""
-    deps.check_results.append(f"{player.nickname} · HP {current} → {new_value}{status}")
     deps.stat_changes.append(
         StatChangeNotice(
             player_id=player.id,
@@ -108,7 +107,6 @@ async def adjust_npc_hp_impl(deps: KeeperDeps, delta: int, reason: str, npc_labe
         summary = f"{name} HP → {hp}{status}"
     else:
         summary = f"{name} 累计受伤 {state.get('damage', 0)} 点（数据卡无 HP）"
-    deps.check_results.append(summary)
     return f"{summary}（{reason}）"
 
 

@@ -77,23 +77,29 @@ def _render_check(payload: dict) -> str:
     此前这里只渲染玩家自己那一半（`rolled`/`target`/`level`），`opposed` 整块
     ——包括 `verdict`——**一个字都没进去**。而 `settle_skill_check` 里那段精心
     组装的三态文本（结论提句首 + 明写"不要按成功等级自行推断"）写进的是
-    `deps.check_results`，**那个字段从头到尾没有任何读取方**。
+    `deps.check_results`——**那个字段从头到尾没有任何读取方**（已于同日删除：
+    它是 07-23 加的"掷骰可见性硬保证"的数据源，07-28 那个职责搬到结构化 WS
+    事件之后，读取方被删、容器留了下来）。
 
     ⇒ 两跑写反**不是模型不遵守，是对抗结论根本没送到它眼前**。`exec/20 §1.20`
     当时判成"prompt 手段已用尽、只能靠状态化硬化"，那是**拿错了度量对象**：
     量的是"代码组装了什么"，不是"叙事真正收到了什么"。
     """
-    player = payload.get("player", "")
+    # 🔴 `player` 与 `npc` 是**两个键**（`_record_check`：NPC 掷的骰不许挂在任何
+    # 玩家名下）。只读 `player` 的话，NPC 那条在历史里会渲染成「进行了一次拍击
+    # 检定」——**主语没了**，而这正是 `#79` 当初要防的"州警开枪被记成玩家射击"。
+    # 2026-08-18 删 `deps.check_results` 死链时才发现新载体漏了这一半。
+    who = payload.get("player") or payload.get("npc") or ""
     skill = payload.get("skill", "")
     opposed = payload.get("opposed")
     if isinstance(opposed, dict):
         template = _OPPOSED_LINE.get(str(opposed.get("verdict")))
         if template is not None:
             return template.format(
-                player=player, skill=skill, opponent=opposed.get("opponent", "对手")
+                player=who, skill=skill, opponent=opposed.get("opponent", "对手")
             )
     return (
-        f"{player}进行了一次{skill}检定，掷出{payload.get('rolled', '?')}，"
+        f"{who}进行了一次{skill}检定，掷出{payload.get('rolled', '?')}，"
         f"目标{payload.get('target', '?')}，结果{payload.get('level', '')}。"
     )
 

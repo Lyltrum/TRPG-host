@@ -25,6 +25,7 @@ from sqlalchemy.pool import NullPool
 from app.core.coc7.content import build_coc7_ruleset
 from app.core.db import Base
 from app.core.keeper.capabilities import reserved_state_keys, settle_hook_for
+from app.core.keeper.capabilities.skill_check.attempts import CHECK_ATTEMPTS_KEY
 from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.runtime.deps import KeeperDeps
 from app.core.keeper.runtime.pending import PendingDecision
@@ -132,6 +133,8 @@ def _skill_pending(room_id: str, player_id: str) -> PendingDecision:
         loss_on_success="0",
         loss_on_failure="0",
         reason="翻找书桌",
+        # 有地点，生效那一步才会真的往 keeper_state 记一笔——探针要有东西可看
+        node="hall",
     )
 
 
@@ -149,6 +152,21 @@ def _san_pending(room_id: str, player_id: str) -> PendingDecision:
     )
 
 
+async def _keeper_state(room_id: str) -> dict:
+    """世界状态的探针。
+
+    🔴 **它替下的是 `deps.check_results`**（2026-08-18 删）：那个字段是 07-23
+    「掷骰可见性硬保证」的数据源，07-28 那个职责搬到结构化 WS 事件之后读取方
+    被删、容器留了下来，于是这条用例有一半时间在守一个没人看的桶。
+    换成 `keeper_state` 更准——技能检定的 `apply` 真的会往里写「本地检定次数」，
+    那是**落库的副作用**，正是这条约束要防的东西。
+    """
+    async with _session_factory() as db:
+        room = await db.get(Room, room_id)
+        assert room is not None
+        return dict(room.keeper_state or {})
+
+
 async def test_rolling_a_skill_check_changes_nothing_until_apply() -> None:
     room_id, player_id = await _seed("RA100")
     deps = _deps(room_id, player_id)
@@ -159,12 +177,13 @@ async def test_rolling_a_skill_check_changes_nothing_until_apply() -> None:
 
     assert notice.rolled > 0, "骰子该掷了——不然下面的断言只是在验一个没发生的动作"
     assert await _event_count(room_id) == 0, "🔴 掷骰那一步写了 events"
-    assert deps.check_results == [], "🔴 掷骰那一步就把结果写给叙事了"
+    assert await _keeper_state(room_id) == {}, "🔴 掷骰那一步写了 keeper_state"
 
     await hook.apply(deps, pending, notice)
 
     assert await _event_count(room_id) == 1
-    assert len(deps.check_results) == 1
+    # 生效那一步确实落了东西——没有这半句，把 apply() 改成空函数也照样绿
+    assert CHECK_ATTEMPTS_KEY in await _keeper_state(room_id)
 
 
 async def test_rolling_a_san_check_does_not_touch_the_character_until_apply() -> None:
@@ -180,13 +199,11 @@ async def test_rolling_a_san_check_does_not_touch_the_character_until_apply() ->
     )
     assert await _san(room_id) == _STARTING_SAN, "🔴 掷骰那一步就把理智扣了"
     assert await _event_count(room_id) == 0, "🔴 掷骰那一步写了 events"
-    assert deps.check_results == []
 
     await hook.apply(deps, pending, notice)
 
     assert await _san(room_id) == _STARTING_SAN - notice.san_loss
     assert await _event_count(room_id) == 1
-    assert len(deps.check_results) == 1
 
 
 async def test_every_settler_returns_something_appliable() -> None:

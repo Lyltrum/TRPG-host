@@ -139,7 +139,7 @@ async def test_execute_side_effects_runs_hp_and_state(deps: KeeperDeps) -> None:
     # 多出几行。这条用例守的是「HP 和 state 两件事都跑到了」，条数是脚手架。
     assert any("10 → 7" in line for line in report)
     assert any("当前场景 = 书房" in line for line in report)
-    assert len(deps.check_results) == 1  # HP 变动的可见性记录
+    assert len(deps.stat_changes) == 1  # HP 变动走结构化广播（character.stat_changed）
     assert len(await _events(deps, "keeper.hp")) == 1  # 留痕落库
     assert len(await _events(deps, "keeper.state")) == 1
 
@@ -172,9 +172,8 @@ async def test_create_pending_checks_valid_skill(deps: KeeperDeps) -> None:
     assert check.player_nickname == "阿福"
     assert check.reason == "搜索书房"
     assert check.decision_id  # uuid4，非空
-    # 不掷骰：不留 keeper.check 事件，也不进 check_results 可见性记录
+    # 不掷骰：不留 keeper.check 事件
     assert await _events(deps, "keeper.check") == []
-    assert deps.check_results == []
 
 
 async def test_create_pending_checks_valid_san(deps: KeeperDeps) -> None:
@@ -216,10 +215,9 @@ async def test_roll_check_trained_skill(deps: KeeperDeps) -> None:
     events = await _events(deps, "keeper.check")
     assert len(events) == 1
     assert events[0].payload["target"] == 70
-    # 掷骰可见性硬保证的数据源：结果必须记进 check_results（narrate 末尾由
-    # 代码强制附加广播，不依赖模型把数字写进叙事）
-    assert len(deps.check_results) == 1
-    assert f"{expected_roll}/70" in deps.check_results[0]
+    # 🔴 掷骰可见性的数据源就是这条落库 payload：前端掷骰卡片（formatCheckLine）
+    # 与重连回放都读它，不依赖模型把数字写进叙事。
+    assert events[0].payload["rolled"] == expected_roll
 
     # 「侦查」同义写法必须解析到同一技能（模组文本常用写法）
     assert "目标值 70" in await roll_check_impl(deps, "侦查")
@@ -330,8 +328,6 @@ async def test_san_check_applies_loss(deps: KeeperDeps) -> None:
     events = await _events(deps, "keeper.san")
     assert len(events) == 1
     assert events[0].payload["loss"] == expected_loss
-    assert len(deps.check_results) == 1
-    assert "理智检定" in deps.check_results[0]
 
 
 async def test_san_check_big_loss_warns_temporary_insanity(deps: KeeperDeps) -> None:

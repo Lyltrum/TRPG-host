@@ -58,11 +58,6 @@ class KeeperDeps:
     # 执行同轮工具（三次 update_state 只留最后一个键的 lost update），`*_impl`
     # 若再被并发调用方复用，这把锁就是防线。
     write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    # 本轮的检定/理智/伤害结果记录。掷骰可见性不能依赖模型自觉——真机实测
-    # 它会把数字藏进叙事（玩家掷出 94/29 失败，叙事只说"什么也没找到"，玩家
-    # 以为根本没掷）。`*_impl` 往这里记，KeeperAgent.narrate 由**代码**把它们
-    # 强制附加在叙事末尾广播。
-    check_results: list[str] = field(default_factory=list)
     # 本轮发生的 HP 变更（结构化，供 WS 层广播 `character.stat_changed`，
     # 供前端把角色卡的 HP 从"建卡快照"更新成实时值——真人实测 09-#4）。
     stat_changes: list[StatChangeNotice] = field(default_factory=list)

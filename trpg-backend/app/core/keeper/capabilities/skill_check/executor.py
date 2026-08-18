@@ -274,29 +274,8 @@ async def _record_check(deps: KeeperDeps, detail: dict) -> None:
             # "僵持"。缺了它，回放里僵持会显示成"负"——那是在说谎。
             "verdict": detail.get("opposed_verdict"),
         }
-        verdict = detail.get("opposed_verdict") or ("胜" if detail["opposed_won"] else "负")
-        summary = (
-            f"{detail['player']} · {detail['skill']}对抗{detail['opposed_opponent']}："
-            f"{detail['rolled']}/{detail['target']}（{detail['level']}） vs "
-            f"{detail['opposed_rolled']}/{detail['opposed_target']}"
-            f"（{detail['opposed_level']}） → {verdict}"
-        )
-    elif detail.get("effective_rolled") is not None:
-        # 花过幸运：原始出目 → 补正后的出目，两个数都要说，否则"7 对 5 却成功"
-        # 在卡面上说不通（2026-08-14 实测）。
-        summary = (
-            f"{detail['player']} · {detail['skill']}检定："
-            f"{detail['rolled']} 花 {detail['luck_spent']} 点幸运压到 "
-            f"{detail['effective_rolled']}/{detail['target']} → {detail['level']}"
-        )
-    else:
-        summary = (
-            f"{detail['player']} · {detail['skill']}检定："
-            f"{detail['rolled']}/{detail['target']} → {detail['level']}"
-        )
     async with deps.session_factory() as db:
         await record_event(db, deps, "keeper.check", record)
-    deps.check_results.append(summary)
 
 
 async def roll_check_impl(deps: KeeperDeps, skill_name: str, player_name: str | None = None) -> str:
@@ -377,7 +356,6 @@ async def _roll_for_npc(deps: KeeperDeps, check: object) -> list[str]:
             f"NPC 检定未发起：{name} 的数据卡上取不出「{ability}」的百分位（可用的项：{options}）"
         ]
     outcome = dice.evaluate_check(dice.roll_d100(deps.rng), target)
-    summary = f"{name} · {ability}：{outcome.rolled}/{outcome.target} → {outcome.level}"
     async with deps.session_factory() as db:
         await record_event(
             db,
@@ -393,7 +371,6 @@ async def _roll_for_npc(deps: KeeperDeps, check: object) -> list[str]:
                 "level": outcome.level,
             },
         )
-    deps.check_results.append(summary)
     return []
 
 
@@ -411,7 +388,7 @@ async def create_pending_skill_checks(
     for check in getattr(decision, "checks", ()):
         # 🔴 **NPC 掷的那种不进待掷队列**（2026-08-15）：待掷队列的语义是
         # "等某个玩家按下掷骰"，而州警开枪不该要玩家替他按一下按钮。这一支
-        # 服务端立刻掷完、直接进 check_results 给叙事，`pending` 一条不加。
+        # 服务端立刻掷完、直接落 `keeper.check` 事件，`pending` 一条不加。
         if getattr(check, "npc", None):
             issues.extend(await _roll_for_npc(deps, check))
             continue
@@ -613,9 +590,7 @@ async def apply_skill_check(
         and pending.opposed_value is not None
         and _is_stealth_check(deps, pending.skill)
     ):
-        revealed = await reveal_hidden_player_impl(deps, pending.player_id, pending.player_nickname)
-        if revealed:
-            deps.check_results.append(f"{pending.player_nickname} 潜行对抗失败 → 被发现，不再隐匿")
+        await reveal_hidden_player_impl(deps, pending.player_id, pending.player_nickname)
         return
 
     # 🔴 **进入隐匿也归结算**（2026-08-15，回归实测）。
@@ -631,7 +606,5 @@ async def apply_skill_check(
     # 掷过了就藏住了；有对手的那种上面已经处理完并 return。
     if _is_stealth_check(deps, pending.skill) and pending.opposed_value is None:
         if not dice.is_success(notice.level):
-            deps.check_results.append(f"{pending.player_nickname} 潜行失败 → 没藏住，仍然显眼")
             return
         await set_stealth_impl(deps, pending.player_nickname, True)
-        deps.check_results.append(f"{pending.player_nickname} 潜行成功 → 进入隐匿")

@@ -77,7 +77,7 @@ async def san_check_only(
     warnings = []
     if loss >= 5:
         # 症状不在这里说：生效那一步（`_apply_san_loss`）会掷症状表并把具体
-        # 那一条写进 check_results，两处都说会让叙事收到两种发作表现。
+        # 那一条写进疯狂状态，两处都说会让叙事收到两种发作表现。
         warnings.append("单次损失≥5，触发临时疯狂")
     if new_value == 0:
         warnings.append("理智归零，角色永久疯狂")
@@ -103,7 +103,6 @@ async def _apply_san_loss(deps: KeeperDeps, detail: dict, player_name: str | Non
     """生效：扣理智 + 记事件 + 给叙事留一句话。**只吃 detail**，理由见 `SettleHook`。"""
     loss = int(detail["loss"])
     current = int(detail["target"])
-    result = "成功" if detail["succeeded"] else "失败"
     # write_lock：见 KeeperDeps 注释——并行工具调用下的读-改-写必须串行。
     # 🔴 这里**重新读一次角色卡**再扣，不写掷骰那一刻算出的 `san`：掷骰与生效
     # 之间隔着一次广播（幸运消费还隔着玩家的决定），期间别处改过 SAN 的话，
@@ -128,21 +127,12 @@ async def _apply_san_loss(deps: KeeperDeps, detail: dict, player_name: str | Non
                 "san": written,
             },
         )
-    deps.check_results.append(
-        f"{detail['player']} · 理智检定：{detail['rolled']}/{current} → {result}，"
-        f"San {current} → {written}（-{loss}）"
-    )
     # 🔴 临时性疯狂：**代码强制**，不是请模型自觉。触发条件是这里刚算出来的
     # 数，症状点数也由代码掷——能确定性判断的一律代码强制。解除那一半才是
     # 模型的活儿（`capabilities/madness`）。状态放在 runtime 是因为两片能力
     # 不许互相 import，理由见 `madness_state` 模块说明。
     if loss >= MADNESS_LOSS_THRESHOLD:
-        symptom = await enter_madness(deps, player_id, nickname)
-        if symptom is not None:
-            deps.check_results.append(
-                f"{nickname} · 单次损失 {loss} 点，陷入临时性疯狂："
-                f"{symptom.label}——{symptom.description}"
-            )
+        await enter_madness(deps, player_id, nickname)
 
 
 async def san_check_impl(

@@ -124,13 +124,6 @@ async def resolve_luck_spend(
     # 成一条特判，直接按降下来的出目重新判等级。
     pushed = dice.evaluate_check(notice.target, notice.target)
     revised = _revise(notice, pushed, cost=cost)
-    verdict = (
-        "" if revised.opposed_opponent is None else f"，对抗{'胜' if revised.opposed_won else '负'}"
-    )
-    deps.check_results.append(
-        f"{offer.player_nickname} 消耗 {cost} 点幸运（剩 {offer.luck_remaining - cost}）："
-        f"{notice.level} → {revised.level}{verdict}"
-    )
     return roll, revised
 
 

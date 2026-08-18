@@ -27,6 +27,7 @@ from app.core.keeper.contract.module_loader import load_module
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.runtime.pending import PendingDecision
 from app.core.narration.contract import CheckResultNotice
+from app.models.event import Event
 from app.models.room import Character, Player, Room
 
 _TESTS_DIR = next(p for p in Path(__file__).resolve().parents if p.name == "trpg-backend") / "tests"
@@ -215,7 +216,6 @@ async def test_declining_changes_nothing() -> None:
 
     assert notice.level == "失败"
     assert await _luck_of(room_id) == _STARTING_LUCK
-    assert deps.check_results == []
 
 
 async def test_spending_deducts_luck_and_pushes_the_result_to_a_regular_success() -> None:
@@ -227,7 +227,17 @@ async def test_spending_deducts_luck_and_pushes_the_result_to_a_regular_success(
 
     assert notice.level == "成功", "只能推成**普通**成功——它是那个换算的推论，不是独立规则"
     assert await _luck_of(room_id) == _STARTING_LUCK - 8
-    assert any("消耗 8 点幸运" in line for line in deps.check_results)
+    # 玩家侧看得见这次消费：`keeper.luck_spend` 落库，前端按它渲染一条时间线
+    # （`formatLuckSpendLine`）。此前这里断言的 `deps.check_results` 没有读取方。
+    async with _session_factory() as db:
+        rows = (
+            await db.scalars(
+                select(Event).where(
+                    Event.room_id == room_id, Event.event_type == "keeper.luck_spend"
+                )
+            )
+        ).all()
+    assert len(rows) == 1 and rows[0].payload["cost"] == 8
 
 
 async def test_the_original_roll_value_is_not_rewritten() -> None:

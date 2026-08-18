@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import structlog
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.keeper.capabilities.san_check.state import (
@@ -22,6 +21,7 @@ from app.core.keeper.capabilities.san_check.state import (
 )
 from app.core.keeper.contract.registry import PendingContext, TurnFacts
 from app.core.keeper.primitives import dice
+from app.core.keeper.runtime.beat import happened_this_beat
 from app.core.keeper.runtime.deps import (
     KeeperDeps,
     KeeperToolError,
@@ -33,7 +33,6 @@ from app.core.keeper.runtime.deps import (
 from app.core.keeper.runtime.madness_state import MADNESS_LOSS_THRESHOLD, enter_madness
 from app.core.keeper.runtime.pending import PendingDecision
 from app.core.narration.contract import CheckResultNotice
-from app.models.event import Event
 from app.models.room import Room
 
 logger = structlog.get_logger()
@@ -159,23 +158,10 @@ async def san_check_impl(
 async def san_already_rolled_this_beat(db: AsyncSession, room_id: str) -> bool:
     """这一句玩家发言引发的链条里，是不是已经掷过理智了。
 
-    「一拍」= 最后一条 `action.submit` 之后到现在。一次玩家发言可以引发**多次
-    裁决**：每掷完一批骰子就有一次结算叙事，而结算叙事本身又是一次完整裁决，
-    可以再开新的 `san_checks`（见 `agent._after_check`）。
+    「一拍」的定义与判断下沉在 `runtime/beat.py`——`closure` 的「无进展轮数」
+    后来也要同一条分界线，各写各的就是「同一件事有两种做法」。
     """
-    last_utterance = (
-        await db.execute(
-            select(Event.created_at)
-            .where(Event.room_id == room_id, Event.event_type == "action.submit")
-            .order_by(Event.created_at.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-
-    stmt = select(Event.id).where(Event.room_id == room_id, Event.event_type == "keeper.san")
-    if last_utterance is not None:
-        stmt = stmt.where(Event.created_at > last_utterance)
-    return (await db.execute(stmt.limit(1))).scalar_one_or_none() is not None
+    return await happened_this_beat(db, room_id, "keeper.san")
 
 
 async def create_pending_san_checks(

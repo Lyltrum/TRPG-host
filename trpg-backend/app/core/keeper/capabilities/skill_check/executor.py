@@ -20,6 +20,7 @@ from app.core.keeper.capabilities.skill_check.guard import (
     filter_checks_against_module,
     find_node_for_scene,
 )
+from app.core.keeper.contract.module_loader import ScenarioModule
 from app.core.keeper.contract.registry import PendingContext, TurnFacts
 from app.core.keeper.primitives import dice
 from app.core.keeper.primitives.npcs import (
@@ -316,6 +317,26 @@ async def publish_stealth_check_requests(
     return [], []
 
 
+def _display_opponent(module: ScenarioModule, opponent: str) -> str:
+    """对手栏是**展示用**的，玩家在掷骰卡片上看得见——填了 NPC id 就翻成名字。
+
+    🔴 真机（2026-08-18）：`opposedOpponent = "mi-go-4"`，而同一局前几次写的是
+    「米-戈 #4」。schema 里这一栏的描述是「对手是谁/什么（NPC 名、毒物、暗流……），
+    展示用」，模型有时按它写、有时顺手写了 id —— 自由文本栏本来就压不住。
+
+    **不新造机制**：NPC 掷骰那条路（`_roll_for_npc`）早就在用
+    `resolve_npc_ref` + `npc_display_name`，这里接同一对。id→名字是**完全确定**
+    的映射，没有语义判断。
+
+    🔴 **认不出来就原样返回**：对手可以根本不是 NPC（毒物、暗流、一扇卡住的门），
+    那时它就是一段正常的展示文本，不该被改动。
+    """
+    npc_id = resolve_npc_ref(module, opponent)
+    if npc_id is None:
+        return opponent
+    return npc_display_name(module, npc_id)
+
+
 async def _roll_for_npc(deps: KeeperDeps, check: object) -> list[str]:
     """名册 NPC 自己掷一次。返回 issue 列表（成功时为空）。
 
@@ -479,7 +500,7 @@ async def create_pending_skill_checks(
                     "不在 1-100（属性点要 ×5 换算成百分位）"
                 )
                 continue
-            opposed_opponent = check.opposed.opponent
+            opposed_opponent = _display_opponent(deps.module, check.opposed.opponent)
             opposed_value = check.opposed.value
         pending.append(
             PendingDecision.roll(

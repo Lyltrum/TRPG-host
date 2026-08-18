@@ -243,6 +243,35 @@ async def test_valid_opposed_check_carries_opponent_into_pending() -> None:
     assert pending[0].opposed_value == 80
 
 
+async def test_an_npc_id_in_the_opponent_slot_reaches_pending_as_a_name() -> None:
+    """🔴 对手栏填了 NPC id 时，进队列的必须是**名字**（2026-08-18 真机）。
+
+    实测 `opposedOpponent = "mi-go-4"` 出现在玩家的掷骰卡片上，而同一局前几次
+    写的是「米-戈 #4」。这一栏在 schema 里就是自由文本（「NPC 名、毒物、
+    暗流……，展示用」），压不住；而 id→名字是**完全确定**的映射。
+
+    这条守的是**接线**，不是那个翻译函数本身（它的边界情形在
+    `test_opposed_opponent.py`）：把调用点改回 `check.opposed.opponent`
+    就当场变红 —— 只测函数不测接线的话，变异体会大摇大摆活下来。
+    """
+    room_id, player_id = await _seed("OPP250")
+    decision = KeeperDecision(
+        thinking="扳手腕",
+        narration_guidance="写对抗",
+        checks=[
+            CheckRequest(
+                skill_id="STR",
+                player="凌铭辉",
+                reason="跟管家较劲",
+                opposed=OpposedTarget(opponent="butler-public", value=60),
+            )
+        ],
+    )
+    pending, issues = await create_pending_checks(_deps(room_id, player_id), decision)
+    assert issues == []
+    assert pending[0].opposed_opponent == "管家", "玩家会在掷骰卡片上看到英文 id"
+
+
 # ── 3. 结算 ─────────────────────────────────────────
 
 

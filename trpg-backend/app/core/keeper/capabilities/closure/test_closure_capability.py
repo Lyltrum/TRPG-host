@@ -525,3 +525,48 @@ async def test_not_writing_the_field_never_closes_anything() -> None:
     )
     assert issues == []
     assert await _phase_of(room_id) != PHASE_FINISHED
+
+
+async def test_the_stall_push_writes_a_probe_line() -> None:
+    """🔴 「打转」升级成硬要求时要留一条可复盘的记录（2026-08-18 用户拍板）。
+
+    判据本轮**不动**——手上只有 2 个样本，而上一次基于少量样本改这个口径当场
+    引入了「开一条 thread 就能清零」那条路。装这只眼睛是为了下次能直接回答
+    「它响了几次、几次是对的」，而不是靠翻 transcript 猜。
+
+    **变异检验**：把 `_log_stall_push` 那个调用去掉，这条当场红。
+    """
+    from structlog.testing import capture_logs
+
+    room_id, player_id = await _seed(
+        "CLS810",
+        {
+            PLAYER_LOCATION_KEY: "p1@hall",
+            VISITED_NODES_KEY: "hall",
+            STALLED_TURNS_KEY: str(STALL_PUSH_THRESHOLD - 1),
+        },
+    )
+    with capture_logs() as events:
+        await _utterance(room_id, "我继续往前走")
+        await execute_closure(_deps(room_id, player_id), KeeperDecision(), TurnFacts())
+
+    pushes = [e for e in events if e.get("event") == "keeper_stall_push"]
+    assert pushes, "撞到阈值却没留下任何记录"
+    assert pushes[0]["stalled"] == STALL_PUSH_THRESHOLD
+    assert "narration_repeat" in pushes[0] and "utterance_repeat" in pushes[0]
+    # 🔴 只记比值，绝不记文本——叙事里带着模组正文（版权红线）
+    assert not any(isinstance(v, str) and len(v) > 40 for v in pushes[0].values())
+
+
+async def test_no_probe_line_below_the_threshold() -> None:
+    """没到阈值就不该有噪音——每拍一条日志会把真正响的那几次淹掉。"""
+    from structlog.testing import capture_logs
+
+    room_id, player_id = await _seed(
+        "CLS811", {PLAYER_LOCATION_KEY: "p1@hall", VISITED_NODES_KEY: "hall"}
+    )
+    with capture_logs() as events:
+        await _utterance(room_id, "我四处看看")
+        await execute_closure(_deps(room_id, player_id), KeeperDecision(), TurnFacts())
+
+    assert not [e for e in events if e.get("event") == "keeper_stall_push"]

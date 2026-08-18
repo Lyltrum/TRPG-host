@@ -39,9 +39,13 @@ bug，不是修 bug**：门本身没错，错的是它数错了东西——「�
 
 from __future__ import annotations
 
+import difflib
+
+import structlog
 from pydantic import BaseModel
 
 from app.core.keeper.capabilities.closure.remaining import (
+    STALL_PUSH_THRESHOLD,
     unfired_agenda_count,
     unrevealed_pair_count,
 )
@@ -67,6 +71,76 @@ from app.models.room import Room
 #: 每拍一条的进展留痕。它有两个用途：可审计（这一拍到底算不算推进），
 #: 以及给「一拍只计一次」当游标。
 PROGRESS_EVENT = "keeper.progress"
+
+logger = structlog.get_logger()
+
+
+async def _repeat_ratio(db, room_id: str, event_type: str) -> float | None:
+    """最近两条同类事件的文本相似度（0–1）；不足两条返回 `None`。
+
+    量它是因为 08-14 那次**真**停滞的症状正是这个：玩家连说四轮「继续走」，
+    拿到四段越来越像的洞穴描写，**最后两拍逐字相同**。而 08-18 第二局那次
+    误报里，两侧都是全新内容。
+
+    ⚠️ 这**不是判据**，是探针 —— 它不参与任何决定，只进日志。
+
+    🔴 **只记比值，绝不记文本**：叙事里带着模组正文（版权红线，正文不得离开
+    `模组资料/`）。玩家原话不受那条约束，但也一样只记比值 —— 两个数放一起
+    才好比。
+    """
+    from sqlalchemy import select
+
+    from app.models.event import Event
+
+    rows = await db.execute(
+        select(Event.payload)
+        .where(Event.room_id == room_id, Event.event_type == event_type)
+        .order_by(Event.created_at.desc())
+        .limit(2)
+    )
+    texts = [
+        str((payload or {}).get("text") or (payload or {}).get("utterance") or "")
+        for (payload,) in rows.all()
+    ]
+    if len(texts) < 2 or not all(texts):
+        return None
+    return round(difflib.SequenceMatcher(None, texts[0], texts[1]).ratio(), 3)
+
+
+async def _log_stall_push(db, deps: KeeperDeps, stalled: int) -> None:
+    """「打转」那条硬要求即将进 prompt —— 记一条，供事后复盘。
+
+    🔴 **装这只眼睛，是因为「它响了几次、几次是对的」现在只能靠翻 transcript
+    猜**（2026-08-18 用户拍板）。判据本轮**不动**：手上只有 2 个样本，而上一次
+    基于少量样本改这个口径（08-18 上午扩成含 `world_advanced`）当场引入了
+    「开一条 thread 就能清零」那条路。
+
+    已知的三个样本留在这里当读日志时的对照：
+
+      - 08-14 **真阳性**：`无进展轮数=26`，玩家连说四轮「继续走」，最后两拍
+        叙事逐字相同 ⇒ 期望 `narration_repeat` 接近 1；
+      - 08-18 上午 **假阳性**：19 拍涨到 15，而那一局目睹枪杀、拿到主线线索、
+        触发议程 ⇒ 已修（补 `world_advanced`）；
+      - 08-18 第二局 **假阳性**：模组核心真相在一场对话里给出，纯对话不改任何
+        带 id 的东西 ⇒ 期望两个 repeat 都低。
+        那一次**实际危害是 0**：硬要求进了 prompt，模型照样写出了正确的安静
+        结局，四个"挑一个落地"的选项一个都没照做。
+
+    只在真的要响的那一拍算，所以一局最多几次，两次额外查询不心疼。
+
+    🔴 **没有「有没有 NPC 在台上」这一项**，虽然它恰好能把上面两个样本分开：
+    那个键归 `cast` 所有，`closure` 去读它就是能力之间互相依赖（架构守护测试
+    `test_capabilities_do_not_import_each_other` 当场打红）。而它本来也只是
+    "碰巧分得开两个样本"的弱判据 —— 两个相似度才正对着 08-14 那次的真实症状。
+    真需要它的时候，走 `TurnFacts` 那条正门发布，不要绕过约束。
+    """
+    logger.info(
+        "keeper_stall_push",
+        room_id=deps.room_id,
+        stalled=stalled,
+        narration_repeat=await _repeat_ratio(db, deps.room_id, "narration.push"),
+        utterance_repeat=await _repeat_ratio(db, deps.room_id, "action.submit"),
+    )
 
 
 async def _record_progress(
@@ -111,7 +185,10 @@ async def _record_progress(
             # 每掷完一批骰子就有一次结算叙事，而它本身又是一次完整裁决。原来
             # 每次执行都 +1，于是**每次检定把这个数推高 2**，越认真检定的局
             # 越像在打转，而这个信号的语义恰恰是相反的那件事。
-            current_state[STALLED_TURNS_KEY] = load_stalled_turns(current_state) + 1
+            stalled = load_stalled_turns(current_state) + 1
+            current_state[STALLED_TURNS_KEY] = stalled
+            if stalled >= STALL_PUSH_THRESHOLD:
+                await _log_stall_push(db, deps, stalled)
 
         room.keeper_state = current_state
         if newly:

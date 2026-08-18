@@ -4,8 +4,6 @@
   `GET /rooms/{roomId}/replay` 直接顺序读这张表——是本期唯一一条"服务端真的
   在写、也真的在读"的事件日志闭环（ws.py 在 narration.push / action.submit
   时插入行）。
-- CheckResult：检定结果记录（技能检定/理智检定），本期 `check.roll`/
-  `san.check.roll` 走 NOT_IMPLEMENTED 桩，不会真的写入这张表，只铺表结构。
 - PendingDecisionRow：**待掷**检定队列（两段式玩家掷骰）。原先是进程内存 dict
   ——后端一重启队列就清空，而 `narrate` 有 pending 守卫，会一直回「请先完成
   待掷的检定」，**整局死锁**（exec/24 §8.1）。短模组一次跑完暴露不出来，
@@ -40,36 +38,11 @@ class Event(Base):
     )
 
 
-class CheckResult(Base):
-    __tablename__ = "check_results"
-
-    id: Mapped[str] = mapped_column(
-        Uuid(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-    room_id: Mapped[str] = mapped_column(
-        Uuid(as_uuid=False), ForeignKey("rooms.id"), nullable=False
-    )
-    player_id: Mapped[str] = mapped_column(
-        Uuid(as_uuid=False), ForeignKey("players.id"), nullable=False
-    )
-    character_id: Mapped[str | None] = mapped_column(
-        Uuid(as_uuid=False), ForeignKey("characters.id"), nullable=True
-    )
-    check_type: Mapped[str] = mapped_column(String(20), nullable=False)  # "skill" | "san"
-    skill_or_stat: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    roll_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    target_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    result: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
-
-
 class PendingDecisionRow(Base):
     """一次**等某个玩家做决定**的请求；他没决定之前，这一轮不能往下走。
 
-    与 `CheckResult` 的区别是时态：这张表装的是"已经判定要问、但玩家还没回答"
-    的请求，答完就删；`CheckResult` 装的是掷完之后的留痕。
+    跟 `Event` 的区别是时态：这张表装的是"已经判定要问、但玩家还没回答"的
+    请求，答完就删；掷完之后的留痕落在 `events`（`keeper.check`/`keeper.san`）。
 
     🔴 **它曾经叫 `pending_checks`，只装掷骰**（`exec/34`）。那时"等玩家决定"
     确实只有掷骰一种，名字是对的；第二个实例（会合确认）出现时没有回头看，

@@ -16,14 +16,13 @@ from app.models.content import (
     ScenarioScene,
     World,
 )
-from app.models.event import CheckResult, Event, PendingDecisionRow
+from app.models.event import Event, PendingDecisionRow
 from app.models.replay import ModuleImportJob, RoomSession, RoomSummary
 from app.models.room import Character, Note, Player, Room
 from app.models.user import LlmDailyUsage, User, UserCharacterTemplate, UserSession
 
 __all__ = [
     "ChatMessage",
-    "CheckResult",
     "Character",
     "Entity",
     "Event",

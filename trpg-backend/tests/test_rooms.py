@@ -552,3 +552,56 @@ async def test_replay_never_leaks_the_keeper_decision_audit(
     # 审计内容一个字都不能漏出去
     assert "玩家在问可行性" not in response.text
     assert "feasibility_question" not in response.text
+
+
+async def test_replay_hides_every_audit_only_event(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """🔴 黑名单是**逐个列出**的，加一类审计事件就漏一类。
+
+    2026-08-18 加 `keeper.progress`（每拍一条的无进展记账）时当场漏过一次：
+    玩家的复盘时间线里会多出一串 `{"advanced": false}`。这条按**表**遍历，
+    加一项时它跟着覆盖，不必再写一条新用例。
+
+    🔴 **样本不许来自被测的那张表**：第一版拿 `_REPLAY_HIDDEN_EVENT_TYPES`
+    自己当样本来源，于是从表里删掉一项之后循环也就不造那一项，变异体大摇大摆
+    活下来——同 08-14 那条 `fields()` 遍历的守护测试瞎掉的形态。
+    这里改成**独立列一份期望**，两头都钉：表变了这条会红，要么是真漏了，
+    要么是有意加的、那就回来把这份期望改掉。
+
+    **变异检验**：从 `_REPLAY_HIDDEN_EVENT_TYPES` 里去掉任意一项，这条当场红。
+    """
+    from app.service.room import _REPLAY_HIDDEN_EVENT_TYPES
+
+    expected_hidden = {"keeper.decision", "keeper.progress"}
+    assert expected_hidden == _REPLAY_HIDDEN_EVENT_TYPES, (
+        "隐藏名单变了：确认新增的那一类确实是纯审计事件，然后更新这份期望"
+    )
+
+    room = await create_room(client)
+    room_id = room["roomId"]
+    for event_type in expected_hidden:
+        db_session.add(
+            Event(
+                room_id=room_id,
+                player_id=room["playerId"],
+                event_type=event_type,
+                payload={"audit_marker": f"{event_type}-不该出现"},
+            )
+        )
+    # 对照：没有它，整个 replay 返回空列表也能绿
+    db_session.add(
+        Event(
+            room_id=room_id,
+            player_id=room["playerId"],
+            event_type="narration.push",
+            payload={"text": "门厅里空无一人。"},
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"{ROOMS_BASE}/{room_id}/replay", headers=reconnect(room["reconnectToken"])
+    )
+    assert [e["eventType"] for e in response.json()["data"]] == ["narration.push"]
+    assert "不该出现" not in response.text

@@ -938,7 +938,13 @@ async def build_narration_context(
 #:
 #: 这是黑名单，不是白名单——改成白名单要动现有全部事件类型，风险不成比例。
 #: 代价是：**新增任何带敏感 payload 的事件类型时，必须回来加进这个集合**。
-_REPLAY_HIDDEN_EVENT_TYPES = frozenset({"keeper.decision"})
+#: 纯审计事件：落库是为了让**我们**能诊断，不该出现在玩家的复盘时间线里。
+#:
+#: 🔴 这是一张**逐个列出**的表（下面 `get_replay` 的注释里点了它的名）：
+#: 加一类审计事件就得回来加一行，漏了不会有任何东西变红。2026-08-18 加
+#: `keeper.progress` 时当场漏过一次——那是每拍一条的记账留痕，玩家看到
+#: `{"advanced": false}` 毫无意义。
+_REPLAY_HIDDEN_EVENT_TYPES = frozenset({"keeper.decision", "keeper.progress"})
 
 
 async def get_replay(

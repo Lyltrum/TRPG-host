@@ -13,9 +13,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.keeper.capabilities.san_check.state import (
+    RECENT_SAN_KEY,
     SAN_POINTS_FIRED_KEY,
     load_fired_san_points,
+    load_recent_san_reasons,
     match_san_point,
+    record_san_reason,
 )
 from app.core.keeper.contract.registry import PendingContext, TurnFacts
 from app.core.keeper.primitives import dice
@@ -236,7 +239,30 @@ async def create_pending_san_checks(
                 reason=san.reason,
             )
         )
+    await _remember_san_reasons(deps, pending)
     return pending, issues
+
+
+async def _remember_san_reasons(deps: KeeperDeps, pending: list[PendingDecision]) -> None:
+    """记下这一批检定各是为什么掷的，供下一拍的局面块用（判据见 `state.py`）。
+
+    🔴 **记的是真正入队的那些**，不是裁决里请求的那些：被上面那道「一拍只掷
+    一次」的门拦掉的请求，玩家一眼都没看见，把它当成"已经掷过"会让下一拍的
+    提醒指向一件没发生的事。
+    """
+    if not pending:
+        return
+    async with deps.write_lock, deps.session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        if room is None:
+            return
+        state = dict(room.keeper_state or {})
+        recent = load_recent_san_reasons(state)
+        for item in pending:
+            recent = record_san_reason(recent, item.reason)
+        state[RECENT_SAN_KEY] = recent
+        room.keeper_state = state
+        await db.commit()
 
 
 async def mark_san_points_fired(

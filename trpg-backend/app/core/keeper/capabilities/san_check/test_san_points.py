@@ -27,14 +27,16 @@ from app.core.keeper.capabilities.san_check.executor import create_pending_san_c
 from app.core.keeper.capabilities.san_check.schema import SanCheckRequest
 from app.core.keeper.capabilities.san_check.state import (
     SAN_POINTS_FIRED_KEY,
+    format_recent_san,
     format_san_points,
     load_fired_san_points,
+    load_recent_san_reasons,
     san_point_ref,
 )
 from app.core.keeper.capabilities.world_state.schema import StateUpdate
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import ScenarioModule
-from app.core.keeper.contract.registry import PendingContext
+from app.core.keeper.contract.registry import PendingContext, SituationContext
 from app.core.keeper.runtime.deps import KeeperDeps
 from app.core.keeper.runtime.location_state import PLAYER_LOCATION_KEY
 from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY, SCENE_NAME_KEY
@@ -439,3 +441,102 @@ async def test_two_sources_in_one_adjudication_still_roll_twice(solo) -> None:
         )
     assert len(pending) == 2, "同一次裁决里的多个来源各掷一次"
     assert issues == []
+
+
+# ── 跨拍同源：记账走真实执行链（2026-08-18 真机）──────────────
+
+
+async def _issue_san(deps: KeeperDeps, reason: str) -> tuple[list, list[str]]:
+    decision = KeeperDecision(
+        san_checks=[SanCheckRequest(loss_on_success="0", loss_on_failure="1D6", reason=reason)]
+    )
+    async with _session_factory() as db:
+        return await create_pending_san_checks(
+            deps, decision, PendingContext(db=db, keeper_state=None, current_scene=None)
+        )
+
+
+async def _keeper_state(deps: KeeperDeps) -> dict:
+    async with _session_factory() as db:
+        room = await db.get(Room, deps.room_id)
+        assert room is not None
+        return dict(room.keeper_state or {})
+
+
+async def test_an_issued_san_check_is_remembered(solo) -> None:
+    """🔴 **变异检验**：把 `create_pending_san_checks` 末尾那行
+    `await _remember_san_reasons(...)` 删掉，这条当场红。"""
+    deps = solo
+    await _submit(deps, "我冲过去撞开那把椅子")
+    await _issue_san(deps, "目睹那个中枪的人被近距离枪杀，脑浆溅到附近")
+
+    assert load_recent_san_reasons(await _keeper_state(deps)) == [
+        "目睹那个中枪的人被近距离枪杀，脑浆溅到附近"
+    ]
+
+
+async def test_a_refused_check_is_not_remembered(solo) -> None:
+    """🔴 记的是**真正入队的**那些。
+
+    被「一拍只掷一次」拦掉的请求玩家一眼都没看见，把它当成"已经掷过"会让
+    下一拍的提醒指向一件没发生的事——那是「有消费方但没有数据」的镜面：
+    有数据，但它描述的事没发生过。
+
+    **变异检验**：把 `_remember_san_reasons` 的调用挪到那道门**之前**
+    （即改成对 `decision.san_checks` 记账），这条当场红。
+    """
+    deps = solo
+    await _submit(deps, "我打开手电筒看一下里面有什么")
+    await _san_rolled(deps)  # 这一拍已经掷过了
+
+    pending, issues = await _issue_san(deps, "这一次根本没发生")
+    assert pending == [] and issues, "前提：这次必须真的被拦下"
+    assert load_recent_san_reasons(await _keeper_state(deps)) == []
+
+
+async def test_three_beats_on_one_corpse_are_all_visible_next_turn(solo) -> None:
+    """🔴 **真机那三拍的原样复现**（2026-08-18）。
+
+    连着三拍为同一具尸体掷了三次理智：被枪杀 → 爆头后复活起身 → 复活后蹒跚
+    走向大门。三次各自跟在一句新的玩家发言后面，所以「一拍只掷一次」那道门
+    一次都没拦——**它按拍分界，而这个病跨拍**。
+
+    这里守的是：第四拍开始时，前三次的理由都摆在裁决器眼前。判不判仍归它
+    （`state.py` 里写了为什么不拦）。
+    """
+    deps = solo
+    reasons = (
+        "目睹那个中枪的人被近距离枪杀，脑浆溅到附近",
+        "目睹那个中枪的人被爆头后复活起身",
+        "目睹那个中枪的人复活后蹒跚走向大门",
+    )
+    for i, reason in enumerate(reasons):
+        await _submit(deps, f"第{i}句话")
+        pending, _issues = await _issue_san(deps, reason)
+        assert len(pending) == 1, f"第 {i} 拍是新的一拍，必须发得出去"
+
+    state = await _keeper_state(deps)
+    assert load_recent_san_reasons(state) == list(reasons)
+
+    block = format_recent_san(SituationContext(module=_MODULE, keeper_state=state))
+    for reason in reasons:
+        assert reason in block
+    assert "同一个来源不要重复检定" in block
+
+
+async def test_the_narrator_never_sees_the_recent_san_block(solo) -> None:
+    """跟检定点那块同样 `keeper_only`：这是写给裁决器的纪律。
+
+    叙事器读到"最近为什么掷过理智"会把它当成可以复述的剧情——而那些理由里
+    常常写着玩家还没确认的事（"被爆头后复活"）。
+    """
+    deps = solo
+    await _submit(deps, "我看着他站起来")
+    await _issue_san(deps, "目睹那个中枪的人被爆头后复活起身")
+    state = await _keeper_state(deps)
+
+    keeper = situation_blocks(_MODULE, state)
+    narrator = situation_blocks(_MODULE, state, keeper_view=False)
+    assert any("最近的理智检定" in body for _order, body in keeper)
+    assert not any("最近的理智检定" in body for _order, body in narrator)
+    assert not any("复活起身" in body for _order, body in narrator)

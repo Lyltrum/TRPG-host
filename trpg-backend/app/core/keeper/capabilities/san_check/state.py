@@ -35,6 +35,14 @@ from app.core.keeper.contract.registry import SituationContext
 
 SAN_POINTS_FIRED_KEY = "已触发理智检定点"
 
+#: 最近几次理智检定各是为什么掷的（`SanCheckRequest.reason` 原文）。
+#: 值是 list[str]，最新的在最后。
+RECENT_SAN_KEY = "最近理智检定"
+
+#: 留几条。同一场遭遇里理智检定本来就该稀少，留太多会把很久以前的事翻出来
+#: 当"刚掷过"。真机那次的失控是连续 3 拍，4 条足够看见它。
+_RECENT_SAN_LIMIT = 4
+
 #: 模组里表示"这条检定点是理智检定"的 kind（`ModuleCheck.kind` 的封闭取值之一）。
 SAN_KIND = "san"
 
@@ -56,6 +64,68 @@ def load_fired_san_points(keeper_state: dict | None) -> list[str]:
     if raw is None or raw == "":
         return []
     return [part.strip() for part in str(raw).split(",") if part.strip()]
+
+
+def load_recent_san_reasons(keeper_state: dict | None) -> list[str]:
+    """解析最近几次理智检定的理由。脏数据一律当没有——它只是参考材料。"""
+    if not keeper_state:
+        return []
+    raw = keeper_state.get(RECENT_SAN_KEY)
+    if not isinstance(raw, list):
+        return []
+    return [text for item in raw if (text := str(item).strip())]
+
+
+def record_san_reason(recent: list[str], reason: str) -> list[str]:
+    """记一次。返回**新表**（同 `record_attempt`：调用方要整列写回）。
+
+    空理由不记：记了也没法帮模型判断"是不是同一个来源"，只会占掉一格。
+    """
+    text = (reason or "").strip()
+    if not text:
+        return list(recent)
+    return [*recent, text][-_RECENT_SAN_LIMIT:]
+
+
+def format_recent_san(context: SituationContext) -> str:
+    """局面块：最近为什么掷过理智，附「同一来源不重复」那条纪律。
+
+    ## 🔴 为什么是注入而不是拦截（2026-08-18 真机）
+
+    实测连着三拍为**同一具尸体**掷了三次理智：「目睹被近距离枪杀」→「目睹
+    爆头后复活起身」→「目睹复活后蹒跚走向大门」。COC7 里同一来源一场遭遇
+    只掷一次，规则 3 也写着——但**"已经为这个来源掷过了"从来没进过它的上下文**，
+    跟 `skill_check` 的「本地检定次数」是同一个病。
+
+    `executor.py` 里那道「一拍之内只掷一次」的门拦不住这个：它按**拍**分界，
+    而这三次各自跟在一句新的玩家发言后面，分属三拍。那道门的注释里其实已经
+    写出了自己的假设——「拦掉之后玩家下一次发言就能再掷（真的升级了，下一拍
+    照样掷得出）」。08-16 的数据里"跟在新发言后"就是合法；08-18 的数据里三次
+    全跟在新发言后、**全是同一个来源**。同一个判据在两份数据上给出相反结论
+    ⇒ 不能再加一道同形状的门。
+
+    🔴 **`reason` 在这里只当展示内容，不当标识符。** 拿它做 key 去 dedup 才是
+    「用自由文本当标识符」；把原文摆到模型眼前、由它判"是不是同一个来源"，
+    正是「能确定化的是判断的输入，不是判断本身」。
+    """
+    recent = load_recent_san_reasons(context.keeper_state)
+    if not recent:
+        return ""
+    lines = "\n".join(f"- {text}" for text in recent)
+    return (
+        "【最近已经掷过的理智检定】\n"
+        + lines
+        + "\n**同一个来源不要重复检定**：上面这些已经掷过了，"
+        "同一个东西后来又动了一下、又靠近了一点、又被看清了一点，**都还是它**，"
+        "不要再为它发起理智检定——直接按已有结果往下写。\n"
+        "**换成新的来源照掷**：另一个怪物、另一具尸体、另一件此前没见过的事，"
+        "那是新的一次，该掷就掷。"
+    )
+
+
+def render_recent_san(context: SituationContext) -> str:
+    """注册进局面块的 situation 钩子。"""
+    return format_recent_san(context)
 
 
 def _same_loss(left: str | None, right: str | None) -> bool:

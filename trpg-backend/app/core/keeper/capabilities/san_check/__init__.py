@@ -26,7 +26,12 @@ from app.core.keeper.capabilities.san_check.schema import (
     SanCheckDecisionFields,
     audit_fields,
 )
-from app.core.keeper.capabilities.san_check.state import SAN_POINTS_FIRED_KEY, render_san_points
+from app.core.keeper.capabilities.san_check.state import (
+    RECENT_SAN_KEY,
+    SAN_POINTS_FIRED_KEY,
+    render_recent_san,
+    render_san_points,
+)
 from app.core.keeper.contract.registry import (
     ExecutorHook,
     KeeperCapability,
@@ -51,7 +56,13 @@ CAPABILITY = KeeperCapability(
     # 它眼前——真机上它直接念给了玩家听（`exec/23 #77`）。
     situations=(
         SituationBlock(order=45, heading="理智检定点", render=render_san_points, keeper_only=True),
+        # 紧跟在检定点后面：两块一起读才完整——那块说"还有哪些没掷"，
+        # 这块说"刚为什么掷过"。同样 `keeper_only`：这是写给裁决器的纪律，
+        # 叙事器读到"最近掷过什么"会把它当成可以复述的剧情。
+        SituationBlock(
+            order=46, heading="最近的理智检定", render=render_recent_san, keeper_only=True
+        ),
     ),
     audit=audit_fields,
-    reserved_state_keys=(SAN_POINTS_FIRED_KEY,),
+    reserved_state_keys=(SAN_POINTS_FIRED_KEY, RECENT_SAN_KEY),
 )

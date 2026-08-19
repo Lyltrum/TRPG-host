@@ -829,10 +829,48 @@ async def _load_public_story(
     return public_story_from_module(resolved.module)
 
 
-async def get_module_detail(db: AsyncSession, module_id: str) -> ModuleDetailRead | None:
-    """GET /api/v1/modules/{moduleId} —— 模组详情（含 structured 玩家前情）。"""
+async def _may_read_module(db: AsyncSession, scenario: Scenario, user_id: str) -> bool:
+    """这个人能不能看这份模组的玩家前情。
+
+    三种可以（**其余一律不能**）：
+
+    1. **内置模组**（`owner_user_id is None`）——它是目录，登录了就看得见；
+    2. **自己导入的**；
+    3. **正在某个用了这份模组的房间里**——这一条不能省：三个调用点全在房间内
+       （`StoryPage` 的前情页、`RoomPage` 的 `playerIntro` 与旧占位句替换），
+       而**同房间的其他玩家并不拥有这个模组**（`Scenario.owner_user_id` 的注释
+       写着"已经在玩的房间照旧看 `rooms.scenario_id`"）。只按主人过滤的话，
+       导入模组的房间里除房主外所有人的前情页当场变空白。
+    """
+    if scenario.owner_user_id is None or scenario.owner_user_id == user_id:
+        return True
+    seat = await db.scalar(
+        select(Player.id)
+        .join(Room, Room.id == Player.room_id)
+        .where(Player.user_id == user_id, Room.scenario_id == scenario.id)
+        .limit(1)
+    )
+    return seat is not None
+
+
+async def get_module_detail(
+    db: AsyncSession, module_id: str, user_id: str
+) -> ModuleDetailRead | None:
+    """GET /api/v1/modules/{moduleId} —— 模组详情（含 structured 玩家前情）。
+
+    🔴 **这个端点此前没有任何鉴权**（2026-08-19 补）：它返回的确实只有玩家可见
+    的那部分（`player_intro` / `opening_script` / `story_pages`，绝不含 `kp_truth`），
+    但**导入模组是有主的**——知道 id 的任何人（此前连登录都不需要）都能读到别人
+    导入的模组前情。`list_modules` 早就按主人过滤了，详情这一头漏了。
+    同族判据：**一份数据有几个出口，规则就要落几处。**
+
+    看不到的一律当**不存在**（不是 403），跟 `5cfbe6c` 给「拿它开新局」那个出口
+    定的口径一致——不确认"这个 id 存在但你没权限"。
+    """
     scenario = await db.get(Scenario, module_id)
     if scenario is None:
+        return None
+    if not await _may_read_module(db, scenario, user_id):
         return None
     detail = ModuleDetailRead.model_validate(scenario)
     intro, opening, pages = await _load_public_story(db, module_id)

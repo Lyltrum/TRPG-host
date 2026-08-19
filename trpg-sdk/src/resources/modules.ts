@@ -19,9 +19,15 @@ export class ModulesResource {
     return { headers: { Authorization: `Bearer ${token}` } };
   }
 
-  /** GET /api/v1/modules/{moduleId} — 模组详情 */
-  getDetail(moduleId: string): Promise<ModuleDetail> {
-    return this.client.get<ModuleDetail>(`/modules/${moduleId}`);
+  /**
+   * GET /api/v1/modules/{moduleId} — 模组详情。
+   *
+   * 🔴 `token` 是**必填**（2026-08-19）：导入的模组有主，后端按
+   * 「内置 / 我导入的 / 我正在某个用了它的房间里」判受众。做成可选参数的话，
+   * 漏传就静默退化成一次未登录请求——那正是这个仓库禁止的静默兜底。
+   */
+  getDetail(moduleId: string, token: string): Promise<ModuleDetail> {
+    return this.client.get<ModuleDetail>(`/modules/${moduleId}`, this.authenticated(token));
   }
 
   /**

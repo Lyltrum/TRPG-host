@@ -54,10 +54,15 @@ async def list_import_jobs(
 
 @router.get("/{module_id}", response_model=ApiResponse[ModuleDetailRead])
 async def get_module_detail(
-    module_id: str, db: AsyncSession = Depends(get_db)
+    module_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> ApiResponse[ModuleDetailRead]:
-    """GET /api/v1/modules/{moduleId} —— 模组详情。"""
-    module = await room_service.get_module_detail(db, module_id)
+    """GET /api/v1/modules/{moduleId} —— 模组详情。
+
+    要登录：导入模组有主，受众判定在 service 层（`_may_read_module`）。
+    """
+    module = await room_service.get_module_detail(db, module_id, user.id)
     if module is None:
         raise AppException(ErrorCode.NOT_FOUND, "模组不存在", status.HTTP_404_NOT_FOUND)
     return ApiResponse.ok(module)

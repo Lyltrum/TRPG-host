@@ -22,13 +22,15 @@ import uuid
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.db import Base
 from app.models.content import Game, GameSystem, Scenario
+from app.models.room import Player, Room
 from app.models.user import User
-from app.service.room import list_modules
+from app.service.room import get_module_detail, list_modules
 
 _db_path = Path(tempfile.mkdtemp(prefix="trpg-module-own-test-")) / "own.db"
 _engine = create_async_engine(f"sqlite+aiosqlite:///{_db_path}", poolclass=NullPool)
@@ -85,6 +87,14 @@ async def world():
         yield alice.id, bob.id
 
 
+@pytest.fixture
+async def ids():
+    """三份模组的 id，按标题取。"""
+    async with _session_factory() as db:
+        rows = await db.execute(select(Scenario.title, Scenario.id))
+        return dict(rows.tuples().all())
+
+
 async def test_i_do_not_see_other_peoples_imports(world) -> None:
     """🔴 核心回归：别人导入的模组连标题都不该出现在我的列表里。
 
@@ -134,3 +144,102 @@ def test_import_list_route_is_declared_before_the_module_detail_route() -> None:
     paths = [r.path for r in router.routes]  # ty: ignore[unresolved-attribute]
 
     assert paths.index("/modules/import") < paths.index("/modules/{module_id}")
+
+
+# ── 详情端点的受众（2026-08-19 补；此前它没有任何鉴权）────────────
+
+
+async def test_a_builtin_module_is_readable_by_anyone_logged_in(world, ids) -> None:
+    """内置模组是目录，登录了就看得见——这条是"别把门开过头"的对照组。"""
+    _alice, bob = world
+    async with _session_factory() as db:
+        assert await get_module_detail(db, ids["内置模组"], bob) is not None
+
+
+async def test_i_can_read_my_own_import(world, ids) -> None:
+    alice, _bob = world
+    async with _session_factory() as db:
+        assert await get_module_detail(db, ids["阿福导入的"], alice) is not None
+
+
+async def test_someone_elses_import_reads_as_not_existing(world, ids) -> None:
+    """🔴 **这条是这次改动的全部理由**：`list_modules` 早就按主人过滤了，
+    详情这一头**一直是完全公开的**（连登录都不需要）。一份数据两个出口，
+    规则只落了一处。
+
+    口径跟 `5cfbe6c` 给「拿它开新局」那个出口定的一致：看不到就当**不存在**，
+    不确认"这个 id 存在但你没权限"。
+
+    **变异检验**：把 `_may_read_module` 的调用去掉，这条当场红。
+    """
+    alice, _bob = world
+    async with _session_factory() as db:
+        assert await get_module_detail(db, ids["阿贵导入的"], alice) is None
+
+
+async def test_a_guest_in_the_room_can_still_read_the_intro(world, ids) -> None:
+    """🔴 **只按主人过滤会把前情页对非导入者整个关掉。**
+
+    三个调用点全在房间内，而**同房间的其他玩家并不拥有这个模组**——房主导入、
+    朋友扫码进来，朋友的 `player_intro` 当场变空白。这条守的正是那半个口子。
+
+    **变异检验**：把 `_may_read_module` 里那段 `Player join Room` 删掉，
+    这条当场红。
+    """
+    alice, bob = world
+    async with _session_factory() as db:
+        room = Room(
+            room_code="OWN001",
+            room_name="阿贵开的局",
+            max_players=4,
+            phase="InGame",
+            scenario_id=ids["阿贵导入的"],
+        )
+        db.add(room)
+        await db.flush()
+        db.add(Player(room_id=room.id, user_id=alice, nickname="阿福"))
+        await db.commit()
+
+    async with _session_factory() as db:
+        assert await get_module_detail(db, ids["阿贵导入的"], alice) is not None
+
+
+async def test_leaving_the_room_is_not_required_to_be_checked_here(world, ids) -> None:
+    """在**别的**房间里不算——判据是"这个房间用的就是这份模组"，
+    不是"我在某个房间里"。
+
+    **变异检验**：把 `Room.scenario_id == scenario.id` 那个条件删掉，这条当场红。
+    """
+    alice, _bob = world
+    async with _session_factory() as db:
+        room = Room(
+            room_code="OWN002",
+            room_name="用内置模组的局",
+            max_players=4,
+            phase="InGame",
+            scenario_id=ids["内置模组"],
+        )
+        db.add(room)
+        await db.flush()
+        db.add(Player(room_id=room.id, user_id=alice, nickname="阿福"))
+        await db.commit()
+
+    async with _session_factory() as db:
+        assert await get_module_detail(db, ids["阿贵导入的"], alice) is None
+
+
+def test_the_detail_endpoint_requires_a_logged_in_user() -> None:
+    """🔴 端点这一层也要钉住：service 判得再对，控制器忘了要 `get_current_user`
+    就等于没做（"整条链都在，就是没人能用到"的镜面——**这次是链上少了一环**）。
+    """
+    import inspect
+
+    from app.controller.dependencies import get_current_user
+    from app.controller.v1.modules import get_module_detail as endpoint
+
+    deps = [
+        p.default.dependency
+        for p in inspect.signature(endpoint).parameters.values()
+        if hasattr(p.default, "dependency")
+    ]
+    assert get_current_user in deps

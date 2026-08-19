@@ -4,7 +4,7 @@ import { ArrowLeft, BookOpen } from 'lucide-react'
 import { useGameStore } from '@/stores/game-store'
 import { useRoomStore } from '@/stores/room-store'
 import { getScenarioById } from '@/config/games'
-import { disconnectWebSocket, friendlyErrorMessage, sdk } from '@/services/api-client'
+import { disconnectWebSocket, friendlyErrorMessage, getAuthToken, sdk } from '@/services/api-client'
 import type { ModuleDetail } from 'trpg-sdk'
 
 export default function StoryPage() {
@@ -30,11 +30,16 @@ export default function StoryPage() {
       setDetail(null)
       return
     }
+    const token = getAuthToken()
+    if (!token) {
+      setDetail(null)
+      return
+    }
     let cancelled = false
     setLoading(true)
     setLoadError('')
     sdk.modules
-      .getDetail(moduleId)
+      .getDetail(moduleId, token)
       .then((mod) => {
         if (!cancelled) setDetail(mod)
       })

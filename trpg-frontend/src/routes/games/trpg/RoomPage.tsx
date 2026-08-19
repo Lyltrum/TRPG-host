@@ -6,7 +6,7 @@ import { useRoomStore } from '@/stores/room-store'
 import { useGameStore } from '@/stores/game-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { useCharacterStore } from '@/stores/character-store'
-import { connectWebSocket, waitForWsOpen, sdk, onWsMessage, disconnectWebSocket, friendlyErrorMessage } from '@/services/api-client'
+import { connectWebSocket, waitForWsOpen, sdk, onWsMessage, disconnectWebSocket, friendlyErrorMessage, getAuthToken } from '@/services/api-client'
 import { BACKGROUND_DETAIL_FIELDS } from '@/data/character-model'
 import { endGame, setPlayerAway } from '@/services/room'
 import { fetchCharacter } from '@/services/character/character-api'
@@ -738,9 +738,11 @@ export default function RoomPage() {
   // player_intro 建卡前就已固定不变，只需要请求一次并缓存，不用跟着 WS 事件刷新。
   useEffect(() => {
     if (!moduleId) return
+    const token = getAuthToken()
+    if (!token) return
     let cancelled = false
     sdk.modules
-      .getDetail(moduleId)
+      .getDetail(moduleId, token)
       .then((detail) => {
         if (!cancelled && detail.playerIntro) setPlayerIntro(detail.playerIntro)
       })
@@ -786,7 +788,9 @@ export default function RoomPage() {
             // 仅替换极旧占位句；不另注入第二段模组正文
             if (text === staleOpening && moduleId) {
               try {
-                const detail = await sdk.modules.getDetail(moduleId)
+                const token = getAuthToken()
+                if (!token) throw new Error('未登录')
+                const detail = await sdk.modules.getDetail(moduleId, token)
                 const real =
                   detail.openingScript ||
                   detail.playerIntro ||

@@ -484,6 +484,52 @@ async def test_ids_are_never_reused_and_names_are_not_deduped(party) -> None:
     assert list(table) == ["loc-1", "loc-2"]
 
 
+async def test_a_same_named_rebuild_leaves_a_probe_line(party) -> None:
+    """🔴 **探针，不是门**（2026-08-19 真机 + 全库量化后拍板）。
+
+    真机撞到一次：玩家回到开局的「旅馆前厅」，模型没有复用 `loc-1` 而是新建了
+    `loc-2`，两条 `name` 与 `from` 完全相同。当时想加确定性去重，量完全库之后
+    **没做**——14 个房间 / 26 个即兴地点里这种重复只有 1 处（4%），而它只灌水
+    `去过的节点`，那个数明确不是收尾门。拿 1 个样本推翻「重名不去重」这条明写的
+    设计决定，正是「对着一个样本调判据」。
+
+    所以这里守的是**两件事同时成立**：照建不误（上面那条用例）+ 留下一条
+    可复盘的记录。
+
+    **变异检验**：把 `logger.warning("keeper_improvised_location_duplicate", ...)`
+    删掉，这条当场红。
+    """
+    from structlog.testing import capture_logs
+
+    deps, _a_id, _b_id = party
+    await execute_side_effects(deps, KeeperDecision(new_location=NewLocation(name="旅馆前厅")))
+    with capture_logs() as events:
+        await execute_side_effects(deps, KeeperDecision(new_location=NewLocation(name="旅馆前厅")))
+
+    dups = [e for e in events if e.get("event") == "keeper_improvised_location_duplicate"]
+    assert dups, "同名重建却没留下任何记录"
+    assert dups[0]["existing"] == ["loc-1"]
+    # 行为**不变**：第二条照样建出来了
+    assert list(load_improvised_locations(await _state(deps))) == ["loc-1", "loc-2"]
+
+
+async def test_a_different_origin_is_not_flagged_as_a_duplicate(party) -> None:
+    """同名但来路不同是**两个地方**（两栋房子各有一间「厨房」）——不该报。
+
+    这条同时钉住"探针别变成噪音"：它一旦对合法情况也响，下次真出问题时
+    没人会再看这条日志。
+    """
+    from structlog.testing import capture_logs
+
+    deps, _a_id, _b_id = party
+    await execute_side_effects(deps, KeeperDecision(new_location=NewLocation(name="厨房")))
+    with capture_logs() as events:
+        await execute_side_effects(
+            deps, KeeperDecision(new_location=NewLocation(name="厨房", from_id="loc-1"))
+        )
+    assert not [e for e in events if e.get("event") == "keeper_improvised_location_duplicate"]
+
+
 async def test_an_unresolvable_origin_is_dropped_not_stored(party) -> None:
     """来路解析不出就丢掉——存下来它就会被当成 id 用（自由文本当标识符）。"""
     deps, _a_id, _b_id = party

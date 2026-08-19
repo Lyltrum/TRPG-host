@@ -598,6 +598,20 @@ async def create_improvised_location_impl(
 
     🔴 **重名不去重**：两个「墓地」是两条。名字是给人看的，不是标识符——
     去重就等于拿自由文本当 key，那正是这套设计要避免的（`exec/17`）。
+
+    🔴 **这条决定 2026-08-19 复核过，没有推翻，只加了一只眼睛。** 真机撞到一次
+    「玩家回到开局的旅馆前厅，模型没有复用 `loc-1` 而是新建了 `loc-2`」，两条
+    `name` 与 `from` 完全相同。当时想加确定性去重，量完全库之后没做：
+
+      - **14 个房间 / 26 个即兴地点里，(同名 + 同 from) 重复只有 1 处（4%）**；
+      - **危害接近 0**：它只灌水 `去过的节点`，而那个数**明确不是收尾门**，
+        只是参考（见 `closure/remaining.py` 开头）；
+      - 拿 1 个样本推翻一条明写的设计决定，正是判据全集里「对着一个样本调判据」
+        那一类。规则 4e 里本来就写着「已经建过的去那儿就直接用它的 `loc-N`」，
+        这一次是模型没照做 ⇒ 属概率性（`exec/20 §1.28`）。
+
+    所以下面只打一条 warning **攒样本**，行为一个字不改。等它真的常见了，再谈
+    要不要拦——那时也该先看它长什么样，别直接照 (name, from) 去重。
     """
     cleaned = name.strip()
     if not cleaned:
@@ -611,6 +625,20 @@ async def create_improvised_location_impl(
         # 来路只留能解析的：解析不出就丢掉这一项，**不把模型写的字符串原样存下来**
         # （存了它就会被当成 id 用，又一次自由文本当标识符）。
         origin = from_id if resolve_location(deps.module, current_state, from_id) else None
+        same = [
+            lid
+            for lid, entry in table.items()
+            if entry.get("name", "").strip() == cleaned and entry.get("from") == origin
+        ]
+        if same:
+            # 探针，不是门（判据见 docstring）：**照建不误**。
+            logger.warning(
+                "keeper_improvised_location_duplicate",
+                room_id=deps.room_id,
+                existing=same,
+                name=cleaned,
+                origin=origin,
+            )
         loc_id = next_improvised_id(table)
         table[loc_id] = {"name": cleaned, "from": origin}
         current_state[IMPROVISED_LOCATION_KEY] = table

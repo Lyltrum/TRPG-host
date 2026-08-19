@@ -6,7 +6,7 @@
 |---|---|---|---|
 | L1 事实账本（`fact_ledger`） | 已确认的线索 | **代码** | 永久 |
 | **L2 分段摘要（本模块）** | 一段剧情的梗概 | LLM，**离线** | 永久 |
-| L3 历史窗口（`_load_room_memory`） | 最近 200 条事件原文 | —— | 滑动窗口 |
+| L3 历史窗口（`_load_room_memory`） | 最近 `HISTORY_LIMIT` 条事件原文 | —— | 滑动窗口 |
 
 L1 保证"事实不丢"，但一场戏里还有大量**不是线索**却影响后续的东西：跟谁翻过
 脸、许过什么诺、哪扇门被撞坏了。这些逐条记账不现实（判据不清晰），摘要正好
@@ -17,10 +17,14 @@ L1 保证"事实不丢"，但一场戏里还有大量**不是线索**却影响�
 跟 L1 同一个理由：只追加、带时间戳、按 room 索引。`room_summaries` 表不能
 复用——它 `room_id` 唯一（一房一条），是复盘用的终局总结，不是分段的。
 
-## 触发：场景切换 + 至少 N 轮
+## 触发：场景切换 + 至少 N 轮，**或**攒够了事件条数
 
 只按场景切换会在玩家来回踱步时疯狂触发；只按轮数会把一段完整的戏拦腰截断。
 两者取交集：**换了场景，且距上次摘要已经积累了足够多轮**。
+
+再并上一条兜底：**距上次已产生 `CHAPTER_EVENT_CEILING` 条事件**，不管场景
+变没变——否则长时间待在一个场景就等于零摘要，而那段剧情滚出 L3 之后谁也
+重建不了。兜底的单位是**事件条数**不是拍数，理由见那个常量。
 
 ## 离线：不在玩家等待路径上
 
@@ -51,27 +55,41 @@ EVENT_TYPE = "keeper.chapter"
 #: 两次摘要之间至少要积累这么多轮，才允许在场景切换时再摘一次。
 MIN_TURNS_BETWEEN_CHAPTERS = 12
 
-#: L3 窗口大约覆盖多少拍。一拍产生 2-3 条事件（玩家原话 + 叙事，有检定时更多），
-#: 取 2.5 折算。
-_BEATS_COVERED_BY_L3 = HISTORY_LIMIT / 2.5
-
-#: 🔴 **兜底上限**：距上次摘要超过这么多拍，**不管场景变没变**都要摘一次。
+#: 🔴 **兜底上限**：距上次摘要已经产生这么多条事件，**不管场景变没变**都要摘一次。
 #:
 #: 没有它的时候，摘要只在场景切换时触发（`should_summarize` 取的是交集），于是
 #: **长时间待在同一个场景 = 零摘要**——地下室搜半小时、审一个 NPC 审二十轮都会
 #: 撞上，而那段剧情滚出 L3 之后**再也没人能重建它**（L1 靠 id 重渲、L3 原文还在
 #: 库里，只有 L2 是一次性的）。
 #:
-#: **从 `HISTORY_LIMIT` 推导，不写死一个数**：写死的话，哪天有人调大/调小历史
-#: 窗口，这里的安全边际会静默失效——而失效的表现是"某几段剧情没了"，不会有
-#: 任何东西变红。留 3 倍余量。
-CHAPTER_HARD_CEILING = int(_BEATS_COVERED_BY_L3 / 3)
+#: ## 🔴 2026-08-19：单位从「拍」换成「事件条数」
+#:
+#: 原来写的是 `int(HISTORY_LIMIT / 2.5 / 3)` = 53 **拍**，注释声称「留 3 倍余量」。
+#: **那个 2.5（"一拍产生 2-3 条事件"）是错的**，实测 5.0–13.7。用真实长局复现：
+#: `LG4LWD`（112 拍单人局）**第 53 拍时已累计 414 条事件 > HISTORY_LIMIT 400**
+#: ——兜底还没触发，这段剧情的开头就已经滚出 L3 了，而摘要模型读的正是 L3 窗口
+#: （`agent._summarize_chapter` 收的是这一轮加载的 `history_lines`）。声称的
+#: 3 倍余量实际是**负的**。
+#:
+#: 而在多人局里它是**反方向**失效：`turns_since_last_chapter` 数的是
+#: `action.submit` 条数，实测这个数与真实回合数的比值随人数单调上升
+#: （1 人 0.82 / 2 人 1.04 / 3 人 1.75 / 4 人 2.50——几个人的发言被收进同一拍），
+#: 于是同一个 53 在四人局里只相当于 21 个真实回合，摘要触发过频、把一段戏切碎。
+#:
+#: **两头的失效同一个根因：常数的单位在不同人数下对应的真实回合数不同。**
+#: 同 `exec/45` SAN 窗口那条——「容量是房间级的、装的东西却按人增长 ⇒ 规则在
+#: 多人局自动失效」。换成事件条数之后，人数不再影响它：**L3 装的就是事件，
+#: 兜底问的就是"窗口用掉多少了"，中间不再隔着任何折算。**
+#:
+#: 取 `HISTORY_LIMIT // 2`：窗口用掉一半就摘，**留一倍余量给事件密度的波动**
+#: （实测密度在 5.0–13.7 之间摆动，而余量是按条数算的，密度再怎么变都不影响）。
+CHAPTER_EVENT_CEILING = HISTORY_LIMIT // 2
 
 #: 一段摘要的字数上限——它要长期常驻上下文，不能自己变成新的上下文负担。
 CHAPTER_MAX_CHARS = 120
 
 
-def should_summarize(*, scene_changed: bool, turns_since_last: int) -> bool:
+def should_summarize(*, scene_changed: bool, turns_since_last: int, events_since_last: int) -> bool:
     """纯函数，方便单测与调参。
 
     两条路，取并集：
@@ -79,12 +97,18 @@ def should_summarize(*, scene_changed: bool, turns_since_last: int) -> bool:
     - **换了场景，且积累够了轮数**——原来的判据，一段戏完整了就摘（见模块
       docstring 的取交集理由：只按场景会在玩家来回踱步时疯狂触发，只按轮数会
       把一段完整的戏拦腰截断）。
-    - **距上次超过 `CHAPTER_HARD_CEILING` 拍**——兜底，不管场景变没变。
+    - **距上次已产生 `CHAPTER_EVENT_CEILING` 条事件**——兜底，不管场景变没变。
 
-    🔴 第二条是 2026-08-16 补的。只有第一条时，**不换场景就永远不摘**，
-    那段剧情滚出 L3 之后再也生成不出来。见 `CHAPTER_HARD_CEILING` 的说明。
+    🔴 第二条是 2026-08-16 补的，2026-08-19 把它的单位从「拍」换成「事件条数」
+    （原来的折算系数量错了，实锤见 `CHAPTER_EVENT_CEILING` 的说明）。
+
+    🔴 **两条路各用各的量，这是有意的**：兜底问的是"L3 窗口用掉多少了"，那是
+    容量问题，只有事件条数答得了；而 12 拍那条问的是"这段戏够不够完整"，那是
+    语义判断，拍数才是它的单位。合成一个数会让其中一条失去它真正的依据。
+    （12 拍那条在多人局下同样偏频，但它**没有实锤危害证据**——按判据「改判据
+    之前先量误报的实际危害」，先装探针攒样本，不跟着这次一起改。）
     """
-    if turns_since_last >= CHAPTER_HARD_CEILING:
+    if events_since_last >= CHAPTER_EVENT_CEILING:
         return True
     return scene_changed and turns_since_last >= MIN_TURNS_BETWEEN_CHAPTERS
 
@@ -99,6 +123,29 @@ async def turns_since_last_chapter(db: AsyncSession, *, room_id: str) -> int:
     )
     since = last.scalar_one_or_none()
     stmt = select(Event.id).where(Event.room_id == room_id, Event.event_type == "action.submit")
+    if since is not None:
+        stmt = stmt.where(Event.created_at > since)
+    rows = await db.execute(stmt)
+    return len(rows.all())
+
+
+async def events_since_last_chapter(db: AsyncSession, *, room_id: str) -> int:
+    """上次摘要之后房间里一共产生了多少条事件。
+
+    🔴 **数的是全部事件，不是 `action.submit`**——它要回答的是"L3 窗口用掉多少
+    了"，而 L3 装的就是全部事件（`_load_room_memory` 按 `HISTORY_LIMIT` 条截）。
+    换成任何别的分母都要再折算一次，而上一版正是折算错了才出的问题。
+
+    没摘过时从房间第一条事件算起：那时"距上次"就是"到目前为止"。
+    """
+    last = await db.execute(
+        select(Event.created_at)
+        .where(Event.room_id == room_id, Event.event_type == EVENT_TYPE)
+        .order_by(Event.created_at.desc())
+        .limit(1)
+    )
+    since = last.scalar_one_or_none()
+    stmt = select(Event.id).where(Event.room_id == room_id)
     if since is not None:
         stmt = stmt.where(Event.created_at > since)
     rows = await db.execute(stmt)

@@ -49,6 +49,7 @@ from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import ScenarioModule
 from app.core.keeper.contract.registry import Capability
 from app.core.keeper.memory.chapter import (
+    events_since_last_chapter,
     record_chapter,
     should_summarize,
     split_history_for_chapters,
@@ -1293,9 +1294,14 @@ class KeeperAgent(Narrator):
         try:
             async with self._session_factory() as db:
                 turns = await turns_since_last_chapter(db, room_id=room_id)
+                events = await events_since_last_chapter(db, room_id=room_id)
             # 🔴 用真实的 `scene_changed`，不再写死 True。写死的时候，兜底那条
             # 路径就算被调到也会被"当成换了场景"，两条判据分不开。
-            if not should_summarize(scene_changed=scene_changed, turns_since_last=turns):
+            if not should_summarize(
+                scene_changed=scene_changed,
+                turns_since_last=turns,
+                events_since_last=events,
+            ):
                 return
             for audience, lines in split_history_for_chapters(history_lines, everyone):
                 if not lines:

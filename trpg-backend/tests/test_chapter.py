@@ -14,7 +14,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.db import Base
 from app.core.keeper.memory.chapter import (
-    CHAPTER_HARD_CEILING,
+    CHAPTER_EVENT_CEILING,
     CHAPTER_MAX_CHARS,
     MIN_LINES_PER_CHAPTER,
     MIN_TURNS_BETWEEN_CHAPTERS,
@@ -70,7 +70,7 @@ async def _add_actions(factory, room_id: str, player_id: str, count: int) -> Non
 
 def test_scene_change_alone_is_not_enough() -> None:
     """只按场景切换会在玩家来回踱步时疯狂触发。"""
-    assert should_summarize(scene_changed=True, turns_since_last=1) is False
+    assert should_summarize(scene_changed=True, turns_since_last=1, events_since_last=0) is False
 
 
 def test_turns_alone_is_not_enough_below_the_ceiling() -> None:
@@ -79,11 +79,25 @@ def test_turns_alone_is_not_enough_below_the_ceiling() -> None:
     🔴 2026-08-16 收窄：原来断言的是 `turns=999` 也不摘，而那正是缺陷——
     不换场景就永远不摘。现在的规则是「**在兜底上限以内**，光有轮数不够」。
     """
-    assert should_summarize(scene_changed=False, turns_since_last=CHAPTER_HARD_CEILING - 1) is False
+    assert (
+        should_summarize(
+            scene_changed=False,
+            turns_since_last=MIN_TURNS_BETWEEN_CHAPTERS * 3,
+            events_since_last=CHAPTER_EVENT_CEILING - 1,
+        )
+        is False
+    )
 
 
 def test_both_conditions_trigger() -> None:
-    assert should_summarize(scene_changed=True, turns_since_last=MIN_TURNS_BETWEEN_CHAPTERS) is True
+    assert (
+        should_summarize(
+            scene_changed=True,
+            turns_since_last=MIN_TURNS_BETWEEN_CHAPTERS,
+            events_since_last=0,
+        )
+        is True
+    )
 
 
 def test_the_ceiling_fires_even_without_a_scene_change() -> None:
@@ -93,19 +107,90 @@ def test_the_ceiling_fires_even_without_a_scene_change() -> None:
     而那段剧情滚出 L3 之后**再也没人能重建它**——L1 能从 id 重渲、L3 原文
     还在库里，只有 L2 是一次性的。
     """
-    assert should_summarize(scene_changed=False, turns_since_last=CHAPTER_HARD_CEILING) is True
+    assert (
+        should_summarize(
+            scene_changed=False, turns_since_last=0, events_since_last=CHAPTER_EVENT_CEILING
+        )
+        is True
+    )
 
 
 def test_the_ceiling_is_derived_from_the_history_window() -> None:
-    """🔴 兜底上限必须**显著小于 L3 能覆盖的拍数**，否则它兜不住底。
+    """🔴 兜底上限必须**显著小于 L3 窗口**，否则它兜不住底。
 
-    而且要跟着 `HISTORY_LIMIT` 走：写死一个数的话，哪天有人调大/调小历史
-    窗口，安全边际会静默失效——失效的表现是"某几段剧情没了"，不会有任何
-    东西变红。
+    要跟着 `HISTORY_LIMIT` 走：写死一个数的话，哪天有人调大/调小历史窗口，
+    安全边际会静默失效——失效的表现是"某几段剧情没了"，不会有任何东西变红。
+
+    ## 🔴 这条测试上一版是瞎的（2026-08-19 修）
+
+    它原来写的是：
+
+        beats_covered = HISTORY_LIMIT / 2.5
+        assert beats_covered / 2 > CHAPTER_HARD_CEILING
+
+    `2.5` 正是**被测代码自己用的那个折算系数**——测试拿被测对象的错误假设当
+    自己的依据，于是无论那个系数错得多离谱，两边都会一致地错下去，测试永远绿。
+    同 `exec/43` 那条「守护测试拿被测的那张表自己当样本来源」。
+
+    现在两边的单位都是**事件条数**，中间不再有任何折算，这个洞就消失了。
     """
-    beats_covered = HISTORY_LIMIT / 2.5
-    assert beats_covered / 2 > CHAPTER_HARD_CEILING, "余量不足两倍，兜底可能来不及"
-    assert CHAPTER_HARD_CEILING > MIN_TURNS_BETWEEN_CHAPTERS, "兜底比常规间隔还小就没意义了"
+    assert CHAPTER_EVENT_CEILING < HISTORY_LIMIT, "兜底比窗口还大 ⇒ 结构上不可能兜住底"
+    assert HISTORY_LIMIT / CHAPTER_EVENT_CEILING >= 2, "余量不足两倍，密度一波动就来不及"
+
+
+def test_the_ceiling_beats_the_window_on_a_real_long_game() -> None:
+    """🔴 **实锤复现**（`LG4LWD`，112 拍单人真机局）。
+
+    上一版的兜底是 53 **拍**，而那局**第 53 拍时已累计 414 条事件**——超过
+    `HISTORY_LIMIT`（400）。也就是说兜底还没触发，这段剧情的开头就已经滚出
+    L3 了，而摘要模型读的正是 L3 窗口（`agent._summarize_chapter` 收的是这一轮
+    加载的 `history_lines`）⇒ 它摘不到要摘的东西。
+
+    这里把那局的真实密度钉成一个数：**7.8 条事件/拍**（414/53）。按新判据，
+    兜底在第 `CHAPTER_EVENT_CEILING` 条事件时就该触发，那时窗口才用掉一半。
+
+    **变异检验**：把 `CHAPTER_EVENT_CEILING` 改回 `int(HISTORY_LIMIT / 2.5 / 3)`
+    并按拍计数，这条当场红。
+    """
+    events_per_beat = 414 / 53  # LG4LWD 实测
+    beats_when_ceiling_fires = CHAPTER_EVENT_CEILING / events_per_beat
+
+    # 触发时窗口还没满 —— 这正是上一版做不到的那件事
+    assert CHAPTER_EVENT_CEILING < HISTORY_LIMIT
+    # 而且要早得多：留下的余量够再跑一整段同样长的戏
+    assert beats_when_ceiling_fires < 53, "兜底触发得比出问题的那一版还晚，等于没修"
+
+
+def test_the_ceiling_is_immune_to_party_size() -> None:
+    """🔴 判据不许随人数漂移——这是换单位的**根本理由**。
+
+    实测 `action.submit / keeper.decision` 随人数单调上升（1 人 0.82 / 2 人 1.04
+    / 3 人 1.75 / 4 人 2.50：几个人的发言被收进同一拍）。旧判据数的是
+    `action.submit`，于是同一个 53 在单人局是 53 个真实回合、在四人局只有 21 个
+    ——**同一条规则在多人局自动变成另一条规则**（同 `exec/45` SAN 窗口那条）。
+
+    新判据数的是全部事件，而 L3 装的也是全部事件，两者**同一个单位**，人数
+    再怎么变都不进入这个判断。这条用四种人数的实测密度各跑一遍，断言触发点
+    落在同一个事件数上。
+    """
+    for submit_per_beat in (0.82, 1.04, 1.75, 2.50):
+        # 不管一拍里有几条玩家发言，兜底问的都是"窗口用掉多少了"
+        assert (
+            should_summarize(
+                scene_changed=False,
+                turns_since_last=int(CHAPTER_EVENT_CEILING / submit_per_beat),
+                events_since_last=CHAPTER_EVENT_CEILING,
+            )
+            is True
+        )
+        assert (
+            should_summarize(
+                scene_changed=False,
+                turns_since_last=int(CHAPTER_EVENT_CEILING / submit_per_beat),
+                events_since_last=CHAPTER_EVENT_CEILING - 1,
+            )
+            is False
+        )
 
 
 # ── 计数：从上一段摘要之后算起 ───────────────────────────────
@@ -417,14 +502,15 @@ def test_without_a_roster_the_old_behaviour_is_kept() -> None:
 
 @pytest.mark.asyncio
 async def test_the_ceiling_path_really_produces_a_summary(room) -> None:
-    """兜底那条路要真的走得通：没换场景、但攒够了拍数 → 摘一段出来。
+    """兜底那条路要真的走得通：没换场景、但攒够了**事件** → 摘一段出来。
 
     只测 `should_summarize` 不够——那是纯函数，它返回 True 不代表
     `_summarize_chapter` 会把 `scene_changed=False` 传给它（改之前那里写死的
-    就是 True）。
+    就是 True），也不代表调用点真的去查了事件数（2026-08-19 换单位时，
+    漏接 `events_since_last_chapter` 会让它永远收到 0）。
     """
     factory, (room_id, player_id) = room
-    await _add_actions(factory, room_id, player_id, CHAPTER_HARD_CEILING)
+    await _add_actions(factory, room_id, player_id, CHAPTER_EVENT_CEILING)
     client = _CountingClient()
 
     await _agent_with(factory, client)._summarize_chapter(
@@ -434,6 +520,65 @@ async def test_the_ceiling_path_really_produces_a_summary(room) -> None:
     assert client.calls == 1
     async with factory() as db:
         assert len(await load_chapters(db, room_id=room_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_ceiling_counts_events_not_player_turns(room) -> None:
+    """🔴 **守的是「单位」本身**，而不是那个数值。
+
+    上一版按 `action.submit` 条数算，这一版按全部事件条数算。区分这两者需要一个
+    **两种单位下结论相反**的样本——现有的兜底集成测试造的全是 `action.submit`，
+    两种算法都会触发，它区分不开（造的样本没走到被测分支 = 没测）。
+
+    这里造的是：**少量玩家发言 + 大量叙事/裁决事件**。真实长局就长这样——
+    `LG4LWD` 实测 112 拍产生 844 条事件，`narration.push` 和 `keeper.decision`
+    才是大头。
+
+    - 按事件数：`CHAPTER_EVENT_CEILING` 条 ⇒ **该摘**
+    - 按拍数：只有 3 拍，远不到任何阈值 ⇒ 不摘
+
+    **变异检验**：把 `agent._summarize_chapter` 里的 `events_since_last=events`
+    改成 `events_since_last=turns`（= 退回按拍算），这条当场红。
+    """
+    factory, (room_id, player_id) = room
+    await _add_actions(factory, room_id, player_id, 3)
+    async with factory() as db:
+        for i in range(CHAPTER_EVENT_CEILING):
+            db.add(
+                Event(
+                    room_id=room_id,
+                    player_id=None,
+                    event_type="narration.push",
+                    payload={"text": f"第 {i} 段叙事"},
+                )
+            )
+        await db.commit()
+
+    client = _CountingClient()
+    await _agent_with(factory, client)._summarize_chapter(
+        room_id, [HistoryLine("阿福：我再翻一遍这个抽屉")], scene_changed=False
+    )
+
+    assert client.calls == 1, "大量非发言事件撑满了窗口，兜底必须触发"
+    async with factory() as db:
+        assert len(await load_chapters(db, room_id=room_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_quiet_stretch_of_pure_turns_does_not_trigger_the_ceiling(room) -> None:
+    """对照组：光有拍数、事件没攒够，兜底不该触发。
+
+    没有这条的话，上面那条可以被"永远返回 True"的退化实现骗过去。
+    """
+    factory, (room_id, player_id) = room
+    await _add_actions(factory, room_id, player_id, MIN_TURNS_BETWEEN_CHAPTERS * 2)
+
+    client = _CountingClient()
+    await _agent_with(factory, client)._summarize_chapter(
+        room_id, [HistoryLine("阿福：我再翻一遍这个抽屉")], scene_changed=False
+    )
+
+    assert client.calls == 0
 
 
 def test_the_summary_call_site_is_not_nested_under_scene_changed() -> None:

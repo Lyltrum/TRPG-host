@@ -1,6 +1,8 @@
 import type {
   AgeAdjustmentResult,
   CharacterTemplate,
+  EquipmentCheckBody,
+  EquipmentCheckResult,
   RollAttributePoolResult,
   RollAttributesResult,
   RollLuckResult,
@@ -112,6 +114,15 @@ export async function saveCharacter(
  */
 export async function fetchCharacter(roomId: string, characterId: string) {
   return sdk.characters.get(roomId, characterId, requireReconnectToken());
+}
+
+/** 离开装备那一步时先审一遍（不是第二道闸门，`complete` 那道照跑）。 */
+export async function checkEquipment(
+  roomId: string,
+  characterId: string,
+  payload: EquipmentCheckBody
+): Promise<EquipmentCheckResult> {
+  return sdk.characters.checkEquipment(roomId, characterId, payload, requireReconnectToken());
 }
 
 export async function completeCharacter(

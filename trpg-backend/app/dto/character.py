@@ -295,6 +295,51 @@ class SkillComputeView(CamelModel):
     cap: int
 
 
+class EquipmentCheckBody(CamelModel):
+    """POST /rooms/{roomId}/characters/{characterId}/check-equipment 请求体。
+
+    🔴 **判断素材由前端带上，不从库里读**：向导直到最后一步才 PATCH，而这次
+    校验发生在**离开装备那一步**的时候——那时库里那张卡还是空的（真人反馈
+    2026-08-19：「应该在装备那个界面点击下一步就该有」）。
+
+    `era` 不在这里：它来自模组，属于服务端权威，让客户端传等于把"这一局是
+    哪个年代"交给客户端说了算。
+    """
+
+    equipment: list[str] = Field(default_factory=list)
+    occupation: str | None = None
+    age: int | None = None
+    residence: str | None = None
+    birthplace: str | None = None
+    credit_rating: int | None = None
+    #: 物品名 → 玩家写的来路。重试时带上（同 `CharacterCompleteBody`）。
+    notes: dict[str, str] = Field(default_factory=dict)
+
+
+class RejectedEquipmentView(CamelModel):
+    """一件判为「拿不到」的装备。"""
+
+    item: str
+    #: 为什么不行 + 可以改成什么，拼成一句给人看的话。
+    message: str
+
+
+class EquipmentCheckResult(CamelModel):
+    """哪几件这个人拿不到。空列表 = 全都合理，可以进下一步。
+
+    🔴 `checked=False` 表示**这次判断没跑成**（没配 key / 超时 / JSON 崩了），
+    跟"全都合理"完全是两回事：前者放行但不该让玩家以为审过了。同
+    `EquipmentChecker.check` 返回 None 的那条判据。
+    """
+
+    checked: bool
+    #: 🔴 不给默认值（同 `PartyUpdatePayload`）：服务端每次都送得出这个字段，
+    #: 契约就该说它一定在。给了默认值生成的 TS 就是可选的，前端只能写 `?? []`
+    #: ——那正是明令禁止的静默兜底。（这个坑同一天踩了两次，前一次是
+    #: `EndGameStatusPayload.waiting_for`。）
+    rejected: list[RejectedEquipmentView]
+
+
 class CharacterCompleteBody(CamelModel):
     """POST /rooms/{roomId}/characters/{characterId}/complete 请求体（可选）。
 

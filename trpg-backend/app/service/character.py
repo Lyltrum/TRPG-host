@@ -55,7 +55,10 @@ from app.dto.character import (
     CharacterTemplateUpdateBody,
     CharacterUpdateBody,
     EduImprovementCheckView,
+    EquipmentCheckBody,
+    EquipmentCheckResult,
     PartyCharacterRead,
+    RejectedEquipmentView,
     RollAttributePoolResult,
     RollAttributesResult,
     RollLuckResult,
@@ -416,6 +419,58 @@ async def _equipment_issues(
         )
         for rejected in verdict.rejected
     ]
+
+
+async def check_equipment(
+    db: AsyncSession, room_id: str, reconnect_token: str | None, body: EquipmentCheckBody
+) -> EquipmentCheckResult:
+    """离开装备那一步时先审一遍，别让玩家一路填到最后才被拦回来。
+
+    真人反馈（2026-08-19）：「在这里进行提示感觉很生硬呀，应该在装备那个界面
+    点击下一步就该有」。原来唯一的闸门在 `complete_character`，那是**第 8 步**，
+    而装备栏在**第 7 步**——中间隔着一整屏背景故事。
+
+    🔴 **这不是第二道闸门，是同一道门的提前预览**：判据、prompt、放行规则全部
+    复用 `_equipment_issues` 那条路，`complete` 那道仍然照跑。两份判据迟早
+    分叉，而分叉的方向一定是"预览说行、提交说不行"。
+
+    素材由调用方带上（向导那时还没 PATCH 过），只有 `era` 从模组取——它是
+    服务端权威，让客户端传等于把"这一局是哪个年代"交给客户端说了算。
+    """
+    room = await find_room_by_id(db, room_id)
+    player = await get_player_by_reconnect_token(db, reconnect_token)
+    if player.room_id != room.id:
+        raise RoomAuthorizationError("你不在这个房间里")
+
+    items = clamp_items(body.equipment)
+    if not items:
+        return EquipmentCheckResult(checked=True, rejected=[])
+    api_key = get_settings().deepseek_api_key
+    if not api_key:
+        return EquipmentCheckResult(checked=False, rejected=[])
+
+    era = await module_era(db, room.scenario_id)
+    verdict = await EquipmentChecker(api_key).check(
+        build_equipment_prompt(
+            equipment=items,
+            occupation=body.occupation,
+            age=body.age,
+            residence=body.residence,
+            birthplace=body.birthplace,
+            credit_rating=body.credit_rating,
+            era=era,
+            notes=body.notes,
+        )
+    )
+    if verdict is None:
+        return EquipmentCheckResult(checked=False, rejected=[])
+    return EquipmentCheckResult(
+        checked=True,
+        rejected=[
+            RejectedEquipmentView(item=r.item, message=rejection_message(r))
+            for r in verdict.rejected
+        ],
+    )
 
 
 async def complete_character(

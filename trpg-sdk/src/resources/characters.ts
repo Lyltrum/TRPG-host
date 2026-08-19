@@ -4,6 +4,8 @@ import type {
   ApplyAgeAdjustmentInput,
   Character,
   CharacterCompleteBody,
+  EquipmentCheckBody,
+  EquipmentCheckResult,
   CharacterDraftResult,
   QuickBuildCharacterInput,
   RollAttributePoolResult,
@@ -101,6 +103,25 @@ export class CharactersResource {
   ): Promise<null> {
     return this.client.patch<null>(
       `/rooms/${roomId}/characters/${characterId}`,
+      payload,
+      this.authenticated(reconnectToken)
+    );
+  }
+
+  /** POST /api/v1/rooms/{roomId}/characters/{characterId}/check-equipment —
+   * 离开装备那一步时先审一遍。
+   *
+   * **不是第二道闸门**：`complete` 那道照跑，这里只是同一道门的提前预览
+   * （真人反馈 2026-08-19：不该等填完整张卡才被拦回来）。判断素材由调用方
+   * 带上——向导直到最后一步才 `save`，这时服务端那张卡还是空的。 */
+  checkEquipment(
+    roomId: string,
+    characterId: string,
+    payload: EquipmentCheckBody,
+    reconnectToken: string
+  ): Promise<EquipmentCheckResult> {
+    return this.client.post<EquipmentCheckResult>(
+      `/rooms/${roomId}/characters/${characterId}/check-equipment`,
       payload,
       this.authenticated(reconnectToken)
     );

@@ -15,6 +15,7 @@ import { WIZARD_STEPS } from './wizard-steps'
 import { DEFAULT_AGE, createInitialWizardState, wizardReducer, type WizardState } from './wizard-state'
 import { useWizardPreview } from './useWizardPreview'
 import { useWizardHydration } from './useWizardHydration'
+import { useEquipmentGate } from './useEquipmentGate'
 import { useWizardSubmit } from './useWizardSubmit'
 import { buildSkillComputeMap, pointBuyAttributes, stepBlockers, totalPointsRemaining } from './wizard-selectors'
 import { ConceptStep } from './steps/ConceptStep'
@@ -86,6 +87,10 @@ export default function CharacterWizardPage() {
   // 玩家对每件被拒装备写的来路。**不落库**：这是对守秘人说的一句解释，
   // 不是卡面数据，只影响这一次提交。
   const [equipmentNotes, setEquipmentNotes] = useState<Record<string, string>>({})
+  const gate = useEquipmentGate(state, ruleset)
+  // 两个来源合成一份：装备那一步的预审、以及最终提交被拒。同一件事的两个
+  // 时机，展示与输入框只该有一套。
+  const blockedEquipment = rejectedEquipment.length > 0 ? rejectedEquipment : gate.rejected
 
   const [pendingConfirm, setPendingConfirm] = useState(false)
   useEffect(() => setPendingConfirm(false), [state.step])
@@ -207,6 +212,20 @@ export default function CharacterWizardPage() {
       return
     }
     if (blockers.length > 0) return
+    // 🔴 **装备那一步先审一遍**，别让玩家一路填到最后才被拦回来（真人反馈
+    // 2026-08-19）。审不过就停在这一步，输入框跟着出现在下面。
+    if (stepMeta.id === 'background') {
+      const notes = Object.fromEntries(
+        Object.entries(equipmentNotes).filter(([, v]) => v.trim())
+      )
+      void gate.audit(notes).then((passed) => {
+        if (passed) {
+          setPendingConfirm(false)
+          dispatch({ type: 'SET_STEP', step: state.step + 1 })
+        }
+      })
+      return
+    }
     if (isSoftGateStep) {
       if (hasValidationIssues) return
       if (remaining > 0 && !pendingConfirm) {
@@ -220,9 +239,16 @@ export default function CharacterWizardPage() {
 
   const nextDisabled =
     submitting ||
+    gate.checking ||
     (blockers.length > 0 && !isSoftGateStep) ||
     ((isSoftGateStep || isLastStep) && hasValidationIssues)
-  const nextLabel = submitting
+  // 🔴 **审核中必须看得见**（真人反馈 2026-08-19：「我给出解释点击完成创建
+  // 没反应」）。那次其实跑完了整轮 LLM 重判、也确实又被拒了，只是界面从头到尾
+  // 一个像素没变——玩家无从知道自己提交过。一次要等 3–5 秒的操作，没有进行中
+  // 状态就等于没有反馈。
+  const nextLabel = gate.checking
+    ? '守秘人在看装备…'
+    : submitting
     ? '提交中…'
     : (isSoftGateStep || isLastStep) && hasValidationIssues
       ? '请先解决上方的超支问题'
@@ -342,29 +368,52 @@ export default function CharacterWizardPage() {
 
       <div className="relative z-10 flex-none px-3 pt-2 pb-3 mt-2 bg-page border-t border-border-mid">
         {submitError && <p className="text-[10.5px] text-rust text-center mb-1.5">{submitError}</p>}
-        {rejectedEquipment.length > 0 && (
-          <div className="mb-2 space-y-2">
-            {/* 🔴 不是"改掉它"，是"说说你怎么会有它"。真人桌上主持人问的就是
-                这一句，玩家答得上来就能带着。 */}
-            {rejectedEquipment.map((r) => (
-              <div key={r.item} className="press-soft bg-card px-2.5 py-2">
-                <p className="text-[10.5px] text-rust leading-relaxed">⚠️ {r.message}</p>
-                <label className="block text-[10.5px] text-text-muted mt-1.5 mb-1">
-                  他怎么会有「{r.item}」？说得通就能带着。
-                </label>
-                <input
-                  type="text"
-                  value={equipmentNotes[r.item] ?? ''}
-                  onChange={(e) =>
-                    setEquipmentNotes((prev) => ({ ...prev, [r.item]: e.target.value }))
-                  }
-                  placeholder="例：我父亲留下的，他是一战老兵"
-                  className="w-full px-2 py-1.5 text-[11px] bg-page border border-border-mid text-text-body"
-                />
-              </div>
-            ))}
-            <p className="text-[10.5px] text-text-muted text-center">
-              不想解释也可以回上一步把它改掉。
+        {blockedEquipment.length > 0 && (
+          /* 🔴 **一块，不是每件一张卡**（真人反馈 2026-08-19：「多条不合理可以
+             一起描述的」）。原来每件东西重复一遍"他怎么会有…说得通就能带着"，
+             两件就把整屏占满了。理由合并成一段，输入框收成紧凑的一行一件。 */
+          <div className="press-soft bg-card px-2.5 py-2 mb-2">
+            <p className="text-[10.5px] text-rust leading-relaxed">
+              ⚠️ 有 {blockedEquipment.length} 件东西，守秘人觉得这个人在这个年代拿不到：
+            </p>
+            <ul className="mt-1 mb-2 space-y-0.5">
+              {blockedEquipment.map((r) => (
+                <li key={r.item} className="text-[10.5px] text-rust/90 leading-relaxed">
+                  · {r.message}
+                  {/* 🔴 这一句是「重试之后仍然被拒」唯一看得见的信号。没有它，
+                      玩家写完理由再点一次，界面从头到尾一个像素不变（守秘人
+                      其实重判了一整轮，措辞都变了），只会以为按钮坏了。 */}
+                  {(equipmentNotes[r.item] ?? '').trim() && (
+                    <span className="text-text-muted">
+                      　← 刚才那条理由没能说服守秘人，换个说法或者把东西改掉。
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <p className="text-[10.5px] text-text-muted mb-1.5">
+              说说他怎么会有它们？说得通就能带着。
+            </p>
+            <div className="space-y-1.5">
+              {blockedEquipment.map((r) => (
+                <div key={r.item} className="flex items-center gap-1.5">
+                  <span className="text-[10.5px] text-text-body shrink-0 max-w-[5.5rem] truncate">
+                    {r.item}
+                  </span>
+                  <input
+                    type="text"
+                    value={equipmentNotes[r.item] ?? ''}
+                    onChange={(e) =>
+                      setEquipmentNotes((prev) => ({ ...prev, [r.item]: e.target.value }))
+                    }
+                    placeholder="例：我父亲留下的，他是一战老兵"
+                    className="flex-1 min-w-0 px-2 py-1.5 text-[11px] bg-page border border-border-mid text-text-body"
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="text-[10.5px] text-text-muted text-center mt-2">
+              不想解释也可以把它改掉。
             </p>
           </div>
         )}

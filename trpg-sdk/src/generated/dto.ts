@@ -555,6 +555,40 @@ export interface EndGameStatusPayload {
   finished: boolean;
 }
 
+/**
+ * POST /rooms/{roomId}/characters/{characterId}/check-equipment 请求体。
+ *
+ * 🔴 **判断素材由前端带上，不从库里读**：向导直到最后一步才 PATCH，而这次
+ * 校验发生在**离开装备那一步**的时候——那时库里那张卡还是空的（真人反馈
+ * 2026-08-19：「应该在装备那个界面点击下一步就该有」）。
+ *
+ * `era` 不在这里：它来自模组，属于服务端权威，让客户端传等于把"这一局是
+ * 哪个年代"交给客户端说了算。
+ */
+export interface EquipmentCheckBody {
+  equipment?: string[];
+  occupation?: string | null;
+  age?: number | null;
+  residence?: string | null;
+  birthplace?: string | null;
+  creditRating?: number | null;
+  notes?: {
+    [k: string]: string;
+  };
+}
+
+/**
+ * 哪几件这个人拿不到。空列表 = 全都合理，可以进下一步。
+ *
+ * 🔴 `checked=False` 表示**这次判断没跑成**（没配 key / 超时 / JSON 崩了），
+ * 跟"全都合理"完全是两回事：前者放行但不该让玩家以为审过了。同
+ * `EquipmentChecker.check` 返回 None 的那条判据。
+ */
+export interface EquipmentCheckResult {
+  checked: boolean;
+  rejected: RejectedEquipmentView[];
+}
+
 export interface EquipmentItem {
   name: string;
 }
@@ -1018,6 +1052,14 @@ export interface RegisterBody {
   account: string;
   password: string;
   nickname: string;
+}
+
+/**
+ * 一件判为「拿不到」的装备。
+ */
+export interface RejectedEquipmentView {
+  item: string;
+  message: string;
 }
 
 /**

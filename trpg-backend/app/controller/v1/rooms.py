@@ -22,6 +22,8 @@ from app.dto.character import (
     CharacterDraftResult,
     CharacterRead,
     CharacterUpdateBody,
+    EquipmentCheckBody,
+    EquipmentCheckResult,
     PartyCharacterRead,
     QuickBuildCharacterBody,
     RollAttributePoolResult,
@@ -640,6 +642,38 @@ async def update_character(
     ) as exc:
         _raise_service_error(exc)
     return ApiResponse.ok(None)
+
+
+@router.post(
+    "/{room_id}/characters/{character_id}/check-equipment",
+    response_model=ApiResponse[EquipmentCheckResult],
+    tags=["characters"],
+)
+async def check_character_equipment(
+    room_id: str,
+    character_id: str,
+    payload: EquipmentCheckBody,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[EquipmentCheckResult]:
+    """POST /api/v1/rooms/{roomId}/characters/{characterId}/check-equipment
+
+    离开建卡向导的装备那一步时先审一遍（真人反馈 2026-08-19：「应该在装备那个
+    界面点击下一步就该有」）。**不是第二道闸门**——`complete` 那道照跑，这里
+    只是同一道门的提前预览，判据与 prompt 完全复用。
+
+    `character_id` 目前只用于鉴权路径的一致性：判断素材全部由请求体带上，
+    因为向导直到最后一步才 PATCH，这时库里那张卡还是空的。
+    """
+    try:
+        result = await character_service.check_equipment(db, room_id, reconnect_token, payload)
+    except (
+        room_service.RoomNotFoundError,
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+    ) as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(result)
 
 
 @router.post(

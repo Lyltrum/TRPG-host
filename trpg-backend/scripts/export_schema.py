@@ -57,6 +57,8 @@ _MODELS: list[type[BaseModel]] = [
     character.EquipmentItem,
     character.CharacterUpdateBody,
     character.CharacterCompleteBody,
+    character.EquipmentCheckBody,
+    character.EquipmentCheckResult,
     character.QuickBuildCharacterBody,
     character.CharacterDraftResult,
     character.CharacterRead,

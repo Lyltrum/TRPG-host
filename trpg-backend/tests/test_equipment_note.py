@@ -94,3 +94,97 @@ def test_the_message_still_reads_like_a_sentence() -> None:
     assert "「手机」" in msg
     assert "1925 年还没有手机" in msg
     assert "怀表、电报" in msg
+
+
+# ── 装备那一步的提前预审（2026-08-19 真人反馈）────────────────
+
+
+async def test_the_early_check_reuses_the_same_gate(client, monkeypatch) -> None:
+    """🔴 **不是第二道闸门，是同一道门的提前预览。**
+
+    真人反馈：「应该在装备那个界面点击下一步就该有」——原来唯一的闸门在
+    `complete`（第 8 步），而装备栏在第 7 步，中间隔着一整屏背景故事。
+
+    两份判据迟早分叉，而分叉的方向一定是"预览说行、提交说不行"。这条钉住
+    两者走的是同一个 prompt 组装函数。
+    """
+    from app.core.equipment_check import EquipmentVerdict, RejectedItem
+    from tests.helpers import ROOMS_BASE, create_room, reconnect
+    from tests.test_equipment_check import _install, _StubChecker
+
+    _StubChecker.prompts = []
+    _install(
+        monkeypatch, EquipmentVerdict(rejected=[RejectedItem(item="手机", reason="1925 年没有")])
+    )
+    room = await create_room(client)
+    draft = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
+    )
+    cid = draft.json()["data"]["characterId"]
+
+    r = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{cid}/check-equipment",
+        json={"equipment": ["手机", "手电筒"], "occupation": "图书管理员", "creditRating": 30},
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["checked"] is True
+    assert [x["item"] for x in data["rejected"]] == ["手机"]
+    # 走的是同一条 prompt 组装：素材齐、剧本正文不在
+    assert len(_StubChecker.prompts) == 1
+    assert "图书管理员" in _StubChecker.prompts[0]
+
+
+async def test_the_early_check_says_when_it_could_not_judge(client, monkeypatch) -> None:
+    """🔴 `checked=False` 是**没判成**，不是"全都合理"。
+
+    没配 key / 超时都走这条。前端据此放行但不该显示"审过了"——同后端那条
+    「模型说不行和模型没说话是两回事」。
+    """
+    from tests.helpers import ROOMS_BASE, create_room, reconnect
+    from tests.test_equipment_check import _install, _StubChecker
+
+    _StubChecker.prompts = []
+    _install(monkeypatch, None)  # 判断没跑成
+    room = await create_room(client)
+    draft = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
+    )
+    cid = draft.json()["data"]["characterId"]
+
+    r = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{cid}/check-equipment",
+        json={"equipment": ["手机"]},
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    assert r.status_code == 200
+    assert r.json()["data"] == {"checked": False, "rejected": []}
+
+
+async def test_the_early_check_carries_the_players_explanation(client, monkeypatch) -> None:
+    """申辩在这一步也要能用——否则玩家只能到最后一步才解释得了。"""
+    from app.core.equipment_check import EquipmentVerdict
+    from tests.helpers import ROOMS_BASE, create_room, reconnect
+    from tests.test_equipment_check import _install, _StubChecker
+
+    _StubChecker.prompts = []
+    _install(monkeypatch, EquipmentVerdict(rejected=[]))
+    room = await create_room(client)
+    draft = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters", headers=reconnect(room["reconnectToken"])
+    )
+    cid = draft.json()["data"]["characterId"]
+
+    await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{cid}/check-equipment",
+        json={
+            "equipment": [".32 左轮手枪"],
+            "notes": {".32 左轮手枪": "我父亲留下的，他是一战老兵"},
+        },
+        headers=reconnect(room["reconnectToken"]),
+    )
+
+    assert "我父亲留下的" in _StubChecker.prompts[0]

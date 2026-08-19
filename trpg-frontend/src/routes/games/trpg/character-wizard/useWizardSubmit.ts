@@ -4,7 +4,12 @@ import type { Ruleset, SkillComputeView } from 'trpg-sdk'
 import { useCharacterStore } from '@/stores/character-store'
 import { useRoomStore } from '@/stores/room-store'
 import { completeCharacter, createCharacterDraft, saveCharacter } from '@/services/character/character-api'
-import { previewCharacter, translateCharacterValidationError } from '@/services/character/ruleset-api'
+import {
+  extractRejectedEquipment,
+  previewCharacter,
+  translateCharacterValidationError,
+  type RejectedEquipment,
+} from '@/services/character/ruleset-api'
 import { effectiveAttr, normalizeDerivedStats } from './wizard-selectors'
 import { buildSkillsPayload } from './wizard-network'
 import type { WizardState } from './wizard-state'
@@ -23,8 +28,11 @@ export function useWizardSubmit(
   const navigate = useNavigate()
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState('')
+  // 被判「这个人拿不到」的装备。非空时完成页就地问一句「他怎么会有它」——
+  // 真人桌上这一步是玩家解释、主持人点头，不是主持人单方面判定。
+  const [rejectedEquipment, setRejectedEquipment] = useState<RejectedEquipment[]>([])
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (equipmentNotes?: Record<string, string>) => {
     const roomId = useRoomStore.getState().roomId
     if (!roomId) {
       setSubmitError('房间信息丢失，请重新创建/加入房间')
@@ -97,7 +105,7 @@ export function useWizardSubmit(
         backgroundDetail: state.backgroundDetail,
         generationMethod: state.generationMethod,
       })
-      await completeCharacter(roomId, characterId)
+      await completeCharacter(roomId, characterId, equipmentNotes)
       useRoomStore.getState().setCharacterId(characterId)
       useCharacterStore.getState().setCharacter(
         {
@@ -126,11 +134,16 @@ export function useWizardSubmit(
       )
       navigate('/room/ready')
     } catch (err) {
-      setSubmitError(translateCharacterValidationError(err))
+      // 🔴 装备那几条**不当成普通错误**：它们有一条走得通的出路（说明来路），
+      // 而其余校验失败（属性超标、技能点没花完）只能回去改。混在一起显示的话，
+      // 玩家看到的是「你的枪不合理」然后没有任何下一步。
+      const rejected = extractRejectedEquipment(err)
+      setRejectedEquipment(rejected)
+      setSubmitError(rejected.length > 0 ? '' : translateCharacterValidationError(err))
     } finally {
       setSubmitting(false)
     }
   }
 
-  return { handleSubmit, submitting, submitError }
+  return { handleSubmit, submitting, submitError, rejectedEquipment }
 }

@@ -114,8 +114,18 @@ export async function fetchCharacter(roomId: string, characterId: string) {
   return sdk.characters.get(roomId, characterId, requireReconnectToken());
 }
 
-export async function completeCharacter(roomId: string, characterId: string): Promise<void> {
-  await sdk.characters.complete(roomId, characterId, requireReconnectToken());
+export async function completeCharacter(
+  roomId: string,
+  characterId: string,
+  /** 物品名 → 玩家对它的说明。装备被判「拿不到」时带上，是申辩那一步。 */
+  equipmentNotes?: Record<string, string>
+): Promise<void> {
+  await sdk.characters.complete(
+    roomId,
+    characterId,
+    requireReconnectToken(),
+    equipmentNotes && Object.keys(equipmentNotes).length > 0 ? { equipmentNotes } : undefined
+  );
 }
 
 /** 重摇一次角色背景（exec/25 P1 #5）。只换过去，属性/技能/职业不动。 */

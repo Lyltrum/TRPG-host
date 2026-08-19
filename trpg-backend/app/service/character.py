@@ -369,7 +369,10 @@ async def _resolve_ruleset(db: AsyncSession, room: Room) -> RulesetRead:
 
 
 async def _equipment_issues(
-    db: AsyncSession, room: Room, character: Character
+    db: AsyncSession,
+    room: Room,
+    character: Character,
+    equipment_notes: dict[str, str] | None = None,
 ) -> list[ValidationIssue]:
     """装备合理性：这几件东西，这个人在这个时代这个地方拿得到吗？
 
@@ -397,14 +400,18 @@ async def _equipment_issues(
             birthplace=character.birthplace,
             credit_rating=(character.skills or {}).get("credit-rating"),
             era=era,
+            notes=equipment_notes,
         )
     )
     if verdict is None:
         return []
+    # 🔴 `field` 带上**是哪一件**：前端要就地给这件东西一个「说明来路」的输入框，
+    # 只有一句拼好的话没法定位到具体哪一项。`field` 的既有语义就是字段路径
+    # （`skills.spot-hidden`），沿用它，不新开 DTO 字段。
     return [
         ValidationIssue(
             code="EQUIPMENT_IMPLAUSIBLE",
-            field="equipment",
+            field=f"equipment.{rejected.item}",
             message=rejection_message(rejected),
         )
         for rejected in verdict.rejected
@@ -412,7 +419,11 @@ async def _equipment_issues(
 
 
 async def complete_character(
-    db: AsyncSession, room_id: str, character_id: str, reconnect_token: str | None
+    db: AsyncSession,
+    room_id: str,
+    character_id: str,
+    reconnect_token: str | None,
+    equipment_notes: dict[str, str] | None = None,
 ) -> None:
     """标记建卡完成，同步把对应玩家的 has_character 置为 True。
 
@@ -449,7 +460,7 @@ async def complete_character(
         allocated_attributes=character.allocated_attributes,
         occupation_not_found=not_found,
     )
-    issues += await _equipment_issues(db, room, character)
+    issues += await _equipment_issues(db, room, character, equipment_notes)
     if issues:
         raise CharacterInvalidError(issues)
 

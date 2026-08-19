@@ -3,6 +3,7 @@ import type {
   AgeAdjustmentResult,
   ApplyAgeAdjustmentInput,
   Character,
+  CharacterCompleteBody,
   CharacterDraftResult,
   QuickBuildCharacterInput,
   RollAttributePoolResult,
@@ -105,11 +106,20 @@ export class CharactersResource {
     );
   }
 
-  /** POST /api/v1/rooms/{roomId}/characters/{characterId}/complete — 标记建卡完成 */
-  complete(roomId: string, characterId: string, reconnectToken: string): Promise<null> {
+  /** POST /api/v1/rooms/{roomId}/characters/{characterId}/complete — 标记建卡完成
+   *
+   * `equipmentNotes`（物品名 → 玩家的说明）是**申辩那一步**：装备被判为「这个人
+   * 拿不到」时，玩家给一句来路（「我父亲留下的，他是一战老兵」）再提交一次。
+   * 真人桌上"这个人哪来的枪"从来不是主持人单方面判定。不传就是第一次提交。 */
+  complete(
+    roomId: string,
+    characterId: string,
+    reconnectToken: string,
+    body?: CharacterCompleteBody
+  ): Promise<null> {
     return this.client.post<null>(
       `/rooms/${roomId}/characters/${characterId}/complete`,
-      null,
+      body ?? null,
       this.authenticated(reconnectToken)
     );
   }

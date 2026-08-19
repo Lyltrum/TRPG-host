@@ -32,6 +32,7 @@ export type {
   // 角色建卡（Character）模块 —— 对应后端 dto/character.py
   EquipmentItem as CharacterEquipmentItem,
   CharacterUpdateBody as UpdateCharacterInput,
+  CharacterCompleteBody,
   CharacterDraftResult,
   QuickBuildCharacterBody as QuickBuildCharacterInput,
   RollAttributesResult,

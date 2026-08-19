@@ -105,7 +105,10 @@ async def test_an_impossible_item_blocks_the_build(
     assert body["error"]["code"] == "CHARACTER_INVALID"
     issues = body["error"]["details"]
     assert [i["code"] for i in issues] == ["EQUIPMENT_IMPLAUSIBLE"]
-    assert issues[0]["field"] == "equipment"
+    # 🔴 `field` 带上**是哪一件**（2026-08-19）：前端要就地给这件东西一个
+    # 「说明来路」的输入框，只有一句拼好的话定位不到具体哪一项。沿用
+    # `skills.spot-hidden` 的既有路径语义。
+    assert issues[0]["field"] == "equipment.手机"
     # 说清楚为什么不行 **并且** 改成什么——只说"不行"玩家只能瞎猜
     message = issues[0]["message"]
     assert "手机" in message

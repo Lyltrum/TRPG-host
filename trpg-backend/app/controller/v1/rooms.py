@@ -17,6 +17,7 @@ from app.core.errors import AppException, ErrorCode
 from app.dto.character import (
     AgeAdjustmentRequest,
     AgeAdjustmentResult,
+    CharacterCompleteBody,
     CharacterCreateBody,
     CharacterDraftResult,
     CharacterRead,
@@ -649,6 +650,7 @@ async def update_character(
 async def complete_character(
     room_id: str,
     character_id: str,
+    payload: CharacterCompleteBody | None = None,
     reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[None]:
@@ -657,9 +659,18 @@ async def complete_character(
     issue #84 S2：落库前的权威校验没通过时，`character_service.complete_character`
     抛 `CharacterInvalidError`，这里转成 422 + 结构化校验报告（`AppException.details`），
     不走 `_raise_service_error`（那条路径只有 code/message，装不下校验报告）。
+
+    `payload` 可选，**老客户端不带 body 照常工作**（2026-08-19 加装备申辩时
+    这个端点原本没有请求体）。带上时里面是玩家对被拒装备的说明。
     """
     try:
-        await character_service.complete_character(db, room_id, character_id, reconnect_token)
+        await character_service.complete_character(
+            db,
+            room_id,
+            character_id,
+            reconnect_token,
+            equipment_notes=(payload.equipment_notes if payload else None),
+        )
     except character_service.CharacterInvalidError as exc:
         raise AppException(
             ErrorCode.CHARACTER_INVALID,

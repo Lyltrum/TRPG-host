@@ -62,6 +62,34 @@ export async function previewCharacter(payload: PreviewCharacterInput): Promise<
 // "角色卡未通过校验：[SKILL_ABOVE_CAP] 聆听 的值 105 超过上限 99；[...] ..."
 // （见 trpg-backend app/service/character.py），这里去掉方括号里的机器码，
 // 只把给人看的说明拼起来展示。
+/** 一件被判「这个人拿不到」的装备，以及给玩家看的理由。 */
+export interface RejectedEquipment {
+  /** 物品名，原样取自 `field` 的 `equipment.` 之后那一段。 */
+  item: string
+  /** 为什么不行 + 可以改成什么（后端拼好的一句话）。 */
+  message: string
+}
+
+/**
+ * 从建卡失败里挑出装备那几条。
+ *
+ * 🔴 读的是**结构化的 `details`**，不是去正则解析拼好的那句话——后端把物品名
+ * 放在 `field`（`equipment.{物品名}`，沿用 `skills.spot-hidden` 的既有语义），
+ * 而 message 是给人看的说明。从 message 里抠「」中间那一段也能凑合，但物品名
+ * 本身就可能带书名号。
+ *
+ * 空数组 = 这次失败跟装备无关（属性超标、技能点没花完…），调用方照旧只显示
+ * 那句话，不要弹申辩框。
+ */
+export function extractRejectedEquipment(err: unknown): RejectedEquipment[] {
+  if (!(err instanceof ApiError) || err.code !== 'CHARACTER_INVALID') return []
+  const PREFIX = 'equipment.'
+  return err.details
+    .filter((d) => d.code === 'EQUIPMENT_IMPLAUSIBLE' && (d.field ?? '').startsWith(PREFIX))
+    .map((d) => ({ item: d.field.slice(PREFIX.length), message: d.message ?? '' }))
+    .filter((d) => d.item)
+}
+
 export function translateCharacterValidationError(err: unknown): string {
   if (err instanceof ApiError && err.code === 'CHARACTER_INVALID') {
     const body = err.message.replace(/^角色卡未通过校验：/, '');

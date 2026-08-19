@@ -9,12 +9,27 @@ import type { ApiResponse } from './types';
 export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
+  /**
+   * 结构化错误详情（后端 `AppException.details`）。
+   *
+   * 🔴 后端**一直在发**这一段（建卡校验的每条 issue 都带 code/field/message），
+   * 而这个类此前只收 code/message —— 调用方要拿"是哪个字段出错"只能去正则
+   * 解析拼好的那句话。「整条链都在，就是没人能用到」的又一处（2026-08-19
+   * 给装备申辩接线时发现）。
+   */
+  readonly details: Array<Record<string, string>>;
 
-  constructor(code: string, message: string, status: number) {
+  constructor(
+    code: string,
+    message: string,
+    status: number,
+    details: Array<Record<string, string>> = []
+  ) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -86,7 +101,8 @@ export class ApiClient {
       throw new ApiError(
         body.error?.code ?? 'UNKNOWN_ERROR',
         body.error?.message ?? '请求失败',
-        response.status
+        response.status,
+        body.error?.details ?? []
       );
     }
 

@@ -295,6 +295,22 @@ class SkillComputeView(CamelModel):
     cap: int
 
 
+class CharacterCompleteBody(CamelModel):
+    """POST /rooms/{roomId}/characters/{characterId}/complete 请求体（可选）。
+
+    `equipment_notes`：物品名 → 玩家对它的说明（「我父亲留下的，他是一战老兵」）。
+    这是**申辩那一步**——真人桌上"这个人哪来的枪"不是主持人单方面判定，而是
+    玩家给个理由、主持人点头。第一版没有它，实测 1925 年图书管理员带把左轮被
+    稳定拦下 3/3。
+
+    🔴 **不落库**：它是玩家对守秘人说的一句解释，不是卡面数据，只影响这一次
+    校验。存起来就要多一列、多一次迁移，而且下一次校验该不该沿用上一次的
+    说辞本身就是个新问题。
+    """
+
+    equipment_notes: dict[str, str] = Field(default_factory=dict)
+
+
 class ValidationIssueView(CamelModel):
     """一条结构化校验失败信息，空列表代表这张卡合法。"""
 

@@ -81,7 +81,11 @@ export default function CharacterWizardPage() {
 
   const skillComputeMap = buildSkillComputeMap(preview)
   const selectedOccName = ruleset?.occupations.find((o) => o.id === state.occupationId)?.name ?? null
-  const { handleSubmit, submitting, submitError } = useWizardSubmit(ruleset, state, skillComputeMap, selectedOccName)
+  const { handleSubmit, submitting, submitError, rejectedEquipment } =
+    useWizardSubmit(ruleset, state, skillComputeMap, selectedOccName)
+  // 玩家对每件被拒装备写的来路。**不落库**：这是对守秘人说的一句解释，
+  // 不是卡面数据，只影响这一次提交。
+  const [equipmentNotes, setEquipmentNotes] = useState<Record<string, string>>({})
 
   const [pendingConfirm, setPendingConfirm] = useState(false)
   useEffect(() => setPendingConfirm(false), [state.step])
@@ -194,7 +198,12 @@ export default function CharacterWizardPage() {
   const goNext = () => {
     if (isLastStep) {
       if (hasValidationIssues) return
-      void handleSubmit()
+      // 上一次提交因为装备被拒时，这一次把玩家写的来路一起带上（申辩那一步）。
+      // 空说明不传：后端拿到空串等于没给理由，跟第一次提交是一样的判断。
+      const notes = Object.fromEntries(
+        Object.entries(equipmentNotes).filter(([, v]) => v.trim())
+      )
+      void handleSubmit(Object.keys(notes).length > 0 ? notes : undefined)
       return
     }
     if (blockers.length > 0) return
@@ -333,6 +342,32 @@ export default function CharacterWizardPage() {
 
       <div className="relative z-10 flex-none px-3 pt-2 pb-3 mt-2 bg-page border-t border-border-mid">
         {submitError && <p className="text-[10.5px] text-rust text-center mb-1.5">{submitError}</p>}
+        {rejectedEquipment.length > 0 && (
+          <div className="mb-2 space-y-2">
+            {/* 🔴 不是"改掉它"，是"说说你怎么会有它"。真人桌上主持人问的就是
+                这一句，玩家答得上来就能带着。 */}
+            {rejectedEquipment.map((r) => (
+              <div key={r.item} className="press-soft bg-card px-2.5 py-2">
+                <p className="text-[10.5px] text-rust leading-relaxed">⚠️ {r.message}</p>
+                <label className="block text-[10.5px] text-text-muted mt-1.5 mb-1">
+                  他怎么会有「{r.item}」？说得通就能带着。
+                </label>
+                <input
+                  type="text"
+                  value={equipmentNotes[r.item] ?? ''}
+                  onChange={(e) =>
+                    setEquipmentNotes((prev) => ({ ...prev, [r.item]: e.target.value }))
+                  }
+                  placeholder="例：我父亲留下的，他是一战老兵"
+                  className="w-full px-2 py-1.5 text-[11px] bg-page border border-border-mid text-text-body"
+                />
+              </div>
+            ))}
+            <p className="text-[10.5px] text-text-muted text-center">
+              不想解释也可以回上一步把它改掉。
+            </p>
+          </div>
+        )}
         {stepMeta.id !== 'finish' && (preview?.validation.length ?? 0) > 0 && (
           <div className="mb-1.5 space-y-0.5">
             {preview!.validation.map((issue, i) => (

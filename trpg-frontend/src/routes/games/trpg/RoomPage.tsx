@@ -15,7 +15,7 @@ import { useRoomPlayers } from '@/hooks/useRoomPlayers'
 import { useRuleset } from '@/hooks/useRuleset'
 import { useSpeechInput } from '@/hooks/useSpeechInput'
 import TypedNarration from './TypedNarration'
-import { mergeRoomHistory, shouldShowThinking } from './room-history'
+import { appendOnce, mergeRoomHistory, shouldShowThinking } from './room-history'
 import {
   TIMELINE_EVENT_RENDERERS,
   checkResultToEventPayload,
@@ -37,6 +37,9 @@ interface Message {
   eventId?: string
   // 还在流式接收中：最后那条 narration.push 到达时置回 false。
   streaming?: boolean
+  // 同一条推送可能到达两次时的幂等键（现在只有待掷检定用得上，见
+  // `check.request` 那个分支）。历史重建不带它——补发照常显示，行为不变。
+  dedupeKey?: string
   // 这条要逐字浮现（exec/28）。🔴 只有**本次会话中实时到达**的叙事才置位——
   // 历史消息、replay 补的内容一律 false，否则刷新页面会把整局重打一遍字。
   animate?: boolean
@@ -956,33 +959,45 @@ export default function RoomPage() {
         // 球回到玩家手上了（该谁掷骰），守秘人这一拍写完了
         setTyping(false)
         const isSelf = envelope.payload.playerId === playerId
+        const reqId = envelope.payload.checkRequestId
         if (isSelf) {
-          setPendingCheck({
-            id: envelope.payload.checkRequestId,
+          // 🔴 **同一张卡会到达两次**（2026-08-19 三人局实测）：多人局里两个人
+          // 同时被要求掷骰，先掷完的那个走结算时，pending 守卫会把还没掷的人
+          // 那张**重发一遍**。无条件 setState 就会把已经点下去的「正在掷」
+          // 打回未掷状态。单人局撞不到——那里不存在"另一个人正在掷"。
+          setPendingCheck(prev => (prev && prev.id === reqId ? prev : {
+            id: reqId,
             kind: 'skill',
             skill: envelope.payload.skill,
             targetValue: envelope.payload.targetValue ?? null,
             rolling: false,
-          })
+          }))
         }
-        setMessages(prev => [...prev, {
+        setMessages(prev => appendOnce(prev, {
           type: 'system',
           content: isSelf
             ? `守秘人请求你进行${envelope.payload.skill}检定`
             : `等待 ${nicknameFor(envelope.payload.playerId)} 进行${envelope.payload.skill}检定`,
           time: now,
-        }])
+          dedupeKey: `check-request:${reqId}`,
+        }))
       } else if (envelope.type === 'san.check.request') {
         setTyping(false)
         const isSelf = envelope.payload.playerId === playerId
+        const reqId = envelope.payload.checkRequestId
         if (isSelf) {
-          setPendingCheck({ id: envelope.payload.checkRequestId, kind: 'san', skill: null, targetValue: null, rolling: false })
+          // 重发同一张卡的道理同上面的 `check.request`——同一件事的两个出口，
+          // 只改一个就是「改了口径只改一半」。
+          setPendingCheck(prev => (prev && prev.id === reqId
+            ? prev
+            : { id: reqId, kind: 'san', skill: null, targetValue: null, rolling: false }))
         }
-        setMessages(prev => [...prev, {
+        setMessages(prev => appendOnce(prev, {
           type: 'system',
           content: isSelf ? '守秘人请求你进行理智检定' : `等待 ${nicknameFor(envelope.payload.playerId)} 进行理智检定`,
           time: now,
-        }])
+          dedupeKey: `san-check-request:${reqId}`,
+        }))
       } else if (envelope.type === 'luck.offer') {
         // 骰子停下、结果还没生效。球在这个人手上，守秘人这一拍写完了。
         setTyping(false)

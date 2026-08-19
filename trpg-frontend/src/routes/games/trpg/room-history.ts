@@ -44,3 +44,27 @@ export function mergeRoomHistory<T>(history: T[], live: T[]): T[] {
 export function shouldShowThinking(merged: { type: string }[]): boolean {
   return !merged.some((m) => m.type === 'narr')
 }
+
+/**
+ * 追加一条消息，但**同一个 `dedupeKey` 只进一次**。
+ *
+ * ## 🔴 为什么需要它（三人真机 2026-08-19）
+ *
+ * 多人局里两个人同时被要求掷骰，**先掷完的那个人走结算**时，pending 守卫会把
+ * 还没掷的人那张卡**重发一遍**（`exec/23 #76` 的设计行为：提醒球还在你手上）。
+ * 于是后掷的那个人收到两条一模一样的 `check.request`，聊天区多出一句重复的
+ * 「守秘人请求你进行侦察检定」。
+ *
+ * **单人局在结构上撞不到**——那里不存在"另一个人正在掷"。
+ *
+ * 同一个 handler 里 `action.broadcast` 早就按 `messageId` 去过重了，检定这一半
+ * 一直没有：**一份数据有几个出口，规则就要落几处。**
+ *
+ * 不带 `dedupeKey` 的照常追加——历史重建、重连补发都走那条路，行为不变。
+ */
+export function appendOnce<T extends { dedupeKey?: string }>(list: T[], item: T): T[] {
+  if (item.dedupeKey && list.some(m => m.dedupeKey === item.dedupeKey)) {
+    return list
+  }
+  return [...list, item]
+}

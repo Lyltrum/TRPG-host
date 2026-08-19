@@ -92,6 +92,7 @@ from app.core.keeper.narration.situation import SituationBuilder, build_situatio
 from app.core.keeper.primitives.dice import is_success
 from app.core.keeper.runtime.decision_log import record_decision
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
+from app.core.keeper.runtime.end_game import propose_end_game
 from app.core.keeper.runtime.llm_calls import (
     FALLBACK_ADJUDICATE_GUIDANCE,
     REQUEST_TIMEOUT_SECONDS,
@@ -493,6 +494,10 @@ class KeeperAgent(Narrator):
             forced=classification.forced_labels(spotlight=bool(context.spotlight_nickname)),
         )
 
+        # 玩家提议收工时这一拍要额外推出去的确认卡（走 `player_offers` 那条
+        # 现成通道——它本来就是「等某个玩家答一句」的统称，不是幸运卡专用）。
+        end_game_cards: list = []
+
         # 🔴 **玩家说"结束了吧"时，那句话不是"我们还想玩"**（2026-08-15）。
         #
         # 上面那条退回规则假设了"玩家继续说话 = 还想玩"。08-14 实测里它正好
@@ -502,10 +507,32 @@ class KeeperAgent(Narrator):
         #
         # 判"这句是不是出戏想收场"是语义判断，交给裁决 LLM（新增第八格
         # `wrap_up`，同 `confused` / `feasibility_question` 的先例）。代码只
-        # 消费它，而且**只在本轮确实是从 `ending` 退回来的时候消费**——
-        # 收尾门先得开过，玩家中途喊一句不算。判错的代价因此仍然很小。
+        # 消费它。
+        #
+        # 🔴 **2026-08-19：它不再要求「收尾门先开过」。** 原来绑死在
+        # `reopened_from_ending` 上，于是玩家手上只有否决权和确认权、**没有
+        # 发起权**——而真人线下团里，收尾最高频的入口恰恰是玩家自己宣布的
+        # （「我们报警，然后回家」）。收尾门问的是「内容跑完了没有」，这句话
+        # 问的是「我们还想不想玩」，是两个独立的信号（同「卡住了和做完了是
+        # 相反的处境」那条判据）。
+        #
+        # 挡住误判的东西**从「门」换成了「一次显式点击」**：这里只发提议，
+        # 结束与否由 `end_game.py` 那张全桌确认卡决定，单人局也要点一次。
         #
         # 按 `exec/20` 的口径：这是概率性改进（触发条件由 LLM 判），不说"已修复"。
+        if getattr(decision, "player_state", None) == "wrap_up":
+            async with self._session_factory() as db:
+                proposal = await propose_end_game(db, room_id, context.player_id)
+                await db.commit()
+            logger.info(
+                "keeper_end_game_proposed",
+                room_id=room_id,
+                player_id=context.player_id,
+                cards=len(proposal.cards),
+                waiting_for=list(proposal.waiting_for),
+            )
+            end_game_cards = list(proposal.cards)
+
         if reopened_from_ending:
             # 收束纪律：不管这一拍收不收得成，**都该按收场写**（铺尾声、不抛
             # 新线索、给最后一次动作机会）。此前 `ending` 阶段除了放宽字数
@@ -513,11 +540,6 @@ class KeeperAgent(Narrator):
             decision = decision.model_copy(
                 update={"narration_guidance": inject_closure_guidance(decision.narration_guidance)}
             )
-            if getattr(decision, "player_state", None) == "wrap_up":
-                await set_phase_impl(deps, PHASE_FINISHED)
-                logger.info(
-                    "keeper_closure_confirmed", room_id=room_id, player_id=context.player_id
-                )
 
         # 🔴 命中**剧本预设结局**的那一拍要写成终章（2026-08-16 真机）。
         # 上面那一支只覆盖开放式收尾——它要求先进过 `ending` 阶段再退回来，而
@@ -653,6 +675,7 @@ class KeeperAgent(Narrator):
                 check_requests=[to_notice(c) for c in pending_checks],
                 stat_changes=deps.stat_changes,
                 segments=segments,
+                player_offers=end_game_cards,
             )
 
         # 阶段3·叙事：只写故事 + 长度硬裁 + 去菜单/软挡。
@@ -686,7 +709,12 @@ class KeeperAgent(Narrator):
         # 不该它说的系统台词（真人实测 2026-07-28 反馈）。现在 deps.stat_changes
         # 走 character.stat_changed 结构化广播，前端渲染成独立的系统提示，
         # 和叙事气泡分开。
-        return NarrationOutcome(text=narration, stat_changes=deps.stat_changes, segments=segments)
+        return NarrationOutcome(
+            text=narration,
+            stat_changes=deps.stat_changes,
+            segments=segments,
+            player_offers=end_game_cards,
+        )
 
     async def resolve_check(
         self,

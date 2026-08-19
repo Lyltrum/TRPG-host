@@ -15,6 +15,16 @@ class RoomSummaryRead(CamelModel):
     room_id: str
     summary_text: str | None = None
     highlights: list[str] | None = None
+    #: 这一局**没查到**的东西：核心真相 + 没揭开的线索配对（2026-08-19）。
+    #:
+    #: 🔴 **只在对局已经 `finished` 时非空**，服务层守着这道门。真人 KP 收场时
+    #: 一定会把谜底讲出来，那是玩家最在乎的部分；而 `kp_truth` 此前只进裁决
+    #: prompt，没有任何通往玩家的出口。玩家可以主动收工（内容没跑完就结束）
+    #: 之后，拿不到交代会变成默认结果。
+    #:
+    #: `None` = 还没结束（或解析不出模组），**不是空列表**：两者含义不同，
+    #: 前端据此区分"不该显示这一块"和"全查到了，没有遗漏"。
+    missed_truths: list[str] | None = None
 
 
 class ReplayEventRead(CamelModel):

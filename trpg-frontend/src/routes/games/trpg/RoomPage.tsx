@@ -60,6 +60,17 @@ interface PendingCheck {
 // 幸运消费（exec/26 #66）：骰子已经停下、结果还没生效的那个窗口里，问一句
 // 「要不要花幸运把这次失败推成成功」。**新手根本不知道有这条规则**，所以卡片
 // 本身就是教学位——差几点、花多少、剩多少全写出来。
+/** 「我们收工吧」确认卡（2026-08-19）。全票才结束、一票否决、没有超时自动同意。 */
+interface EndGameOffer {
+  id: string
+  /** 谁提议的——不知道是谁提的就无从判断该不该点头。 */
+  initiator: string
+  /** 这张卡是不是发给我的。别人那张也要显示（否则桌上一半人不知道在等什么）， */
+  /** 但只有本人能点。 */
+  isSelf: boolean
+  deciding: boolean
+}
+
 interface LuckOffer {
   id: string
   skill: string
@@ -676,6 +687,7 @@ export default function RoomPage() {
   const [showDice, setShowDice] = useState(false)
   const [pendingCheck, setPendingCheck] = useState<PendingCheck | null>(null)
   const [luckOffer, setLuckOffer] = useState<LuckOffer | null>(null)
+  const [endGameOffer, setEndGameOffer] = useState<EndGameOffer | null>(null)
   // 首次待掷检定教学（session 内一次）
   // 🔴 血条的分母由**后端权威给出**（`CharacterRead.hpMax`，exec/26 #67）：
   // `derived.hp` 在被守秘人扣过血之后是当前值，拿它当分母会让带伤进房的
@@ -998,6 +1010,42 @@ export default function RoomPage() {
           time: now,
           dedupeKey: `san-check-request:${reqId}`,
         }))
+      } else if (envelope.type === 'game.end.request') {
+        // 有人提议收工。🔴 **每个人都看得到这张卡**（不像检定卡只给本人）：
+        // 这是整桌的事，别人不知道在等什么就只会以为卡住了。只有本人能点。
+        setTyping(false)
+        const isSelf = envelope.payload.playerId === playerId
+        const reqId = envelope.payload.decisionId
+        setEndGameOffer(prev => (prev && prev.id === reqId ? prev : {
+          id: reqId,
+          initiator: envelope.payload.initiator,
+          isSelf,
+          deciding: false,
+        }))
+        setMessages(prev => appendOnce(prev, {
+          type: 'system',
+          content: `${envelope.payload.initiator}提议结束这一局，等所有人表态`,
+          time: now,
+          dedupeKey: `end-game:${reqId}`,
+        }))
+      } else if (envelope.type === 'game.end.status') {
+        const { waitingFor, declinedBy, finished } = envelope.payload
+        // 卡片撤掉的三种情形：有人否了、全票通过、或轮到别人还在等（保留卡但
+        // 本人已经表过态）。只有"还在等我"时才继续显示可点的卡。
+        if (declinedBy !== null || finished) {
+          setEndGameOffer(null)
+        } else {
+          setEndGameOffer(prev => (prev ? { ...prev, deciding: false, isSelf: false } : prev))
+        }
+        setMessages(prev => [...prev, {
+          type: 'system',
+          content: declinedBy !== null
+            ? `${declinedBy}还想继续，这一局接着玩`
+            : finished
+              ? '全体同意，本局结束。'
+              : `还在等 ${waitingFor.join('、')} 表态`,
+          time: now,
+        }])
       } else if (envelope.type === 'luck.offer') {
         // 骰子停下、结果还没生效。球在这个人手上，守秘人这一拍写完了。
         setTyping(false)
@@ -1236,6 +1284,14 @@ export default function RoomPage() {
   // 🔴 **两个按钮都要给**——跟会合确认不同，那边不点就是维持分离（安全方向
   // 就是默认），这边不答一句，那次检定的结果就一直悬着、整轮停在那儿。
   // 卡片在结果广播回来时收起（花了会重推一条改写过的 check.result）。
+  // 「收工吗」表态。🔴 两个按钮都要给：不表态就是维持默认，而这里的默认方向
+  // 是**继续玩**，所以"还想玩"必须能被明确说出来——它会当场清掉整批卡。
+  const handleEndGameDecide = (accepted: boolean) => {
+    if (!endGameOffer || !playerId || endGameOffer.deciding) return
+    setEndGameOffer({ ...endGameOffer, deciding: true })
+    sdk.roomSocket.decideEndGame(playerId, { decisionId: endGameOffer.id, accepted })
+  }
+
   const handleLuckDecide = (accepted: boolean) => {
     if (!luckOffer || !playerId || luckOffer.deciding) return
     setLuckOffer(prev => (prev ? { ...prev, deciding: true } : prev))
@@ -1819,6 +1875,39 @@ export default function RoomPage() {
 
       {/* 幸运消费卡（exec/26 #66）：骰子已经停下、结果还没生效。
           卡片本身就是教学位——新手根本不知道有这条规则，只有主持人知道。 */}
+      {channel === 'dm' && endGameOffer && (
+        <div className="relative z-[1] px-3 pt-2 flex-shrink-0">
+          <div className="paper-grain relative bg-dossier text-ink border-l-4 border-double border-brass px-3 py-2.5 shadow-[0_2px_0_rgba(0,0,0,.4),0_8px_16px_rgba(0,0,0,.42)]">
+            <div className="text-[12.5px] font-semibold">
+              {endGameOffer.initiator}提议结束这一局
+            </div>
+            <div className="typed text-[10.5px] leading-[1.7] text-ink-soft mt-1">
+              {endGameOffer.isSelf
+                ? '所有人都同意才会结束，任何一个人想继续，这一局就接着玩。结束之后不能反悔，没查到的真相会在复盘里交代。'
+                : '等其他人表态。'}
+            </div>
+            {endGameOffer.isSelf && (
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => handleEndGameDecide(true)}
+                  disabled={endGameOffer.deciding}
+                  className="typed flex-1 px-3.5 py-2 bg-ink text-book text-[10px] active:bg-rust disabled:opacity-50 transition-colors"
+                >
+                  {endGameOffer.deciding ? '等其他人…' : '同意收工'}
+                </button>
+                <button
+                  onClick={() => handleEndGameDecide(false)}
+                  disabled={endGameOffer.deciding}
+                  className="typed flex-1 px-3.5 py-2 border border-black/55 text-[10px] active:border-rust disabled:opacity-50 transition-colors"
+                >
+                  我还想继续
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {channel === 'dm' && luckOffer && (
         <div className="relative z-[1] px-3 pt-2 flex-shrink-0">
           <div className="paper-grain relative bg-dossier text-ink border-l-4 border-double border-brass px-3 py-2.5 shadow-[0_2px_0_rgba(0,0,0,.4),0_8px_16px_rgba(0,0,0,.42)]">

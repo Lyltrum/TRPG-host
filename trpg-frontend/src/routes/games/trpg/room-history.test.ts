@@ -88,7 +88,18 @@ describe('🔴 接线：RoomPage 的两个待掷分支真的用了它', () => {
   it('两条待掷推送都走 appendOnce 且带上各自的键', () => {
     expect(source).toContain('dedupeKey: `check-request:${reqId}`')
     expect(source).toContain('dedupeKey: `san-check-request:${reqId}`')
-    expect(source.match(/setMessages\(prev => appendOnce\(prev, \{/g) ?? []).toHaveLength(2)
+  })
+
+  it('🔴 每一处 appendOnce 都带了 dedupeKey —— 不带就是白调', () => {
+    // **扫前缀，不数个数。** 第一版断言"恰好 2 处"，2026-08-19 加收工确认卡
+    // （第 3 处）时当场变红——那是「逐个列出的断言，加一项就漏一项」自己的
+    // 症状。真正要守的是「凡是走了 appendOnce 的都给了键」：漏了键的调用
+    // 静默退化成普通追加，而那正是这个函数存在的理由。
+    const calls = source.split('setMessages(prev => appendOnce(prev, {').slice(1)
+    expect(calls.length).toBeGreaterThanOrEqual(3)
+    for (const call of calls) {
+      expect(call.slice(0, call.indexOf('}))'))).toContain('dedupeKey:')
+    }
   })
 
   it('重复到达不许把「正在掷」打回未掷', () => {

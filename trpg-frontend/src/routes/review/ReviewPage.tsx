@@ -63,6 +63,28 @@ export default function ReviewPage() {
               </div>
             )}
 
+            {/* 🔴 没查到的真相（2026-08-19）。真人 KP 收场时一定会把谜底讲出来，
+                那是玩家最在乎的部分；而 `kpTruth` 此前只进裁决 prompt，没有任何
+                通往玩家的出口。玩家可以主动收工（内容没跑完就结束）之后，拿不到
+                交代会变成默认结果。
+
+                后端守着门：只有对局真的 `finished` 才非空。`null` = 还没结束，
+                `[]` = 全查到了——两者含义不同，所以判的是长度而不是真值。 */}
+            {summary?.missedTruths && summary.missedTruths.length > 0 && (
+              <div className="press-soft bg-card p-3.5">
+                <span className="inline-block text-[10.5px] font-bold tracking-[0.14em] bg-text-primary text-page px-2 py-[3px] mb-2.5">
+                  你们没查到的
+                </span>
+                <div className="flex flex-col gap-2">
+                  {summary.missedTruths.map((line, i) => (
+                    <div key={i} className="text-[13px] text-text-body leading-[1.75]">
+                      · {line}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="press-soft bg-card p-3.5">
               <span className="inline-flex items-center gap-1.5 text-[10.5px] font-bold tracking-[0.14em] bg-text-primary text-page px-2 py-[3px] mb-2.5">
                 <ScrollText className="w-[13px] h-[13px]" /> 案件回顾

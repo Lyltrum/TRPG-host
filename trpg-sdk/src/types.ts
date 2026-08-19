@@ -108,6 +108,10 @@ export type {
   // 幸运消费（exec/26 #66，exec/34 第 4 步）
   LuckOfferPayload,
   LuckDecidePayload,
+  // 玩家发起的收工（2026-08-19）：任何人提、全体确认、一票否决
+  EndGameRequestPayload,
+  EndGameDecidePayload,
+  EndGameStatusPayload,
 } from './generated/dto';
 
 /** GET /api/v1/me/rooms 返回项。 */
@@ -148,6 +152,8 @@ import type {
   KeeperBusyPayload,
   KeeperPhasePayload,
   CharacterMayHaveChangedPayload,
+  EndGameRequestPayload,
+  EndGameStatusPayload,
   LuckOfferPayload,
   NarrationDeltaPayload,
   NarrationPushPayload,
@@ -216,6 +222,8 @@ export type ServerToClientEvent =
   // exec/34 第 4 步：骰子已经停下、结果还没生效——问他要不要花幸运推成成功。
   // 同处一地的队友也收得到（前端只给本人渲染按钮）：他们至少知道桌子为什么停着。
   | { type: 'luck.offer'; payload: LuckOfferPayload }
+  | { type: 'game.end.request'; payload: EndGameRequestPayload }
+  | { type: 'game.end.status'; payload: EndGameStatusPayload }
   // exec/35：大家在休息。元层信息（谁按的、现在停没停），不含虚构内容 → 全房间。
   | { type: 'room.paused'; payload: RoomPausedPayload }
   | { type: 'error'; payload: ErrorPayload };

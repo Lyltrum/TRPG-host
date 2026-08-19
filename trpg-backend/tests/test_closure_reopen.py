@@ -152,11 +152,30 @@ async def test_a_finished_game_is_still_a_hard_wall() -> None:
 # ——**出戏的话被当成戏内发言喂进了裁决**。
 
 
+async def _confirm_end_game(room_id: str, player_id: str) -> None:
+    """替玩家点掉那张「收工吗」确认卡。"""
+    from app.core.keeper.runtime.end_game import decide_end_game
+
+    async with _session_factory() as db:
+        await decide_end_game(db, room_id, player_id, accepted=True)
+        await db.commit()
+
+
 async def test_an_out_of_character_wrap_up_really_ends_the_game() -> None:
+    """🔴 **2026-08-19：多了一步确认。**
+
+    `wrap_up` 不再直接落 `finished`，它现在**发一张全桌确认卡**——「结束」
+    作用于整桌人，一个人替全桌决定正是「单人局验不到、多人局才炸」的那一类。
+    单人局也要点一次（发起靠的是 LLM 判读一句话，下游是硬墙）。
+
+    这条守的东西没变：**出戏说"结束了吧"最终真的能结束对局**。
+    """
     room_id, player_id = await _seed("RPN400", PHASE_ENDING)
 
     await _agent(player_state="wrap_up").narrate(_ctx(room_id, player_id, "结束了吧"))
+    assert await _phase_of(room_id) != PHASE_FINISHED  # 还没点，不许自己结束
 
+    await _confirm_end_game(room_id, player_id)
     assert await _phase_of(room_id) == PHASE_FINISHED
 
 
@@ -164,23 +183,33 @@ async def test_the_next_action_after_a_wrap_up_hits_the_wall() -> None:
     """收完之后再说话就该撞墙——不然"结束"只是句空话。"""
     room_id, player_id = await _seed("RPN401", PHASE_ENDING)
     await _agent(player_state="wrap_up").narrate(_ctx(room_id, player_id, "结束了吧"))
+    await _confirm_end_game(room_id, player_id)
 
     outcome = await _agent().narrate(_ctx(room_id, player_id, "我还想再看一眼"))
 
     assert "本局已结束" in outcome.text
 
 
-async def test_a_wrap_up_outside_the_ending_phase_is_ignored() -> None:
-    """🔴 对照组：**收尾门没开过就不算数**。
+async def test_a_wrap_up_mid_game_proposes_but_does_not_end_anything() -> None:
+    """🔴 **判据换了形状（2026-08-19），但守的东西更强了。**
 
-    玩家中途喊一句"不玩了"不该直接散场——门先得开过（内容跑完了），
-    判错的代价才小。没有这一条，把条件放宽成"只看 player_state"也会绿。
+    原来这条叫「收尾门没开过就不算数」：中途喊一句不玩了会被**整个忽略**，
+    因为那时挡住误判的东西是"门先得开过"。现在玩家有了发起权（真人线下团里
+    收尾最高频的入口就是玩家自己宣布的），挡误判的换成了**一次显式点击**。
+
+    所以中途 `wrap_up` **会发卡、但绝不自己结束**。没有这一条，把
+    `decide_end_game` 改成"提议即结束"也会绿。
     """
+    from app.core.keeper.runtime.pending import END_GAME_KIND, pending_decision_manager
+
     room_id, player_id = await _seed("RPN402", PHASE_INVESTIGATION)
 
     await _agent(player_state="wrap_up").narrate(_ctx(room_id, player_id, "结束了吧"))
 
     assert await _phase_of(room_id) == PHASE_INVESTIGATION
+    async with _session_factory() as db:
+        cards = await pending_decision_manager.list_all(db, room_id, {END_GAME_KIND})
+    assert [c.player_id for c in cards] == [player_id]
 
 
 async def test_reopening_still_works_for_anything_else() -> None:

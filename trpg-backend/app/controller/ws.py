@@ -65,6 +65,9 @@ from app.dto.ws import (
     CheckResultPayload,
     CheckRollPayload,
     ClientEnvelope,
+    EndGameDecidePayload,
+    EndGameRequestPayload,
+    EndGameStatusPayload,
     ErrorPayload,
     GameStartPayload,
     KeeperBusyPayload,
@@ -462,6 +465,52 @@ async def _handle_merge_confirm(
         await _push_after_turn(db, websocket, room_id)
 
 
+async def _handle_end_game_decide(
+    db: AsyncSession,
+    websocket: WebSocket,
+    room_id: str,
+    player_id: str,
+    payload: EndGameDecidePayload,
+) -> None:
+    """玩家对「收工吗」表态（2026-08-19）。
+
+    全票 → 落 `finished` 并把 `keeper.phase` 推给所有人；一票拒绝 → 清空整批，
+    继续玩。两种结果都发一条 `game.end.status`，否则表完态的人只看到卡片消失、
+    不知道发生了什么。
+    """
+    from app.core.keeper.runtime.deps import KeeperToolError
+    from app.core.keeper.runtime.end_game import decide_end_game
+
+    # 跟裁决循环串行：它改 keeper_state（阶段），同 check.roll 的理由。
+    lock_token = await _acquire_for_small_op(room_id)
+    if lock_token is None:
+        await _send_error(websocket, "ACTION_IN_PROGRESS", "守秘人正在处理其他玩家的行动，请稍候")
+        return
+    async with action_lock_manager.held(room_id, lock_token):
+        try:
+            outcome = await decide_end_game(db, room_id, player_id, accepted=payload.accepted)
+        except KeeperToolError as exc:
+            await _send_error(websocket, "END_GAME_DECIDE_FAILED", str(exc))
+            return
+        await db.commit()
+
+    await manager.broadcast(
+        room_id,
+        ServerEnvelope(
+            type="game.end.status",
+            payload=EndGameStatusPayload(
+                waiting_for=list(outcome.waiting_for),
+                declined_by=outcome.declined_by,
+                finished=outcome.finished,
+            ).model_dump(by_alias=True),
+        ).model_dump(by_alias=True),
+    )
+    if outcome.finished:
+        # 阶段变了就得推——这条链此前断过一次（2026-08-16「收尾在玩家侧不存在」），
+        # 而这里是**玩家自己按下的结束**，收不到反馈比任何时候都刺眼。
+        await _push_keeper_phase(db, websocket, room_id)
+
+
 async def _audience_at_speaker_location(
     db: AsyncSession, room_id: str, player_id: str, *, private: bool = False
 ) -> list[str] | None:
@@ -843,6 +892,7 @@ async def _resend_pending_checks(
     不另写一套。
     """
     from app.core.keeper.runtime.pending import (
+        END_GAME_KIND,
         LUCK_SPEND_KIND,
         ROLL_KINDS,
         pending_decision_manager,
@@ -870,6 +920,14 @@ async def _resend_pending_checks(
             continue
         envelope = ServerEnvelope(
             type="luck.offer", payload=_luck_offer_payload(offer).model_dump(by_alias=True)
+        )
+        await websocket.send_json(envelope.model_dump(by_alias=True))
+    # 收工确认卡同理。🔴 **它不按受众裁**（同首发）：「这一局要不要结束」是整桌
+    # 的事，刷新一下页面就再也看不到自己那张票，等于把一票否决权吞掉了。
+    # 「持久化必须配套重连补发」这条已经复发过三次，加 kind 时一并配上。
+    for card in await pending_decision_manager.list_all(db, room_id, {END_GAME_KIND}):
+        envelope = ServerEnvelope(
+            type="game.end.request", payload=_end_game_payload(card).model_dump(by_alias=True)
         )
         await websocket.send_json(envelope.model_dump(by_alias=True))
 
@@ -902,6 +960,49 @@ async def _broadcast_luck_offer(  # noqa: ANN001
         type="luck.offer", payload=_luck_offer_payload(offer).model_dump(by_alias=True)
     )
     await _send_to_colocated(db, room_id, offer.player_id, envelope.model_dump(by_alias=True))
+
+
+def _end_game_payload(offer) -> EndGameRequestPayload:  # noqa: ANN001
+    """收工确认卡 → 推送 payload。首发与重连补发共用。"""
+    return EndGameRequestPayload(
+        decision_id=offer.decision_id,
+        player_id=offer.player_id,
+        initiator=str(offer.payload.get("initiator") or ""),
+    )
+
+
+async def _broadcast_end_game_request(  # noqa: ANN001
+    room_id: str, offer, db: AsyncSession | None = None
+) -> None:
+    """推一张「收工吗」确认卡。
+
+    🔴 **全房间广播，不按位置裁**——跟检定卡正相反。分头两处的人也要收到：
+    「这一局要不要结束」是**整桌的事**，按位置裁会让另一处的人既看不到提议、
+    也无从表态，而他们的票是必需的（全票才结束）。
+    """
+    envelope = ServerEnvelope(
+        type="game.end.request", payload=_end_game_payload(offer).model_dump(by_alias=True)
+    )
+    await manager.broadcast(room_id, envelope.model_dump(by_alias=True))
+
+
+async def _broadcast_player_offer(  # noqa: ANN001
+    room_id: str, offer, db: AsyncSession | None = None
+) -> None:
+    """把一张待决定卡推出去，**按 kind 分发**。
+
+    🔴 这里此前写死了 `_broadcast_luck_offer`：`player_offers` 是「等某个玩家
+    答一句」的统称，不是幸运卡专用，而写死之后加第二种 kind 就会静默丢失
+    （没有消费方 = 没加）。分发表放一处，加 kind 时只改这里。
+    """
+    from app.core.keeper.runtime.pending import END_GAME_KIND, LUCK_SPEND_KIND
+
+    if offer.kind == END_GAME_KIND:
+        await _broadcast_end_game_request(room_id, offer, db)
+    elif offer.kind == LUCK_SPEND_KIND:
+        await _broadcast_luck_offer(room_id, offer, db)
+    else:  # pragma: no cover - 新 kind 忘了登记时要看得见，不静默吞掉
+        logger.warning("ws_unknown_player_offer_kind", room_id=room_id, kind=offer.kind)
 
 
 async def _handle_chat_send(
@@ -1603,7 +1704,7 @@ async def _deliver_check_outcome(
     for notice in outcome.check_requests:
         await _broadcast_check_request(room_id, notice, db)
     for offer in outcome.player_offers:
-        await _broadcast_luck_offer(room_id, offer, db)
+        await _broadcast_player_offer(room_id, offer, db)
     # 位置可能刚变过（分头/会合/走到图外）——把每个人自己的处境推给他
     await _push_after_turn(db, websocket, room_id)
     # 这位掷完了，排在他后面的 AI 检定该轮到了（exec/21 第三层）
@@ -1836,6 +1937,11 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                             room_id,
                             bound_player_id,
                             clarify_payload.clarification.strip(),
+                        )
+                    elif event_type == "game.end.decide":
+                        end_payload = EndGameDecidePayload.model_validate(raw_payload)
+                        await _handle_end_game_decide(
+                            db, websocket, room_id, bound_player_id, end_payload
                         )
                     elif event_type == "party.merge.confirm":
                         PartyMergeConfirmPayload.model_validate(raw_payload)

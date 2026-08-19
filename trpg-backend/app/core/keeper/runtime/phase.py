@@ -33,6 +33,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError, record_event
 from app.models.room import Room
 
@@ -78,19 +80,42 @@ def format_phase_status(phase: str | None, ending_id: str | None = None) -> str:
     return labels.get(phase, phase)
 
 
-async def set_phase_impl(deps: KeeperDeps, phase: str, ending_id: str | None = None) -> str:
-    """写入对局阶段（及可选结局 id）。仅允许 VALID_PHASES。"""
+async def write_phase(db, room_id: str, phase: str, ending_id: str | None = None) -> None:  # noqa: ANN001
+    """只把阶段写进库，不记事件、不管锁。
+
+    抽出来是因为**有两个调用方**：`set_phase_impl`（守秘人回合里，自带 deps 与
+    写锁）和玩家发起的收工确认（在 WS 层，手上只有一个 session）。写阶段这件事
+    只该有一份实现——两份迟早会长出「一边写了 `结局` 一边没写」这类分叉。
+    """
     if phase not in VALID_PHASES:
         raise KeeperToolError(f"非法对局阶段：{phase!r}")
+    room = await db.get(Room, room_id)
+    if room is None:
+        raise KeeperToolError("房间不存在")
+    current_state = dict(room.keeper_state or {})
+    current_state[PHASE_KEY] = phase
+    if ending_id:
+        current_state[ENDING_ID_KEY] = ending_id
+    room.keeper_state = current_state
+    # 🔴 **对局阶段与房间阶段是两份，此前只写了一份**（2026-08-19 发现）。
+    #
+    # `room.phase`（大厅级 Lobby/InGame/Completed）原先只有**房主手动结束**和
+    # **解散**两条路会置 `Completed`；守秘人判定的收束（剧本结局 / 自然收尾）
+    # 一律不动它。于是对局在守秘人眼里已经结束、房间在大厅眼里还在进行中，
+    # 而 `build_summary` 的落库条件正是 `room.phase == "Completed"`
+    # ⇒ **复盘永远不落库、每次进来都重算一遍**。
+    #
+    # 挂在这个唯一写阶段的出口上，三条结束路径自动一致——给某一条单独补同步，
+    # 就会长出「一条同步、两条不同步」，那正是「改了口径只改一半」。
+    if phase == PHASE_FINISHED and room.phase != "Completed":
+        room.phase = "Completed"
+        room.ended_at = datetime.now(UTC)
+
+
+async def set_phase_impl(deps: KeeperDeps, phase: str, ending_id: str | None = None) -> str:
+    """写入对局阶段（及可选结局 id）。仅允许 VALID_PHASES。"""
     async with deps.write_lock, deps.session_factory() as db:
-        room = await db.get(Room, deps.room_id)
-        if room is None:
-            raise KeeperToolError("房间不存在")
-        current_state = dict(room.keeper_state or {})
-        current_state[PHASE_KEY] = phase
-        if ending_id:
-            current_state[ENDING_ID_KEY] = ending_id
-        room.keeper_state = current_state
+        await write_phase(db, deps.room_id, phase, ending_id)
         await record_event(
             db,
             deps,

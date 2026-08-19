@@ -100,6 +100,30 @@ TURN_BLOCKING_KINDS = ROLL_KINDS | {LUCK_SPEND_KIND}
 #: **没有超时自动确认**：超时自动 = 静默泄露。也没有"否认"动作，不点就是维持分离。
 MERGE_CONFIRM_KIND = "merge_confirm"
 
+#: 「我们收工吧」——玩家主动提议结束这一局，要**全桌点头**才作数。
+#:
+#: ## 🔴 它跟收尾门是两个独立的信号（2026-08-19）
+#:
+#: 收尾门（`closure`）问的是「**内容跑完了没有**」——配对全揭开、一次性议程
+#: 全触发。这张卡问的是「**我们还想不想玩**」。把两者接到同一个判据上，就是
+#: 「卡住了和做完了是相反的处境，不能共用一个信号」那条判据的重演。
+#:
+#: 所以这条路**故意不看任何门**：玩家说不玩了就是不玩了，剧本还剩多少内容
+#: 不构成反驳——真人 KP 不会回一句「不行你还有三条线索没查」。
+#:
+#: ## 为什么要全体确认
+#:
+#: 「结束」跟掷骰不同，它**作用于整桌人**。一个人替全桌做这个决定，正是
+#: 「单人局验不到、多人局才炸」的那一类。全票才结束，任何一人拒绝就当场撤销。
+#:
+#: **没有超时自动确认**（同 `MERGE_CONFIRM_KIND` 与 `LUCK_SPEND_KIND`）：
+#: 超时自动同意会把「没看见这张卡」变成「同意结束这一局」，而这一步之后是
+#: 硬墙。默认方向必须是**继续玩**。
+#:
+#: 🔴 **不进 `TURN_BLOCKING_KINDS`**：卡挂着的时候整桌照常能说话、能行动——
+#: 那本来就是「还不想结束」的表达，把回合卡死反而逼着人必须先表态。
+END_GAME_KIND = "end_game_confirm"
+
 
 @dataclass
 class PendingDecision:
@@ -187,6 +211,32 @@ class PendingDecision:
             player_id=player_id,
             player_nickname=player_nickname,
             reason=reason,
+        )
+
+    @classmethod
+    def end_game(
+        cls,
+        *,
+        room_id: str,
+        player_id: str,
+        player_nickname: str,
+        initiator_nickname: str,
+        reason: str = "",
+        decision_id: str | None = None,
+    ) -> PendingDecision:
+        """造一张「收工吗」确认卡。一次提议给每个在场的人各发一张。
+
+        `initiator_nickname` 进 payload 是给**玩家**看的（「霍启元提议结束这一局」）
+        ——没有它，收到卡的人不知道是谁提的，也就无从判断该不该点头。
+        """
+        return cls(
+            decision_id=decision_id or str(uuid.uuid4()),
+            kind=END_GAME_KIND,
+            room_id=room_id,
+            player_id=player_id,
+            player_nickname=player_nickname,
+            reason=reason,
+            payload={"initiator": initiator_nickname},
         )
 
     @classmethod

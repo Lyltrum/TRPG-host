@@ -134,6 +134,9 @@ _MODELS: list[type[BaseModel]] = [
     ws.PartyMergeConfirmPayload,
     # exec/34 第 4 步：骰子停下之后问一句「花幸运吗」
     ws.LuckOfferPayload,
+    ws.EndGameRequestPayload,
+    ws.EndGameDecidePayload,
+    ws.EndGameStatusPayload,
     ws.LuckDecidePayload,
     # exec/35：休息 / 纠错 / 重试
     ws.RoomPausePayload,

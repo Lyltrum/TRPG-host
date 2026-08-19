@@ -24,11 +24,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.keeper.contract.catalog import default_modules_dir
+from app.core.keeper.contract.module_loader import (
+    ScenarioModule,
+    iter_all_nodes,
+    reachable_visibility_pairs,
+)
+from app.core.keeper.contract.source import resolve_module
 from app.core.keeper.primitives.dice import (
     LEVEL_CRITICAL,
     LEVEL_EXTREME,
@@ -36,6 +45,8 @@ from app.core.keeper.primitives.dice import (
     LEVEL_HARD,
     LEVEL_REGULAR,
 )
+from app.core.keeper.runtime.phase import PHASE_FINISHED, load_phase
+from app.core.keeper.runtime.progress_state import load_revealed_clues
 from app.core.llm_tape import build_llm_client
 from app.core.narration.deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from app.dto.replay import RoomSummaryRead
@@ -161,19 +172,46 @@ async def _write_recap(story: list[str]) -> str | None:
     return (response.choices[0].message.content or "").strip() or None
 
 
+async def _missed_truths_if_finished(db: AsyncSession, room: Room) -> list[str] | None:
+    """对局真的结束了才组装谜底，否则 `None`。
+
+    🔴 **门开在这里，而且只有这一处。** 复盘允许中途查看（见 `build_summary`
+    里那条注释），谜底不设门就当场变成剧透工具。缓存命中与现算两条路都走这个
+    函数——各写一遍就是「一份数据有几个出口，规则就要落几处」的下一个受害者。
+
+    判据用的是**对局阶段**（`keeper_state` 的 `finished`），不是
+    `room.phase == "Completed"`：后者是大厅级状态，房主解散一个还没开打的房间
+    也会置上它，那时揭谜底等于白送。两个 phase 粒度不同，别混用。
+    """
+    if load_phase(room.keeper_state) != PHASE_FINISHED:
+        return None
+    settings = get_settings()
+    modules_dir = (
+        Path(settings.keeper_modules_dir).expanduser().resolve()
+        if settings.keeper_modules_dir
+        else default_modules_dir()
+    )
+    resolved = await resolve_module(db, modules_dir, room.scenario_id)
+    if resolved is None:
+        return None
+    return build_missed_truths(resolved.module, room.keeper_state)
+
+
 async def build_summary(db: AsyncSession, room_id: str) -> RoomSummaryRead:
     """复盘摘要。已经生成过就直接读，没有就现算一次并落库。"""
+    room = await db.get(Room, room_id)
+    if room is None:
+        raise LookupError("房间不存在")
+
     existing = await db.scalar(select(RoomSummary).where(RoomSummary.room_id == room_id))
     if existing is not None:
         return RoomSummaryRead(
             room_id=room_id,
             summary_text=existing.summary_text,
             highlights=existing.highlights,
+            missed_truths=await _missed_truths_if_finished(db, room),
         )
 
-    room = await db.get(Room, room_id)
-    if room is None:
-        raise LookupError("房间不存在")
     events = list(
         await db.scalars(
             select(Event).where(Event.room_id == room_id).order_by(Event.created_at, Event.id)
@@ -183,9 +221,56 @@ async def build_summary(db: AsyncSession, room_id: str) -> RoomSummaryRead:
     highlights = build_highlights(room, events)
     summary_text = await _write_recap(_story_lines(events))
 
+    missed = await _missed_truths_if_finished(db, room)
+
     # 🔴 只在**这一局已经结束**时落库。还在跑的局也允许看复盘（中途想回顾
     # 一下很正常），但那时的统计是半截的，存下来之后就再也不会更新了。
     if room.phase == "Completed":
         db.add(RoomSummary(room_id=room_id, summary_text=summary_text, highlights=highlights))
         await db.commit()
-    return RoomSummaryRead(room_id=room_id, summary_text=summary_text, highlights=highlights)
+    return RoomSummaryRead(
+        room_id=room_id,
+        summary_text=summary_text,
+        highlights=highlights,
+        missed_truths=missed,
+    )
+
+
+def build_missed_truths(module: ScenarioModule, keeper_state: dict | None) -> list[str]:
+    """这一局**没查到**的东西：核心真相 + 还没揭开的线索配对的真相侧。
+
+    ## 🔴 为什么必须有它
+
+    真人线下团提前收场时，KP 一定会把谜底讲出来——那恰恰是玩家最在乎的部分。
+    而 `kp_truth.key_facts` 一直只进**裁决 prompt**，从来没有任何通往玩家的
+    出口；复盘那段回顾是从**事件流**生成的，只讲得出发生过的事，讲不出没发生
+    的。玩家主动收工这条路一旦通了（玩家可以在内容没跑完时结束），拿不到交代
+    就成了默认结果。
+
+    🔴 **调用方必须先确认对局已经 `finished`**（见 `build_summary`）。这份
+    内容是绝密真相，局还在跑的时候给出去，这个端点当场变成剧透工具——而
+    `GET /summary` 是**允许中途查看**的（代码里明写「中途想回顾一下很正常」）。
+    门开在调用方那一层，这里只负责组装。
+
+    纯函数：喂模组和状态就能验，不查库、不打网络（同 `build_highlights`）。
+    """
+    # 🔴 **任何人揭开过就不算"没查到"**，所以这里比的是 pair_id 集合，不是
+    # `is_pair_revealed(...)` —— 后者不传 observer 时只认**房间级**揭开，于是
+    # 「只有邵行远一个人发现的那条」会被算进"你们没查到"，把玩家自己挣来的
+    # 发现写成遗憾。复盘是给全桌看的终局交代，粒度本来就该是整桌。
+    revealed_ids = {pair_id for pair_id, _ in load_revealed_clues(keeper_state)}
+    out: list[str] = [text for fact in module.kp_truth.key_facts if (text := fact.strip())]
+
+    # 配对的真相侧是**节点 id**（`reachable_visibility_pairs` 就是按这个筛的），
+    # 不是一段现成的文本 —— 要解引用才拿得到内容。
+    nodes = {node.id: node for node in iter_all_nodes(module.nodes)}
+    for pair in reachable_visibility_pairs(module):
+        if pair.id in revealed_ids:
+            continue
+        node = nodes.get(pair.secret_ref)
+        if node is None:  # 筛过一遍了，正常到不了这里
+            continue
+        detail = (node.kp_text or "").strip()
+        title = (node.title or "").strip() or pair.secret_ref
+        out.append(f"{title}：{detail}" if detail else title)
+    return out

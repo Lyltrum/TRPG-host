@@ -2,6 +2,7 @@ import type {
   ActionSubmitPayload,
   ChatSendPayload,
   CheckRollPayload,
+  EndGameDecidePayload,
   LuckDecidePayload,
   PlayerReadyPayload,
   RoomJoinPayload,
@@ -83,6 +84,13 @@ const PAYLOAD_VALIDATORS: {
     'mergePendingAt' in p,
   // exec/34 第 4 步。decisionId 必填（没有它玩家没法答"就这一个"）；
   // cost/luckRemaining 必填——卡片本身就是教学位，缺一个数字这张卡就没意义了。
+  // 2026-08-19 玩家发起的收工：请求卡 + 进展。🔴 这张表**当场抓到了我漏登记**
+  // ——它是"已知事件类型"的唯一来源，加事件不补校验器 typecheck 就红。
+  'game.end.request': (p) =>
+    typeof p.decisionId === 'string' &&
+    typeof p.playerId === 'string' &&
+    typeof p.initiator === 'string',
+  'game.end.status': (p) => Array.isArray(p.waitingFor) && typeof p.finished === 'boolean',
   'luck.offer': (p) =>
     typeof p.decisionId === 'string' &&
     typeof p.playerId === 'string' &&
@@ -290,6 +298,16 @@ export class RoomSocket {
    * 停在那儿。所以卡片上两个按钮都要给。 */
   decideLuck(playerId: string, payload: LuckDecidePayload): void {
     this.send('luck.decide', playerId, payload);
+  }
+
+  /** game.end.decide —— 对「我们收工吧」表态（2026-08-19）。
+   *
+   * 跟 confirmMerge 不同，这里**有"不同意"这个动作**：不表态就是维持默认，
+   * 而这里的默认方向是**继续玩**，所以拒绝必须能被明确说出来——它会当场清掉
+   * 整批卡。全票才结束、一票否决，也**没有超时自动同意**（超时自动会把
+   * "没看见这张卡"变成"同意结束这一局"，而那一步之后是硬墙）。 */
+  decideEndGame(playerId: string, payload: EndGameDecidePayload): void {
+    this.send('game.end.decide', playerId, payload);
   }
 
   disconnect(): void {

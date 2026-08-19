@@ -497,6 +497,46 @@ export interface EduImprovementCheckView {
   eduAfter: number;
 }
 
+/**
+ * `game.end.decide` 客户端事件：同意收工，或者不。
+ *
+ * 有"不同意"这个动作（同 `luck.decide`、不同于会合确认）：不表态就是维持
+ * 默认，而这里的默认方向是**继续玩**——所以拒绝必须能被明确说出来，它会
+ * 当场清掉整批卡。
+ */
+export interface EndGameDecidePayload {
+  decisionId: string;
+  accepted: boolean;
+}
+
+/**
+ * `game.end.request` 推送：有人提议结束这一局，请你表态（2026-08-19）。
+ *
+ * 真人线下团里收尾最高频的入口是**玩家自己宣布**的（「我们报警，然后回家」），
+ * 而在这之前玩家手上只有否决权和确认权、没有发起权。这张卡是那条入口。
+ *
+ * 🔴 **全票才结束、一票否决**：「结束」跟掷骰不同，它作用于整桌人。
+ * 也**没有超时自动同意**——超时自动会把「没看见这张卡」变成「同意结束」，
+ * 而这一步之后是硬墙。
+ */
+export interface EndGameRequestPayload {
+  decisionId: string;
+  playerId: string;
+  initiator: string;
+}
+
+/**
+ * `game.end.status` 推送：这次提议的进展。
+ *
+ * 三种终局：还在等谁（`waiting_for` 非空）、被谁否了（`declined_by`）、
+ * 全票通过（`finished`，此时 `keeper.phase` 会另发一条 `finished`）。
+ */
+export interface EndGameStatusPayload {
+  waitingFor: string[];
+  declinedBy: string | null;
+  finished: boolean;
+}
+
 export interface EquipmentItem {
   name: string;
 }
@@ -1144,6 +1184,7 @@ export interface RoomSummaryRead {
   roomId: string;
   summaryText?: string | null;
   highlights?: string[] | null;
+  missedTruths?: string[] | null;
 }
 
 /**

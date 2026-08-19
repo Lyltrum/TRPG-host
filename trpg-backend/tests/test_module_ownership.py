@@ -22,15 +22,17 @@ import uuid
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.db import Base
+from app.core.errors import AppException, ErrorCode
 from app.models.content import Game, GameSystem, Scenario
+from app.models.replay import ModuleImportJob
 from app.models.room import Player, Room
 from app.models.user import User
-from app.service.room import get_module_detail, list_modules
+from app.service.room import delete_module, get_module_detail, list_modules
 
 _db_path = Path(tempfile.mkdtemp(prefix="trpg-module-own-test-")) / "own.db"
 _engine = create_async_engine(f"sqlite+aiosqlite:///{_db_path}", poolclass=NullPool)
@@ -243,3 +245,156 @@ def test_the_detail_endpoint_requires_a_logged_in_user() -> None:
         if hasattr(p.default, "dependency")
     ]
     assert get_current_user in deps
+
+
+# ── 删除（2026-08-19）────────────────────────────────────
+
+
+async def test_i_can_delete_my_own_import(world, ids) -> None:
+    """主人删得掉自己的。"""
+    alice_id, _ = world
+    async with _session_factory() as db:
+        await delete_module(db, ids["阿福导入的"], alice_id)
+    async with _session_factory() as db:
+        assert await db.get(Scenario, ids["阿福导入的"]) is None
+
+
+async def test_i_cannot_delete_someone_elses(world, ids) -> None:
+    """🔴 别人的删不掉，而且报的是"不存在"不是"没权限"。
+
+    同 `get_module_detail` 的口径：不确认"这个 id 存在但你没权限"。
+    """
+    alice_id, _ = world
+    async with _session_factory() as db:
+        with pytest.raises(AppException) as caught:
+            await delete_module(db, ids["阿贵导入的"], alice_id)
+        assert caught.value.code == ErrorCode.NOT_FOUND
+    async with _session_factory() as db:
+        assert await db.get(Scenario, ids["阿贵导入的"]) is not None
+
+
+async def test_a_builtin_module_cannot_be_deleted_by_anyone(world, ids) -> None:
+    """🔴 内置模组是随发版进来的目录，任何账号都不该能删掉它。
+
+    它靠 `owner_user_id is None ≠ user_id` 顺带挡住——**不是**另写一条 if。
+    **变异检验**：把判断改成 `scenario.owner_user_id not in (None, user_id)`
+    （即"无主的谁都能删"），这条当场红。
+    """
+    alice_id, _ = world
+    async with _session_factory() as db:
+        with pytest.raises(AppException):
+            await delete_module(db, ids["内置模组"], alice_id)
+    async with _session_factory() as db:
+        assert await db.get(Scenario, ids["内置模组"]) is not None
+
+
+async def test_a_module_in_use_by_a_room_refuses_to_be_deleted(world, ids) -> None:
+    """🔴 有房间在用就拒绝，**并且报出有几个**。
+
+    判据「悬空的指针比没有指针更坏」：`rooms.scenario_id` 没有 ondelete，
+    删了那些房间的世界就凭空消失，而复盘/回放还指着它。
+
+    「加一道门必须同时配一条走得通的修法」——所以消息里要说清楚出路（解散），
+    数量也要给，否则用户不知道要去解散几个。
+    """
+    alice_id, _ = world
+    module_id = ids["阿福导入的"]
+    async with _session_factory() as db:
+        for i in range(2):
+            db.add(
+                Room(
+                    room_code=f"USED{i}",
+                    room_name=f"房{i}",
+                    max_players=4,
+                    scenario_id=module_id,
+                )
+            )
+        await db.commit()
+
+    async with _session_factory() as db:
+        with pytest.raises(AppException) as caught:
+            await delete_module(db, module_id, alice_id)
+        assert caught.value.code == ErrorCode.CONFLICT
+        assert "2 个房间" in caught.value.message, "要报出数量，否则不知道去解散几个"
+        assert "解散" in caught.value.message, "要给出路，不能只说不行"
+
+    async with _session_factory() as db:
+        assert await db.get(Scenario, module_id) is not None
+
+
+async def test_deleting_clears_the_import_jobs_pointer(world, ids) -> None:
+    """🔴 **删引用方之前先清指针**（判据：悬空的指针比没有指针更坏）。
+
+    导入任务是历史记录，不删（`retried_from_job_id` 那条链要留着）；但它的
+    `result_scenario_id` 必须摘掉，否则导入记录页会拿一个死 id 去开局——那正是
+    常用卡那次踩过的坑（下游据此"确信地"显示，然后点了就炸）。
+    """
+    alice_id, _ = world
+    module_id = ids["阿福导入的"]
+    async with _session_factory() as db:
+        db.add(
+            ModuleImportJob(
+                owner_user_id=alice_id,
+                status="succeeded",
+                stage="registering",
+                result_scenario_id=module_id,
+            )
+        )
+        await db.commit()
+
+    async with _session_factory() as db:
+        await delete_module(db, module_id, alice_id)
+
+    async with _session_factory() as db:
+        job = (await db.scalars(select(ModuleImportJob))).one()
+        assert job.result_scenario_id is None, "死指针没摘掉"
+        assert job.status == "succeeded", "历史记录不该被改写"
+
+
+async def test_every_table_hanging_off_a_scenario_gets_cleaned(world, ids) -> None:
+    """🔴 **扫外键，不逐个列出**——八张表一张都不能漏，而且以后新加的也要被清到。
+
+    这条测试自己也不逐个列出：它从元数据里找出所有指向 `scenarios.id` 的外键，
+    给每张表塞一行，删完之后断言全空。**新加一张挂 scenario_id 的表而忘了处理，
+    它会自动红**（「逐个列出的地方，加一项就漏一项」）。
+
+    `rooms` 排除在外：走到这里说明没有房间在用它，而且房间本身不该被删模组带走。
+    """
+    alice_id, _ = world
+    module_id = ids["阿福导入的"]
+
+    hanging = [
+        (table, fk.parent.name)
+        for table in Base.metadata.sorted_tables
+        if table.name not in {"scenarios", "rooms", "module_import_jobs"}
+        for fk in table.foreign_keys
+        if fk.column.table.name == "scenarios"
+    ]
+    assert hanging, "一张挂着 scenario 的表都没找到 ⇒ 这条测试测了个寂寞"
+
+    async with _session_factory() as db:
+        for table, column in hanging:
+            values = {column: module_id}
+            for col in table.columns:
+                if col.name in values or col.nullable or col.default is not None:
+                    continue
+                if col.primary_key:
+                    values[col.name] = str(uuid.uuid4())
+                elif str(col.type).upper().startswith(("VARCHAR", "TEXT", "STRING")):
+                    values[col.name] = "x"
+                elif "JSON" in str(col.type).upper():
+                    values[col.name] = {}
+                else:
+                    values[col.name] = 0
+            await db.execute(table.insert().values(**values))
+        await db.commit()
+
+    async with _session_factory() as db:
+        await delete_module(db, module_id, alice_id)
+
+    async with _session_factory() as db:
+        for table, column in hanging:
+            left = await db.scalar(
+                select(func.count()).select_from(table).where(table.c[column] == module_id)
+            )
+            assert left == 0, f"{table.name} 没被清干净，留下 {left} 行孤儿"

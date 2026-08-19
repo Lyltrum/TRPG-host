@@ -236,6 +236,92 @@ def test_report_numbers_are_separate_integer_columns() -> None:
     assert "llm_call_count" not in columns
 
 
+def test_every_report_column_has_a_writer() -> None:
+    """🔴 **守的是"有没有人写"，不是"列在不在"**（2026-08-19 补）。
+
+    上面那条只断言列存在且是 Integer——那是 schema。而「加了字段没有消费方」
+    的镜面版本是**有消费方但没有数据**，项目 CLAUDE.md 明写"两个方向都不会
+    变红"：列有、DTO 有、前端读得到，只要没人赋值，它就永远是 0，而两条既有
+    测试都不会察觉。
+
+    ## 为什么扫 AST 而不是逐个调函数
+
+    写入方**分在两处**：`_copy_counts` 抄管线量到的五个（页数/图片/字符/条目/
+    硬失败），`_register` 直接从 module 数四个拓扑数（节点/NPC/结局/议程）。
+    逐个列出调用点就是「逐个列出的地方，加一项就漏一项」——所以这里**扫赋值
+    语句的左侧**，新加一个 `*_count` 列却没人写，它当场红。
+
+    （🔴 写这条测试时我先断言过"那四个数恒为 0"，**是错的**——只读了
+    `_copy_counts` 就下结论，而 `_register` 里那四行就在它上面一行。库里成功
+    那条 job 是 `node=12 npc=6`。教训进 `wrong-measurement-target`。）
+    """
+    import ast
+    from pathlib import Path as _Path
+
+    columns = {c.key for c in inspect(ModuleImportJob).columns if c.key.endswith("_count")}
+    source = (
+        _Path(__file__).parent.parent / "app" / "core" / "module_import" / "runner.py"
+    ).read_text(encoding="utf-8")
+
+    written: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            # 只认 `job.xxx_count = ...` 这个形状
+            if isinstance(target, ast.Attribute) and target.attr.endswith("_count"):
+                written.add(target.attr)
+
+    missing = columns - written
+    assert not missing, f"这些报告列没有任何写入方，会永远停在 0：{sorted(missing)}"
+
+
+def test_the_five_pipeline_counts_are_copied_verbatim() -> None:
+    """`_copy_counts` 抄的那五个，一个都不许漏。
+
+    样本取**互不相同的非零值**：漏抄一个它会停在 0，与样本不等 ⇒ 红。
+    有 0 的话，漏抄它就恰好"猜对"了（同 `exec/40` 守护测试瞎掉的那条修法：
+    **造的样本不许有任何字段等于默认值**）。
+
+    **变异检验**：删掉 `_copy_counts` 里任意一行，这条当场红。
+    """
+    from types import SimpleNamespace
+
+    from app.core.module_import.runner import _copy_counts
+
+    sample = SimpleNamespace(page_count=11, image_count=22, chars=33, items=44, hard_failures=99)
+    expected = {
+        "page_count": 11,
+        "image_count": 22,
+        "char_count": 33,
+        "item_count": 44,
+        "hard_failure_count": 99,
+    }
+    assert 0 not in expected.values(), "样本里有 0 ⇒ 漏抄那一列会蒙混过关"
+
+    job = ModuleImportJob()
+    for column in expected:
+        setattr(job, column, 0)
+    _copy_counts(job, sample)
+
+    assert {c: getattr(job, c) for c in expected} == expected
+
+
+def test_the_report_columns_and_the_dto_do_not_drift() -> None:
+    """报告列与 DTO 字段一一对应——加了列不暴露，或暴露了没有列，都算漂。
+
+    🔴 **逐个列出的地方，加一项就漏一项**：这里改成两边**扫集合**再比对，
+    而不是各自维护一张手写清单。
+    """
+    from app.dto.module import ModuleImportJobRead
+
+    columns = {c.key for c in inspect(ModuleImportJob).columns if c.key.endswith("_count")}
+    fields = {name for name in ModuleImportJobRead.model_fields if name.endswith("_count")}
+    assert columns == fields, (
+        f"列与 DTO 不一致：只在列里 {columns - fields}，只在 DTO 里 {fields - columns}"
+    )
+
+
 def test_status_vocabulary_is_closed() -> None:
     assert {
         STATUS_PENDING,

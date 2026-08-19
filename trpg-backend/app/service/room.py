@@ -10,11 +10,13 @@ import secrets
 import string
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, or_, select
+from fastapi import status
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import Base
+from app.core.errors import AppException, ErrorCode
 from app.core.keeper.capabilities.presence import state as presence_state
 from app.core.narration.contract import NarrationContext
 from app.dto.game import GameRead, GameSystemRead, RulesetRead
@@ -32,6 +34,7 @@ from app.dto.room import (
 )
 from app.models.content import Game, GameSystem, Scenario
 from app.models.event import Event
+from app.models.replay import ModuleImportJob
 from app.models.room import Character, Player, Room
 from app.models.user import User
 from app.service import chat as chat_service
@@ -827,6 +830,80 @@ async def _load_public_story(
     if resolved is None:
         return None, None, []
     return public_story_from_module(resolved.module)
+
+
+async def delete_module(db: AsyncSession, module_id: str, user_id: str) -> None:
+    """DELETE /api/v1/modules/{moduleId} —— 把自己导入的模组从库里删掉。
+
+    ## 🔴 为什么需要它
+
+    在这之前模组**只进不出**：导错了、导重了、导坏了，全部永久堆在「我的模组」
+    和建房下拉列表里。而**导入的自查闭环本来就是断的**（剧透约束让导入者看不到
+    切成什么样，只能开一局才知道好不好），于是"重导一份"是常规操作——没有删除
+    就等于每试一次就永久脏一格。
+
+    ## 门：有房间在用就拒绝
+
+    用户 2026-08-19 拍板选了最保守那档。理由是判据「**悬空的指针比没有指针更坏**」：
+    `rooms.scenario_id` 没有 `ondelete`，删了之后那些房间的世界会凭空消失，而
+    复盘/回放还指着它。
+
+    拒绝时**报出有几个房间在用**——「加一道门，必须同时给它配一条走得通的修法」：
+    解散那些房间就能删了，而房主本来就有解散能力。
+
+    ## 只有主人能删，且看不到的当不存在
+
+    比 `_may_read_module` 严格一档：那里"同房间的人"也能读（否则别人的前情页
+    会空白），但删除只认主人。内置模组 `owner_user_id is None`，同一个判断顺带
+    挡住——**内置的是随发版进来的目录，不该被任何账号删掉**。
+
+    看不到就抛 404 而不是 403，跟 `get_module_detail` 同口径：不确认"这个 id
+    存在但你没权限"。
+
+    ## 清理范围
+
+    八张 `scenario_id` 外键表**一张都不能漏**（它们没有一个配了 `ondelete`）
+    ——所以这里**扫外键、不逐个列出**：新加一张挂 `scenario_id` 的表，它会自动
+    被清到，而手写清单会漏（「逐个列出的地方，加一项就漏一项」）。
+
+    最后把指向它的导入任务的 `result_scenario_id` 清空：那是**引用方**，
+    判据「删引用方之前先清指针」——留着的话导入记录页会拿一个死 id 去开局。
+    """
+    scenario = await db.get(Scenario, module_id)
+    if scenario is None or scenario.owner_user_id != user_id:
+        raise AppException(ErrorCode.NOT_FOUND, "模组不存在", status.HTTP_404_NOT_FOUND)
+
+    in_use = await db.scalar(select(func.count(Room.id)).where(Room.scenario_id == module_id))
+    if in_use:
+        raise AppException(
+            ErrorCode.CONFLICT,
+            f"还有 {in_use} 个房间在用这份模组，先解散它们再删。",
+            status.HTTP_409_CONFLICT,
+        )
+
+    # 引用方的指针先清空，别删：导入任务是历史记录，`retried_from_job_id` 这条
+    # 链要留着（"用户点三次要知道前两次为什么失败"）。只把死指针摘掉。
+    await db.execute(
+        update(ModuleImportJob)
+        .where(ModuleImportJob.result_scenario_id == module_id)
+        .values(result_scenario_id=None)
+    )
+
+    # 🔴 扫外键、按子表在前的顺序删——形状与 `disband_room` 完全一致（那里的
+    # 理由同样成立：逐个列出的话，以后新加一张带 `scenario_id` 的表就会漏，
+    # 而漏了不会有任何东西变红，外键在 SQLite 默认还不强制）。
+    #
+    # `rooms` 排除在外：走到这里说明没有房间在用它（上面那道门），而 rooms 的
+    # `scenario_id` 可空、房间本身也不该被删模组这个动作带走。
+    for table in reversed(Base.metadata.sorted_tables):
+        if table.name in {Scenario.__tablename__, Room.__tablename__}:
+            continue
+        for fk in table.foreign_keys:
+            if fk.column.table.name == Scenario.__tablename__:
+                await db.execute(delete(table).where(table.c[fk.parent.name] == module_id))
+
+    await db.execute(delete(Scenario).where(Scenario.id == module_id))
+    await db.commit()
 
 
 async def _may_read_module(db: AsyncSession, scenario: Scenario, user_id: str) -> bool:

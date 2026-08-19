@@ -5,6 +5,7 @@ import ShellPage from '@/shared/components/ShellPage'
 import Badge from '@/shared/components/Badge'
 import ImportProgress from './ImportProgress'
 import {
+  deleteModule,
   isJobRunning,
   listModuleImports,
   type ModuleImportJob,
@@ -23,6 +24,8 @@ export default function MyModulesPage() {
   const navigate = useNavigate()
   const [jobs, setJobs] = useState<ModuleImportJob[] | null>(null)
   const [error, setError] = useState('')
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // 🔴 轮询只在**有 job 在跑**时开。全都是终态还接着轮，等于白烧电池——
   // 而这一屏用户可能停留很久（他在等一件十几分钟的事）。
@@ -42,6 +45,33 @@ export default function MyModulesPage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  /**
+   * 删掉一份模组。
+   *
+   * 🔴 **失败的那句话要原样给用户看**：后端在"有房间在用"时会连房间数和出路
+   * （先解散）一起返回，那是**下一步**，换成"删除失败"就把它扔了。
+   *
+   * 🔴 删除中要有可见状态：这是一次网络往返，没有它用户会以为没反应
+   * （2026-08-19 装备审核那次踩过）。
+   */
+  const remove = useCallback(
+    async (job: ModuleImportJob) => {
+      if (!job.resultScenarioId) return
+      setDeletingId(job.jobId)
+      setError('')
+      try {
+        await deleteModule(job.resultScenarioId)
+        setConfirmingId(null)
+        await load()
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '删不掉这份模组')
+      } finally {
+        setDeletingId(null)
+      }
+    },
+    [load]
+  )
 
   useEffect(() => {
     if (!hasRunning) return
@@ -67,7 +97,19 @@ export default function MyModulesPage() {
         )}
 
         {jobs?.map((job) => (
-          <JobCard key={job.jobId} job={job} onOpen={() => navigate(`/home/modules/${job.jobId}`)} />
+          <JobCard
+            key={job.jobId}
+            job={job}
+            onOpen={() => navigate(`/home/modules/${job.jobId}`)}
+            confirming={confirmingId === job.jobId}
+            deleting={deletingId === job.jobId}
+            onAskDelete={() => {
+              setConfirmingId(job.jobId)
+              setError('')
+            }}
+            onCancelDelete={() => setConfirmingId(null)}
+            onDelete={() => void remove(job)}
+          />
         ))}
       </div>
 
@@ -93,13 +135,35 @@ const SPINE: Record<string, string> = {
   interrupted: 'border-l-text-muted',
 }
 
-function JobCard({ job, onOpen }: { job: ModuleImportJob; onOpen: () => void }) {
+function JobCard({
+  job,
+  onOpen,
+  onDelete,
+  confirming,
+  deleting,
+  onAskDelete,
+  onCancelDelete,
+}: {
+  job: ModuleImportJob
+  onOpen: () => void
+  onDelete: () => void
+  confirming: boolean
+  deleting: boolean
+  onAskDelete: () => void
+  onCancelDelete: () => void
+}) {
   const spine = SPINE[job.status] ?? SPINE.interrupted
+  // 🔴 只有真的产出了一份模组才谈得上删。失败/中断的 job 是**历史记录**，
+  // 它的失败理由要留着（用户点三次重试得知道前两次为什么failed）。
+  const removable = job.status === 'succeeded' && Boolean(job.resultScenarioId)
 
   return (
+    <div
+      className={`bg-card border-l-[5px] ${spine} transition-all duration-100`}
+    >
     <button
       onClick={onOpen}
-      className={`press-soft bg-card p-3.5 text-left border-l-[5px] ${spine} active:translate-x-[3px] active:translate-y-[3px] active:shadow-none transition-all duration-100`}
+      className="press-soft w-full p-3.5 text-left active:translate-x-[3px] active:translate-y-[3px] active:shadow-none transition-all duration-100"
     >
       <div className="flex items-center justify-between gap-2">
         <span className="text-[15px] font-extrabold text-text-primary truncate">
@@ -122,6 +186,63 @@ function JobCard({ job, onOpen }: { job: ModuleImportJob; onOpen: () => void }) 
         </p>
       )}
     </button>
+
+    {removable && !confirming && (
+      <div className="px-3.5 pb-2.5 -mt-1">
+        <button
+          onClick={onAskDelete}
+          className="press px-2 py-1 text-[11px] font-bold text-text-muted active:text-rust"
+        >
+          删掉这份
+        </button>
+      </div>
+    )}
+
+    {removable && confirming && (
+      <DeleteConfirm deleting={deleting} onConfirm={onDelete} onCancel={onCancelDelete} />
+    )}
+    </div>
+  )
+}
+
+/**
+ * 删除确认条。**代价要写在按下之前**（同「我的房间」那条）。
+ *
+ * 模组删掉之后，用它开过的房间不受影响——因为**有房间在用就根本删不掉**
+ * （后端 409）。所以这里要说的代价只有一条：这份转换结果没了，再要就得
+ * 重传重转，那是十几分钟加一次钱。
+ */
+function DeleteConfirm({
+  deleting,
+  onConfirm,
+  onCancel,
+}: {
+  deleting: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="bg-page p-2.5 flex flex-col gap-2">
+      <p className="text-[11px] text-text-muted leading-relaxed">
+        删了要再玩就得<span className="font-bold text-text-primary">重传重转一遍</span>
+        （十几分钟）。已经用它开过的房间不受影响。
+      </p>
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={onConfirm}
+          disabled={deleting}
+          className="press px-2.5 py-1.5 text-[11.5px] font-bold bg-rust text-[#fff5ea] disabled:opacity-60 whitespace-nowrap"
+        >
+          {deleting ? '删除中…' : '确认删除'}
+        </button>
+        <button
+          onClick={onCancel}
+          className="press px-2.5 py-1.5 text-[11.5px] font-bold bg-card text-text-muted whitespace-nowrap"
+        >
+          取消
+        </button>
+      </div>
+    </div>
   )
 }
 

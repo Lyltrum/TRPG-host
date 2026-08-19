@@ -470,8 +470,9 @@ async def test_an_issued_san_check_is_remembered(solo) -> None:
     await _submit(deps, "我冲过去撞开那把椅子")
     await _issue_san(deps, "目睹那个中枪的人被近距离枪杀，脑浆溅到附近")
 
-    assert load_recent_san_reasons(await _keeper_state(deps)) == [
-        "目睹那个中枪的人被近距离枪杀，脑浆溅到附近"
+    # 单人局：表里正好一个人，他名下正好这一条（记账按玩家分格，见 `state.py`）。
+    assert list(load_recent_san_reasons(await _keeper_state(deps)).values()) == [
+        ["目睹那个中枪的人被近距离枪杀，脑浆溅到附近"]
     ]
 
 
@@ -491,7 +492,7 @@ async def test_a_refused_check_is_not_remembered(solo) -> None:
 
     pending, issues = await _issue_san(deps, "这一次根本没发生")
     assert pending == [] and issues, "前提：这次必须真的被拦下"
-    assert load_recent_san_reasons(await _keeper_state(deps)) == []
+    assert load_recent_san_reasons(await _keeper_state(deps)) == {}
 
 
 async def test_three_beats_on_one_corpse_are_all_visible_next_turn(solo) -> None:
@@ -516,7 +517,7 @@ async def test_three_beats_on_one_corpse_are_all_visible_next_turn(solo) -> None
         assert len(pending) == 1, f"第 {i} 拍是新的一拍，必须发得出去"
 
     state = await _keeper_state(deps)
-    assert load_recent_san_reasons(state) == list(reasons)
+    assert list(load_recent_san_reasons(state).values()) == [list(reasons)]
 
     block = format_recent_san(SituationContext(module=_MODULE, keeper_state=state))
     for reason in reasons:

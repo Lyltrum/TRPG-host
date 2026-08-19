@@ -102,6 +102,7 @@ async def execute_open_threads(
     # 推进全被算成原地打转（2026-08-18 真机）。
     if report:
         facts.world_advanced_this_turn = True
+        facts.world_advanced_by.append("open_threads")
 
     if len(table) > OPEN_THREADS_SOFT_LIMIT:
         # 只报，不裁剪：局面块必须全量列出，藏起来的模型看不见就会重开一条。

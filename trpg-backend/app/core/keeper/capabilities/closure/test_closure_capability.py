@@ -45,8 +45,10 @@ from app.core.keeper.runtime.phase import (
 from app.core.keeper.runtime.progress_state import (
     AGENDA_FIRED_KEY,
     CLUES_REVEALED_KEY,
+    PROGRESS_SOURCE_KEY,
     STALLED_TURNS_KEY,
     VISITED_NODES_KEY,
+    load_progress_source,
     load_stalled_turns,
     load_visited_nodes,
 )
@@ -570,3 +572,67 @@ async def test_no_probe_line_below_the_threshold() -> None:
         await execute_closure(_deps(room_id, player_id), KeeperDecision(), TurnFacts())
 
     assert not [e for e in events if e.get("event") == "keeper_stall_push"]
+
+
+# ── 2026-08-18 双人真机：探针要答得出「是谁在清零」 ────────────────
+
+
+async def test_a_reset_records_who_caused_it() -> None:
+    """🔴 A4：这个数为什么涨不上去，此前只能事后翻 `keeper_state` **猜**。
+
+    双人真机 5 拍打同一场僵局而计数只到 2，根因是每拍记一条既成事实就把它
+    清零了——而日志里只有一个 `world_advanced=True`，回答不了"是谁"。
+
+    **变异检验**：把 `current_state[PROGRESS_SOURCE_KEY] = ...` 那行删掉，
+    这条当场红。
+    """
+    room_id, player_id = await _seed(
+        "CLS812",
+        {
+            PLAYER_LOCATION_KEY: "p1@hall",
+            VISITED_NODES_KEY: "hall",
+            STALLED_TURNS_KEY: "7",
+        },
+    )
+    facts = TurnFacts(world_advanced_this_turn=True, world_advanced_by=["established"])
+    await execute_closure(_deps(room_id, player_id), KeeperDecision(), facts)
+
+    state = await _state_of(room_id)
+    assert load_stalled_turns(state) == 0, "前提：这一拍确实清零了"
+    assert load_progress_source(state) == "established"
+
+
+async def test_the_probe_line_says_what_the_last_progress_was() -> None:
+    """🔴 探针响的那一刻要一起说出「上次是靠什么推进的」——那正是判据下一次
+    要用的证据。
+
+    **变异检验**：把 `last_progress=` 那一行从 `logger.info` 里删掉，这条当场红。
+    """
+    from structlog.testing import capture_logs
+
+    room_id, player_id = await _seed(
+        "CLS813",
+        {
+            PLAYER_LOCATION_KEY: "p1@hall",
+            VISITED_NODES_KEY: "hall",
+            STALLED_TURNS_KEY: str(STALL_PUSH_THRESHOLD - 1),
+            PROGRESS_SOURCE_KEY: "established",
+        },
+    )
+    with capture_logs() as events:
+        await _utterance(room_id, "我又站了一会儿")
+        await execute_closure(_deps(room_id, player_id), KeeperDecision(), TurnFacts())
+
+    pushes = [e for e in events if e.get("event") == "keeper_stall_push"]
+    assert pushes and pushes[0]["last_progress"] == "established"
+
+
+async def test_walking_somewhere_new_is_named_as_the_reason() -> None:
+    """来源不是只有 `world_advanced` 一种——「去了新地方」「揭开新线索」也要
+    分得开，否则探针只能告诉你"推进过"，还是回答不了是哪一类。
+    """
+    room_id, player_id = await _seed(
+        "CLS814", {PLAYER_LOCATION_KEY: "p1@hall", STALLED_TURNS_KEY: "3"}
+    )
+    await execute_closure(_deps(room_id, player_id), KeeperDecision(), TurnFacts())
+    assert load_progress_source(await _state_of(room_id)) == "新地方"

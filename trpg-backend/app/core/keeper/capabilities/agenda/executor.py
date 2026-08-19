@@ -81,6 +81,7 @@ async def execute_agenda_fired(
             report.append(await mark_agenda_fired_impl(deps, valid_ids))
             # 剧本议程真的发生了 = 世界往前走了一步（`closure` 读它算停滞）。
             facts.world_advanced_this_turn = True
+            facts.world_advanced_by.append("agenda")
         except KeeperToolError as exc:
             issues.append(f"议程事件未执行：{exc}")
     return report, issues

@@ -235,7 +235,7 @@ async def _remember_san_reasons(deps: KeeperDeps, pending: list[PendingDecision]
         state = dict(room.keeper_state or {})
         recent = load_recent_san_reasons(state)
         for item in pending:
-            recent = record_san_reason(recent, item.reason)
+            recent = record_san_reason(recent, item.player_id, item.reason)
         state[RECENT_SAN_KEY] = recent
         room.keeper_state = state
         await db.commit()

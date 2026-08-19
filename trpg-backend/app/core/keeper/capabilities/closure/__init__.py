@@ -49,7 +49,11 @@ from app.core.keeper.capabilities.closure.schema import (
     audit_fields,
 )
 from app.core.keeper.contract.registry import ExecutorHook, KeeperCapability, SituationBlock
-from app.core.keeper.runtime.progress_state import STALLED_TURNS_KEY, VISITED_NODES_KEY
+from app.core.keeper.runtime.progress_state import (
+    PROGRESS_SOURCE_KEY,
+    STALLED_TURNS_KEY,
+    VISITED_NODES_KEY,
+)
 
 CAPABILITY = KeeperCapability(
     name="closure",
@@ -74,5 +78,5 @@ CAPABILITY = KeeperCapability(
         ),
     ),
     audit=audit_fields,
-    reserved_state_keys=(VISITED_NODES_KEY, STALLED_TURNS_KEY),
+    reserved_state_keys=(VISITED_NODES_KEY, STALLED_TURNS_KEY, PROGRESS_SOURCE_KEY),
 )

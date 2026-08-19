@@ -60,8 +60,10 @@ from app.core.keeper.runtime.phase import (
     set_phase_impl,
 )
 from app.core.keeper.runtime.progress_state import (
+    PROGRESS_SOURCE_KEY,
     STALLED_TURNS_KEY,
     VISITED_NODES_KEY,
+    load_progress_source,
     load_stalled_turns,
     load_visited_nodes,
     serialize_visited_nodes,
@@ -107,7 +109,7 @@ async def _repeat_ratio(db, room_id: str, event_type: str) -> float | None:
     return round(difflib.SequenceMatcher(None, texts[0], texts[1]).ratio(), 3)
 
 
-async def _log_stall_push(db, deps: KeeperDeps, stalled: int) -> None:
+async def _log_stall_push(db, deps: KeeperDeps, stalled: int, state: dict) -> None:
     """「打转」那条硬要求即将进 prompt —— 记一条，供事后复盘。
 
     🔴 **装这只眼睛，是因为「它响了几次、几次是对的」现在只能靠翻 transcript
@@ -138,13 +140,14 @@ async def _log_stall_push(db, deps: KeeperDeps, stalled: int) -> None:
         "keeper_stall_push",
         room_id=deps.room_id,
         stalled=stalled,
+        last_progress=load_progress_source(state),
         narration_repeat=await _repeat_ratio(db, deps.room_id, "narration.push"),
         utterance_repeat=await _repeat_ratio(db, deps.room_id, "action.submit"),
     )
 
 
 async def _record_progress(
-    deps: KeeperDeps, *, clues_revealed: bool, world_advanced: bool
+    deps: KeeperDeps, *, clues_revealed: bool, world_advanced: bool, advanced_by: list[str]
 ) -> list[str]:
     """记「去过的节点」，并顺手维护「无进展轮数」。返回本轮新去的那些。
 
@@ -180,6 +183,12 @@ async def _record_progress(
         advanced = bool(newly) or clues_revealed or world_advanced
         if advanced:
             current_state[STALLED_TURNS_KEY] = 0
+            # 🔴 **只记，不参与判断**：这个数为什么涨不上去，此前只能事后翻
+            # `keeper_state` 猜（2026-08-18 双人真机就是这么查出来"每拍记一条
+            # 既成事实把它清零"的）。存的是**上一次清零的原因**，探针响的时候
+            # 一起打出来。存量键，不进局面块。
+            reasons = ["新地方"] * bool(newly) + ["新线索"] * clues_revealed + advanced_by
+            current_state[PROGRESS_SOURCE_KEY] = ", ".join(reasons) or "world_advanced"
         elif not await happened_this_beat(db, deps.room_id, PROGRESS_EVENT):
             # 🔴 **一拍只计一次**（2026-08-18）：一次玩家发言会引发多次裁决——
             # 每掷完一批骰子就有一次结算叙事，而它本身又是一次完整裁决。原来
@@ -188,7 +197,7 @@ async def _record_progress(
             stalled = load_stalled_turns(current_state) + 1
             current_state[STALLED_TURNS_KEY] = stalled
             if stalled >= STALL_PUSH_THRESHOLD:
-                await _log_stall_push(db, deps, stalled)
+                await _log_stall_push(db, deps, stalled, current_state)
 
         room.keeper_state = current_state
         if newly:
@@ -211,6 +220,7 @@ async def execute_closure(
             deps,
             clues_revealed=bool(facts.clues_revealed_this_turn),
             world_advanced=bool(facts.world_advanced_this_turn),
+            advanced_by=list(facts.world_advanced_by),
         )
     except KeeperToolError as exc:
         issues.append(f"到过的地方未记账：{exc}")

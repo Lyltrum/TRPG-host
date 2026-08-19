@@ -37,6 +37,16 @@ VISITED_NODES_KEY = "去过的节点"
 #: 它是**参考材料，不是门**：多少轮算久由 KP 判断，代码只负责把这个数算准。
 STALLED_TURNS_KEY = "无进展轮数"
 
+#: 上一次「无进展轮数」被清零，是因为什么。
+#:
+#: 🔴 **纯探针，任何判断都不许读它**：它存在的唯一理由是回答"这个数为什么涨
+#: 不上去"。2026-08-18 双人真机里 5 拍打同一场僵局而计数只到 2，当时是事后翻
+#: `keeper_state` **猜**出来的（每拍记一条既成事实 ⇒ 清零），而日志里只有一个
+#: `world_advanced=True`，回答不了"是谁"。
+#:
+#: 不进局面块——模型看见"上次是靠记既成事实推进的"只会去迎合它。
+PROGRESS_SOURCE_KEY = "上次推进来源"
+
 
 # ── 已揭开配对 ──────────────────────────────────────
 
@@ -143,3 +153,12 @@ def load_stalled_turns(keeper_state: dict | None) -> int:
     except ValueError:
         return 0
     return value if value > 0 else 0
+
+
+def load_progress_source(keeper_state: dict | None) -> str | None:
+    """上一次清零的原因。没有就是 `None`（这一局还没推进过 / 老房间）。"""
+    if not keeper_state:
+        return None
+    raw = keeper_state.get(PROGRESS_SOURCE_KEY)
+    text = str(raw or "").strip()
+    return text or None

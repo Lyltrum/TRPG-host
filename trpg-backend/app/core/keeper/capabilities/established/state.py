@@ -29,6 +29,8 @@
 
 from __future__ import annotations
 
+import difflib
+
 #: 存储键。代码记账，不原样喂给模型（走 `reserved_state_keys`）。
 ESTABLISHED_KEY = "既成事实"
 
@@ -41,6 +43,48 @@ FACT_ID_PREFIX = "fact-"
 #: 地点与悬而未决：它说明模型在拿这张表当便签本，那时该查的是"它把什么塞进
 #: 来了"，而不是给这张表加裁剪。真要裁，也只能裁存储不能裁展示。
 ESTABLISHED_SOFT_LIMIT = 24
+
+
+#: 两条既成事实文本相似到这个程度就当**同一件事**，新的那条直接丢掉。
+#:
+#: 🔴 **阈值是拿真样本标定的，而标定结果推翻了「一个阈值就够」**（2026-08-18
+#: 双人真机）：
+#:
+#:   - 真重复 A（这一局）`程雨眠用撬棍砸碎了…渡轮模型` vs `程雨眠砸碎了…渡轮
+#:     模型` ⇒ **0.923**
+#:   - 真重复 B（08-16）`点燃了地下室的煤油` vs `点燃了地下室，火势已起` ⇒ **0.600**
+#:   - 而**不该判重复**的「同句式、换了主语与宾语」（`程雨眠砸碎了…渡轮模型`
+#:     vs `霍启元砸碎了…神像`）⇒ **0.647**，**夹在两个真样本中间**。
+#:
+#: ⇒ 一个阈值抓不全。既成事实是**永久记忆**，误删一条真事实的代价高于漏拦一条
+#: 重复（漏拦只是局面块多一行），所以按仓库既有的两档做（同 `_entity_name_in_key`
+#: 的先例）：**确定的那一半拦，判不准的报而不断**。
+#:
+#: ⚠️ 上面那条负样本是**构造的，不是观测到的**——真出现了误伤要先看它长什么样，
+#: 别直接调数。
+DUPLICATE_RATIO = 0.85
+
+#: 到这个程度就**只报不拦**：像但不够像，记下来供事后看它到底该不该拦。
+SUSPECT_RATIO = 0.60
+
+
+def duplicate_of(table: dict[str, dict], text: str) -> tuple[str | None, str | None]:
+    """这条新事实跟表里哪一条重了。返回 (要拦的 fact_id, 只报不拦的 fact_id)。
+
+    两个返回值最多有一个非空；都为空表示这是一条新事实。
+    """
+    best_id, best_ratio = None, 0.0
+    for fact_id, entry in table.items():
+        ratio = difflib.SequenceMatcher(None, entry["text"], text).ratio()
+        if ratio > best_ratio:
+            best_id, best_ratio = fact_id, ratio
+    if best_id is None:
+        return None, None
+    if best_ratio >= DUPLICATE_RATIO:
+        return best_id, None
+    if best_ratio >= SUSPECT_RATIO:
+        return None, best_id
+    return None, None
 
 
 def load_established(keeper_state: dict | None) -> dict[str, dict]:
@@ -97,6 +141,11 @@ def format_established(context) -> str:  # noqa: ANN001 — SituationContext，�
     # 分别来自相邻的两拍）。悬而未决那一片天然没这个毛病，因为它必须显示 `thread-N`
     # 供 `resolved_threads` 引用——**id 顺带承担了"这条已经有了"的信号**。
     # 这一片没有结清动作，所以 id 的唯一作用就是这个，但它确实是必要的。
+    #
+    # 🔴 **但 id 不够**（2026-08-18 双人真机推翻了上面那句的言下之意）：同一拍的
+    # 两次裁决各记了一条"程雨眠砸碎了渡轮模型"，而第二次裁决**看得见** `fact-2`
+    # （`_load_room_memory` 每次开新 session，不是脏读）。⇒ 把已有的摆出来只是
+    # 必要条件，去重得由代码做，见 `duplicate_of`。
     rows = sorted(table.items(), key=lambda kv: _order_of(kv[0]))
     return "\n".join(f"- {fact_id}｜{entry['text']}" for fact_id, entry in rows)
 

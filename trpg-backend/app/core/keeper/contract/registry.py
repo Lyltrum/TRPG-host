@@ -341,6 +341,16 @@ class TurnFacts:
     #: 单独读它（"还在往外掏线索的那一轮不许收尾"），合并会把两个判据搅在一起。
     world_advanced_this_turn: bool = False
 
+    #: 上面那个布尔是**被谁**置位的（能力名，按置位顺序）。
+    #:
+    #: 🔴 **只给探针用，不参与任何判断**（2026-08-18 双人真机）：那一局
+    #: 5 拍打同一场僵局，「无进展轮数」只涨到 2——因为每拍都记下一条既成事实
+    #: 就把它清零了。当时是**事后翻 `keeper_state` 猜出来的**，而日志里只有
+    #: 一个 `world_advanced=True`，回答不了"是谁"。
+    #:
+    #: 加它不是为了改判据（判据这一轮不动），是为了让下一次改判据时**有证据**。
+    world_advanced_by: list[str] = field(default_factory=list)
+
     #: 本轮为**哪些玩家 id** 发起了潜行检定。`skill_check`（order=5）写，
     #: `movement`（order=30）读。
     #:

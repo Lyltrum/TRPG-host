@@ -23,8 +23,10 @@ from app.core.keeper.capabilities.established.schema import (
     NewFact,
 )
 from app.core.keeper.capabilities.established.state import (
+    DUPLICATE_RATIO,
     ESTABLISHED_KEY,
     ESTABLISHED_SEQ_KEY,
+    SUSPECT_RATIO,
     format_established,
     load_established,
     next_fact_id,
@@ -215,3 +217,97 @@ def test_facts_are_listed_in_numeric_order() -> None:
     }
     text = format_established(_context(state))
     assert text.index("第一件") < text.index("第二件") < text.index("第十件")
+
+
+# ── 2026-08-18 双人真机：id 不够，去重要代码做 ──────────────────
+
+
+#: 真机那两条。同一拍的**两次裁决**各记了一条，而第二次裁决看得见 `fact-2`
+#: （`_load_room_memory` 每次开新 session，不是脏读）——⇒ 把已有的摆出来
+#: 只是必要条件。
+_THE_REAL_DUPLICATE = (
+    "程雨眠用撬棍砸碎了朱印船深处房间的渡轮模型",
+    "程雨眠砸碎了朱印船深处房间的渡轮模型",
+)
+
+
+async def test_the_second_wording_of_the_same_event_is_not_recorded(
+    deps: KeeperDeps,
+) -> None:
+    """🔴 **这条是这次改动的全部理由**（2026-08-18 双人真机原样复现）。
+
+    **变异检验**：把 `executor.py` 里那句 `if same_as is not None: continue`
+    删掉，这条当场红。
+    """
+    first, second = _THE_REAL_DUPLICATE
+    await execute_established(deps, _decision(first), TurnFacts())
+    report, issues = await execute_established(deps, _decision(second), TurnFacts())
+
+    assert report == [], "重复的那条不该进执行报告"
+    assert any("重复" in issue and "fact-1" in issue for issue in issues), issues
+    assert list(load_established(await _state(deps))) == ["fact-1"]
+
+
+async def test_a_duplicate_does_not_count_as_the_world_moving_forward(
+    deps: KeeperDeps,
+) -> None:
+    """🔴 A3：`world_advanced` 是「无进展轮数」的清零条件之一 ⇒ 重复记账会把
+    打转计数按住不动（双人真机 5 拍打同一场僵局，那个数只涨到 2）。
+
+    **变异检验**：把 `if report:` 改回 `if new_facts:`，这条当场红。
+    """
+    first, second = _THE_REAL_DUPLICATE
+
+    fresh = TurnFacts()
+    await execute_established(deps, _decision(first), fresh)
+    assert fresh.world_advanced_this_turn is True, "前提：新的一条确实算推进"
+
+    dup = TurnFacts()
+    await execute_established(deps, _decision(second), dup)
+    assert dup.world_advanced_this_turn is False
+    assert dup.world_advanced_by == []
+
+
+async def test_a_genuinely_different_fact_still_gets_through(deps: KeeperDeps) -> None:
+    """🔴 **纯否定的收窄会压死整片能力**：这一片的全部价值是"十几小时后还记得"，
+    误删一条真事实的代价高于漏拦一条重复。
+
+    这条文本跟上一条**同句式、只换了主语与宾语**（实测相似度 0.647，正好夹在
+    两个真重复样本 0.923 与 0.600 之间）——`DUPLICATE_RATIO` 取 0.85 就是为了
+    让它过得去。
+    """
+    await execute_established(deps, _decision(_THE_REAL_DUPLICATE[1]), TurnFacts())
+    report, issues = await execute_established(
+        deps, _decision("霍启元砸碎了朱印船深处房间的神像"), TurnFacts()
+    )
+    assert report, "这是另一件事，必须记下来"
+    assert list(load_established(await _state(deps))) == ["fact-1", "fact-2"]
+    # 判不准的那一档：照常记，但要留一条供事后看
+    assert any("疑似重复" in issue for issue in issues), issues
+
+
+def test_the_two_thresholds_bracket_the_real_samples() -> None:
+    """🔴 **阈值是拿真样本标定的，这条把标定结果钉住**。
+
+    三个数一变，上面三条端到端就会开始飘——把它们直接写成断言，改阈值的人
+    当场看得见自己踩到了哪个样本。
+    """
+    import difflib
+
+    def ratio(a: str, b: str) -> float:
+        return difflib.SequenceMatcher(None, a, b).ratio()
+
+    # 真重复 A（双人局，同一拍两次裁决）
+    assert ratio(*_THE_REAL_DUPLICATE) >= DUPLICATE_RATIO
+    # 不该判重复的（同句式换主宾）——必须落在拦截线之下
+    assert (
+        SUSPECT_RATIO
+        <= ratio(
+            "程雨眠砸碎了朱印船深处房间的渡轮模型",
+            "霍启元砸碎了朱印船深处房间的神像",
+        )
+        < DUPLICATE_RATIO
+    )
+    # 真重复 B（08-16 煤油）：**拦不住**，只落在"报而不断"那一档。
+    # 这不是缺陷是取舍——它跟上面那条负样本没法用一个阈值分开。
+    assert SUSPECT_RATIO <= ratio("点燃了地下室的煤油", "点燃了地下室，火势已起") < DUPLICATE_RATIO

@@ -36,11 +36,23 @@ from app.core.keeper.contract.registry import SituationContext
 SAN_POINTS_FIRED_KEY = "已触发理智检定点"
 
 #: 最近几次理智检定各是为什么掷的（`SanCheckRequest.reason` 原文）。
-#: 值是 list[str]，最新的在最后。
+#:
+#: 🔴 **值是 `{player_id: [reason, ...]}`，每个玩家一格**（2026-08-18 双人真机
+#: 改）。原来是一条房间级的 list，而记账是**每个玩家各记一条**——双人局同一个
+#: 来源当场占掉两格，四人局占四格。于是这个窗口在四人局只记得住**一个**来源，
+#: 而它是「同一来源不重复掷」那条规则**唯一**的依据 ⇒ 规则在单人局设计并验证，
+#: 人一多就自动失效。同族的自检问句：**这个容量是房间级的，装的东西是不是
+#: 按人增长的？**
+#:
+#: 顺带把规则说准了：COC7 里「一场遭遇同一来源只掷一次」是**对每个调查员**说的
+#: ——A 看过尸体掷过了，B 刚进门理应还要掷。房间级那份从一开始就压掉了这个维度。
+#:
+#: ⚠️ 老房间里存的是 list（房间级），`load_recent_san_reasons` 当脏数据丢弃。
+#: 它只是参考材料，丢了最多让模型多问一次，不值得为它写迁移。
 RECENT_SAN_KEY = "最近理智检定"
 
-#: 留几条。同一场遭遇里理智检定本来就该稀少，留太多会把很久以前的事翻出来
-#: 当"刚掷过"。真机那次的失控是连续 3 拍，4 条足够看见它。
+#: **每个玩家**留几条。同一场遭遇里理智检定本来就该稀少，留太多会把很久以前的
+#: 事翻出来当"刚掷过"。真机那次的失控是连续 3 拍，4 条足够看见它。
 _RECENT_SAN_LIMIT = 4
 
 #: 模组里表示"这条检定点是理智检定"的 kind（`ModuleCheck.kind` 的封闭取值之一）。
@@ -66,25 +78,40 @@ def load_fired_san_points(keeper_state: dict | None) -> list[str]:
     return [part.strip() for part in str(raw).split(",") if part.strip()]
 
 
-def load_recent_san_reasons(keeper_state: dict | None) -> list[str]:
-    """解析最近几次理智检定的理由。脏数据一律当没有——它只是参考材料。"""
-    if not keeper_state:
-        return []
-    raw = keeper_state.get(RECENT_SAN_KEY)
-    if not isinstance(raw, list):
-        return []
-    return [text for item in raw if (text := str(item).strip())]
+def load_recent_san_reasons(keeper_state: dict | None) -> dict[str, list[str]]:
+    """解析每个玩家最近几次理智检定的理由。脏数据一律当没有——它只是参考材料。
 
-
-def record_san_reason(recent: list[str], reason: str) -> list[str]:
-    """记一次。返回**新表**（同 `record_attempt`：调用方要整列写回）。
-
-    空理由不记：记了也没法帮模型判断"是不是同一个来源"，只会占掉一格。
+    老形态（房间级 list）读成空表，见 `RECENT_SAN_KEY` 的说明。
     """
+    if not keeper_state:
+        return {}
+    raw = keeper_state.get(RECENT_SAN_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, list[str]] = {}
+    for player_id, items in raw.items():
+        if not isinstance(items, list):
+            continue
+        reasons = [text for item in items if (text := str(item).strip())]
+        if (pid := str(player_id).strip()) and reasons:
+            out[pid] = reasons
+    return out
+
+
+def record_san_reason(
+    recent: dict[str, list[str]], player_id: str, reason: str
+) -> dict[str, list[str]]:
+    """给某个玩家记一次。返回**新表**（同 `record_attempt`：调用方整份写回）。
+
+    空理由 / 空玩家不记：记了也没法帮模型判断"是不是同一个来源"，只会占掉一格。
+    """
+    out = {pid: list(items) for pid, items in recent.items()}
     text = (reason or "").strip()
-    if not text:
-        return list(recent)
-    return [*recent, text][-_RECENT_SAN_LIMIT:]
+    pid = (player_id or "").strip()
+    if not text or not pid:
+        return out
+    out[pid] = [*out.get(pid, []), text][-_RECENT_SAN_LIMIT:]
+    return out
 
 
 def format_recent_san(context: SituationContext) -> str:
@@ -111,15 +138,21 @@ def format_recent_san(context: SituationContext) -> str:
     recent = load_recent_san_reasons(context.keeper_state)
     if not recent:
         return ""
-    lines = "\n".join(f"- {text}" for text in recent)
+    names = dict(context.players)
+    lines: list[str] = []
+    for player_id, reasons in recent.items():
+        who = names.get(player_id, player_id)
+        lines += [f"- {who}：{text}" for text in reasons]
     return (
         "【最近已经掷过的理智检定】\n"
-        + lines
-        + "\n**同一个来源不要重复检定**：上面这些已经掷过了，"
+        + "\n".join(lines)
+        + "\n**同一个人对同一个来源不要重复检定**：上面这些他已经掷过了，"
         "同一个东西后来又动了一下、又靠近了一点、又被看清了一点，**都还是它**，"
-        "不要再为它发起理智检定——直接按已有结果往下写。\n"
+        "不要再为它给这个人发起理智检定——直接按已有结果往下写。\n"
         "**换成新的来源照掷**：另一个怪物、另一具尸体、另一件此前没见过的事，"
-        "那是新的一次，该掷就掷。"
+        "那是新的一次，该掷就掷。\n"
+        "**换个人也照掷**：上面没出现过的人，哪怕来源是同一个，"
+        "对他也是第一次亲眼看见——该掷就掷。"
     )
 
 

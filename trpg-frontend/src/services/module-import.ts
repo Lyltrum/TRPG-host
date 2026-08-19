@@ -21,7 +21,17 @@ export async function listModuleImports(): Promise<ModuleImportJob[]> {
 }
 
 export async function getModuleImport(jobId: string): Promise<ModuleImportJob> {
-  return sdk.modules.getImportJob(jobId)
+  return sdk.modules.getImportJob(jobId, requireAuthToken())
+}
+
+/**
+ * 删掉自己导入的一份模组。
+ *
+ * 🔴 **有房间在用会抛 409**，`err.message` 里带着房间数和出路（先解散）。
+ * 调用方要把那句话原样给用户看——它是下一步，不是一句"失败了"。
+ */
+export async function deleteModule(moduleId: string): Promise<void> {
+  await sdk.modules.deleteModule(requireAuthToken(), moduleId)
 }
 
 /** 重跑。返回的是**一个新 job**，调用方要拿新的 jobId 继续轮询。 */

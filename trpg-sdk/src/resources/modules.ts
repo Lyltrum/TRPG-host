@@ -56,9 +56,30 @@ export class ModulesResource {
     );
   }
 
-  /** GET /api/v1/modules/import/{jobId} — 轮询导入任务状态 */
-  getImportJob(jobId: string): Promise<ModuleImportJob> {
-    return this.client.get<ModuleImportJob>(`/modules/import/${jobId}`);
+  /**
+   * GET /api/v1/modules/import/{jobId} — 轮询导入任务状态。
+   *
+   * 🔴 `token` 是**必填**（2026-08-19 补鉴权）：这个端点此前连登录都不要，
+   * 而 job 里带着 `sourceFilename`——用户自己的文件名。同 `getDetail`，不做成
+   * 可选参数：漏传会静默退化成一次未登录请求，而那正是禁止的静默兜底。
+   */
+  getImportJob(jobId: string, token: string): Promise<ModuleImportJob> {
+    return this.client.get<ModuleImportJob>(
+      `/modules/import/${jobId}`,
+      this.authenticated(token)
+    );
+  }
+
+  /**
+   * DELETE /api/v1/modules/{moduleId} — 把自己导入的模组删掉。
+   *
+   * 🔴 **有房间在用会 409**，错误消息里带着房间数与出路（解散）。别把它当成
+   * 「删不掉就算了」——那句话是给用户看的下一步。
+   *
+   * 内置模组删不掉（无主），别人的模组表现为 404（不确认存在性）。
+   */
+  deleteModule(token: string, moduleId: string): Promise<null> {
+    return this.client.delete<null>(`/modules/${moduleId}`, this.authenticated(token));
   }
 
   /**

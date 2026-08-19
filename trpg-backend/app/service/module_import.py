@@ -232,9 +232,21 @@ async def list_import_jobs(db: AsyncSession, *, user_id: str) -> list[ModuleImpo
     return [_to_dto(row) for row in rows]
 
 
-async def get_import_job(db: AsyncSession, job_id: str) -> ModuleImportJobRead:
+async def get_import_job(db: AsyncSession, job_id: str, user_id: str) -> ModuleImportJobRead:
+    """GET /api/v1/modules/import/{jobId} —— 轮询导入任务状态。
+
+    🔴 **这个端点此前没有任何鉴权**（2026-08-19 补）：连登录都不要。它泄的不是
+    模组内容（DTO 那层挡住了），而是 `source_filename`——用户自己的文件名，
+    以及"某人导入过一份东西"这件事本身。
+
+    `list_modules` 与 `get_module_detail` 都已经按主人过滤，**只有这一头漏了**：
+    「一份数据有几个出口，规则就要落几处」。
+
+    看不到的一律当**不存在**（不是 403），跟 `get_module_detail` 同口径——
+    不确认"这个 id 存在但你没权限"。
+    """
     job = await db.get(ModuleImportJob, job_id)
-    if job is None:
+    if job is None or job.owner_user_id != user_id:
         raise AppException(ErrorCode.NOT_FOUND, "导入任务不存在", status.HTTP_404_NOT_FOUND)
     return _to_dto(job)
 

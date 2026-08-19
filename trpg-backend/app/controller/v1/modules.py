@@ -68,6 +68,21 @@ async def get_module_detail(
     return ApiResponse.ok(module)
 
 
+@router.delete("/{module_id}", response_model=ApiResponse[None])
+async def delete_module(
+    module_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ApiResponse[None]:
+    """DELETE /api/v1/modules/{moduleId} —— 把自己导入的模组删掉。
+
+    只有主人能删（内置模组无主，顺带挡住）；**有房间在用就 409 并报出几个**
+    ——判据与清理范围见 `room_service.delete_module`。
+    """
+    await room_service.delete_module(db, module_id, user.id)
+    return ApiResponse.ok(None)
+
+
 @router.post(
     "/import", response_model=ApiResponse[ModuleImportJobRead], status_code=status.HTTP_201_CREATED
 )
@@ -89,10 +104,15 @@ async def import_module(
 
 @router.get("/import/{job_id}", response_model=ApiResponse[ModuleImportJobRead])
 async def get_import_job(
-    job_id: str, db: AsyncSession = Depends(get_db)
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> ApiResponse[ModuleImportJobRead]:
-    """GET /api/v1/modules/import/{jobId} —— 轮询导入任务状态。"""
-    job = await module_import_service.get_import_job(db, job_id)
+    """GET /api/v1/modules/import/{jobId} —— 轮询导入任务状态。
+
+    🔴 鉴权在 service 层（看不到就当不存在），理由见那里。
+    """
+    job = await module_import_service.get_import_job(db, job_id, user.id)
     return ApiResponse.ok(job)
 
 

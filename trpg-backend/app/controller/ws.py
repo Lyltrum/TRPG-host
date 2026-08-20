@@ -1600,6 +1600,14 @@ async def _run_turn(
         await _deliver_narration_segments(db, room_id, outcome.segments)
         for notice in outcome.check_requests:
             await _broadcast_check_request(room_id, notice, db)
+        # 🔴 玩家提议收工的那张确认卡走的正是这条路（`action.submit` → 裁决判
+        # `wrap_up` → `propose_end_game`），而这份「本轮要推什么」的清单此前
+        # 只在检定结算那一处写全了 ⇒ 卡建出来了、进了库、分发表也备好了，
+        # **就是没人把它推出去**（2026-08-20 双人真机：两次明确说"这局结束
+        # 吧"，裁决两次都判对了 `wrap_up`，玩家侧一张卡都没有）。
+        # 同「逐个列出的断言/判断，加一项就漏一项」——这是第三处清单。
+        for offer in outcome.player_offers:
+            await _broadcast_player_offer(room_id, offer, db)
     finally:
         # 🔴 必须在 finally：叙事失败那条路径上有 early return，写在成功分支里
         # 就会让「守秘人正在忙」在所有人屏幕上永远亮着。

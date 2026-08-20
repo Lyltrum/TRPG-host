@@ -274,3 +274,64 @@ async def test_the_spoilers_stay_shut_until_the_game_is_over(db_session, _stub_m
     out = await _missed_truths_if_finished(db_session, room)
     assert out is not None
     assert "科比特一直活着" in out
+
+
+# --- 接线：那张卡到底有没有被推出去 ---------------------------------------
+#
+# 🔴 上面那批全是 service 层函数测试，**一条都没走完整路径**——于是
+# `outcome.player_offers` 的投递此前只写在检定结算那一处，`action.submit`
+# 那条（也就是玩家说「结束吧」真正走的那条）漏掉了，全套 2167 条照样绿。
+# 2026-08-20 双人真机撞出来：裁决两次都判对 `wrap_up`、卡也进了库，玩家侧
+# 一张都没有。同 08-18 那条判据「只测函数不测接线」。
+
+
+class _FakeNarrator:
+    """只负责把一张收工确认卡放进 outcome，其余照最小形状返回。"""
+
+    def __init__(self, offers: list) -> None:
+        self._offers = offers
+
+    async def narrate(self, _context):  # noqa: ANN001, ANN202
+        from app.core.narration.contract import NarrationOutcome
+
+        return NarrationOutcome(text="雾更浓了。", player_offers=list(self._offers))
+
+
+@pytest.mark.asyncio
+async def test_the_end_game_card_reaches_the_table_from_a_plain_utterance(
+    db_session, monkeypatch
+) -> None:
+    """玩家说一句「结束吧」→ 那张卡必须真的被推出去，不能只躺在库里。"""
+    from types import SimpleNamespace
+
+    from app.controller import ws as ws_module
+    from app.service.turn_window import Submission
+
+    room, players = await _room(db_session, "小林", "阿罗")
+    await db_session.commit()
+    proposal = await propose_end_game(db_session, room.id, players[1].id)
+    await db_session.commit()
+    assert proposal.cards, "装置自证：这一步就该建出卡来"
+
+    pushed: list[str] = []
+
+    async def _broadcast(_room_id, envelope):  # noqa: ANN001, ANN202
+        pushed.append(envelope["type"])
+
+    async def _send_to_players(_room_id, _player_ids, envelope):  # noqa: ANN001, ANN202
+        pushed.append(envelope["type"])
+
+    monkeypatch.setattr(ws_module.manager, "broadcast", _broadcast)
+    monkeypatch.setattr(ws_module.manager, "send_to_players", _send_to_players)
+
+    websocket = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(narrator=_FakeNarrator(proposal.cards)))
+    )
+    await ws_module._run_turn(
+        db_session,
+        websocket,  # ty: ignore[invalid-argument-type] — 只用到 app.state.narrator
+        room.id,
+        [Submission(player_id=players[1].id, nickname="阿罗", utterance="这局到此为止，结束吧。")],
+    )
+
+    assert "game.end.request" in pushed, f"确认卡没被推出去，只推了 {pushed}"

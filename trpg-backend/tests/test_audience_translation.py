@@ -306,3 +306,31 @@ def test_normalise_runs_before_pruning() -> None:
     kept = module["nodes"][0]["checks"]
     assert len(kept) == 1, "「侦查」是能归一到 spot-hidden 的，不该被扔"
     assert kept[0]["skill_ids"] == ["spot-hidden"]
+
+
+def test_every_json_mode_prompt_says_the_word_json() -> None:
+    """🔴 DeepSeek 硬性要求：用 `response_format={"type":"json_object"}` 时，
+    **prompt 里必须出现字面的 "json"**，否则 400。
+
+    真机上就是这么挂的：`AUDIENCE_SYSTEM` 里只有 `{"kinds": {...}}` 的形状，
+    没有那个词，模型侧直接 400，重试 3 次全挂——而本文件 13 条测试当时全绿，
+    因为替身 client 不检查这条约束。
+
+    **这条约束是"逐个列出的地方，加一项就漏一项"的典型**：以后每加一个走
+    `_chat_json` 的 prompt 都要记得，而没人会记得。所以这里**扫前缀**——
+    模块里所有 `*_SYSTEM` 常量一个不漏。
+
+    **变异检验**：把任意一个 prompt 里的 "JSON" 删掉，这条当场红。
+    """
+    from scripts.module_probe import assemble, probe, relation_probe
+
+    missing: list[str] = []
+    for module in (assemble, relation_probe, probe):
+        for name in dir(module):
+            if not name.endswith("_SYSTEM"):
+                continue
+            prompt = getattr(module, name)
+            if isinstance(prompt, str) and "json" not in prompt.lower():
+                missing.append(f"{module.__name__.split('.')[-1]}.{name}")
+
+    assert not missing, f"这些 prompt 走 JSON mode 却没提到 json，模型侧会直接 400：{missing}"

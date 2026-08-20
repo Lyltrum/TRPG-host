@@ -703,27 +703,80 @@ def stage1_group(
     merged_entities: list[dict[str, Any]] = []
     entity_by_id: dict[str, dict[str, Any]] = {}
 
+    def _run_batch(focus: list[dict[str, Any]], label: str) -> dict[str, Any]:
+        """跑一批；**输出撑爆就对半拆，直到跑通或拆到单个片段**。
+
+        ## 🔴 为什么不是"再调一次批大小"
+
+        第一版按**片段数**切（60 一批），坨子岛 218 片段跑通了，秘鲁序章 161
+        片段却在 batch0 就截断——**片段数更少反而更长**：
+
+            坨子岛：45,011 字符 / 218 片段 = 206 字符/片段
+            秘鲁：  58,269 字符 / 161 片段 = 362 字符/片段（1.76 倍）
+
+        片段的"大小"在模组之间差着一倍多，**按个数切就是拿错了度量**。而按字符
+        数切也只是换一个猜得准一点的阈值——输出长度是模型决定的，输入长度只是
+        个相关量，下一份模组照样能找到反例。
+
+        自动对半拆不需要任何阈值：**撞上了就拆细，拆到跑通为止**。这条线的定位
+        是「只能成功不能失败」，而这正是那个"更窄的修法"。
+
+        代价是撞上时多花几次调用。可以接受——它只在真的撞上时才发生。
+        """
+        try:
+            return _chat_json(
+                client,
+                system=STAGE1_SYSTEM,
+                user=(
+                    f"【本批要归组的片段，共 {len(focus)} 个】\n"
+                    + format_item_catalog(focus)
+                    + "\n【片段间关系】\n"
+                    + format_relations(rels)
+                    + _format_known_entities(merged_entities)
+                    + "\n\n请产出 entities + assignments + orphans。"
+                    + "**本批**的每个片段 id 必须出现在 assignments 中。"
+                    + (f"\n\n【上轮校验/归组问题，请修正】\n{repair_notes}" if repair_notes else "")
+                ),
+                temperature=TEMPERATURE,
+                stats=stats,
+                # 🔴 label 带批号：磁带按 label 取键，同名会让几批互相覆盖。
+                label=label,
+            )
+        except RuntimeError:
+            if len(focus) <= 1:
+                # 单个片段都吐不完整，那不是长度问题，如实往上抛
+                raise
+            mid = len(focus) // 2
+            print(
+                f"  ↯ {label} 输出撑爆，拆成 {mid} + {len(focus) - mid} 重跑",
+                flush=True,
+            )
+            left = _run_batch(focus[:mid], f"{label}.a")
+            # 🔴 先并进 merged_entities 再跑右半——右半要看得见左半刚建的实体，
+            # 否则同一个场景会被两半各建一个 id（分批那条判据在拆分时同样成立）。
+            _absorb(left)
+            return _merge_batch_data(left, _run_batch(focus[mid:], f"{label}.b"))
+
+    def _merge_batch_data(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+        """把两半的产出并成一份，形状与单批一致。"""
+        return {
+            "entities": (a.get("entities") or []) + (b.get("entities") or []),
+            "assignments": (a.get("assignments") or []) + (b.get("assignments") or []),
+            "orphans": (a.get("orphans") or []) + (b.get("orphans") or []),
+        }
+
+    def _absorb(data: dict[str, Any]) -> None:
+        """把一批的实体并进已建清单（拆分时左半要先并，右半才看得见）。"""
+        for ent in data.get("entities") or []:
+            if not isinstance(ent, dict):
+                continue
+            eid = str(ent.get("id") or "").strip()
+            if eid and eid not in entity_by_id:
+                entity_by_id[eid] = ent
+                merged_entities.append(ent)
+
     for bi, focus in enumerate(batches):
-        user = (
-            f"【本批要归组的片段，共 {len(focus)} 个】\n"
-            + format_item_catalog(focus)
-            + "\n【片段间关系】\n"
-            + format_relations(rels)
-            + _format_known_entities(merged_entities)
-            + "\n\n请产出 entities + assignments + orphans。"
-            + "**本批**的每个片段 id 必须出现在 assignments 中。"
-        )
-        if repair_notes:
-            user += f"\n\n【上轮校验/归组问题，请修正】\n{repair_notes}"
-        data = _chat_json(
-            client,
-            system=STAGE1_SYSTEM,
-            user=user,
-            temperature=TEMPERATURE,
-            stats=stats,
-            # 🔴 label 带批号：磁带按 label 取键，同名会让几批互相覆盖。
-            label="stage1.group" if len(batches) == 1 else f"stage1.group:batch{bi}",
-        )
+        data = _run_batch(focus, "stage1.group" if len(batches) == 1 else f"stage1.group:batch{bi}")
         for row in data.get("assignments") or []:
             if isinstance(row, dict):
                 merged_assignments.append(row)

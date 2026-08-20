@@ -312,3 +312,180 @@ def test_an_unassigned_item_is_claimable() -> None:
     )
 
     assert result["assignment_map"]["it-1"]["dest_id"] == "trap"
+
+
+# ── 输出撑爆时自动对半拆（2026-08-20，秘鲁序章）────────────
+
+
+class _TruncatingCompletions:
+    """替身：指定 label 前缀的调用返回**被截断的 JSON**，其余正常。"""
+
+    def __init__(self, truncate_labels: tuple[str, ...]) -> None:
+        # 🔴 **精确匹配，不是前缀**：第一版用 startswith，于是拆出来的
+        # `batch0.a` 也被判成要截断，一路拆到单个片段——装置自己造了个假。
+        self._truncate = frozenset(truncate_labels)
+        self.labels: list[str] = []
+
+    def create(self, **kwargs):
+        label = kwargs.get("tape_key") or ""
+        self.labels.append(label)
+        user = kwargs["messages"][1]["content"]
+        ids = [
+            line.split("id: ", 1)[1].strip()
+            for line in user.splitlines()
+            if line.startswith("- id: ")
+        ]
+
+        class _Msg:
+            content = ""
+
+        if label in self._truncate:
+            # 半截 JSON —— json.loads 会抛，_chat_json 重试三次后抛 RuntimeError
+            _Msg.content = '{"entities": [{"kind": "node", "id": "x", "item_i'
+        else:
+            # 🔴 **看得见已建实体就复用它的 id**——模拟真实模型的行为，也是
+            # `_absorb` 唯一起作用的场景。第一版装置每批都造新 id，于是
+            # "右半看不见左半"这个变异体大摇大摆活了下来（造的样本没走到被测分支）。
+            eid = f"loc-{ids[0]}"
+            if "前面几批已经建好的实体" in user:
+                known = [
+                    line.split("/", 1)[1].split(":", 1)[0].strip()
+                    for line in user.splitlines()
+                    if line.startswith("- node/")
+                ]
+                if known:
+                    eid = known[0]
+            _Msg.content = json.dumps(
+                {
+                    "entities": [{"kind": "node", "id": eid, "title": "场景", "item_ids": ids}],
+                    "assignments": [
+                        {"item_id": i, "dest_kind": "node", "dest_id": eid} for i in ids
+                    ],
+                    "orphans": [],
+                },
+                ensure_ascii=False,
+            )
+
+        class _Choice:
+            message = _Msg()
+
+        class _Resp:
+            choices = [_Choice()]
+            usage = None
+
+        return _Resp()
+
+
+class _TruncatingClient:
+    def __init__(self, labels: tuple[str, ...]) -> None:
+        self.chat = type("_C", (), {"completions": _TruncatingCompletions(labels)})()
+
+    @property
+    def labels(self) -> list[str]:
+        return self.chat.completions.labels
+
+
+@pytest.fixture
+def _no_backoff(monkeypatch):
+    """`_chat_json` 每次重试前 sleep 1.5×attempt，测试里没必要真等。"""
+    from scripts.module_probe import assemble
+
+    monkeypatch.setattr(assemble.time, "sleep", lambda _s: None)
+
+
+def test_a_batch_that_blows_the_output_limit_is_split_in_half(_no_backoff) -> None:
+    """🔴 **秘鲁序章**：161 片段（比坨子岛的 218 还少）却在 batch0 就截断。
+
+        坨子岛：45,011 字符 / 218 片段 = 206 字符/片段
+        秘鲁：  58,269 字符 / 161 片段 = 362 字符/片段（1.76 倍）
+
+    片段的"大小"在模组之间差着一倍多——**按个数切批就是拿错了度量**。而按字符
+    数切也只是换一个猜得准一点的阈值，下一份模组照样能找到反例。
+
+    对半拆不需要任何阈值：撞上了就拆细，拆到跑通为止。
+
+    **变异检验**：把 `except RuntimeError` 那段删掉，这条当场红。
+    """
+    client = _TruncatingClient(("stage1.group:batch0",))
+    # batch0 整批会截断，它的两半（.a / .b）不会
+    result = stage1_group(
+        client,  # ty: ignore[invalid-argument-type]
+        _items(120),
+        [],
+        CallStats(),
+        batch_size=60,
+    )
+
+    assert len(result["assignment_map"]) == 120, "拆分之后有片段丢了"
+    patched = [k for k, v in result["assignment_map"].items() if v["dest_kind"] == "unassigned"]
+    assert not patched, f"这些片段是被补洞逻辑救回来的：{patched[:5]}"
+
+
+def test_the_split_halves_get_their_own_tape_keys(_no_backoff) -> None:
+    """拆出来的两半要有各自的磁带键，否则回放时互相覆盖。"""
+    client = _TruncatingClient(("stage1.group:batch0",))
+    stage1_group(
+        client,  # ty: ignore[invalid-argument-type]
+        _items(120),
+        [],
+        CallStats(),
+        batch_size=60,
+    )
+
+    succeeded = [k for k in client.labels if not k.startswith("stage1.group:batch0#")]
+    assert any(k.startswith("stage1.group:batch0.a") for k in succeeded)
+    assert any(k.startswith("stage1.group:batch0.b") for k in succeeded)
+
+
+def test_a_single_item_that_still_fails_is_not_swallowed(_no_backoff) -> None:
+    """🔴 拆到单个片段还吐不完整，那不是长度问题——**如实往上抛**，不要假装成功。
+
+    静默吞掉会让一份缺了内容的模组悄悄进库，那比失败更糟。
+
+    **变异检验**：把 `if len(focus) <= 1: raise` 改成 `return 空结果`，这条当场红。
+    """
+    # 4 个片段一批，拆分树是：batch 整批 → .a/.b → .a.a/.a.b/... 全部列出
+    client = _TruncatingClient(
+        (
+            "stage1.group",
+            "stage1.group.a",
+            "stage1.group.b",
+            "stage1.group.a.a",
+            "stage1.group.a.b",
+            "stage1.group.b.a",
+            "stage1.group.b.b",
+        )
+    )
+
+    with pytest.raises(RuntimeError):
+        stage1_group(
+            client,  # ty: ignore[invalid-argument-type]
+            _items(4),
+            [],
+            CallStats(),
+            batch_size=4,
+        )
+
+
+def test_the_right_half_sees_what_the_left_half_just_built(_no_backoff) -> None:
+    """🔴 拆分时，右半必须看得见左半刚建的实体。
+
+    否则同一个场景会被两半各建一个 id（"地下室" / "cellar"），合并时谁也认不出
+    它们是一回事——分批那条判据在**拆分**时同样成立，而拆分是另一条代码路径。
+
+    **变异检验**：把 `_absorb(left)` 那行去掉，这条当场红。
+    """
+    client = _TruncatingClient(("stage1.group:batch0",))
+    result = stage1_group(
+        client,  # ty: ignore[invalid-argument-type]
+        _items(120),
+        [],
+        CallStats(),
+        batch_size=60,
+    )
+
+    # batch0 被拆成两半，两半应该归到同一个实体上
+    dest_ids = {
+        v["dest_id"] for k, v in result["assignment_map"].items() if int(k.split("-")[1]) < 60
+    }
+    assert len(dest_ids) == 1, f"batch0 的两半各建了一个实体：{dest_ids}"

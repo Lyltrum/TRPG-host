@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 import sys
@@ -2181,7 +2182,35 @@ def run_pipeline(
     )
     print(report.summary_text(), flush=True)
 
+    # 🔴 **保留最好的那一版，不是最后一版**（2026-08-20）。
+    #
+    # 真机实测：硬失败数走的是 3 → 2 → 6，而循环拒绝时交出去的是**最后一版**
+    # ——手里明明有过一份只有 3 处问题的中间产物，被自己覆盖掉了。
+    #
+    # 自修每一轮都可能重跑归组，而归组是概率的：这一轮修好了 A，下一轮可能带出
+    # 新的 B。没有"留底"的循环，跑得越多不一定越好。
+    best_module = copy.deepcopy(module)
+    best_report = report
+    best_map = copy.deepcopy(assignment_map)
+
+    stalled = 0
     while not report.ok and repair_count < MAX_REPAIR:
+        # 🔴 **结算放在轮首，不是轮尾**：循环体里有好几处 `continue`，放轮尾的
+        # 代码会被跳过——那正是「逐个列出的地方，加一项就漏一项」（reach 那条
+        # 窄路就是这么被 continue 吃掉的）。放轮首，每条路径都必然经过它。
+        if len(report.all_errors()) < len(best_report.all_errors()):
+            best_module = copy.deepcopy(module)
+            best_report = report
+            best_map = copy.deepcopy(assignment_map)
+            stalled = 0
+        elif repair_count:
+            # 这一轮没让它变好。连着两轮不见好就停——再跑只是烧钱，而且实测
+            # 会**越修越糟**（真机那次 3 → 2 → 6）。
+            stalled += 1
+            if stalled >= 2:
+                print("\n🔴 连续两轮没有改善，停止自修（继续跑只会更糟）", flush=True)
+                break
+
         repair_count += 1
         print(f"\n--- 自修 #{repair_count} ---", flush=True)
         err_text = "\n".join(report.all_errors())
@@ -2244,7 +2273,20 @@ def run_pipeline(
             )
             print(report.summary_text(), flush=True)
             # 归组修好后若只剩产物级问题，同轮再修一次 JSON（不另计 repair）
-            if report.ok or report.needs_stage1_repair():
+            #
+            # 🔴 **只在 `report.ok` 时 continue**（2026-08-20 改）。原来的条件是
+            # `report.ok or report.needs_stage1_repair()`，而后半句意味着"还是
+            # 归组问题就跳到下一轮"——于是只要存在任何一个 secret_public /
+            # orphan / thin_slot / structure 错误，**下面所有窄路一次都跑不到**。
+            #
+            # 真机实测：2026-08-10 专门为 reach 做的那条窄路（每个悬空节点单独
+            # 一次小调用），在三轮自修里**一次都没被调用过**（日志里零个
+            # `repair#` 标签），而 reach 错误在 3→2→6 之间乱跳——那正是每轮
+            # 整份重吐带出来的新孤立节点。
+            #
+            # 判据：**兜底的触发条件要包含「主路失败」，不能只包含「主路没走」**
+            # ——`if/continue` 会让主路失败吃掉兜底。
+            if report.ok:
                 continue
 
         # schema/ref/skill/leak：先机械归一+修补，仍失败再尝试整份 JSON 自修
@@ -2454,6 +2496,18 @@ def run_pipeline(
         "meta_items": thin_counts.get("meta", 0),
         "content_preserve_suspects": len(report.content_preserve_suspects),
     }
+    # 🔴 循环结束，交出**最好的那一版**
+    if len(best_report.all_errors()) < len(report.all_errors()):
+        print(
+            f"\n🔴 自修没能变好：最后一版 {len(report.all_errors())} 处问题，"
+            f"回退到最好的那一版（{len(best_report.all_errors())} 处）",
+            flush=True,
+        )
+        module = best_module
+        report = best_report
+        assignment_map = best_map
+
+    intermediate["repair_rounds"] = repair_count
     intermediate["success"] = report.ok
 
     # 写产物（模组资料/，gitignored）

@@ -247,3 +247,68 @@ def test_boundaries_around_the_batch_size(n: int) -> None:
     """批大小边界：不多不少，正好每个片段一条。"""
     _, result = _run(n, batch_size=60)
     assert len(result["assignment_map"]) == n
+
+
+# ── 两份映射自洽（2026-08-20，真机 trace 失败）──────────────
+
+
+def _normalize(entities, assignments, valid_ids):
+    from scripts.module_probe.assemble import _normalize_stage1
+
+    return _normalize_stage1(
+        {"entities": entities, "assignments": assignments, "orphans": []}, valid_ids
+    )
+
+
+def test_an_entity_claiming_an_item_gets_it_in_the_assignment_map() -> None:
+    """🔴 真机：`node:third-day-trap-su ← 1 items` 明明认领了一个片段，
+    `assignment_map` 里却没有任何片段指向它 ⇒ trace 判它「没有溯源锚点」，
+    而三轮自修都修不掉——`repair#N.entity` 重吐的是实体内容，动不了映射。
+
+    `entities[].item_ids` 与 `assignments` 是**同一个映射的两个方向**，模型的
+    输出经常在两处对不上。合并这两份数据的人（就是这个函数）该负责让它们自洽。
+
+    **变异检验**：删掉反向补齐那一段，这条当场红。
+    """
+    result = _normalize(
+        entities=[{"kind": "node", "id": "trap", "title": "陷阱", "item_ids": ["it-1"]}],
+        assignments=[],  # 模型忘了给 it-1 写 assignment
+        valid_ids={"it-1"},
+    )
+
+    info = result["assignment_map"]["it-1"]
+    assert info["dest_kind"] == "node"
+    assert info["dest_id"] == "trap"
+    # 补齐之后它就不是孤儿了
+    assert not any(o["item_id"] == "it-1" for o in result["orphans"])
+
+
+def test_it_does_not_steal_an_item_that_already_has_an_owner() -> None:
+    """🔴 **只补没主的，不抢**。
+
+    一个片段被两个实体同时认领，那是真正的归组冲突，该让校验报出来，不该在
+    这里悄悄改掉——悄悄改会把「两个归宿」变成「最后一个赢」，而那不是修好了。
+
+    **变异检验**：把条件里的 `or info["dest_kind"] == "unassigned"` 扩成无条件
+    覆盖，这条当场红。
+    """
+    result = _normalize(
+        entities=[{"kind": "node", "id": "trap", "title": "陷阱", "item_ids": ["it-1"]}],
+        assignments=[{"item_id": "it-1", "dest_kind": "npc", "dest_id": "someone"}],
+        valid_ids={"it-1"},
+    )
+
+    info = result["assignment_map"]["it-1"]
+    assert info["dest_kind"] == "npc", "已经有主的片段被抢走了"
+    assert info["dest_id"] == "someone"
+
+
+def test_an_unassigned_item_is_claimable() -> None:
+    """`unassigned` 等于没主，可以被认领——那正是补洞逻辑刚标上去的状态。"""
+    result = _normalize(
+        entities=[{"kind": "node", "id": "trap", "title": "陷阱", "item_ids": ["it-1"]}],
+        assignments=[{"item_id": "it-1", "dest_kind": "unassigned", "dest_id": ""}],
+        valid_ids={"it-1"},
+    )
+
+    assert result["assignment_map"]["it-1"]["dest_id"] == "trap"

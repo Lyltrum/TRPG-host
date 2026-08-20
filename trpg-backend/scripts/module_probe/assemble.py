@@ -820,6 +820,31 @@ def _normalize_stage1(data: dict[str, Any], valid_ids: set[str]) -> dict[str, An
                 }
             )
 
+    # 🔴 **让两份映射自洽**（2026-08-20，真机 trace 失败逼出来的）。
+    #
+    # `entities[].item_ids` 与 `assignments` 表达的是**同一个映射的两个方向**
+    # （实体→片段 / 片段→实体），而模型的输出经常在两处对不上：真机上
+    # `node:third-day-trap-su ← 1 items` 明明认领了一个片段，`assignment_map`
+    # 里却没有任何片段指向它 ⇒ trace 判它「没有溯源锚点」，而三轮自修都修不掉
+    # ——`repair#N.entity` 重吐的是实体内容，动不了 assignment_map。
+    #
+    # 修的方向是**单向的**：只补 `assignment_map` 里还没主的片段（缺失或
+    # unassigned）。已经归给别人的**不抢**——那是一个片段两个归宿的冲突，
+    # 属于真正的归组错误，该让校验报出来，不该在这里悄悄改掉。
+    for ent in entities:
+        eid = str(ent.get("id") or "")
+        kind = str(ent.get("kind") or "")
+        if not eid or not kind:
+            continue
+        for iid in ent.get("item_ids") or []:
+            info = assignment_map.get(iid)
+            if info is None or info["dest_kind"] == "unassigned":
+                assignment_map[iid] = {
+                    "dest_kind": kind,
+                    "dest_id": eid,
+                    "reason": f"由 entities[{eid}].item_ids 反向补齐（两份映射对不上）",
+                }
+
     orphans_raw = data.get("orphans") or []
     orphans: list[dict[str, Any]] = []
     if isinstance(orphans_raw, list):

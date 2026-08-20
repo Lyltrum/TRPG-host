@@ -1095,12 +1095,33 @@ def check_thin_public_slots(assignment_map: dict[str, Any]) -> list[str]:
     return errors
 
 
-def _audience_is_keeper_secret(audience: str) -> bool:
-    """audience 含「绝密 / 守密人 / KP」即视为不得进玩家公开槽。"""
-    a = (audience or "").strip()
-    if not a:
-        return False
-    return any(sig in a for sig in ("绝密", "守密人", "KP", "kp"))
+def _audience_is_keeper_secret(item: dict[str, Any]) -> bool:
+    """这个片段能不能进玩家公开槽。
+
+    ## 🔴 2026-08-20：从关键词表换成枚举
+
+    上一版是 `any(sig in a for sig in ("绝密", "守密人", "KP", "kp"))`——拿
+    **自由文本**当标识符，而抽取那头是**刻意**不给固定列表的（`probe.py`：
+    "按内容如实写，不要强迫二选一"）。五份模组实测 20 多种写法，那张表同时
+    有漏判和误判：
+
+    - **漏**：表里写的是「守密**人**」，数据里是「守**秘**人」，一字之差全漏；
+    - **误**：`玩家可见（守秘人笔记部分为守秘人绝密）` 含"绝密"，整条被判成
+      KP 绝密——而它主体是玩家可见的。
+
+    判据：**不要用自由文本当标识符，要么是白名单 id，要么退化成同义词打地鼠。**
+    现在读 `audience_kind`（`assemble.translate_audiences` 产出的枚举）。
+
+    `both` **不算绝密**：它的主体是玩家可见，只是夹着一段主持人笔记——那一段
+    该在归组时拆走，不该让整个片段进不了公开槽。
+
+    没有 `audience_kind` 的（老产物、或翻译层没跑）落到 `kp`：判错的代价不对称，
+    多藏一段只是主持人多讲一句，剧透一次毁掉整局。
+    """
+    kind = str(item.get("audience_kind") or "").strip().lower()
+    if not kind:
+        return True
+    return kind == "kp"
 
 
 def check_secret_not_public(
@@ -1114,8 +1135,8 @@ def check_secret_not_public(
         if kind not in _PUBLIC_SLOT_KINDS:
             continue
         it = items_by_id.get(iid) or {}
-        audience = str(it.get("audience") or "")
-        if _audience_is_keeper_secret(audience):
+        if _audience_is_keeper_secret(it):
+            audience = str(it.get("audience") or "")
             errors.append(f"片段 {iid!r} audience={audience!r} 却归到公开槽 {kind}")
     return errors
 

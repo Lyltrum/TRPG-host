@@ -341,6 +341,11 @@ def format_item_catalog(items: list[dict[str, Any]]) -> str:
         lines.append(f"  title: {it.get('title') or ''}")
         lines.append(f"  what_kind_of_thing: {it.get('what_kind_of_thing') or ''}")
         lines.append(f"  audience: {it.get('audience') or ''}")
+        # 🔴 枚举跟自由文本一起给：自由文本有细节（"守秘人笔记部分"），枚举是
+        # 下游代码唯一认的东西。只给自由文本，归组就会像真机那次一样把一个
+        # audience=KP 的片段归进 opening。
+        if it.get("audience_kind"):
+            lines.append(f"  audience_kind: {it.get('audience_kind')}（player/kp/both）")
         lines.append(f"  summary: {it.get('summary') or ''}")
         lines.append("")
     return "\n".join(lines)
@@ -541,6 +546,140 @@ def _format_known_entities(entities: list[dict[str, Any]]) -> str:
         + "\n".join(lines)
         + "\n🔴 本批片段如果属于上面某个已有实体，**直接用它的 id**，不要另起一个新的。"
     )
+
+
+AUDIENCE_KINDS = ("player", "kp", "both")
+
+AUDIENCE_SYSTEM = """\
+你在给模组片段的「受众」分类。
+
+上一步的抽取**故意**让 audience 保持自由文本（"按内容如实写，不要强迫二选一"），
+所以它现在什么写法都有：`玩家可见` / `KP绝密` / `守秘人` / `KP（模组真相部分）` /
+`玩家可见（守秘人笔记部分为守秘人绝密）`……
+
+你的任务：把每一种写法归到三档之一。
+
+- player —— 玩家读得到的内容（开场白、公开情报、玩家手边资料）
+- kp —— 只有主持人能看的内容（真相、谜底、主持指引、失败处理、NPC 底牌）
+- both —— 主体玩家可见、但夹着一部分主持人专属（如"玩家可见（守秘人笔记部分绝密）"）
+
+判据：**"如果把这段原样念给玩家听，会不会毁掉悬念？"** 会 → kp。
+
+🔴 拿不准时选 kp。剧透一次就毁掉整局，而多藏一段最多是主持人多讲一句。
+
+输出：{"kinds": {"<原文>": "player|kp|both", ...}}，键必须与给你的原文**逐字相同**。
+"""
+
+
+def translate_audiences(
+    client: TapedSyncClient,
+    items: list[dict[str, Any]],
+    stats: CallStats,
+) -> dict[str, str]:
+    """把 audience 的自由文本翻译成 `AUDIENCE_KINDS` 里的一档。
+
+    ## 🔴 为什么需要这一层（2026-08-20）
+
+    抽取那头保持自由文本是**对的**（`probe.py`：常见是玩家可见或 KP 绝密，
+    "但也可能是别的情况，按内容如实写，不要强迫二选一"）——实测里
+    `玩家可见（守秘人笔记部分为守秘人绝密）` 这种复合受众，二选一确实会丢信息。
+
+    **错在下游没有翻译就直接拿它当标识符用。** 原来的
+    `_audience_is_keeper_secret` 是个关键词表（"绝密"/"守密人"/"KP"），而实测
+    五份模组的取值有 20 多种写法，那张表**同时有漏判和误判**：
+
+    - 漏：代码写的是「守密**人**」，数据里是「守**秘**人」，一字之差全漏；
+    - 误：`玩家可见（守秘人笔记部分为守秘人绝密）` 含"绝密"就被整条判成 KP。
+
+    判据在项目里写着：**不要用自由文本当标识符，要么是白名单 id，要么退化成
+    同义词打地鼠**。这一层就是那个"翻译成白名单"的步骤。
+
+    ## 一次调用就够
+
+    **按字符串去重**——170 个片段写的都是"玩家可见"，只需要翻译一次。实测五份
+    模组去重后各只有 10–20 种写法。
+
+    🔴 **不在这里加规则表兜底**（"含'玩家可见'就直接判 player"）：那会把刚拆掉
+    的打地鼠原样搬进来。唯一的例外是**空值**——它没有内容可理解，也不该花一次
+    调用。
+    """
+    raw = sorted({str(it.get("audience") or "").strip() for it in items} - {""})
+    if not raw:
+        return {}
+    user = "请给下面每一种写法分类：\n" + "\n".join(f"- {a}" for a in raw)
+    data = _chat_json(
+        client,
+        system=AUDIENCE_SYSTEM,
+        user=user,
+        temperature=TEMPERATURE,
+        stats=stats,
+        label="audience.translate",
+    )
+    kinds = data.get("kinds") or {}
+    out: dict[str, str] = {}
+    for a in raw:
+        kind = str(kinds.get(a) or "").strip().lower()
+        # 🔴 模型没给或给了非法值时**落到 kp**，不是 player。同 prompt 里那条：
+        # 剧透一次毁掉整局，多藏一段只是主持人多讲一句。判错的代价不对称。
+        out[a] = kind if kind in AUDIENCE_KINDS else "kp"
+    return out
+
+
+def apply_audience_kinds(items: list[dict[str, Any]], kinds: dict[str, str]) -> int:
+    """把翻译结果写回片段，返回写了几条。
+
+    空 audience 落 `kp`：没有内容可判断时按最保守的来（同上，代价不对称）。
+    """
+    written = 0
+    for it in items:
+        raw = str(it.get("audience") or "").strip()
+        it["audience_kind"] = kinds.get(raw, "kp") if raw else "kp"
+        written += 1
+    return written
+
+
+#: KP 片段被归进公开槽时，改把它挪到哪个槽。
+#:
+#: `kp_guidance` 而不是 `kp_truth`：被误归进 opening/player_intro 的通常是
+#: 「模组简介」「怎么开场」这类**主持指引**（真机那次正是一个叫 `introduction`
+#: 的片段），而 `kp_truth` 是谜底。放错成谜底会让收尾判据把它当成真相侧。
+_KP_FALLBACK_SLOT = "kp_guidance"
+
+_PUBLIC_SLOTS = ("player_intro", "opening")
+
+
+def enforce_audience_slots(
+    assignment_map: dict[str, dict[str, Any]],
+    items_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    """把 `audience_kind == "kp"` 却归进公开槽的片段挪走。返回改了哪几条。
+
+    ## 🔴 为什么这一步必须是代码，不是重试
+
+    真机实测：一个叫 `introduction` 的片段，audience 是 `KP（模组真相部分）`，
+    归组模型**每一轮都把它归进 opening**——因为它名字就叫"引言"，那是模型的
+    语义直觉，重试三次一模一样。而这一条错误让 `needs_stage1_repair()` 永远为
+    真，整个自修被锁死在"整份重吐"那条路上，后面所有窄路一次都没跑过。
+
+    有了 `audience_kind` 之后，**这个判断是纯机械的**：一边是枚举值，一边是
+    槽位名，代码全都看得见。判据：**能用代码确定性判断的一律代码强制**。
+
+    ⚠️ 这不代表归组模型可以随便归——它的 prompt 里也拿得到 `audience_kind`
+    （`format_item_catalog` 会渲染）。这一步是**兜底**，不是替它做决定。
+    """
+    moved: list[str] = []
+    for iid, info in sorted(assignment_map.items()):
+        if str(info.get("dest_kind") or "") not in _PUBLIC_SLOTS:
+            continue
+        kind = str((items_by_id.get(iid) or {}).get("audience_kind") or "").strip().lower()
+        if kind != "kp":
+            continue
+        was = info["dest_kind"]
+        info["dest_kind"] = _KP_FALLBACK_SLOT
+        info["dest_id"] = ""
+        info["reason"] = f"audience_kind=kp，自 {was} 移入 {_KP_FALLBACK_SLOT}（代码强制）"
+        moved.append(f"{iid}: {was} → {_KP_FALLBACK_SLOT}")
+    return moved
 
 
 def stage1_group(
@@ -1934,6 +2073,15 @@ def run_pipeline(
     stats = CallStats()
     t_all = time.perf_counter()
 
+    # 🔴 受众翻译：自由文本 → 枚举。必须在归组**之前**——归组模型要靠它才知道
+    # 一个叫 `introduction` 的片段其实是 KP 内容（真机那次它每轮都归进 opening）。
+    audience_kinds = translate_audiences(client, items, stats)
+    apply_audience_kinds(items, audience_kinds)
+    print(
+        f"audience: {len(audience_kinds)} 种写法 → {sorted(set(audience_kinds.values()))}",
+        flush=True,
+    )
+
     intermediate: dict[str, Any] = {
         "source_extract": str(extract_path),
         "source_txt": str(source_txt),
@@ -2018,6 +2166,11 @@ def run_pipeline(
     # ── 校验 + 自修 ──
     print("\n=== 校验闭环 ===", flush=True)
     assignment_map = stage1["assignment_map"]
+    _moved = enforce_audience_slots(assignment_map, items_by_id)
+    if _moved:
+        print(f"  受众槽位强制：{len(_moved)} 条", flush=True)
+        for line in _moved[:10]:
+            print(f"    · {line}", flush=True)
     repair_count = 0
     report = validate_assembled(
         module,
@@ -2047,6 +2200,9 @@ def run_pipeline(
                 f"repair_regroup_{repair_count}": True,
             }
             assignment_map = stage1["assignment_map"]
+            _moved = enforce_audience_slots(assignment_map, items_by_id)
+            if _moved:
+                print(f"  受众槽位强制：{len(_moved)} 条", flush=True)
             top, nodes, npcs, endings, agenda, s23 = _run_stage2_and_3(
                 client,
                 stage1=stage1,

@@ -360,7 +360,7 @@ async def _resolve_ruleset(db: AsyncSession, room: Room) -> RulesetRead:
     房间已经选了模组（`room.system_id` 有值）就用那个规则系统的 ruleset；
     房间还没选模组（比如还在大厅、玩家提前建卡）时没有 `system_id` 可查，
     这里回落到内置 COC7——这是当前唯一内置的规则系统，默认值刻意放在这层
-    组装代码里，而不是塞进 `coc7_rules.py`：规则核心保持对具体系统无知，
+    组装代码里，而不是塞进 `coc7/rules.py`：规则核心保持对具体系统无知，
     正是 issue #112 参数注入的整个目的。
 
     走 `require_ruleset` 而不是 `get_ruleset`：这是裁决路径，规则数据为空时
@@ -522,7 +522,7 @@ async def complete_character(
     # PR #85 review #3：校验通过后属性一定合法，衍生值改成服务端权威重算
     # 并覆盖——不再信任客户端 PATCH 上来的 `derived_stats`，避免属性合法但
     # HP/SAN 被客户端乱填过关。`character.age` 一并传入：MOV 要扣年龄惩罚
-    # （见 coc7_rules.compute_derived_stats），角色卡本来就存了 age，这里
+    # （见 `coc7/rules.py` 的 compute_derived_stats），角色卡本来就存了 age，这里
     # 是唯一真正落定衍生值的地方，不传的话年龄调整端点算出的 MOV 惩罚永远
     # 不会体现在角色卡上。
     character.derived_stats = compute_derived_stats(character.attributes or {}, character.age)
@@ -684,7 +684,7 @@ def compute_character_preview(
 ) -> CharacterComputeResult:
     """POST /api/v1/systems/{systemId}/character/preview —— 建卡过程中的权威
     计算预览（issue #84 S2，路线乙的接缝）：不碰数据库，纯函数式地把
-    `coc7_rules.compute_preview` 的结果转成 DTO。
+    `coc7/rules.py` 里 compute_preview 的结果转成 DTO。
 
     `ruleset` 由调用方（controller）取好传入（issue #112）——它已经为了校验
     systemId 存在而查过一次 `get_ruleset`，这里直接复用结果，不重新查一次。

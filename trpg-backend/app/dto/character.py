@@ -376,7 +376,7 @@ class CharacterComputeResult(CamelModel):
     # 哪些非固定本职技能占用了职业自选槽（character-build-migration
     # redesign-v2 §4-B）：只读展示字段，前端用它在编辑已保存的卡时重建
     # ★ 列表、渲染"占槽"徽标，不参与任何校验语义，值来自
-    # `coc7_rules.ComputeResult.slot_occupied_skill_ids`。
+    # `coc7/rules.py` 的 `ComputeResult.slot_occupied_skill_ids`。
     slot_occupied_skill_ids: list[str] = Field(default_factory=list)
 
 

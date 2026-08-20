@@ -289,7 +289,7 @@ def _allocate_skills(
 ) -> dict[str, int]:
     """把技能点分配成一份 `skills` 字典（存的是**技能总值**，不是加点数）。
 
-    记账口径完全按 `coc7_rules._compute`：
+    记账口径完全按 `coc7/rules.py` 的 `_compute`：
     - 信用评级取 `credit_min`——那部分点数按 Chaosium 官方裁定算职业点负担，
       取下限就是"不额外花钱"的选择；
     - 剩下的职业点摊给固定本职技能 + 自选槽技能；

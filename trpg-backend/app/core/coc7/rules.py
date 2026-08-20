@@ -560,7 +560,7 @@ def _compute(
     # floor/excess 拆分是 Chaosium 官方裁定，独立生效，不参与瀑布——直接
     # 记进 `credit_occupation_portion`/`credit_interest_portion`。这只是
     # 重新分桶，不改变 `occupation_spent + interest_spent` 的总和，也不
-    # 改变任何一条 ValidationIssue 的触发条件（见 test_coc7_rules.py 的
+    # 改变任何一条 ValidationIssue 的触发条件（见 tests/test_coc7_rules.py 的
     # 回归断言）。
     credit_occupation_portion = 0
     credit_interest_portion = 0

@@ -1,4 +1,4 @@
-"""回合编排（L4）：`KeeperDecision` 字段 → tools.py 对应 `*_impl` 的调度表。
+"""回合编排（L4）：`KeeperDecision` 字段 → 各能力/`runtime` 里对应 `*_impl` 的调度表。
 
 跟 `decision.py`（L1 契约：裁决长什么样）分开——这里是"LLM 声明了哪个
 字段就调哪个执行函数"的编排逻辑，不是数据定义。裁决产出分两条路径执行：

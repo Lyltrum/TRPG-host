@@ -40,14 +40,14 @@ deps.py          一轮回合的运行时底座：KeeperDeps · 错误类型 · 
 - `subject.py` 主体与权限、`turn_policy.py` 本轮撤销哪些能力；
 - `prompts.py` 只剩流程类规则（0/5/6/6b/7/11/12）与局面块骨架；
 - `agent.py` / `turn_executor.py` / `heartbeat.py` 编排；
-- `tools.py` **只剩两个 v1 遗留函数**（读角色卡 / 读剧本，现在只有测试在调）；
 - 记忆与可见性：`fact_ledger.py`(L1) · `chapter.py`(L2) · `history.py`(L3) ·
   `leak_guard.py` · `sheet_digest.py` · `prose_discipline.py` · `module_loader.py`
   · `catalog.py`。
 
 ## 🔴 本文件故意不 re-export `KeeperAgent`
 
-原先这里写着 `from app.core.keeper.runtime.agent import KeeperAgent`，而 `tools.py` 写
+原先这里写着 `from app.core.keeper.runtime.agent import KeeperAgent`，而当时的
+`tools.py`（v1 自由工具层，已拆完删除）写
 `from app.core.keeper import module_loader`——`from 包 import 子模块` 会先执行
 包的 `__init__`，于是 `tools → 包 → agent → tools` 成环。当时没炸只是加载顺序
 凑巧，`exec/27` 阶段 0 的架构测试第一次跑就抓到了它。

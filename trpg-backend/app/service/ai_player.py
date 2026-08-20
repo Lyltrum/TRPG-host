@@ -4,7 +4,7 @@
 
 建卡的 HTTP 三步（POST draft → PATCH → POST complete）是**前端向导的形状**，
 不是规则的形状：规则校验本来就在 service 层（`complete_character` 调
-`coc7_rules.validate_character` + `compute_derived_stats`）。为了造一行数据走
+`coc7/rules.py` 的 validate_character + compute_derived_stats）。为了造一行数据走
 三次往返 + 一次向导状态机，纯属绕路。
 
 这里直接按规则算好、一次落库。但**规则函数一个都不自己重写**——属性区间、

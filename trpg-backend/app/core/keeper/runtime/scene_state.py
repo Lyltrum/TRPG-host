@@ -4,7 +4,7 @@
 `load_*`。这里没有独立的 `format_*`——`current_node_id` 不作为单独的
 "局面块"小节展示给 LLM（它只是 `check_guard` 检定护栏、场景切换过渡引导
 判断的内部依据），不像 phase/agenda/visibility 那样需要渲染成一段人类
-可读文本单独展示。写入侧在 `tools.py::set_current_node_impl`。
+可读文本单独展示。写入侧在 `location_state.set_current_node_impl`。
 
 取代此前对「当前场景」自由文本人类地名做的模糊字符串匹配——裁决 LLM
 从剧本节点树里选真实 id（`module.node_by_id` 校验，非法 id 拒绝写入）。

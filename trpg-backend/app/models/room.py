@@ -195,7 +195,7 @@ class Character(Base):
 
     # 掷点池法（"roll_pool"）掷出的权威总值——玩家把这个总值手动分配到八维，
     # complete 时校验"分配总和是否等于这个值"要有个真实依据，不能只信任
-    # 前端报的数（见 coc7_rules.py 的 roll_pool 校验分支）。其余两种生成
+    # 前端报的数（见 `coc7/rules.py` 的 roll_pool 校验分支）。其余两种生成
     # 方法不写这一列，始终是 None。
     attribute_pool_total: Mapped[int | None] = mapped_column(nullable=True)
 

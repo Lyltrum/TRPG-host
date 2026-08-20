@@ -519,8 +519,8 @@ def render_for_subject(
 
 
 def iter_all_nodes(nodes: list[ModuleNode]) -> list[ModuleNode]:
-    """展平节点树（含子节点）。公开是因为 tools.py 的状态主体白名单要用它
-    ——跨模块调私有函数不如把它转正。"""
+    """展平节点树（含子节点）。公开是因为状态主体白名单要用它——跨模块调私有函数
+    不如把它转正。（当年的消费方是 v1 的 `tools.py`，现已拆散进各能力。）"""
     out: list[ModuleNode] = []
     for node in nodes:
         out.append(node)

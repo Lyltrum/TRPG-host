@@ -485,6 +485,51 @@ E. 🔴 **遭遇 / 对抗 / 战斗 / 撤退 / 战后处理不许归进 npc**（�
 """
 
 
+#: 🔴 **归组分批的批大小**（2026-08-20）。
+#:
+#: ## 为什么必须分批
+#:
+#: `stage1` 要求「每个片段 id 必须出现在 assignments 中」，于是**输出长度正比于
+#: 片段数**，而 `max_tokens` 是个常数——两者必然在某个模组上相撞。
+#:
+#: 真机撞上了：一份 241 片段的模组，模型写到 **24,523 字符**仍未写完，JSON 被
+#: 截断（`Unterminated string`），自动重试 3 次全部同样失败。历史最大的一份是
+#: 116 片段（跑通过），所以阈值落在 116–241 之间。
+#:
+#: 🔴 **调大 `max_tokens` 不是修法，是把阈值往后挪一格**：输出仍然 ∝ 片段数，
+#: 下一份更碎的模组照样撞。隔壁 `relation_probe` 早就是「**总是分批**」
+#: （`pipeline.py` 注释：分批是全量的超集，只是慢；导入是后台任务，不在乎慢），
+#: 只有归组这步没照做。
+#:
+#: 取 60：历史成功过的最大是 116，砍一半留足余量；四批之内跑完一份很碎的模组。
+STAGE1_BATCH_SIZE = 60
+
+
+def _stage1_brief(items: list[dict[str, Any]]) -> str:
+    """全部片段的 id + title 简表——每批都附上，让它能引用批外的片段。
+
+    形状照抄 `relation_probe` 的「焦点批 + 全局简表」：不含 summary，省 token。
+    """
+    return "\n".join(f"- {it.get('id')}: {it.get('title') or ''}" for it in items)
+
+
+def _format_known_entities(entities: list[dict[str, Any]]) -> str:
+    """前几批已经建好的实体。**这是分批与全量唯一的语义差别所在。**
+
+    🔴 关系发现那步各批之间没有数据依赖，可以并行；归组不行——它要**创建实体**，
+    两批各跑各的就会给同一个场景建出两个 id（"地下室" / "cellar"），合并时谁也
+    认不出它们是一回事。所以这里**串行**，并把已建实体带进下一批。
+    """
+    if not entities:
+        return ""
+    lines = [f"- {e.get('kind')}/{e.get('id')}: {e.get('title') or ''}" for e in entities]
+    return (
+        "\n\n【前面几批已经建好的实体】\n"
+        + "\n".join(lines)
+        + "\n🔴 本批片段如果属于上面某个已有实体，**直接用它的 id**，不要另起一个新的。"
+    )
+
+
 def stage1_group(
     client: TapedSyncClient,
     items: list[dict[str, Any]],
@@ -492,26 +537,68 @@ def stage1_group(
     stats: CallStats,
     *,
     repair_notes: str = "",
+    batch_size: int = STAGE1_BATCH_SIZE,
 ) -> dict[str, Any]:
-    user = (
-        "【片段清单】\n"
-        + format_item_catalog(items)
-        + "\n【片段间关系】\n"
-        + format_relations(rels)
-        + "\n\n请产出 entities + assignments + orphans。"
-        + "每个片段 id 必须出现在 assignments 中。"
+    """把每个片段分配到一个归宿，并产出实体清单。**总是分批**（理由见
+    `STAGE1_BATCH_SIZE`）；片段少时也就是一批，与分批前逐字同形。"""
+    valid_ids = {str(it["id"]) for it in items if it.get("id")}
+    batches = [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
+    brief = _stage1_brief(items)
+
+    merged_assignments: list[dict[str, Any]] = []
+    merged_entities: list[dict[str, Any]] = []
+    entity_by_id: dict[str, dict[str, Any]] = {}
+
+    for bi, focus in enumerate(batches):
+        user = (
+            f"【全部 {len(items)} 个片段的 id / title 简表】\n"
+            f"（本批之外的片段也在这里，供你判断实体边界；**不要**为它们产出 assignment）\n"
+            + brief
+            + f"\n\n【本批要归组的片段，共 {len(focus)} 个】\n"
+            + format_item_catalog(focus)
+            + "\n【片段间关系】\n"
+            + format_relations(rels)
+            + _format_known_entities(merged_entities)
+            + "\n\n请产出 entities + assignments + orphans。"
+            + "**本批**的每个片段 id 必须出现在 assignments 中。"
+        )
+        if repair_notes:
+            user += f"\n\n【上轮校验/归组问题，请修正】\n{repair_notes}"
+        data = _chat_json(
+            client,
+            system=STAGE1_SYSTEM,
+            user=user,
+            temperature=TEMPERATURE,
+            stats=stats,
+            # 🔴 label 带批号：磁带按 label 取键，同名会让几批互相覆盖。
+            label="stage1.group" if len(batches) == 1 else f"stage1.group:batch{bi}",
+        )
+        for row in data.get("assignments") or []:
+            if isinstance(row, dict):
+                merged_assignments.append(row)
+        for ent in data.get("entities") or []:
+            if not isinstance(ent, dict):
+                continue
+            eid = str(ent.get("id") or "").strip()
+            if not eid:
+                continue
+            known = entity_by_id.get(eid)
+            if known is None:
+                entity_by_id[eid] = ent
+                merged_entities.append(ent)
+                continue
+            # 🔴 同一个实体被两批各归了一部分片段——**合并 item_ids，不是丢掉后来的**。
+            # 直接 `continue` 会让后面几批分给它的片段在 `entities[].item_ids` 里
+            # 消失，而那个字段有下游消费方（stage2 渲染「包含片段」时读它）。
+            merged = list(known.get("item_ids") or [])
+            for iid in ent.get("item_ids") or []:
+                if iid not in merged:
+                    merged.append(iid)
+            known["item_ids"] = merged
+
+    return _normalize_stage1(
+        {"entities": merged_entities, "assignments": merged_assignments}, valid_ids
     )
-    if repair_notes:
-        user += f"\n\n【上轮校验/归组问题，请修正】\n{repair_notes}"
-    data = _chat_json(
-        client,
-        system=STAGE1_SYSTEM,
-        user=user,
-        temperature=TEMPERATURE,
-        stats=stats,
-        label="stage1.group",
-    )
-    return _normalize_stage1(data, {str(it["id"]) for it in items if it.get("id")})
 
 
 def _normalize_stage1(data: dict[str, Any], valid_ids: set[str]) -> dict[str, Any]:

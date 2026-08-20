@@ -771,6 +771,68 @@ def normalize_module_skills(raw: dict[str, Any], ruleset: RulesetRead | None = N
     return changed
 
 
+def drop_unresolvable_checks(raw: dict[str, Any]) -> list[str]:
+    """扔掉归一之后仍然没有 `skill_ids` 的检定点。返回扔掉了哪几条。
+
+    ## 🔴 为什么是"扔掉"而不是"报错"
+
+    真机实测（坨子岛）：`node 'glow-heartbeat' checks[2] 未归一到技能 id
+    （原文 ''）`——**模型吐了一个空的技能名**。这条 check 里没有任何可用信息：
+    没有技能、没有 id，什么都判不了。
+
+    留着它 = 整份模组作废；扔掉它 = 少一个检定点，那一幕照样能主持。用户对这条
+    线的定位是「**只能成功不能失败**，遇到失败先找更窄的修法」——一个空 check
+    正是最该被窄化掉的东西。
+
+    ⚠️ 只扔 `kind != "san"` 且 `skill_ids` 为空的。理智检定本来就不指向技能
+    （`check_skills` 自己也跳过它们），扔了会真的丢东西。
+
+    调用点在 `normalize_module_skills` **之后**——先尽力归一，实在归不出来的
+    才扔。顺序反了会把「电器维修」这种一字之差的也当成无解。
+    """
+    dropped: list[str] = []
+
+    def _walk(node: dict[str, Any], path: str) -> None:
+        checks = node.get("checks")
+        if isinstance(checks, list):
+            kept = []
+            for i, check in enumerate(checks):
+                if not isinstance(check, dict):
+                    continue
+                if str(check.get("kind") or "skill") == "san" or check.get("skill_ids"):
+                    kept.append(check)
+                    continue
+                dropped.append(f"{path} checks[{i}]（原文 {str(check.get('skill') or '')!r}）")
+            if len(kept) != len(checks):
+                node["checks"] = kept
+        sub = node.get("sub_node")
+        if isinstance(sub, dict):
+            _walk(sub, f"{path}/{sub.get('id')}")
+        for child in node.get("sub_nodes") or []:
+            if isinstance(child, dict):
+                _walk(child, f"{path}/{child.get('id')}")
+
+    for n in raw.get("nodes") or []:
+        if isinstance(n, dict):
+            _walk(n, f"node {str(n.get('id'))!r}")
+    return dropped
+
+
+def normalize_and_prune_checks(raw: dict[str, Any], ruleset: RulesetRead | None = None) -> int:
+    """先尽力归一，归不出来的扔掉。返回改动条数（含扔掉的）。
+
+    🔴 **两件事绑在一个函数里是有意的**：调用点有四处，分开写就是「逐个列出的
+    地方，加一项就漏一项」——迟早有一处只归一不清理，然后一个空 check 让整份
+    模组作废。
+
+    顺序不能反：先 `normalize_module_skills`（把「电器维修」这种一字之差救回来），
+    再 `drop_unresolvable_checks`（扔真的无解的）。
+    """
+    changed = normalize_module_skills(raw, ruleset)
+    dropped = drop_unresolvable_checks(raw)
+    return changed + len(dropped)
+
+
 def _collect_node_ids(nodes: list[ModuleNode]) -> set[str]:
     ids: set[str] = set()
     for node in _iter_nodes(nodes):

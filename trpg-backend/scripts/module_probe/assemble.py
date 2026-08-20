@@ -62,7 +62,7 @@ from validate_module import (  # noqa: E402
     ValidationReport,
     build_entity_anchors,
     count_out_of_scope,
-    normalize_module_skills,
+    normalize_and_prune_checks,
     render_skill_whitelist,
     validate_assembled,
 )
@@ -2155,7 +2155,7 @@ def run_pipeline(
     print(f"  visibility_pairs: {len(visibility_pairs)}", flush=True)
 
     module = compose_module(top, nodes, npcs, endings, agenda, visibility_pairs=visibility_pairs)
-    n_skill = normalize_module_skills(module)
+    n_skill = normalize_and_prune_checks(module)
     if n_skill:
         print(f"  技能名机械归一：{n_skill} 处", flush=True)
     mech = mechanical_sanitize_module(module)
@@ -2258,7 +2258,7 @@ def run_pipeline(
             module = compose_module(
                 top, nodes, npcs, endings, agenda, visibility_pairs=visibility_pairs
             )
-            n_skill = normalize_module_skills(module)
+            n_skill = normalize_and_prune_checks(module)
             if n_skill:
                 print(f"  技能名机械归一：{n_skill} 处", flush=True)
             mech = mechanical_sanitize_module(module)
@@ -2291,7 +2291,7 @@ def run_pipeline(
 
         # schema/ref/skill/leak：先机械归一+修补，仍失败再尝试整份 JSON 自修
         print("  → 产物级失败，技能归一 + 机械修补…", flush=True)
-        normalize_module_skills(module)
+        normalize_and_prune_checks(module)
         mech = mechanical_sanitize_module(module)
         if mech:
             print(f"  机械修补 {len(mech)} 项", flush=True)
@@ -2426,7 +2426,7 @@ def run_pipeline(
         module["endings"] = _ensure_ending_minimums(module.get("endings") or [])
         module["agenda"] = _ensure_agenda_minimums(module.get("agenda") or [])
         module.setdefault("visibility_pairs", [])
-        normalize_module_skills(module)
+        normalize_and_prune_checks(module)
         mechanical_sanitize_module(module)
 
         report = validate_assembled(

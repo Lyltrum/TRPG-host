@@ -222,3 +222,87 @@ def test_the_prompt_shows_the_model_the_real_writings() -> None:
     prompt = client.prompts[0]
     for writing in _REAL_WRITINGS:
         assert writing in prompt
+
+
+# ── 无解 check 直接扔掉（2026-08-20）──────────────────────
+
+
+def test_a_check_with_no_resolvable_skill_is_dropped_not_fatal() -> None:
+    """🔴 真机：`checks[2] 未归一到技能 id（原文 ''）`——**模型吐了个空技能名**。
+
+    那条 check 里没有任何可用信息，留着 = 整份模组作废，扔掉 = 少一个检定点、
+    那一幕照样能主持。定位是「只能成功不能失败，遇到失败先找更窄的修法」，
+    一个空 check 正是最该被窄化掉的东西。
+
+    **变异检验**：把 `drop_unresolvable_checks` 改成只 return 不删，这条当场红。
+    """
+    from scripts.module_probe.validate_module import drop_unresolvable_checks
+
+    module = {
+        "nodes": [
+            {
+                "id": "glow-heartbeat",
+                "checks": [
+                    {"kind": "skill", "skill": "侦察", "skill_ids": ["spot-hidden"]},
+                    {"kind": "skill", "skill": "", "skill_ids": []},
+                ],
+            }
+        ]
+    }
+
+    dropped = drop_unresolvable_checks(module)
+
+    assert len(dropped) == 1
+    assert "glow-heartbeat" in dropped[0]
+    kept = module["nodes"][0]["checks"]
+    assert len(kept) == 1 and kept[0]["skill_ids"] == ["spot-hidden"]
+
+
+def test_a_san_check_is_never_dropped() -> None:
+    """🔴 理智检定本来就不指向技能，扔了会真的丢东西。
+
+    `check_skills` 自己也跳过 kind=san。**变异检验**：去掉那个 san 判断，
+    这条当场红。
+    """
+    from scripts.module_probe.validate_module import drop_unresolvable_checks
+
+    module = {"nodes": [{"id": "n1", "checks": [{"kind": "san", "skill": "", "skill_ids": []}]}]}
+
+    assert drop_unresolvable_checks(module) == []
+    assert len(module["nodes"][0]["checks"]) == 1
+
+
+def test_it_reaches_nested_nodes() -> None:
+    """子节点里的空 check 一样要扔——树形结构漏一层就等于没做。"""
+    from scripts.module_probe.validate_module import drop_unresolvable_checks
+
+    module = {
+        "nodes": [
+            {
+                "id": "top",
+                "checks": [],
+                "sub_nodes": [{"id": "deep", "checks": [{"kind": "skill", "skill_ids": []}]}],
+            }
+        ]
+    }
+
+    assert len(drop_unresolvable_checks(module)) == 1
+    assert module["nodes"][0]["sub_nodes"][0]["checks"] == []
+
+
+def test_normalise_runs_before_pruning() -> None:
+    """🔴 顺序不能反：先救「电器维修」这种一字之差的，再扔真的无解的。
+
+    反过来的话，一个还有救的 check 会先被当成无解扔掉。
+    """
+    from scripts.module_probe.validate_module import normalize_and_prune_checks
+
+    module = {
+        "nodes": [{"id": "n1", "checks": [{"kind": "skill", "skill": "侦查", "skill_ids": []}]}]
+    }
+
+    normalize_and_prune_checks(module)
+
+    kept = module["nodes"][0]["checks"]
+    assert len(kept) == 1, "「侦查」是能归一到 spot-hidden 的，不该被扔"
+    assert kept[0]["skill_ids"] == ["spot-hidden"]

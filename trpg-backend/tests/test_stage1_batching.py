@@ -184,24 +184,62 @@ def test_the_same_entity_across_batches_keeps_all_its_items() -> None:
     assert len(entities[0]["item_ids"]) == 120, "跨批的片段被丢了"
 
 
-def test_every_batch_sees_the_whole_catalog_and_what_was_already_built() -> None:
-    """🔴 分批与全量的语义差别全在这两样上，缺一样就会归错。
+def test_a_batch_cannot_even_see_the_ids_outside_it() -> None:
+    """🔴 **约束靠拿不到，不是请你别做**（2026-08-20 真机打脸后改的）。
 
-    - **全局简表**：没有它，模型看不到批外片段，实体边界会画错；
-    - **已建实体**：没有它，第二批会给同一个场景另起一个 id
-      （"地下室" / "cellar"），而合并时谁也认不出它们是一回事。
+    第一版照抄 `relation_probe` 的「焦点批 + 全局简表」，并在 user prompt 里写
+    「本批之外的片段也在这里……**不要**为它们产出 assignment」。真机结果：
+    batch0 只有 60 个片段，模型输出了 **24,500 字符 ≈ 241 条**——它把全部片段
+    都做了，跟分批前一样截断。
+
+    根因是 `STAGE1_SYSTEM` 写着「**全部**片段清单 / 把**每个片段**分配到一个
+    归宿」——**两句话打架，system 赢**（判据：加了门要回头改被绕过的那句话，
+    这是第三次）。
+
+    所以现在批外的 id **根本不进上下文**。这条守的就是那件事。
+
+    **变异检验**：把批外简表加回 user prompt，这条当场红。
+    """
+    client, _ = _run(180, batch_size=60)
+
+    # batch0 拿到的是 it-0..it-59，绝不能出现 it-60 之后的任何 id
+    first = client.prompts[0]
+    for i in range(60, 180):
+        assert f"it-{i}" not in first, f"批外的 it-{i} 泄进了 batch0 的上下文"
+
+
+def test_later_batches_are_told_what_was_already_built() -> None:
+    """🔴 跨批一致性**只**靠这一样：已建实体。
+
+    没有它，第二批会给同一个场景另起一个 id（"地下室" / "cellar"），合并时谁
+    也认不出它们是一回事。归组不需要跨批引用**片段** id，只需要跨批引用
+    **实体** id——这正是它跟关系发现的差别，那边要找跨批的关系对。
 
     **变异检验**：把 `_format_known_entities` 改成恒返回 `""`，这条当场红。
     """
     client, _ = _run(180, batch_size=60)
 
-    for prompt in client.prompts:
-        assert "全部 180 个片段的 id / title 简表" in prompt, "某一批没带全局简表"
-    # 第一批之前什么都没建，之后每批都该看到已建实体
+    # 第一批之前什么都没建
     assert "前面几批已经建好的实体" not in client.prompts[0]
     for prompt in client.prompts[1:]:
         assert "前面几批已经建好的实体" in prompt
         assert "loc-1" in prompt
+
+
+def test_the_system_prompt_does_not_contradict_batching() -> None:
+    """🔴 **system 与 user 打架时 system 赢**——这条守住 system 那半也是分批语义。
+
+    真机上正是这句话让整个分批失效：user 说"只做本批"，system 说"把每个片段
+    分配到一个归宿"，模型听了 system 的。
+
+    断言选得连反例都装不下：光断言 `"一批" in ...` 的话，「全部片段清单」原样
+    留着也能通过。
+    """
+    from scripts.module_probe.assemble import STAGE1_SYSTEM
+
+    assert "全部片段清单" not in STAGE1_SYSTEM, "这句是全量语义，会盖过 user 的分批指令"
+    assert "把**每个片段**分配到一个归宿" not in STAGE1_SYSTEM
+    assert "交给你的每个片段" in STAGE1_SYSTEM
 
 
 @pytest.mark.parametrize("n", [1, 59, 60, 61, 120])

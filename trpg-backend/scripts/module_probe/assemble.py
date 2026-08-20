@@ -392,8 +392,9 @@ def load_example_skeleton(path: Path | None) -> str:
 STAGE1_SYSTEM = """\
 你是模组预处理流水线的「实体归组」阶段。
 
-输入：一份模组已被切成的全部片段清单 + 片段间关系。
-任务：把**每个片段**分配到一个归宿，并产出实体清单。
+输入：一份模组被切成的片段中的**一批** + 片段间关系。
+任务：把**交给你的每个片段**分配到一个归宿，并产出实体清单。
+🔴 只处理清单里真实出现的片段 id，**不要凭空补别的 id**。
 
 归宿种类（dest_kind）：
 - node —— 调查场景/地点/可到达节点/可发现的线索与行动（会进入 nodes[]）
@@ -505,12 +506,24 @@ E. 🔴 **遭遇 / 对抗 / 战斗 / 撤退 / 战后处理不许归进 npc**（�
 STAGE1_BATCH_SIZE = 60
 
 
-def _stage1_brief(items: list[dict[str, Any]]) -> str:
-    """全部片段的 id + title 简表——每批都附上，让它能引用批外的片段。
-
-    形状照抄 `relation_probe` 的「焦点批 + 全局简表」：不含 summary，省 token。
-    """
-    return "\n".join(f"- {it.get('id')}: {it.get('title') or ''}" for it in items)
+# 🔴 **这里故意不给全局片段简表**（2026-08-20，第一版给了，当场被打脸）。
+#
+# 第一版照抄 `relation_probe` 的「焦点批 + 全局简表」，并在 user prompt 里写明
+# 「本批之外的片段也在这里……**不要**为它们产出 assignment」。真机结果：batch0
+# 只有 60 个片段，模型却输出了 24,500 字符 ≈ 241 条 assignment——**它把全部
+# 241 条都做了**，跟分批前一样撞上截断。
+#
+# 根因是 `STAGE1_SYSTEM` 里写着「输入：一份模组已被切成的**全部**片段清单 /
+# 把**每个片段**分配到一个归宿」——**两句话打架，system 赢**。这是项目判据
+# 「**加了门要回头改被绕过的那句话**」的第三次（前两次是 SAN 豁免）。
+#
+# 但只改措辞仍然是「请你别做」。改成**让它拿不到**：批外的 id 根本不出现在
+# 上下文里，想做也做不出来。同 `access/` 那条「**保密靠拿不到，不是请你别说**」
+# ——约束也一样。
+#
+# 代价是第一批没有全局视野。跨批一致性由「已建实体」承担（见下），而归组**不
+# 需要**跨批引用片段 id：它只需要跨批引用**实体** id。这正是它跟关系发现的
+# 差别——那边要找跨批的关系对，简表是必需的。
 
 
 def _format_known_entities(entities: list[dict[str, Any]]) -> str:
@@ -543,7 +556,6 @@ def stage1_group(
     `STAGE1_BATCH_SIZE`）；片段少时也就是一批，与分批前逐字同形。"""
     valid_ids = {str(it["id"]) for it in items if it.get("id")}
     batches = [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
-    brief = _stage1_brief(items)
 
     merged_assignments: list[dict[str, Any]] = []
     merged_entities: list[dict[str, Any]] = []
@@ -551,10 +563,7 @@ def stage1_group(
 
     for bi, focus in enumerate(batches):
         user = (
-            f"【全部 {len(items)} 个片段的 id / title 简表】\n"
-            f"（本批之外的片段也在这里，供你判断实体边界；**不要**为它们产出 assignment）\n"
-            + brief
-            + f"\n\n【本批要归组的片段，共 {len(focus)} 个】\n"
+            f"【本批要归组的片段，共 {len(focus)} 个】\n"
             + format_item_catalog(focus)
             + "\n【片段间关系】\n"
             + format_relations(rels)

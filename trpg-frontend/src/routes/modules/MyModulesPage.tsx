@@ -177,6 +177,14 @@ function JobCard({
       {job.status === 'succeeded' && (
         <p className="text-[10.5px] text-text-muted mt-1">
           {job.nodeCount} 个场景 · {job.npcCount} 个人物
+          {/* 🔴 降级交付的标记也要留在列表里：只在导入那一刻显示等于没显示，
+              开局前想起来"这份好像有点问题"时，得能查得到。 */}
+          {job.failureKinds.length > 0 && (
+            <span className="text-brass-bright font-bold">
+              {' '}
+              · {job.failureKinds.length} 处提醒
+            </span>
+          )}
         </p>
       )}
 

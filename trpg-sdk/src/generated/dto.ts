@@ -838,7 +838,7 @@ export interface ModuleImportJobRead {
   sourceFilename?: string | null;
   resultScenarioId?: string | null;
   errorMessage?: string | null;
-  failureKinds?: string[];
+  failureKinds: string[];
   pageCount: number;
   imageCount: number;
   charCount: number;

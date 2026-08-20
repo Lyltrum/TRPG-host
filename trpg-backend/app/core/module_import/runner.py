@@ -37,6 +37,7 @@ from app.core.module_import.job_state import (
     STATUS_FAILED,
     STATUS_RUNNING,
     STATUS_SUCCEEDED,
+    is_degradable,
     normalize_failure_kinds,
 )
 from app.core.seed import BUILTIN_SYSTEM_ID
@@ -128,6 +129,22 @@ async def run_import_job(
         report = json.loads(Path(result.report_path).read_text(encoding="utf-8"))
         errors = report.get("report", {}).get("all_errors") or []
         kinds = tuple(normalize_failure_kinds(errors))
+        # 🔴 **能降级的就别拒绝**（2026-08-20）。这条线的定位是「只能成功不能
+        # 失败」，而最窄的那一档修法就是"照样交付，把哪里有问题标出来"。
+        #
+        # 实测支撑：`模组资料/` 里的复足与神秘渡轮当年就带着 trace 问题进了库，
+        # 两份都跑过好几局真机，从没出过溯源相关的问题。一份能玩的模组不该因为
+        # 两个没有原文依据的节点被整个扔掉。
+        #
+        # 分档表在 `job_state.DEGRADABLE_FAILURE_KINDS`，leak / content_preserve
+        # 与各类结构性损坏仍然硬拒。
+        if is_degradable(kinds):
+            logger.info("module_import_degraded", job_id=job_id, caveats=kinds)
+            outcome = await _register(
+                job_id, out_structured, session_factory, result=result, caveats=kinds
+            )
+            _cleanup(work_dir)
+            return outcome
         return await _finish_failed(
             job_id, result.failure_reason, kinds, session_factory, work_dir, result=result
         )
@@ -189,6 +206,7 @@ async def _register(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     result: Any,
+    caveats: tuple[str, ...] = (),
 ) -> ImportOutcome:
     """把产物注册成一个可玩的 scenario。
 
@@ -221,6 +239,10 @@ async def _register(
 
         job.status = STATUS_SUCCEEDED
         job.stage = "registering"
+        # 🔴 **降级交付**：`status=succeeded` 且 `failure_kinds` 非空 = 收下了，
+        # 但有几处要提醒。字段是复用的，语义没变——它一直是"这次转换遇到了哪几
+        # 类问题"，只是结果从"因此拒绝"变成"因此标注"。
+        job.failure_kinds = list(caveats) or None
         job.result_scenario_id = scenario_id
         job.finished_at = datetime.now(UTC)
         job.node_count = len(module.nodes)

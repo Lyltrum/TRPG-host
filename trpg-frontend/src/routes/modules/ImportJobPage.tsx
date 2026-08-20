@@ -126,6 +126,11 @@ function Succeeded({ job, navigate }: { job: ModuleImportJob; navigate: Nav }) {
         <Counts job={job} />
       </div>
 
+      {/* 🔴 降级交付：收下了，但有几处要提醒。判据在后端
+          `job_state.DEGRADABLE_FAILURE_KINDS`——能玩的模组不该因为几处小瑕疵
+          被整个扔掉，但玩家得知道是哪几处，撞上了才不会以为是自己看漏了。 */}
+      {job.failureKinds.length > 0 && <Caveats kinds={job.failureKinds} />}
+
       {/* 🔴 这句要说出口：报告只有数字**是有意的**，不是我们没做完。 */}
       <p className="text-[10.5px] text-text-dim mt-3 leading-[1.8]">
         只显示数量。<b>模组的内容一个字也不会展示</b>，这样开局时它对所有人都是新的。
@@ -247,6 +252,36 @@ function Interrupted({
         回到模组列表
       </button>
     </>
+  )
+}
+
+/** 带瑕疵交付时的提醒。**说清楚是什么、以及主持人会怎么处理**，不只是报个类别。 */
+const CAVEAT_HINTS: Record<string, string> = {
+  trace: '有几段内容找不回原文出处，守秘人不会把它们当成剧本里的事实',
+  reach: '有一幕可能没有入口，玩家不一定走得到',
+  orphan: '有几段内容没有归位，这一局里可能不会出现',
+  thin_slot: '开场给的信息偏多',
+  skill: '有检定的技能名对不上，那几处检定已经去掉',
+}
+
+function Caveats({ kinds }: { kinds: string[] }) {
+  return (
+    <div className="press-soft bg-card p-3.5 mt-3 border-l-[5px] border-l-brass-bright">
+      <p className="text-[10.5px] font-bold text-brass-bright tracking-[0.1em]">
+        收下了，但有 {kinds.length} 处要提醒
+      </p>
+      <div className="h-[1.5px] bg-text-primary/20 my-2.5" />
+      <ul className="flex flex-col gap-1.5">
+        {kinds.map((kind) => (
+          <li key={kind} className="text-[11.5px] text-text-muted leading-[1.7]">
+            · {CAVEAT_HINTS[kind] ?? FAILURE_KIND_LABELS[kind] ?? kind}
+          </li>
+        ))}
+      </ul>
+      <p className="text-[10.5px] text-text-dim mt-2.5 leading-[1.7]">
+        这些不影响开局。真撞上了，守秘人会当场圆过去。
+      </p>
+    </div>
   )
 }
 

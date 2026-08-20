@@ -53,7 +53,15 @@ class ModuleImportJobRead(CamelModel):
     result_scenario_id: str | None = None
     #: 拒绝理由。必须可执行（告诉用户下一步做什么）。
     error_message: str | None = None
-    failure_kinds: list[str] = Field(default_factory=list)
+    #: 🔴 **故意不给默认值**（2026-08-20，这条判据踩的第三次）。服务端每次都
+    #: 送得出（`_to_dto` 里是 `list(job.failure_kinds or [])`），给了默认值只会
+    #: 让生成的 TS 变成 `failureKinds?: string[]`，前端被迫写 `?? []` —— 那正是
+    #: 这个项目反复禁止的静默兜底。契约要如实说「这个数组一定在」。
+    #:
+    #: 🔴 **它现在还兼职表达"降级交付"**：`status == "succeeded"` 且它非空 =
+    #: 收下了但有几处提醒。语义没变——它一直是"这次转换遇到了哪几类问题"，
+    #: 变的只是结果（拒绝 → 标注）。
+    failure_kinds: list[str]
 
     # ── 报告：只有数量与拓扑 ──────────────────────────
     #

@@ -23,6 +23,7 @@ job 的状态与报告是**唯一跨到前端的东西**。所以这里刻意**�
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Final
 
 # ── 终态与中间态 ──────────────────────────────────────
@@ -75,6 +76,50 @@ FAILURE_KINDS: Final[tuple[str, ...]] = (
     "numeric",
     "reach",
 )
+
+
+#: 🔴 **哪些硬失败可以降级交付**（2026-08-20，用户拍板）。
+#:
+#: 这条线的定位是「**只能成功不能失败**」——遇到失败先找更窄的修法，而**最窄的
+#: 那一档就是"照样交付，但把哪里有问题标出来"**。
+#:
+#: 分档不是拍脑袋，有实测支撑：`模组资料/` 里的**复足**与**神秘渡轮**当年就带着
+#: `trace` 问题进了库，两份都跑过好几局真机，从没出过溯源相关的问题
+#: （见 `tests/test_import_regression_corpus.py` 里记的期望值）。一份能玩的模组
+#: 不该因为两个没有原文依据的节点被整个扔掉。
+#:
+#: **不在这张表里的一律仍然拒绝**，其中两类是用户明确同意保留硬门的：
+#:
+#: - `leak` —— 剧透第一性，那是这条线三层判据的第一层；
+#: - `content_preserve` —— 改到连原文都对不上，那不是"修好了"，是编了一份。
+#:
+#: 其余没列进来的（`schema` / `ref` / `structure` / `facts` / `numeric`）是
+#: **结构性损坏**：产物本身不自洽，主持人跑到那儿会直接撞上，标注也救不了。
+DEGRADABLE_FAILURE_KINDS: Final[frozenset[str]] = frozenset(
+    {
+        # 节点没有原文依据 ⇒ 删掉它比留着更安全（留着 = 玩家走进去看模型现编）
+        "trace",
+        # 有一幕玩家可能走不到 ⇒ 标出来，主持人自己会圆
+        "reach",
+        # 有片段没归位 ⇒ 少一段内容，不影响其余部分能不能跑
+        "orphan",
+        # 开场信息过多 ⇒ 是节奏问题不是正确性问题
+        "thin_slot",
+        # 技能名归不了一 ⇒ 那条检定去掉，那一幕照样主持
+        "skill",
+    }
+)
+
+
+def is_degradable(kinds: Sequence[str]) -> bool:
+    """这批失败能不能降级交付。
+
+    🔴 **空集合返回 False**：一次没有任何类别的失败说明分类器本身没认出来，
+    那时"能降级"是个没有依据的结论。缺数据要显式失败，不静默放行。
+    """
+    if not kinds:
+        return False
+    return all(k in DEGRADABLE_FAILURE_KINDS for k in kinds)
 
 
 def stage_index(stage: str) -> int:

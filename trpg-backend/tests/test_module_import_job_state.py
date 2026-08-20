@@ -330,3 +330,85 @@ def test_status_vocabulary_is_closed() -> None:
         STATUS_FAILED,
         STATUS_INTERRUPTED,
     } == ALL_STATUSES
+
+
+# ── 降级交付（2026-08-20）──────────────────────────────
+
+
+def test_only_the_listed_kinds_are_degradable() -> None:
+    """🔴 **分档表是白名单，不是黑名单。**
+
+    新加一类校验错误时，它默认**不可降级**——那是安全的那一侧。反过来写
+    （"除了这几类都能降级"）会让任何新错误静默放行。
+    """
+    from app.core.module_import.job_state import DEGRADABLE_FAILURE_KINDS, is_degradable
+
+    assert set(FAILURE_KINDS) >= DEGRADABLE_FAILURE_KINDS, "分档表里有不存在的类别"
+    for kind in FAILURE_KINDS:
+        if kind not in DEGRADABLE_FAILURE_KINDS:
+            assert not is_degradable([kind]), f"{kind} 不在白名单里却能降级"
+
+
+def test_the_two_hard_gates_stay_hard() -> None:
+    """🔴 用户明确同意保留硬门的两类，**不许被降级放行**。
+
+    - leak —— 剧透第一性，是这条线三层判据的第一层；
+    - content_preserve —— 改到连原文都对不上，那不是修好了，是编了一份。
+
+    **变异检验**：把 "leak" 加进 DEGRADABLE_FAILURE_KINDS，这条当场红。
+    """
+    from app.core.module_import.job_state import is_degradable
+
+    assert not is_degradable(["leak"])
+    assert not is_degradable(["trace", "leak"]), "混着一条硬门也不许整批降级"
+
+
+def test_a_mixed_batch_needs_every_kind_to_be_degradable() -> None:
+    """一批里只要有一类不可降级，整批就得拒——不是"多数可降级就降级"。"""
+    from app.core.module_import.job_state import is_degradable
+
+    assert is_degradable(["trace", "reach"])
+    assert not is_degradable(["trace", "schema"])
+
+
+def test_no_kinds_at_all_is_not_degradable() -> None:
+    """🔴 空集合返回 False。
+
+    一次没有任何类别的失败，说明**分类器本身没认出来**——那时"能降级"是个
+    没有依据的结论。缺数据要显式失败，不静默放行。
+
+    **变异检验**：去掉那个空集合判断（`all([])` 是 True），这条当场红。
+    """
+    from app.core.module_import.job_state import is_degradable
+
+    assert not is_degradable([])
+
+
+def test_the_runner_degrades_before_it_gives_up() -> None:
+    """🔴 **守接线**：runner 必须在 `_finish_failed` 之前先问一句能不能降级。
+
+    只测 `is_degradable` 是不够的——那是纯函数，它返回 True 不代表 runner 会
+    去调它（「加了函数没有消费方」）。
+
+    **变异检验**：把 runner 里那个 `if is_degradable(kinds):` 分支删掉，
+    这条当场红。
+    """
+    import ast
+    from pathlib import Path as _Path
+
+    source = (
+        _Path(__file__).parent.parent / "app" / "core" / "module_import" / "runner.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "is_degradable"
+    ]
+    assert calls, "runner 从来没调用过 is_degradable —— 降级这条路接不上"
+
+    # 而且降级分支里要真的去注册，不是只记个日志
+    assert "caveats=kinds" in source, "降级时没把 caveats 传给 _register"

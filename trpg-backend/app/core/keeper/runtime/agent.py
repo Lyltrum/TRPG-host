@@ -1307,7 +1307,24 @@ class KeeperAgent(Narrator):
                 events_since_last=events,
             ):
                 return
-            for audience, lines in split_history_for_chapters(history_lines, everyone):
+            # 🔴 **只摘「距上次摘要以来」的那一段，不是整个 L3 窗口。**
+            #
+            # 传进来的 `history_lines` 是整个窗口（`build_situation` 用的那一份）。
+            # 喂全量的后果不是"模型不听话"——prompt 说的是「把下面这段游戏历史
+            # 压缩成一句话」，而我们给它的就是"从头"，**它从头讲起是正确执行**。
+            #
+            # 实测（2026-08-23，350 拍单人局）：11 段摘要里前 7 段全是
+            # 「调查员从委托人处取得资料，夜查图书馆，驱车北上…」的**同一个故事
+            # 的不同长度版本**——不是分段摘要，是 11 个越来越长的全局重述。
+            # 而 60 字上限不变 ⇒ 对局越长，每段密度越低，**细节第一个被压掉**：
+            # 探针问"借书卡夹在第几页"、"那盏灯的外号"，两条都**编了一个**
+            # （47 页 / 歪脖子），语气跟答对的那条一样确信。
+            #
+            # `events_since_last_chapter` 数的就是 L3 口径的条数（同一个集合），
+            # 所以取尾部这么多行 = 距上次摘要以来的那一段。窗口已满时它会大于
+            # 窗口长度，切片自然退化成"全部"——那时窗口里本来就只有这么多。
+            recent = history_lines[-events:] if events else history_lines
+            for audience, lines in split_history_for_chapters(recent, everyone):
                 if not lines:
                     continue
                 text = await summarize_chapter(self._client, lines)

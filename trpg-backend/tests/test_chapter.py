@@ -696,3 +696,47 @@ def test_nobody_re_lists_the_history_event_types() -> None:
         if isinstance(node, ast.Constant) and node.value in ("narration.push", "keeper.check")
     ]
     assert not literals, "摘要模块里出现了 L3 事件类型的字面量 —— 那是第二份清单"
+
+
+async def test_only_the_new_stretch_gets_summarised(room, monkeypatch) -> None:
+    """🔴 **摘的是「距上次摘要以来」，不是整个 L3 窗口。**
+
+    喂全量的后果不是"模型不听话"——摘要 prompt 说的是「把下面这段游戏历史压缩
+    成一句话」，而我们给它的就是"从头"，**它从头讲起是正确执行**。
+
+    实测（2026-08-23，350 拍单人局）：11 段摘要里前 7 段全是同一个故事的不同
+    长度版本，一个细节都没有；探针问已滚出 L3 的两件事，**两条都编了一个**
+    （借书卡"第 47 页"实为 88、灯的外号"歪脖子"实为"瘸腿老头"），语气跟答对
+    的对照组一样确信。
+
+    **变异检验**：把 `history_lines[-events:]` 改回 `history_lines`，这条当场红。
+    """
+    from app.core.keeper.runtime.agent import KeeperAgent
+
+    factory, (room_id, player_id) = room
+    # 上一段：10 条，已经摘过；新的一段：14 条（要过 MIN_TURNS_BETWEEN_CHAPTERS）
+    await _add_actions(factory, room_id, player_id, 10)
+    async with factory() as db:
+        await record_chapter(db, room_id=room_id, text="上一段的梗概", audience=None)
+        await db.commit()
+    await _add_actions(factory, room_id, player_id, 14)
+
+    seen: list[list[str]] = []
+
+    async def _fake_summarize(_client, lines):
+        seen.append(list(lines))
+        return "梗概"
+
+    monkeypatch.setattr("app.core.keeper.runtime.agent.summarize_chapter", _fake_summarize)
+
+    agent = KeeperAgent.__new__(KeeperAgent)
+    agent._session_factory = factory
+    agent._client = None
+    history = [HistoryLine(text=f"第 {i} 行") for i in range(24)]
+    await agent._summarize_chapter(room_id, history, frozenset(), scene_changed=True)
+
+    assert seen, "装置自证：摘要根本没被触发，下面的断言就没有意义"
+    fed = seen[0]
+    assert len(fed) == 14, f"喂了 {len(fed)} 行 —— 应该只有新产生的那 14 行"
+    assert fed[0] == "第 10 行", "从上一段摘要之后那一行开始，不是从窗口开头"
+    assert fed[-1] == "第 23 行"

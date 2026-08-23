@@ -25,6 +25,7 @@ import structlog
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import ValidationError
 
+from app.core.config import get_settings
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.narration.prompts import (
     CHAPTER_SUMMARY_INSTRUCTIONS,
@@ -33,12 +34,17 @@ from app.core.keeper.narration.prompts import (
 )
 from app.core.keeper.narration.prose_discipline import clip_narration
 from app.core.llm_tape import StreamCall, TapedClient
-from app.core.narration.deepseek import DEEPSEEK_MODEL
+from app.core.narration.deepseek import deepseek_model
 
 logger = structlog.get_logger()
 
+
 #: 单次模型往返的超时。真人在等，宁可兜底也不要无限期挂着。
-REQUEST_TIMEOUT_SECONDS = 60.0
+def request_timeout_seconds() -> float:
+    """这一处的请求超时。读 settings，**不做模块常量**——常量在 import 那一刻
+    就定死，`.env` 与测试都改不动它（同 `deepseek_model()` 的理由）。"""
+    return get_settings().keeper_timeout_seconds
+
 
 #: 裁决解析失败后的重试次数（把校验错误喂回去让它自己改）。
 ADJUDICATE_RETRIES = 2
@@ -75,7 +81,7 @@ async def adjudicate(client: TapedClient, instructions: str, situation: str) -> 
     for attempt in range(1 + ADJUDICATE_RETRIES):
         response = await client.chat.completions.create(
             tape_kind="adjudicate",
-            model=DEEPSEEK_MODEL,
+            model=deepseek_model(),
             messages=messages,
             response_format={"type": "json_object"},
             temperature=0.3,
@@ -174,7 +180,7 @@ def narrate_prose_stream(
     return client.chat.completions.stream(
         tape_kind="narrate",
         tape_key=tape_key,
-        model=DEEPSEEK_MODEL,
+        model=deepseek_model(),
         messages=[
             {"role": "system", "content": instructions},
             {
@@ -221,7 +227,7 @@ async def narrate_prose(
     response = await client.chat.completions.create(
         tape_kind="narrate",
         tape_key=tape_key,
-        model=DEEPSEEK_MODEL,
+        model=deepseek_model(),
         messages=[
             {"role": "system", "content": instructions},
             {"role": "user", "content": user_content},
@@ -264,7 +270,7 @@ async def summarize_chapter(client: TapedClient, history_lines: list[str]) -> st
     """
     response = await client.chat.completions.create(
         tape_kind="chapter",
-        model=DEEPSEEK_MODEL,
+        model=deepseek_model(),
         messages=[
             {"role": "system", "content": CHAPTER_SUMMARY_INSTRUCTIONS},
             {"role": "user", "content": format_chapter_input(history_lines)},

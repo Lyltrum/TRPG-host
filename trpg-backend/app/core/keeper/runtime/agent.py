@@ -96,10 +96,10 @@ from app.core.keeper.runtime.deps import KeeperDeps, KeeperToolError
 from app.core.keeper.runtime.end_game import propose_end_game
 from app.core.keeper.runtime.llm_calls import (
     FALLBACK_ADJUDICATE_GUIDANCE,
-    REQUEST_TIMEOUT_SECONDS,
     adjudicate,
     narrate_prose,
     narrate_prose_stream,
+    request_timeout_seconds,
     summarize_chapter,
 )
 from app.core.keeper.runtime.location_state import (
@@ -149,7 +149,7 @@ from app.core.narration.contract import (
     PlayerUtterance,
     SegmentDeltaSinkFactory,
 )
-from app.core.narration.deepseek import DEEPSEEK_BASE_URL
+from app.core.narration.deepseek import deepseek_base_url
 from app.dto.game import RulesetRead
 from app.models.event import Event
 from app.models.room import Character, Player, Room
@@ -211,7 +211,7 @@ class KeeperAgent(Narrator):
         self._session_factory = session_factory
         self._rng = rng if rng is not None else random.Random()
         self._client = build_llm_client(
-            api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=REQUEST_TIMEOUT_SECONDS
+            api_key=api_key, base_url=deepseek_base_url(), timeout=request_timeout_seconds()
         )
         self._background: set[asyncio.Task] = set()
         #: 分头轮次计数：磁带子键要靠它区分"哪一轮的第几段"。由代码递增，

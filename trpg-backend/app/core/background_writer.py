@@ -32,14 +32,20 @@ import structlog
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, Field, ValidationError
 
+from app.core.config import get_settings
 from app.core.llm_tape import build_llm_client
-from app.core.narration.deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from app.core.narration.deepseek import deepseek_base_url, deepseek_model
 
 logger = structlog.get_logger()
 
+
 #: 比 AI 队友那 25 秒宽：建卡不在对局回合里，没有人在牌桌上等这一拍，
 #: 而玩家更希望"慢一点但有内容"而不是"快但又空了"。
-_REQUEST_TIMEOUT_SECONDS = 40.0
+def _request_timeout_seconds() -> float:
+    """这一处的请求超时。读 settings，**不做模块常量**——常量在 import 那一刻
+    就定死，`.env` 与测试都改不动它（同 `deepseek_model()` 的理由）。"""
+    return get_settings().chapter_timeout_seconds
+
 
 #: 单个字段的长度上限。**这是兜底，不是常规路径**——字数要求写在 prompt 里
 #: （每项 40-60 字），代码只拦住离谱的长篇。
@@ -154,7 +160,7 @@ class BackgroundWriter:
 
     def __init__(self, api_key: str) -> None:
         self._client = build_llm_client(
-            api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=_REQUEST_TIMEOUT_SECONDS
+            api_key=api_key, base_url=deepseek_base_url(), timeout=_request_timeout_seconds()
         )
 
     async def write(self, prompt: str) -> CharacterBackground | None:
@@ -170,7 +176,7 @@ class BackgroundWriter:
         try:
             response = await self._client.chat.completions.create(
                 tape_kind="character_background",
-                model=DEEPSEEK_MODEL,
+                model=deepseek_model(),
                 messages=messages,
                 response_format={"type": "json_object"},
                 temperature=1.0,

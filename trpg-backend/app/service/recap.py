@@ -48,7 +48,7 @@ from app.core.keeper.primitives.dice import (
 from app.core.keeper.runtime.phase import PHASE_FINISHED, load_phase
 from app.core.keeper.runtime.progress_state import load_revealed_clues
 from app.core.llm_tape import build_llm_client
-from app.core.narration.deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from app.core.narration.deepseek import deepseek_base_url, deepseek_model
 from app.dto.replay import RoomSummaryRead
 from app.models.event import Event
 from app.models.replay import RoomSummary
@@ -56,7 +56,12 @@ from app.models.room import Room
 
 logger = structlog.get_logger()
 
-_TIMEOUT_SECONDS = 30.0
+
+def _timeout_seconds() -> float:
+    """这一处的请求超时。读 settings，**不做模块常量**——常量在 import 那一刻
+    就定死，`.env` 与测试都改不动它（同 `deepseek_model()` 的理由）。"""
+    return get_settings().recap_timeout_seconds
+
 
 #: 算作"成功"的等级。**列出来而不是写 `!= 失败`**：大失败也不是"失败"这个
 #: 字符串，用否定式会把它算成成功。
@@ -153,11 +158,13 @@ async def _write_recap(story: list[str]) -> str | None:
     api_key = get_settings().deepseek_api_key
     if not api_key or not story:
         return None
-    client = build_llm_client(api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=_TIMEOUT_SECONDS)
+    client = build_llm_client(
+        api_key=api_key, base_url=deepseek_base_url(), timeout=_timeout_seconds()
+    )
     try:
         response = await client.chat.completions.create(
             tape_kind="recap",
-            model=DEEPSEEK_MODEL,
+            model=deepseek_model(),
             messages=[
                 {"role": "system", "content": _RECAP_SYSTEM_PROMPT},
                 {"role": "user", "content": "\n".join(story)},

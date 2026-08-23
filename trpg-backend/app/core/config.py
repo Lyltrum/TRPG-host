@@ -73,6 +73,34 @@ class Settings(BaseSettings):
     # 环境不配这个变量，本地演示/线上环境按需配置。
     deepseek_api_key: str | None = None
 
+    # 🔴 **模型与 base_url 走环境变量**（2026-08-23）。它们此前是
+    # `narration/deepseek.py` 里的模块常量，而 `.env` 里同时摆着
+    # `DEEPSEEK_MODEL=deepseek-chat` —— **那一行从来没人读**。
+    # 改它不产生任何效果，比没有这个配置更糟：看着像开关，其实是装饰。
+    #
+    # 默认 flash：对局这条链一天能烧几百次调用，pro 的钱花在这里不划算
+    # （用户 2026-08-23 拍板）。要换回 pro 只改环境变量，不动代码。
+    #
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-v4-flash"
+
+    # 六个调用点的超时。**它们本来就该是六个不同的数**——一次裁决要跑完整条
+    # 两阶段链，而 AI 玩家只是判一句"要不要接话"，拿同一个数去卡两者，短的那
+    # 头白等、长的那头误杀。所以这里是六个键，不是一个。
+    #
+    # 🔴 之前我给"不接超时"编的理由是「`.env` 里只有一个
+    # `DEEPSEEK_TIMEOUT_SECONDS`，对不上任何一处」——**那不是理由，多设几个键
+    # 就行了**（用户 2026-08-23 当场指出）。同一个毛病：拿"现状不方便"当
+    # "设计如此"。
+    #
+    # 默认值就是此前六处硬编码的原值，**不改行为**。
+    deepseek_timeout_seconds: float = 30.0
+    keeper_timeout_seconds: float = 60.0
+    ai_actor_timeout_seconds: float = 25.0
+    equipment_check_timeout_seconds: float = 40.0
+    chapter_timeout_seconds: float = 40.0
+    recap_timeout_seconds: float = 30.0
+
     # keeper agent（feat/keeper-agent 实验）：配 deepseek_api_key 后启用。
     # - keeper_modules_dir：structured JSON 所在目录（默认仓库 `模组资料/`）；
     #   房间选中的 scenario 经 catalog 映射到该目录下文件。

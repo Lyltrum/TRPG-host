@@ -42,13 +42,19 @@ import structlog
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, Field, ValidationError
 
+from app.core.config import get_settings
 from app.core.llm_tape import build_llm_client
-from app.core.narration.deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from app.core.narration.deepseek import deepseek_base_url, deepseek_model
 
 logger = structlog.get_logger()
 
+
 #: 与写背景同一档：建卡不在对局回合里，没有人在牌桌上等这一拍。
-_REQUEST_TIMEOUT_SECONDS = 40.0
+def _request_timeout_seconds() -> float:
+    """这一处的请求超时。读 settings，**不做模块常量**——常量在 import 那一刻
+    就定死，`.env` 与测试都改不动它（同 `deepseek_model()` 的理由）。"""
+    return get_settings().equipment_check_timeout_seconds
+
 
 _DISABLE_THINKING: dict = {"thinking": {"type": "disabled"}}
 
@@ -166,7 +172,7 @@ class EquipmentChecker:
 
     def __init__(self, api_key: str) -> None:
         self._client = build_llm_client(
-            api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=_REQUEST_TIMEOUT_SECONDS
+            api_key=api_key, base_url=deepseek_base_url(), timeout=_request_timeout_seconds()
         )
 
     async def check(self, prompt: str) -> EquipmentVerdict | None:
@@ -182,7 +188,7 @@ class EquipmentChecker:
         try:
             response = await self._client.chat.completions.create(
                 tape_kind="equipment_check",
-                model=DEEPSEEK_MODEL,
+                model=deepseek_model(),
                 messages=messages,
                 response_format={"type": "json_object"},
                 # 🔴 低温：这是裁决不是创作。同「两阶段回合制」里裁决那一段。

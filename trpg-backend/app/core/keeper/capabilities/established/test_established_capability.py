@@ -311,3 +311,53 @@ def test_the_two_thresholds_bracket_the_real_samples() -> None:
     # 真重复 B（08-16 煤油）：**拦不住**，只落在"报而不断"那一档。
     # 这不是缺陷是取舍——它跟上面那条负样本没法用一个阈值分开。
     assert SUSPECT_RATIO <= ratio("点燃了地下室的煤油", "点燃了地下室，火势已起") < DUPLICATE_RATIO
+
+
+# ── A3：判据扩到「玩家自己创造的具体事实」（exec/48，2026-08-23）──
+
+
+def test_the_example_shows_both_kinds_of_fact() -> None:
+    """🔴 **示例里必须两类都有。**
+
+    `exec/41` 那次查出来的三个原因之一就是"示例是空数组，而 threads 的是填满
+    的，模型照着看到的形状抄"。只给"烧掉地下室"这一类示例，模型也只会记那一类
+    ——实测 351 拍的局里 `new_facts` **296 次裁决 0 条**，而清单里那六个动词
+    一个都没被命中过。
+
+    **变异检验**：把示例改回只有一条，这条当场红。
+    """
+    from app.core.keeper.capabilities.established.prompt import PROMPT_BLOCKS
+
+    example = next(b for b in PROMPT_BLOCKS if b.slot == "output_example").text
+    assert example.count('{"text"') >= 2, "示例只有一条 —— 模型会只记那一类"
+    assert "烧掉" in example, "少了「世界不可逆变化」那一类的示例"
+    assert "埋在" in example, "少了「玩家自己做的、带具体值」那一类的示例"
+
+
+def test_the_rule_says_what_not_to_record() -> None:
+    """🔴 **对侧**：放宽判据必须同时给反例，否则这一片会被灌满。
+
+    这一片**故意没有结清动作** ⇒ 记进去就清不掉。判据全集里「纯否定的收窄会
+    压死整片能力」有个反面：**纯放宽会淹掉它**。
+
+    断言选的是整句而不是关键词——反例装不下（"只是看了"这种表述改成
+    "看了也要记"之后，下面的断言会红）。
+    """
+    from app.core.keeper.capabilities.established.prompt import PROMPT_BLOCKS
+
+    rule = next(b for b in PROMPT_BLOCKS if b.slot == "rules").text
+    assert "只是看了 / 听了 / 闻了 / 搜了一遍（没有创造任何具体的值）" in rule
+    assert "判据是「有没有一个具体的值」" in rule
+
+
+def test_the_rule_distinguishes_the_deed_from_the_state() -> None:
+    """🔴 这一片没有结清动作，所以它记的必须是**发生过的事**，不是当前状态。
+
+    「他把钥匙埋在第三块石板下」——钥匙后来被挖走了，这句话**仍然为真**。
+    要是记成"钥匙在第三块石板下"（状态），它会在某一刻变成假的，而这一片
+    清不掉任何东西。
+    """
+    from app.core.keeper.capabilities.established.prompt import PROMPT_BLOCKS
+
+    rule = next(b for b in PROMPT_BLOCKS if b.slot == "rules").text
+    assert "写的是他做了什么，不是现在什么状态" in rule

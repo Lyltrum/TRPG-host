@@ -20,6 +20,7 @@ from app.core.keeper.memory.chapter import (
     MIN_TURNS_BETWEEN_CHAPTERS,
     Chapter,
     build_recap,
+    events_since_last_chapter,
     load_chapters,
     record_chapter,
     render_chapters,
@@ -626,3 +627,72 @@ def test_the_summary_call_site_is_not_nested_under_scene_changed() -> None:
                     "兜底上限会永远走不到，而且不会有任何东西变红。"
                 )
             node = parent
+
+
+# ── 兜底数的集合，必须与 L3 装的集合相同（2026-08-23）──────────
+
+
+async def test_the_ceiling_counts_only_what_the_window_actually_holds(room) -> None:
+    """🔴 **同一个错误的第三张脸。**
+
+    | 时间 | 判据 | 错在哪 |
+    |---|---|---|
+    | 最初 | 距上次 53 **拍** | 折算系数 2.5 错了 |
+    | 2026-08-19 | 距上次 200 **条事件** | 单位对了，数的却是**全部事件** |
+    | 2026-08-23 | 距上次 200 条**进得了 L3 的事件** | 集合终于跟窗口对上 |
+
+    L3 装的不是全部事件——`agent.py` 按 `HISTORY_EVENT_TYPES` 过滤，实测一场
+    104 拍的真机局里 759 条事件只有 265 条（35%）进得了窗口。而兜底问的是
+    「窗口用掉多少了」⇒ 数别的集合就是在答别的问题。
+
+    **变异检验**：把 `events_since_last_chapter` 里那个 `in_(HISTORY_EVENT_TYPES)`
+    去掉，这条当场红（计数从 0 变成 `CHAPTER_EVENT_CEILING`）。
+    """
+    factory, (room_id, player_id) = room
+    async with factory() as db:
+        for _ in range(CHAPTER_EVENT_CEILING):
+            db.add(Event(room_id=room_id, event_type="keeper.decision", payload={}))
+        await db.commit()
+    async with factory() as db:
+        counted = await events_since_last_chapter(db, room_id=room_id)
+    assert counted == 0, (
+        f"数出来 {counted} 条，而这些事件一条都进不了 L3 —— 兜底会在窗口空着的时候触发"
+    )
+    assert not should_summarize(scene_changed=False, turns_since_last=0, events_since_last=counted)
+
+
+async def test_the_ceiling_still_fires_on_events_the_window_does_hold(room) -> None:
+    """🔴 上一条的对侧：**别把兜底一起关掉了。**
+
+    只验"不该触发时不触发"的话，`return 0` 这个退化实现照样全绿
+    （同 `judgement-as-conversation` 那条：两头都要验）。
+    """
+    factory, (room_id, player_id) = room
+    await _add_actions(factory, room_id, player_id, CHAPTER_EVENT_CEILING)
+    async with factory() as db:
+        counted = await events_since_last_chapter(db, room_id=room_id)
+    assert counted == CHAPTER_EVENT_CEILING
+    assert should_summarize(scene_changed=False, turns_since_last=0, events_since_last=counted)
+
+
+def test_nobody_re_lists_the_history_event_types() -> None:
+    """「一份知识写两遍」的守门人。
+
+    L3 装哪些类型只有一处定义（`HISTORY_EVENT_TYPES`）。摘要这边要是自己再列
+    一份，两份清单会慢慢分叉，**而两头都不会变红**——上面那个 bug 正是这么活
+    下来的（注释信誓旦旦写着"L3 装的就是全部事件"，而它不是）。
+    """
+    import ast
+    from pathlib import Path as _Path
+
+    source = (
+        _Path(__file__).parent.parent / "app" / "core" / "keeper" / "memory" / "chapter.py"
+    ).read_text(encoding="utf-8")
+    assert "HISTORY_EVENT_TYPES" in source, "摘要根本没引用那份清单"
+    tree = ast.parse(source)
+    literals = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and node.value in ("narration.push", "keeper.check")
+    ]
+    assert not literals, "摘要模块里出现了 L3 事件类型的字面量 —— 那是第二份清单"

@@ -41,6 +41,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.keeper.memory.history import (
+    HISTORY_EVENT_TYPES,
     HISTORY_LIMIT,
     HistoryLine,
     is_visible_to,
@@ -130,11 +131,25 @@ async def turns_since_last_chapter(db: AsyncSession, *, room_id: str) -> int:
 
 
 async def events_since_last_chapter(db: AsyncSession, *, room_id: str) -> int:
-    """上次摘要之后房间里一共产生了多少条事件。
+    """上次摘要之后，**L3 窗口装得下的那些事件**产生了多少条。
 
-    🔴 **数的是全部事件，不是 `action.submit`**——它要回答的是"L3 窗口用掉多少
-    了"，而 L3 装的就是全部事件（`_load_room_memory` 按 `HISTORY_LIMIT` 条截）。
-    换成任何别的分母都要再折算一次，而上一版正是折算错了才出的问题。
+    🔴 **数的集合必须与 L3 装的集合逐字相同**，所以这里过滤
+    `HISTORY_EVENT_TYPES`——它要回答的是"L3 窗口用掉多少了"，而窗口装的
+    **不是全部事件**：`agent.py` 取历史时按 `event_type.in_(HISTORY_EVENT_TYPES)`
+    过滤，实测一场 104 拍的局里 759 条事件只有 265 条（35%）进得了 L3。
+
+    🔴 **这是同一个错误的第三张脸**（2026-08-23 实验中复现出来）：
+
+    | 时间 | 判据 | 错在哪 |
+    |---|---|---|
+    | 最初 | 距上次 53 **拍** | 折算系数 2.5 错了（实测一拍 5–13.7 条事件） |
+    | 2026-08-19 | 距上次 200 **条事件** | 单位对了，但数的是**全部事件** |
+    | 2026-08-23 | 距上次 200 条**进得了 L3 的事件** | 集合终于跟窗口对上 |
+
+    **最小复现**：塞 200 条 `keeper.decision`（它不在 `HISTORY_EVENT_TYPES` 里），
+    修前 `should_summarize` 返回 True，而 L3 窗口 **0/400**——判据认为"窗口用掉
+    一半该摘了"，窗口却一条都没用掉。方向是**过频**：按实测 35% 的比例，兜底
+    在窗口只用掉 17.5% 时就触发，那让它作为"兜底"失去意义。
 
     没摘过时从房间第一条事件算起：那时"距上次"就是"到目前为止"。
     """
@@ -145,7 +160,12 @@ async def events_since_last_chapter(db: AsyncSession, *, room_id: str) -> int:
         .limit(1)
     )
     since = last.scalar_one_or_none()
-    stmt = select(Event.id).where(Event.room_id == room_id)
+    stmt = select(Event.id).where(
+        Event.room_id == room_id,
+        # 与 L3 同一个集合。**不要在这里重列一份类型清单**——那是"一份知识写
+        # 两遍"，而两头都不会变红（这个 bug 就是这么活了四天的）。
+        Event.event_type.in_(HISTORY_EVENT_TYPES),
+    )
     if since is not None:
         stmt = stmt.where(Event.created_at > since)
     rows = await db.execute(stmt)

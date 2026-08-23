@@ -87,6 +87,10 @@ async def run_import_job(
         if job is None or job.source_path is None:
             raise LookupError(f"job 不存在或没有上传件：{job_id}")
         source = Path(job.source_path)
+        # 上传件是按 sha256 命名存盘的 ⇒ 词干是一串哈希，标题线索只在这一行的
+        # `source_filename` 上（A9）。在 session 还开着的时候取出来，别让它跟着
+        # ORM 对象出作用域。
+        title_hint = Path(job.source_filename).stem if job.source_filename else None
         job.status = STATUS_RUNNING
         await db.commit()
 
@@ -110,6 +114,7 @@ async def run_import_job(
             work_dir=work_dir,
             out_structured=out_structured,
             on_stage=_on_stage,
+            title_hint=title_hint,
         )
     except pipeline.ConversionError as exc:
         # 管线自己给的理由已经是"可执行"的（取文层会说清该换成什么格式）。

@@ -113,12 +113,17 @@ def convert(
     work_dir: Path,
     out_structured: Path,
     on_stage: Callable[[str], None] | None = None,
+    title_hint: str | None = None,
 ) -> ConversionResult:
     """跑完整条链。任何一步失败都**抛 `ConversionError`**，不返回半份产物。
 
     `on_stage`：每进入一个阶段调一次，取值是 `job_state.STAGES` 里的词。
     导入 job 拿它报进度——**分阶段是因为每一阶段的失败对用户意味着不同的下一步**，
     不是为了好看。CLI 不传，行为不变。
+
+    `title_hint`：模组标题的外部线索，给组装层的顶层 prompt 用。**web 导入必须
+    传**——那条路上 `source` 是按 sha256 命名的上传件，词干是一串哈希（见
+    `assemble.run_pipeline` 里那段注释）。CLI 不传，退回 `source.stem`。
     """
     t0 = time.perf_counter()
     notify = on_stage or (lambda _stage: None)
@@ -186,6 +191,7 @@ def convert(
         out_structured=out_structured,
         out_intermediate=intermediate,
         out_report=report,
+        title_hint=title_hint,
     )
     result.structured_path = str(out_structured)
     result.report_path = str(report)

@@ -2109,6 +2109,32 @@ def _assignment_thin_counts(assignment_map: dict[str, Any]) -> dict[str, int]:
     return counts
 
 
+#: 一串 sha256 长这样：64 个十六进制字符。上传件就是按它命名的。
+_HASHY = re.compile(r"^[0-9a-f]{32,}$")
+
+
+def resolve_title_hint(explicit: str | None, extract_path: Path) -> str:
+    """模组标题的外部线索——给顶层 prompt 用。
+
+    🔴 **web 导入那条路上文件名是一串 sha256。** 上传件按内容哈希存盘
+    （`uploads/f43acfd8….pdf`），于是从 `extract_path` 词干推出来的「模组标题
+    提示」等于**没有提示**：模型只能从正文里自己挑一个，74 节点那份就是这么
+    把一个小标题当成了模组名（`meta.id` 反而对——抽 id 那一步看的不是它）。
+
+    手工跑法（`模组资料/林中屋.重组.裸抽取.json`）一直是对的，所以这条只在
+    真正上传时才犯 —— 又一次「换一条路径验出来的『好了』」。
+
+    调用方给了真实文件名就用它；没给才退回词干，而**词干看着像哈希就说出来**，
+    不假装那是一个标题（「禁止静默兜底」）。
+    """
+    if explicit and explicit.strip():
+        return explicit.strip()
+    stem = extract_path.name.split(".")[0]
+    if _HASHY.match(stem):
+        return "（未知，文件名没有标题信息，请从正文判断）"
+    return stem
+
+
 def run_pipeline(
     *,
     extract_path: Path,
@@ -2119,6 +2145,7 @@ def run_pipeline(
     out_structured: Path,
     out_intermediate: Path,
     out_report: Path,
+    title_hint: str | None = None,
 ) -> int:
     print(f"extract: {extract_path}", flush=True)
     print(f"source:  {source_txt}", flush=True)
@@ -2147,7 +2174,7 @@ def run_pipeline(
         )
     lines = read_numbered_lines(source_txt)
     schema_doc = load_example_skeleton(example_path)
-    title_hint = extract_path.name.split(".")[0]
+    title_hint = resolve_title_hint(title_hint, extract_path)
 
     api_key = load_api_key()
     client = build_sync_llm_client(api_key=api_key, base_url=DEEPSEEK_BASE_URL, timeout=180.0)

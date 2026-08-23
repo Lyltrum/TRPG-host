@@ -412,3 +412,153 @@ def test_the_runner_degrades_before_it_gives_up() -> None:
 
     # 而且降级分支里要真的去注册，不是只记个日志
     assert "caveats=kinds" in source, "降级时没把 caveats 传给 _register"
+
+
+# ── 5. 标题线索（A9）─────────────────────────────────
+
+
+async def test_the_runner_hands_the_real_filename_down_as_a_title_hint(
+    tmp_path, monkeypatch
+) -> None:
+    """🔴 **守接线**：组装层拿到的标题提示必须是真实文件名，不是那串 sha256。
+
+    上传件按内容哈希存盘（`uploads/f43acfd8….pdf`），而组装层原来是从
+    `extract_path` 的词干推标题提示 ⇒ web 导入这条路上「模组标题提示」一直是
+    一串十六进制，等于**没有提示**。74 节点那份因此把正文里的一个小标题当成了
+    模组名（`meta.id` 反而对——抽 id 那一步看的不是它）。
+
+    **这条只能走接线验**：`assemble.run_pipeline` 收不收 `title_hint` 是纯函数，
+    它有这个参数不代表 runner 会去传（「加了函数没有消费方」）。原来的手工跑法
+    （`林中屋.重组.裸抽取.json`）一直是对的，正是「换一条路径验出来的『好了』」。
+
+    **变异检验**：把 runner 里的 `title_hint=title_hint` 删掉，这条当场红。
+    """
+    from app.core.module_import import runner as runner_module
+
+    seen: dict[str, object] = {}
+
+    class _FakeConversionError(Exception):
+        pass
+
+    class _FakePipeline:
+        ConversionError = _FakeConversionError
+
+        @staticmethod
+        def convert(source, **kwargs):
+            seen.update(kwargs)
+            seen["source"] = source
+            raise _FakeConversionError("到此为止——只验参数")
+
+    monkeypatch.setattr(runner_module, "_load_pipeline", lambda: _FakePipeline)
+
+    upload = tmp_path / ("f" * 64 + ".pdf")
+    upload.write_bytes(b"%PDF-")
+    async with _session_factory() as db:
+        job = ModuleImportJob(
+            status=STATUS_PENDING,
+            stage="received",
+            source_filename="[某翻译组]一份长模组 序章：装置.pdf",
+            source_path=str(upload),
+        )
+        db.add(job)
+        await db.commit()
+        job_id = job.id
+
+    await runner_module.run_import_job(
+        job_id, session_factory=_session_factory, work_root=tmp_path / "work"
+    )
+
+    assert seen, "装置自证：convert 根本没被调到，下面的断言就没有意义"
+    assert Path(str(seen["source"])).name.startswith("f" * 8), "装置自证：上传件确实是哈希命名的"
+    hint = seen.get("title_hint")
+    assert hint == "[某翻译组]一份长模组 序章：装置", (
+        f"组装层拿到的标题提示是 {hint!r}——它必须来自真实文件名"
+    )
+
+
+async def test_a_job_without_a_filename_still_runs(tmp_path, monkeypatch) -> None:
+    """没有文件名不是错误，退回管线自己的推法即可——**别静默塞一个假标题**。"""
+    from app.core.module_import import runner as runner_module
+
+    seen: dict[str, object] = {}
+
+    class _FakeConversionError(Exception):
+        pass
+
+    class _FakePipeline:
+        ConversionError = _FakeConversionError
+
+        @staticmethod
+        def convert(source, **kwargs):
+            seen.update(kwargs)
+            raise _FakeConversionError("到此为止")
+
+    monkeypatch.setattr(runner_module, "_load_pipeline", lambda: _FakePipeline)
+    upload = tmp_path / "anon.pdf"
+    upload.write_bytes(b"%PDF-")
+    async with _session_factory() as db:
+        job = ModuleImportJob(status=STATUS_PENDING, stage="received", source_path=str(upload))
+        db.add(job)
+        await db.commit()
+        job_id = job.id
+
+    await runner_module.run_import_job(
+        job_id, session_factory=_session_factory, work_root=tmp_path / "work"
+    )
+    assert seen, "装置自证：convert 没被调到"
+    assert seen["title_hint"] is None
+
+
+def test_a_hashy_stem_is_not_passed_off_as_a_title() -> None:
+    """🔴 `resolve_title_hint` 的另一半：**没有线索就说没有，别假装有。**
+
+    上面那条守的是 runner 会不会把真实文件名传下去；这条守的是组装层拿到
+    `None` 时的行为——退回词干，而词干看着像哈希就**明说不知道**。塞一串
+    十六进制进 prompt 是「静默兜底」：模型会当它是个标题去用。
+    """
+    # 走包路径而不是往 sys.path 插目录——同 `runner._load_pipeline`，
+    # 那是这个仓库里唯一被验证过的导入姿势。
+    from scripts.module_probe.assemble import resolve_title_hint  # noqa: PLC0415
+
+    hashy = Path("f43acfd839bd68f997739fb4ad70996d90e88d691a8bcbabd4e3316d0.裸抽取.json")
+    assert "f43acfd8" not in resolve_title_hint(None, hashy)
+    assert "未知" in resolve_title_hint(None, hashy)
+    # 传进来的真实文件名永远优先
+    real = "一份长模组 序章：装置"
+    assert resolve_title_hint(real, hashy) == real
+    # 手工跑法那条路不许被改坏
+    assert resolve_title_hint(None, Path("林中屋.重组.裸抽取.json")) == "林中屋"
+    assert resolve_title_hint("   ", Path("林中屋.重组.裸抽取.json")) == "林中屋"
+
+
+def test_run_pipeline_actually_calls_the_resolver() -> None:
+    """🔴 **「加了函数没有消费方」的守门人。**
+
+    `resolve_title_hint` 单测再全，也不代表 `run_pipeline` 会去调它——而这中间
+    要真跑一遍 LLM 才验得到，所以退回读源码。同 `_the_runner_degrades_before…`。
+
+    **变异检验**：把 `run_pipeline` 里那一行换回
+    `extract_path.name.split(".")[0]`，这条当场红（其余 25 条一条都不会红）。
+    """
+    import ast
+    from pathlib import Path as _Path
+
+    source = (_Path(__file__).parent.parent / "scripts" / "module_probe" / "assemble.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+    run_pipeline = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "run_pipeline"
+    )
+    called = {
+        node.func.id
+        for node in ast.walk(run_pipeline)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "resolve_title_hint" in called, (
+        "run_pipeline 没有调 resolve_title_hint —— 标题线索这条路接不上"
+    )
+    # 而且它得把调用方传进来的那个参数喂进去，不是只拿 extract_path 自己算
+    assert "resolve_title_hint(title_hint, extract_path)" in source

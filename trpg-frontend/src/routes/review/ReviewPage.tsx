@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ScrollText } from 'lucide-react'
+import { Copy, ScrollText } from 'lucide-react'
 import ShellPage from '@/shared/components/ShellPage'
 import { getRoomInfo, getRoomSummary, type RoomPreview, type RoomSummary } from '@/services/room'
 import { friendlyErrorMessage } from '@/services/api-client'
+import { buildReviewText, copyText } from './review-text'
 
 export default function ReviewPage() {
   const navigate = useNavigate()
@@ -12,6 +13,8 @@ export default function ReviewPage() {
   const [summary, setSummary] = useState<RoomSummary | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [copied, setCopied] = useState(false)
+  const [fallbackText, setFallbackText] = useState('')
 
   useEffect(() => {
     if (!roomCode) return
@@ -34,6 +37,25 @@ export default function ReviewPage() {
       alive = false
     }
   }, [room])
+
+  /**
+   * 复制整段复盘，供玩家发到群里。
+   *
+   * 🔴 **必须有降级路**：`navigator.clipboard` 在**非安全上下文里不存在**，
+   * 而这个项目的主场恰恰是局域网 `http://<内网IP>:9877`。复制不成就把文本
+   * 摊开让用户自己长按选中——**不假装复制成功**。
+   */
+  const handleCopy = async () => {
+    if (!room) return
+    const text = buildReviewText(room, summary)
+    if (await copyText(text)) {
+      setCopied(true)
+      setFallbackText('')
+      window.setTimeout(() => setCopied(false), 2000)
+    } else {
+      setFallbackText(text)
+    }
+  }
 
   return (
     <ShellPage title="复盘" onBack={() => navigate('/home/my-rooms')}>
@@ -101,6 +123,32 @@ export default function ReviewPage() {
                 </p>
               )}
             </div>
+
+            {/* 复盘的出口（`exec/46` B9）。摘要还在生成时不给按——那时复制
+                出去的是半份。 */}
+            <button
+              onClick={handleCopy}
+              disabled={loading}
+              className="press w-full py-3 text-[13.5px] font-bold border-2 border-text-primary/45 text-text-muted flex items-center justify-center gap-2 active:bg-card disabled:opacity-40 transition-all"
+            >
+              <Copy className="w-[16px] h-[16px]" /> {copied ? '已复制' : '复制这份复盘'}
+            </button>
+
+            {fallbackText && (
+              <div className="press-soft bg-card p-3.5 flex flex-col gap-2">
+                <p className="text-[11px] text-text-muted leading-relaxed">
+                  这个浏览器不让网页直接写剪贴板（局域网 http 打开时常见）。
+                  <span className="font-bold text-text-primary">长按下面的文字全选复制</span>。
+                </p>
+                <textarea
+                  readOnly
+                  value={fallbackText}
+                  onFocus={(e) => e.currentTarget.select()}
+                  rows={10}
+                  className="shell-field w-full px-3 py-2 text-[12px] leading-[1.7] font-mono"
+                />
+              </div>
+            )}
 
             <div className="press-soft bg-card p-3.5">
               <span className="inline-block text-[10.5px] font-bold tracking-[0.14em] bg-text-primary text-page px-2 py-[3px] mb-2.5">

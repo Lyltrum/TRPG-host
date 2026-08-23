@@ -554,3 +554,106 @@ def reachable_visibility_pairs(module: ScenarioModule) -> list[VisibilityPair]:
     """
     node_ids = {node.id for node in iter_all_nodes(module.nodes)}
     return [pair for pair in module.visibility_pairs if pair.secret_ref in node_ids]
+
+
+# ═══ 分层注入的两块地基（exec/47 P0，2026-08-23）═══
+#
+# 这两个函数**此时还没有消费方**——它们是 P0 的产物，P0 的全部目的是**证伪**
+# 「合并图够不够密」这个前提，不是改注入。P1 才把 `render_full` 换掉。
+# （单独说出来，是因为「加了字段没有消费方 = 没加」是本项目的常犯错之一；
+# 这里是**刻意的**，不是漏了。）
+
+
+def merged_graph(module: ScenarioModule) -> dict[str, set[str]]:
+    """节点的**关联图**：`exits ∪ leads_to ∪ contains`，无向。
+
+    🔴 **它不叫「相邻」，任何时候都不许拿它做空间判断。** 三种边语义不同：
+    `exits` 是空间邻接、`leads_to` 是情节推进、`contains` 是包含层级。
+    叫「相邻」会诱使下一个人拿它算「从这儿能走到哪」，而那正是 `ModuleNode.exits`
+    的注释里明令禁止的事（五份内置模组 `exits` 覆盖率 0–24%，其中一份是 0）。
+
+    它的唯一用途是**召回**：「玩家在这个节点，还有哪些节点跟它有关，正文该一起给」。
+    召回多给一个不相干的节点，代价只是几百字符；判错空间会让主持人瞎指路。
+
+    ## 为什么要并三种边
+
+    单独看每一种都太稀疏（`exits` 18–19%、`leads_to` 55–72%），并起来之后孤立
+    节点降到 5–9%（`exec/47 §2.2` 实测两份长模组）。
+
+    ## 无向
+
+    `a.leads_to = [b]` 时 b 也要能召回 a——玩家站在 b 上，「是什么把我引到这儿的」
+    同样是模型需要的上下文。
+
+    ## 悬空 id 直接丢
+
+    模组数据里的边可能指向不存在的节点（LLM 抽出来的）。这里**只保留指向真实
+    节点的边**，悬空的丢掉——保留它只会让召回去查一个查不到的 id。
+    悬空率本身是模组数据质量指标，由 P0 的量表单独报，不在这里静默兜底。
+
+    ## 嵌套的父子关系无条件成边
+
+    `sub_node` / `sub_nodes` 的父子关系**就是**包含，而且它是**结构性事实**——
+    不像 `contains` 那样要指望 LLM 在抽取时写对。八份模组量下来，追书人的
+    `speakeasy` 正是这么漏掉的：它是一个子节点，父节点没写 `contains` 指向它，
+    于是它在只看字段的图里孤立。补上父子边之后八份里孤立的子节点归零。
+    """
+    ids = {node.id for node in iter_all_nodes(module.nodes)}
+    graph: dict[str, set[str]] = {node_id: set() for node_id in ids}
+
+    def _link(a: str, b: str) -> None:
+        if a == b or a not in ids or b not in ids:
+            return
+        graph[a].add(b)
+        graph[b].add(a)
+
+    for node in iter_all_nodes(module.nodes):
+        for target in (*node.exits, *node.leads_to, *node.contains):
+            _link(node.id, target)
+        for child in ([node.sub_node] if node.sub_node is not None else []) + node.sub_nodes:
+            _link(node.id, child.id)
+    return graph
+
+
+def render_node_index(module: ScenarioModule) -> str:
+    """节点索引：每个节点一行 `id｜标题（kind）`。
+
+    🔴 **索引里不许有正文**——`kp_text` 自不必说，`public_text` 也不给。
+    它是「挣得/公开之后才念给玩家」的东西，进了常驻段就等于提前发出去了
+    （「保密靠拿不到」）。索引解决的是「世界上有哪些地方、它们的 id 是什么」，
+    让模型不必现编专有名词；「那儿有什么」由召回段给。
+    """
+    lines = [
+        f"- {node.id}｜{node.title}" + (f"（{node.kind}）" if node.kind else "")
+        for node in iter_all_nodes(module.nodes)
+    ]
+    return "\n".join(lines)
+
+
+def render_npc_index(module: ScenarioModule) -> str:
+    """NPC 索引：每个 NPC 一行 `id｜名字（公开身份）`。
+
+    `role` 是公开身份（「旅店老板」），属于标题级别，不是正文；`kp_notes`
+    与数据卡都不给。同 `render_node_index`：解决「有哪些人、id 是什么」。
+
+    NPC 必须一起索引——74 节点那份的 NPC 卡合计 12,018 字符，比节点索引行
+    总和还大一倍多（`exec/47 §2.1`）。
+    """
+    lines = [
+        f"- {npc.id}｜{npc.name}" + (f"（{npc.role}）" if npc.role else "") for npc in module.npcs
+    ]
+    return "\n".join(lines)
+
+
+def render_index(module: ScenarioModule) -> str:
+    """分层注入的常驻索引段：节点索引 + NPC 索引。
+
+    对应 `render_full` 里 `调查节点` 与 `登场 NPC` 两块（合计约占 90%）的位置。
+    其余五段（overview / opening / agenda / pairs / endings）只占 ~10%，
+    **仍然整体常驻**，不进索引。
+    """
+    return (
+        f"═══ 调查节点一览（正文按需给出）═══\n{render_node_index(module)}\n\n"
+        f"═══ 登场 NPC 一览（专有名词以此为准，不得另起名字）═══\n"
+        f"{render_npc_index(module)}"
+    )

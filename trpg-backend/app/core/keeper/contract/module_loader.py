@@ -453,6 +453,25 @@ def render_full(module: ScenarioModule) -> str:
     调查节点 → NPC → 结局。空块整块省略——旧模组不含 opening/agenda/pairs 时
     输出不应变脏。
     """
+    nodes = "\n\n".join(render_node(n) for n in module.nodes)
+    npcs = "\n\n".join(render_npc(n) for n in module.npcs)
+    return "\n\n".join(
+        [
+            *_script_prologue(module),
+            f"═══ 调查节点 ═══\n\n{nodes}",
+            f"═══ 登场 NPC（专有名词以此为准，不得另起名字）═══\n\n{npcs}",
+            f"═══ 结局 ═══\n{render_endings(module)}",
+        ]
+    )
+
+
+def _script_prologue(module: ScenarioModule) -> list[str]:
+    """剧本前四段：overview / 开场脚本 / 议程 / 密级配对。
+
+    抽出来是因为分层注入（`render_layered`）跟 `render_full` 逐字共用它们——
+    这四段合计只占 ~10%，两种形态下都整体常驻。**一份知识不写两遍**：
+    写两遍的话，以后往 overview 里加一行只会加到其中一条路上，而两头都不会变红。
+    """
     parts = [render_overview(module)]
     opening_text = render_opening(module)
     if opening_text:
@@ -465,11 +484,64 @@ def render_full(module: ScenarioModule) -> str:
     pairs_text = render_visibility_pairs(module)
     if pairs_text:
         parts.append(f"═══ 【密级配对（绝密）】 ═══\n{pairs_text}")
-    nodes = "\n\n".join(render_node(n) for n in module.nodes)
-    parts.append(f"═══ 调查节点 ═══\n\n{nodes}")
-    npcs = "\n\n".join(render_npc(n) for n in module.npcs)
-    parts.append(f"═══ 登场 NPC（专有名词以此为准，不得另起名字）═══\n\n{npcs}")
-    parts.append(f"═══ 结局 ═══\n{render_endings(module)}")
+    return parts
+
+
+def render_layered(module: ScenarioModule, resident_node_ids: frozenset[str]) -> str:
+    """剧本的**分层形态**：正文换成索引，只留必须常驻的那几个节点（`exec/47` P1b）。
+
+    与 `render_full` 的区别只有中间两块：
+
+    | 段 | `render_full` | 这里 |
+    |---|---|---|
+    | 前四段（overview/开场/议程/密级） | 全给 | **全给**（共用 `_script_prologue`，逐字一致） |
+    | 调查节点 | 全部正文 | **索引** + `resident_node_ids` 那几个的正文 |
+    | 登场 NPC | 全部正文 | **索引** |
+    | 结局 | 全给 | **全给** |
+
+    🔴 **它进的是 system prompt，所以里面每一样都必须是「整局不变」的。**
+    按拍变化的召回正文走局面块（`format_turn_input` 的 `script_recall`）——
+    塞进这里会让前缀每拍都变、缓存全废，而 `exec/39` 实测剧本本来是被前缀缓存
+    吃掉的那部分，那样反而更贵。
+
+    `resident_node_ids` 传的是 `focus.isolated_node_ids(module)`：合并图上没有
+    任何边的节点进不了任何关注集，正文不常驻的话模型永远看不到它们
+    （实测 0–2,043 字符，占 `render_full` 0–3.6%）。
+    """
+    by_id = {node.id: node for node in iter_all_nodes(module.nodes)}
+    resident = [by_id[node_id] for node_id in sorted(resident_node_ids) if node_id in by_id]
+    node_section = (
+        f"═══ 调查节点一览（正文按需在「本轮相关剧本」里给出）═══\n{render_node_index(module)}"
+    )
+    if resident:
+        # 这几个在图上孤立 ⇒ 没有任何一拍能把它们召回来，正文只能常驻。
+        bodies = "\n\n".join(render_node(node) for node in resident)
+        node_section += f"\n\n─── 以下几处与其它节点没有关联边，正文常驻 ───\n\n{bodies}"
+    return "\n\n".join(
+        [
+            *_script_prologue(module),
+            node_section,
+            f"═══ 登场 NPC 一览（专有名词以此为准，不得另起名字）═══\n{render_npc_index(module)}",
+            f"═══ 结局 ═══\n{render_endings(module)}",
+        ]
+    )
+
+
+def render_recall(module: ScenarioModule, node_ids: frozenset[str], npc_ids: frozenset[str]) -> str:
+    """这一拍召回的节点与 NPC 正文——**进局面块，不进 system prompt**。
+
+    空集合返回空串（整块不渲染）。短模组走退化路径时永远是空的，
+    局面块因此与改动前**逐字节一致**。
+    """
+    by_node = {node.id: node for node in iter_all_nodes(module.nodes)}
+    by_npc = {npc.id: npc for npc in module.npcs}
+    parts: list[str] = []
+    nodes = [by_node[i] for i in sorted(node_ids) if i in by_node]
+    if nodes:
+        parts.append("\n\n".join(render_node(node) for node in nodes))
+    npcs = [by_npc[i] for i in sorted(npc_ids) if i in by_npc]
+    if npcs:
+        parts.append("\n\n".join(render_npc(npc) for npc in npcs))
     return "\n\n".join(parts)
 
 

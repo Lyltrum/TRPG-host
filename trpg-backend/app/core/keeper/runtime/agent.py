@@ -1145,6 +1145,10 @@ class KeeperAgent(Narrator):
                 ledger=render_ledger(self._module, known),
                 nickname=nickname,
                 utterance=said,
+                # 🔴 分层注入时这个参数决定叙事能不能看到**玩家刚走到的那个
+                # 节点**的正文：局面块整轮只建一次、用的是裁决之前的
+                # keeper_state，新落点此刻只存在于 decision 里（`exec/47` P1b）。
+                decision=decision,
             )
             suffix = extra_suffix + hint + _person(audience) + _bystanders(audience)
             # 🔴 磁带子键（`exec/33 §4` 拦路石 1）：并行之后这几次调用的**完成

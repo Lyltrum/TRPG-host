@@ -20,7 +20,12 @@ from collections.abc import Sequence
 
 from app.core.keeper.capabilities import prompt_blocks
 from app.core.keeper.context_budget import log_system_prompt
-from app.core.keeper.contract.module_loader import ScenarioModule, render_full
+from app.core.keeper.contract.module_loader import (
+    ScenarioModule,
+    render_full,
+    render_layered,
+)
+from app.core.keeper.runtime.focus import isolated_node_ids, should_layer
 from app.core.keeper.runtime.phase import PHASE_OPENING
 from app.dto.game import RulesetRead
 
@@ -138,6 +143,21 @@ def render_skill_reference(ruleset: RulesetRead) -> str:
     return f"技能（id=名称）：{skills}\n属性（key=名称）：{attrs}"
 
 
+def render_script(module: ScenarioModule) -> str:
+    """给 system prompt 用的剧本段：装得下就整份，装不下才分层（`exec/47` P1b）。
+
+    🔴 **两个 system prompt 必须走同一个函数。** 裁决与叙事拿到的剧本形态不一样
+    是最坏的一种不一致：裁决按索引挑了一个节点，叙事那边却在整份剧本里看见了别的
+    ——而两边都不会报错。共用一个函数是让「一份知识写一遍」在这里成立的唯一办法。
+
+    短模组（`render_full` ≤ 2 万字符）走**退化路径**：返回值与分层之前**逐字节
+    相同**。判据与实测分档见 `focus.LAYERED_SCRIPT_THRESHOLD`。
+    """
+    if not should_layer(module):
+        return render_full(module)
+    return render_layered(module, isolated_node_ids(module))
+
+
 def build_adjudicator_instructions(module: ScenarioModule, ruleset: RulesetRead) -> str:
     """裁决阶段 system prompt：守秘人的"规则脑"，只裁决不写故事。
 
@@ -149,7 +169,7 @@ def build_adjudicator_instructions(module: ScenarioModule, ruleset: RulesetRead)
     output_example = _render_output_example()
     # 🔴 各段先落成变量再拼——拼出来的字符串与改动前**逐字节相同**
     # （`test_prompt_assembly.py` 盯着这条），多出来的只是"能按段量"。
-    script = render_full(module)
+    script = render_script(module)
     skill_reference = render_skill_reference(ruleset)
     log_system_prompt(
         kind="adjudicate",
@@ -181,7 +201,7 @@ player 为 null 表示本轮行动的发起玩家；`skill_id` 必须原样取�
 
 def build_narrator_instructions(module: ScenarioModule) -> str:
     """叙事阶段 system prompt：守秘人的"台前"，只讲故事，裁决已由上游完成。"""
-    script = render_full(module)
+    script = render_script(module)
     log_system_prompt(kind="narrate", module_title=module.meta.title, segments={"剧本全文": script})
     return f"""你是一名《克苏鲁的呼唤》（COC 第 7 版）跑团的守秘人（KP），正在主持模组《{module.meta.title}》。规则裁决（要不要检定、掷骰结果、状态变化）已经完成并附在输入里——你的全部工作是把它变成一段优秀的守秘人叙事。
 
@@ -245,6 +265,7 @@ def format_turn_input(
     is_opening_ceremony: bool = False,
     phase: str | None = None,
     party_sheet: str = "",
+    script_recall: str = "",
 ) -> str:
     """两阶段共用的"局面块"：名单 + 状态 + 阶段 + 议程 + 密级 + 历史 + 当前。
 
@@ -304,7 +325,20 @@ def format_turn_input(
         if party_sheet
         else ""
     )
+    # 🔴 order=3：**排在所有块最前面**，因为它是剧本正文——其余的块都是"关于
+    # 这个世界的记账"，而这一块就是那个世界本身。分层注入时 system prompt 里
+    # 只有索引，模型要靠这一块才知道当前这几处到底写着什么。
+    #
+    # 它进局面块而不是 system prompt，是因为它**每拍都变**：塞进 system prompt
+    # 会让前缀缓存全废，而 `exec/39` 实测剧本本来正是被缓存吃掉的那部分。
+    # 短模组走退化路径时它恒为空串 ⇒ 整块不渲染 ⇒ 局面块与改动前逐字节一致。
+    recall_block = (
+        f"## 本轮相关剧本（KP 专用，绝密——当前这几处的完整正文）\n{script_recall}\n\n"
+        if script_recall
+        else ""
+    )
     blocks = [
+        (3.0, recall_block),
         (5.0, sheet_block),
         (30.0, phase_block),
         (70.0, chapters_block),

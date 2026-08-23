@@ -44,6 +44,12 @@
 
 这里只**选 id**。受众裁剪仍在后面（`visible_*` 那一道）：召回错了是少给，
 受众错了是泄密，两件事、两道门、各自要有测试。
+
+🔴 **即兴地点不在召回集里，这是对的。** 真机验证时撞见过一次（2026-08-23，
+玩家跑去模组里没有的"利马警察局"，落成 `loc-1`）：它不在 `module.nodes` 里
+⇒ 被白名单过滤掉。**它本来就没有剧本正文可召回**——名字与来源存在
+`即兴地点` 表里，由 `movement` 那片能力的局面块渲染，是另一条渠道。
+看到"分头的另一半没进召回集"时先确认他站的是不是即兴地点，别当成漏了。
 """
 
 from __future__ import annotations
@@ -57,9 +63,42 @@ from app.core.keeper.contract.module_loader import (
     ScenarioModule,
     iter_all_nodes,
     merged_graph,
+    render_full,
 )
 from app.core.keeper.runtime.location_state import load_player_locations
 from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
+
+#: 🔴 **`render_full` 超过这个字符数才分层。**
+#:
+#: 判据是**装不装得下**，不是"能省多少"。`exec/39` 实测的一次裁决预算
+#: （64K ≈ 10.2 万字符）：
+#:
+#: ```
+#: 骨架固定           12,834   裁决规则 + 技能表 + 输出示例，每次都付
+#: turn input 满窗   ~30,000   历史窗口是唯一在涨的那段（HISTORY_LIMIT 400）
+#: 剧本 ≤ 20,000
+#: ──────────────────────────
+#: 合计              ~63,000   占 62%，与 exec/39「用掉一半多一点」的健康态一致
+#: ```
+#:
+#: **低于这条线的模组整份注入，行为与分层之前逐字节一致**——分层不是免费的：
+#: 模型判断「从这儿能去哪」原本靠的就是整份剧本在 prompt 里
+#: （`ModuleNode.exits` 那段注释），拿走它有真实风险。装得下就别冒。
+#:
+#: 实测这条线把八份模组分成 5 + 3：追书人 7,261 / 复足 10,416 / 林中屋 11,389 /
+#: 科比特 14,157 / 顿足舞 14,818 走整份；神秘渡轮 21,023 / 坨子岛 39,169 /
+#: 74 节点那份 56,102 走分层。而分层在短模组上本来就是**负收益**
+#: （追书人分层后反而是 74.7%，`exec/47` P1a 量过）。
+LAYERED_SCRIPT_THRESHOLD = 20_000
+
+
+def should_layer(module: ScenarioModule) -> bool:
+    """这份模组要不要走分层注入。**按模组定，不按拍定。**
+
+    🔴 逐拍判断会让 system prompt 时而分层时而不分层 ⇒ 前缀缓存反复失效，
+    比两种形态里的任何一种都贵。开局定下来就不再变。
+    """
+    return len(render_full(module)) > LAYERED_SCRIPT_THRESHOLD
 
 
 @dataclass(frozen=True)
@@ -135,6 +174,37 @@ def focus_set(
         npc_ids=frozenset(npc_ids),
         reasons=dict(seen),
     )
+
+
+def ids_mentioned_by(decision: object) -> frozenset[str]:
+    """裁决输出里出现过的**所有**字符串值——留给 `focus_set` 按白名单过滤。
+
+    🔴 **扫全部字段，不逐个列出。** 「逐个列出的断言/判断，加一项就漏一项」在
+    这个仓库里已经记了好几处（`_notice_payload`、`AMBIENT_WS_EVENTS`、movement
+    那三种落点）。裁决 schema 是十一片能力各自注册字段拼出来的，还会继续长——
+    列一张「哪些字段里可能有 node id」的表，下一片能力加进来的那天就漏了，
+    而漏了不会有任何东西变红（表现只是"叙事没提那个地方"）。
+
+    误判的代价是**多召回一个节点**（几百字符），不是错误：一段自由文本恰好
+    等于某个 node id 时会多给一份正文。召回多给不伤，少给才伤。
+    """
+    out: set[str] = set()
+
+    def walk(value: object) -> None:
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                out.add(text)
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            for item in value:
+                walk(item)
+
+    dump = getattr(decision, "model_dump", None)
+    walk(dump() if callable(dump) else decision)
+    return frozenset(out)
 
 
 def isolated_node_ids(module: ScenarioModule) -> frozenset[str]:

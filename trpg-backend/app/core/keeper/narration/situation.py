@@ -30,12 +30,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.keeper.capabilities import situation_blocks, visible_keeper_state
 from app.core.keeper.context_budget import log_turn_input
-from app.core.keeper.contract.module_loader import ScenarioModule
+from app.core.keeper.contract.module_loader import ScenarioModule, render_recall
 from app.core.keeper.memory.chapter import Chapter, load_chapters, render_chapters, visible_chapters
 from app.core.keeper.memory.fact_ledger import render_ledger, revealed_fact_ids
 from app.core.keeper.memory.history import HistoryLine, visible_history
 from app.core.keeper.narration.party_sheet import format_party_sheet, load_party_characters
 from app.core.keeper.narration.prompts import format_turn_input
+from app.core.keeper.runtime.focus import focus_set, ids_mentioned_by, should_layer
 from app.core.keeper.runtime.pending import MERGE_CONFIRM_KIND, pending_decision_manager
 from app.core.keeper.runtime.phase import format_phase_status
 from app.dto.game import RulesetRead
@@ -72,6 +73,15 @@ class SituationBuilder:
     #: 确实填了它这件事**由 test_party_sheet.py 单独钉住**——否则就是那条老毛病：
     #: 加了字段没有消费方，两头都不会变红。
     party_sheet: str = ""
+    #: 分层注入用的两样（`exec/47` P1b）。**短模组两个都是 None**，此时
+    #: `render()` 里那一段整块跳过，局面块与分层之前逐字节一致。
+    #:
+    #: 🔴 这里存的是**原始** `keeper_state`，不是上面那份 `visible_state`——
+    #: 关注集要读 `当前场景节点` / `在场NPC` / `玩家位置` 这些**保留键**，
+    #: 而 `visible_keeper_state` 恰恰把它们滤掉了。拿错那一份的表现是
+    #: 「召回集永远为空」，而且不会报错。
+    module: ScenarioModule | None = None
+    raw_state: dict | None = None
 
     def render(
         self,
@@ -81,6 +91,7 @@ class SituationBuilder:
         nickname: str,
         utterance: str,
         keeper_view: bool = False,
+        decision: object | None = None,
     ) -> str:
         """按受众组装局面块（exec/14 P5.2d）。
 
@@ -93,6 +104,7 @@ class SituationBuilder:
         """
         history = visible_history(self.history_lines, audience)
         chapters = render_chapters(visible_chapters(self.chapters, audience))
+        script_recall = self._script_recall(decision)
         blocks = self.capability_blocks if keeper_view else self.narrator_capability_blocks
         party_sheet = self.party_sheet if keeper_view else ""
         # 观测：这一轮各段有多大。**只记数字不记内容**（段落里有剧本正文），
@@ -108,6 +120,9 @@ class SituationBuilder:
                 "分段摘要L2": chapters,
                 "历史窗口L3": "\n".join(history),
                 "角色卡": party_sheet,
+                # 分层注入时这是局面块里最大的一段（`exec/47` P1b）。
+                # 🔴 它必须在这张表里：预算观测漏掉最大的那一段，等于没观测。
+                "本轮相关剧本": script_recall,
                 "本轮原话": utterance,
             },
             blocks=blocks,
@@ -126,7 +141,27 @@ class SituationBuilder:
             is_opening_ceremony=self.is_opening_ceremony,
             phase=self.phase,
             party_sheet=party_sheet,
+            script_recall=script_recall,
         )
+
+    def _script_recall(self, decision: object | None) -> str:
+        """这一拍要给哪几处的剧本正文（`exec/47` P1b）。分层局才有，短模组恒为空。
+
+        🔴 **`decision` 那一半不是可选的锦上添花。** 局面块整轮只建一次，用的是
+        **裁决之前**的 `keeper_state`；而叙事那一拍最需要的恰恰是玩家刚走到的
+        那个新节点的正文——它此刻只存在于裁决输出里。不带 decision 的话，
+        「我去地窖」这一拍的叙事会拿不到地窖写着什么，只能瞎编。
+        """
+        if self.module is None:
+            return ""
+        mentioned = ids_mentioned_by(decision) if decision is not None else frozenset()
+        focus = focus_set(
+            self.module,
+            self.raw_state,
+            decision_node_ids=mentioned,
+            decision_npc_ids=mentioned,
+        )
+        return render_recall(self.module, focus.node_ids, focus.npc_ids)
 
     def for_keeper(self, *, nickname: str, utterance: str) -> str:
         """守秘人自己的那份（裁决阶段用）。"""
@@ -203,4 +238,8 @@ async def build_situation(
         ),
         is_heartbeat=is_heartbeat,
         is_opening_ceremony=is_opening_ceremony,
+        # 分层注入：只有超过阈值的模组才带这两样，短模组保持 None ⇒ 召回段
+        # 恒为空串 ⇒ 局面块逐字节不变（`focus.LAYERED_SCRIPT_THRESHOLD`）。
+        module=module if should_layer(module) else None,
+        raw_state=keeper_state if should_layer(module) else None,
     )

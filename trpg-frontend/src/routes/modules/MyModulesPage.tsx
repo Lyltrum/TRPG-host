@@ -6,6 +6,7 @@ import Badge from '@/shared/components/Badge'
 import ImportProgress from './ImportProgress'
 import {
   deleteModule,
+  deleteModuleImport,
   isJobRunning,
   listModuleImports,
   type ModuleImportJob,
@@ -57,15 +58,22 @@ export default function MyModulesPage() {
    */
   const remove = useCallback(
     async (job: ModuleImportJob) => {
-      if (!job.resultScenarioId) return
       setDeletingId(job.jobId)
       setError('')
       try {
-        await deleteModule(job.resultScenarioId)
+        // 🔴 两条路，判据是**这条记录还连不连着一份模组**：
+        // 连着 → 删模组（记录会跟着被后端清掉指针，下一次 load 就变成可删记录）；
+        // 不连 → 删记录本身。没转成的、中断的、以及**模组已经被删掉只剩一条
+        // 「已就绪」空壳**的，全走后一条——那第三种此前既点不开也删不掉。
+        if (job.resultScenarioId) {
+          await deleteModule(job.resultScenarioId)
+        } else {
+          await deleteModuleImport(job.jobId)
+        }
         setConfirmingId(null)
         await load()
       } catch (err) {
-        setError(err instanceof Error ? err.message : '删不掉这份模组')
+        setError(err instanceof Error ? err.message : '删不掉')
       } finally {
         setDeletingId(null)
       }
@@ -153,9 +161,15 @@ function JobCard({
   onCancelDelete: () => void
 }) {
   const spine = SPINE[job.status] ?? SPINE.interrupted
-  // 🔴 只有真的产出了一份模组才谈得上删。失败/中断的 job 是**历史记录**，
-  // 它的失败理由要留着（用户点三次重试得知道前两次为什么failed）。
-  const removable = job.status === 'succeeded' && Boolean(job.resultScenarioId)
+  // 🔴 **正在转的不许删**（后台还在往它上面写），其余都可以——包括没转成的。
+  //
+  // 原来这里只让"真的产出了模组"的可删，理由是失败理由要留着。而实测下来
+  // 十条记录里八条是失败的，列表被它们占满：**要不要留是用户的事，代码只要
+  // 保证他能看见理由、也能清掉。**
+  const removable = !isJobRunning(job)
+  // 连着模组 → 删的是那份模组（十几分钟的转换结果）；不连 → 只是一条记录。
+  // 代价差一个数量级，说法不能共用一句。
+  const removesModule = Boolean(job.resultScenarioId)
 
   return (
     <div
@@ -201,13 +215,18 @@ function JobCard({
           onClick={onAskDelete}
           className="press px-2 py-1 text-[11px] font-bold text-text-muted active:text-rust"
         >
-          删掉这份
+          {removesModule ? '删掉这份' : '删掉这条记录'}
         </button>
       </div>
     )}
 
     {removable && confirming && (
-      <DeleteConfirm deleting={deleting} onConfirm={onDelete} onCancel={onCancelDelete} />
+      <DeleteConfirm
+        deleting={deleting}
+        removesModule={removesModule}
+        onConfirm={onDelete}
+        onCancel={onCancelDelete}
+      />
     )}
     </div>
   )
@@ -216,25 +235,39 @@ function JobCard({
 /**
  * 删除确认条。**代价要写在按下之前**（同「我的房间」那条）。
  *
- * 模组删掉之后，用它开过的房间不受影响——因为**有房间在用就根本删不掉**
- * （后端 409）。所以这里要说的代价只有一条：这份转换结果没了，再要就得
- * 重传重转，那是十几分钟加一次钱。
+ * 两种代价差一个数量级，所以是两句话：
+ *
+ * - **删模组**：这份转换结果没了，再要就得重传重转（十几分钟加一次钱）。
+ *   用它开过的房间不受影响——因为**有房间在用就根本删不掉**（后端 409）。
+ * - **删记录**：只少一行，但**失败理由跟着没了**，而那是"下次换个什么文件"
+ *   的唯一依据。代价小也要说。
  */
 function DeleteConfirm({
   deleting,
+  removesModule,
   onConfirm,
   onCancel,
 }: {
   deleting: boolean
+  removesModule: boolean
   onConfirm: () => void
   onCancel: () => void
 }) {
   return (
     <div className="bg-page p-2.5 flex flex-col gap-2">
-      <p className="text-[11px] text-text-muted leading-relaxed">
-        删了要再玩就得<span className="font-bold text-text-primary">重传重转一遍</span>
-        （十几分钟）。已经用它开过的房间不受影响。
-      </p>
+      {removesModule ? (
+        <p className="text-[11px] text-text-muted leading-relaxed">
+          删了要再玩就得<span className="font-bold text-text-primary">重传重转一遍</span>
+          （十几分钟）。已经用它开过的房间不受影响。
+        </p>
+      ) : (
+        /* 没转成的那条删掉只是少一行记录——但**失败理由会跟着没了**，
+           而它正是"下次换个什么文件"的依据。代价小，也要说。 */
+        <p className="text-[11px] text-text-muted leading-relaxed">
+          只删这条记录，<span className="font-bold text-text-primary">没转成的原因也会一起没</span>
+          。原文件要重新上传才能再试。
+        </p>
+      )}
       <div className="flex items-center gap-1.5">
         <button
           onClick={onConfirm}

@@ -83,6 +83,17 @@ export class ModulesResource {
   }
 
   /**
+   * DELETE /api/v1/modules/import/{jobId} — 把一条导入记录从列表里抹掉。
+   *
+   * 删的是**记录**，不是模组。还连着一份模组的记录会 409——那份模组要清得走
+   * `deleteModule`，否则「我的模组」失去它唯一的入口就再也删不掉了。
+   * 正在转的那条也会 409：后台还在往它上面写。
+   */
+  deleteImportJob(token: string, jobId: string): Promise<null> {
+    return this.client.delete<null>(`/modules/import/${jobId}`, this.authenticated(token));
+  }
+
+  /**
    * POST /api/v1/modules/import/{jobId}/retry — 重跑一次。
    *
    * 🔴 **返回的是一个新 job**：旧 job 的失败理由要留着，否则用户点三次就再也

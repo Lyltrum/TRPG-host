@@ -34,6 +34,16 @@ export async function deleteModule(moduleId: string): Promise<void> {
   await sdk.modules.deleteModule(requireAuthToken(), moduleId)
 }
 
+/**
+ * 把一条导入记录从「我的模组」里抹掉。删的是**记录**，不是模组。
+ *
+ * 还连着一份模组的记录会 409（那份模组要清得走 `deleteModule`），正在转的
+ * 也会 409。两句理由都要原样给用户看。
+ */
+export async function deleteModuleImport(jobId: string): Promise<void> {
+  await sdk.modules.deleteImportJob(requireAuthToken(), jobId)
+}
+
 /** 重跑。返回的是**一个新 job**，调用方要拿新的 jobId 继续轮询。 */
 export async function retryModuleImport(jobId: string): Promise<ModuleImportJob> {
   return sdk.modules.retryImport(requireAuthToken(), jobId)

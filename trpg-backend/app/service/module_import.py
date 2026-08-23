@@ -29,7 +29,7 @@ from pathlib import Path
 
 import structlog
 from fastapi import UploadFile, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
@@ -249,6 +249,63 @@ async def get_import_job(db: AsyncSession, job_id: str, user_id: str) -> ModuleI
     if job is None or job.owner_user_id != user_id:
         raise AppException(ErrorCode.NOT_FOUND, "导入任务不存在", status.HTTP_404_NOT_FOUND)
     return _to_dto(job)
+
+
+async def delete_import_job(db: AsyncSession, job_id: str, user_id: str) -> None:
+    """把一条导入记录从「我的模组」里抹掉。
+
+    ## 判据：**没连着一份还在的模组，就可以删它自己**
+
+    不是「失败的才能删」——那条规则会漏掉第三种垃圾：**模组已经被删掉、只剩
+    一条 `succeeded` 记录**（`delete_module` 会把 `result_scenario_id` 清空，
+    行本身留着）。那张卡片显示「已就绪」、点不开、也没有删除入口。
+
+    反过来，还连着模组的记录**不许**从这里删：删了它模组还在，而「我的模组」
+    是那份模组唯一的入口 ⇒ 用户再也删不掉它。要清就走 `delete_module`。
+
+    ## 还在跑的不许删
+
+    后台线程还在往这个 job 上写状态。删了行，线程照跑、照花钱，用户却看不到
+    任何进度——比留着更糟。
+
+    ## 顺带清两样
+
+    - **重试链的指针**：`retried_from_job_id` 有外键约束，指向被删的行会在
+      Postgres 上直接炸（SQLite 默认不强制，本地测不出来）。判据「删引用方
+      之前先清指针」的反面：这里删的是**被引用方**，得先把指针摘掉。
+    - **上传件**：没有别的记录引用同一个文件时才删。它是第三方模组正文，
+      留着既占地方又是版权面上的多余副本；而共享同一个 sha256 的另一条记录
+      还要靠它重试。
+    """
+    job = await db.get(ModuleImportJob, job_id)
+    if job is None or job.owner_user_id != user_id:
+        raise AppException(ErrorCode.NOT_FOUND, "导入任务不存在", status.HTTP_404_NOT_FOUND)
+    if job.status in (STATUS_PENDING, STATUS_RUNNING):
+        raise AppException(
+            ErrorCode.CONFLICT, "这个任务还在跑，等它结束再删。", status.HTTP_409_CONFLICT
+        )
+    if job.result_scenario_id is not None:
+        raise AppException(
+            ErrorCode.CONFLICT,
+            "这条记录还连着一份模组，要清掉请先删那份模组。",
+            status.HTTP_409_CONFLICT,
+        )
+
+    source_path = job.source_path
+    await db.execute(
+        update(ModuleImportJob)
+        .where(ModuleImportJob.retried_from_job_id == job_id)
+        .values(retried_from_job_id=None)
+    )
+    await db.execute(delete(ModuleImportJob).where(ModuleImportJob.id == job_id))
+    await db.commit()
+
+    if source_path:
+        still_used = await db.scalar(
+            select(func.count(ModuleImportJob.id)).where(ModuleImportJob.source_path == source_path)
+        )
+        if not still_used:
+            Path(source_path).unlink(missing_ok=True)
 
 
 async def retry_import(

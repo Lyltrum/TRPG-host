@@ -116,6 +116,21 @@ async def get_import_job(
     return ApiResponse.ok(job)
 
 
+@router.delete("/import/{job_id}", response_model=ApiResponse[None])
+async def delete_import_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ApiResponse[None]:
+    """DELETE /api/v1/modules/import/{jobId} —— 把一条导入记录从列表里抹掉。
+
+    删的是**记录**，不是模组。还连着一份模组的记录删不掉（409）——那份模组
+    要清就走 `DELETE /modules/{moduleId}`，判据见 service。
+    """
+    await module_import_service.delete_import_job(db, job_id, user.id)
+    return ApiResponse.ok(None)
+
+
 @router.post("/import/{job_id}/retry", response_model=ApiResponse[ModuleImportJobRead])
 async def retry_import_job(
     job_id: str,

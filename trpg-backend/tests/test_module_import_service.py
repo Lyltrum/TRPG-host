@@ -282,3 +282,101 @@ async def test_concurrency_is_capped(tmp_path, monkeypatch) -> None:
             )
 
     assert "排满" in exc.value.message
+
+
+# ── 删掉一条导入记录 ──────────────────────────────────
+
+_OWNER = str(uuid.uuid4())
+_OTHER = str(uuid.uuid4())
+
+
+async def test_a_failed_record_can_be_removed() -> None:
+    """列表被没转成的记录占满时，用户得有办法清掉它们。"""
+    async with _session_factory() as db:
+        job = await _job(db, owner_user_id=_OWNER, status=STATUS_FAILED, error_message="没转成")
+        await svc.delete_import_job(db, job.id, _OWNER)
+        assert await db.get(ModuleImportJob, job.id) is None
+
+
+async def test_a_succeeded_record_whose_module_is_gone_can_be_removed() -> None:
+    """🔴 **第三种垃圾**：模组删了，只剩一条 `succeeded` 记录。
+
+    `delete_module` 会把 `result_scenario_id` 清空、行本身留着 ⇒ 那张卡片显示
+    「已就绪」、点不开、也没有删除入口。判据写成「失败的才能删」就会漏掉它，
+    所以真正的判据是**没连着一份还在的模组**。
+    """
+    async with _session_factory() as db:
+        job = await _job(db, owner_user_id=_OWNER, status=STATUS_SUCCEEDED, result_scenario_id=None)
+        await svc.delete_import_job(db, job.id, _OWNER)
+        assert await db.get(ModuleImportJob, job.id) is None
+
+
+async def test_a_record_still_holding_a_module_is_refused() -> None:
+    """删了它模组还在，而「我的模组」是那份模组唯一的入口 ⇒ 再也删不掉。"""
+    async with _session_factory() as db:
+        job = await _job(
+            db,
+            owner_user_id=_OWNER,
+            status=STATUS_SUCCEEDED,
+            result_scenario_id=str(uuid.uuid4()),
+        )
+        with pytest.raises(AppException) as err:
+            await svc.delete_import_job(db, job.id, _OWNER)
+        assert "先删那份模组" in err.value.message
+        assert await db.get(ModuleImportJob, job.id) is not None
+
+
+@pytest.mark.parametrize("running_status", [STATUS_RUNNING, "pending"])
+async def test_a_running_record_is_refused(running_status: str) -> None:
+    """后台线程还在往它上面写。删了行，线程照跑照花钱，用户却看不到进度。"""
+    async with _session_factory() as db:
+        job = await _job(db, owner_user_id=_OWNER, status=running_status)
+        with pytest.raises(AppException):
+            await svc.delete_import_job(db, job.id, _OWNER)
+        assert await db.get(ModuleImportJob, job.id) is not None
+
+
+async def test_someone_elses_record_looks_like_it_does_not_exist() -> None:
+    """同 `get_import_job` 的口径：不确认"这个 id 存在但你没权限"。"""
+    async with _session_factory() as db:
+        job = await _job(db, owner_user_id=_OTHER, status=STATUS_FAILED)
+        with pytest.raises(AppException) as err:
+            await svc.delete_import_job(db, job.id, _OWNER)
+        assert "不存在" in err.value.message
+        assert await db.get(ModuleImportJob, job.id) is not None
+
+
+async def test_the_retry_chain_pointer_is_cleared_not_left_dangling() -> None:
+    """🔴 `retried_from_job_id` 有外键约束。
+
+    指向被删的行在 Postgres 上直接炸，而 **SQLite 默认不强制外键 ⇒ 本地测不出来**
+    ——所以这条断言的是"指针被清空了"，不是"删除没报错"。
+    """
+    async with _session_factory() as db:
+        old = await _job(db, owner_user_id=_OWNER, status=STATUS_FAILED)
+        new = await _job(
+            db, owner_user_id=_OWNER, status=STATUS_INTERRUPTED, retried_from_job_id=old.id
+        )
+        await svc.delete_import_job(db, old.id, _OWNER)
+        refreshed = await db.get(ModuleImportJob, new.id)
+        assert refreshed is not None, "重试出来的那条不该被连带删掉"
+        assert refreshed.retried_from_job_id is None
+
+
+async def test_the_upload_is_deleted_only_when_nothing_else_points_at_it(tmp_path) -> None:
+    """上传件是第三方正文，没人再引用就该清掉；还有人引用就必须留着。"""
+    shared = tmp_path / "shared.pdf"
+    shared.write_bytes(b"%PDF-")
+    lonely = tmp_path / "lonely.pdf"
+    lonely.write_bytes(b"%PDF-")
+
+    async with _session_factory() as db:
+        a = await _job(db, owner_user_id=_OWNER, status=STATUS_FAILED, source_path=str(shared))
+        await _job(db, owner_user_id=_OWNER, status=STATUS_FAILED, source_path=str(shared))
+        c = await _job(db, owner_user_id=_OWNER, status=STATUS_FAILED, source_path=str(lonely))
+
+        await svc.delete_import_job(db, a.id, _OWNER)
+        assert shared.exists(), "还有另一条记录要靠它重试"
+
+        await svc.delete_import_job(db, c.id, _OWNER)
+        assert not lonely.exists(), "没人再引用它了，第三方正文不该留在盘上"

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.background_writer import BackgroundWriter, build_prompt, to_detail
 from app.core.coc7.content import build_coc7_ruleset
 from app.core.config import get_settings
+from app.core.equipment_check import clamp_items
 from app.models.room import Room
 
 logger = structlog.get_logger()
@@ -95,10 +96,25 @@ async def generate_background(
     occupation: str,
     age: int,
     skills: dict[str, int],
-) -> tuple[str, dict[str, str]] | None:
-    """生成 `(background, background_detail)`。**没配 key 或任何失败都返回 None**，
-    由调用方保持背景为空——那正是本功能上线前的状态，`sheet_digest` 会渲染成
-    「未填写（这张卡没有写过去）」，而 #55 已验证模型会把空白留给玩家。
+) -> tuple[str, dict[str, str], list[str]] | None:
+    """生成 `(background, background_detail, equipment)`。
+
+    **没配 key 或任何失败都返回 None**，由调用方保持背景为空——那正是本功能
+    上线前的状态，`sheet_digest` 会渲染成「未填写（这张卡没有写过去）」，
+    而 #55 已验证模型会把空白留给玩家。
+
+    ## 🔴 装备为什么搭这趟车（`exec/46` B8）
+
+    快速建卡此前**不给任何装备**，于是刚做完的那整条装备合理性校验链
+    在这条路径上**结构上跑不到**（2026-08-19 查"装备校验零样本"时的根因）。
+
+    合进这一次调用而不是新开一次：这里已经在为同一个人调一次 LLM，而且
+    **`era` 已经在 prompt 里**——装备正需要年代。多开一次往返是白花的钱。
+
+    **生成出来的装备不再过一遍 `equipment_check`**：那两条规则（年代 / 身份
+    配不配得上武器）已经写进生成 prompt 了，再审一次是让模型自己驳自己，
+    而审不过会让**快速建卡整个失败**——那比装备不合理糟得多。
+    校验那条门是拦**玩家自己写的**，两者的对象不同。
     """
     if writer is None:
         return None
@@ -117,4 +133,4 @@ async def generate_background(
     )
     if background is None:
         return None
-    return background.summary, to_detail(background)
+    return background.summary, to_detail(background), clamp_items(background.equipment)

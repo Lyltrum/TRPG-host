@@ -33,7 +33,8 @@ _FULL_JSON = """{
   "significantPeople": "重要之人",
   "meaningfulLocations": "重要之地",
   "treasuredPossessions": "宝贵之物",
-  "traits": "特质"
+  "traits": "特质",
+  "equipment": ["手电筒", "记者证", "怀表"]
 }"""
 
 
@@ -361,3 +362,125 @@ async def test_ai_teammate_gets_a_background_too(
     character = await db_session.scalar(select(Character).where(Character.player_id == player.id))
     assert character is not None
     assert character.background == "总述"
+
+
+# ── 快速建卡的装备（`exec/46` B8）─────────────────────
+
+
+async def test_quick_build_now_comes_with_equipment(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """🔴 此前这条路径**一件装备都不给**，于是刚做完的那整条装备合理性校验链
+    在这里**结构上跑不到**（2026-08-19 查"装备校验零样本"时的根因）。"""
+    writer, _ = _writer_with(_FULL_JSON)
+    app.state.background_writer = writer
+
+    room = await create_room(client, nickname="账号昵称")
+    response = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/quick-build",
+        json={"name": "凌铭辉"},
+        headers=reconnect(room["reconnectToken"]),
+    )
+    character = await db_session.get(Character, response.json()["data"]["characterId"])
+    assert character is not None
+    assert character.equipment == ["手电筒", "记者证", "怀表"]
+
+
+async def test_quick_build_without_a_writer_still_has_no_equipment(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """没配 key 时装备为空——**跟本功能上线前逐字一致**。
+
+    快速建卡不能因为"生成不出装备"而失败：这条路径的全部意义就是让新人填个
+    名字就能开局。
+    """
+    app.state.background_writer = None
+    room = await create_room(client, nickname="账号昵称")
+    response = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/quick-build",
+        json={"name": "凌铭辉"},
+        headers=reconnect(room["reconnectToken"]),
+    )
+    assert response.status_code == 201
+    character = await db_session.get(Character, response.json()["data"]["characterId"])
+    assert character is not None
+    assert not character.equipment
+
+
+async def test_regenerating_the_background_keeps_the_equipment(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """🔴 **重摇背景不许动装备。**
+
+    玩家想换的是这个人的过去，而他可能已经手改过身上的东西了。
+    `generate_background` 现在返回三元组，这条守的是**重摇那一路把第三项丢掉**
+    ——丢错了方向就会静默抹掉玩家改过的装备。
+    """
+    writer, _ = _writer_with(_FULL_JSON)
+    app.state.background_writer = writer
+
+    room = await create_room(client, nickname="账号昵称")
+    built = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/quick-build",
+        json={"name": "凌铭辉"},
+        headers=reconnect(room["reconnectToken"]),
+    )
+    character_id = built.json()["data"]["characterId"]
+
+    # 玩家手动改成自己的一套
+    character = await db_session.get(Character, character_id)
+    assert character is not None
+    character.equipment = ["玩家自己加的撬棍"]
+    await db_session.commit()
+
+    again = await client.post(
+        f"{ROOMS_BASE}/{room['roomId']}/characters/{character_id}/regenerate-background",
+        headers=reconnect(room["reconnectToken"]),
+    )
+    # 🔴 装置自证：第一版把路径写成了 `background/regenerate`，请求打了个 404，
+    #    装备当然没变——**测试假绿，变异体大摇大摆活下来**。断言状态码才钉得住。
+    assert again.status_code == 200, again.text
+    await db_session.refresh(character)
+    assert character.equipment == ["玩家自己加的撬棍"], "重摇背景把玩家改过的装备抹掉了"
+
+
+def test_the_prompt_forbids_anachronisms_and_unfit_weapons() -> None:
+    """两条规则都要在 prompt 里：**年代**（不许出现那之后才有的东西）与
+    **身份**（普通人别带枪）。
+
+    生成出来的装备**不再过一遍 `equipment_check`**——那是让模型自己驳自己，
+    而审不过会让整个快速建卡失败。所以这两条规则是唯一的防线，得钉住。
+    """
+    # 规则在 system prompt（`_INSTRUCTIONS`）里，不在按人拼的那段 user 消息里
+    # ——第一版断言查错了地方，被自己的装置打红。
+    from app.core.background_writer import _INSTRUCTIONS
+
+    assert "不许出现给定年代之后才有的东西" in _INSTRUCTIONS
+    assert "普通人别带枪" in _INSTRUCTIONS
+
+
+def test_write_keeps_every_field() -> None:
+    """🔴 **`write` 的最后一行是「逐个列出的地方」**：它重建一个
+    `CharacterBackground`，漏掉哪个字段那个字段就静默消失。
+
+    `equipment` 加进来当天就撞上过一次——解析对了、重建时没带，于是快速建卡
+    拿到的装备恒为空，而**没有任何东西会变红**。
+
+    这条遍历 model 的全部字段比对，加新字段时会先在这里红。
+    """
+    from app.core.background_writer import CharacterBackground, _clip
+
+    full = CharacterBackground(
+        summary="总述",
+        personalDescription="形象",
+        ideology="信念",
+        significantPeople="重要之人",
+        meaningfulLocations="重要之地",
+        treasuredPossessions="宝贵之物",
+        traits="特质",
+        equipment=["手电筒"],
+    )
+    # 装置自证：样本里不许有任何字段停在默认值，否则"漏传之后恢复出来也一样"
+    for field_name in CharacterBackground.model_fields:
+        assert getattr(full, field_name), f"样本的 {field_name} 是空的 —— 这条测试守不住它"
+    assert _clip("x", 10) == "x"

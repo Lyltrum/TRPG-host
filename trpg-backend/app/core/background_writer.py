@@ -89,6 +89,12 @@ _INSTRUCTIONS = """你在为一场克苏鲁的呼唤（COC7）跑团里的调查
 5. **每项 40-60 字，写完整的句子**。总述不超过 100 字。宁可少写一个细节，\
 也不要写到一半。
 6. 中文。人名地名符合给定的时代与地区。
+7. **随身物品从这个人长出来，而且要过得了年代**：他的职业会带什么、\
+上面写的"宝贵之物"是不是就在身上。**3-5 件，每件一个短名词**（"手电筒"\
+"记者证"，不是"一支用了很多年的钢笔，是父亲留下的"）。
+   🔴 **不许出现给定年代之后才有的东西**——手机、电脑、塑料、抗生素之类；\
+拿不准就用那个年代一定有的（笔记本、火柴、怀表、绳子）。
+   🔴 **武器要配得上身份**：普通人别带枪。军警猎人可以，医生教授文员不行。
 
 输出 JSON，七个字段全部填写：
 {
@@ -98,7 +104,8 @@ _INSTRUCTIONS = """你在为一场克苏鲁的呼唤（COC7）跑团里的调查
   "significantPeople": "重要之人：一个具体的人，写清关系",
   "meaningfulLocations": "重要之地：一个具体地点，写清为什么",
   "treasuredPossessions": "宝贵之物：一件具体物品，写清来历",
-  "traits": "特质：一个鲜明的性格或习惯"
+  "traits": "特质：一个鲜明的性格或习惯",
+  "equipment": ["随身物品，3-5 件，每件一个短名词"]
 }"""
 
 
@@ -116,6 +123,9 @@ class CharacterBackground(BaseModel):
     meaningfulLocations: str = Field(default="", description="重要之地")  # noqa: N815
     treasuredPossessions: str = Field(default="", description="宝贵之物")  # noqa: N815
     traits: str = Field(default="", description="特质")
+    #: 随身物品。**空列表是合法的**——模型漏填就当没有，卡照常成立
+    #: （同上面七个字段给默认值的理由）。
+    equipment: list[str] = Field(default_factory=list, description="随身物品 3-5 件")
 
 
 def build_prompt(
@@ -191,9 +201,14 @@ class BackgroundWriter:
             logger.warning("character_background_failed", error=str(exc))
             return None
 
+        # 🔴 这里是**逐个列出的地方**：重建对象时漏掉哪个字段，那个字段就静默
+        #    消失。`equipment` 加进来当天就撞上了一次——上面解析对了，这一行没带，
+        #    于是快速建卡拿到的装备恒为空，而没有任何东西会变红。
+        #    加字段时**先看这一行**。`test_write_keeps_every_field` 钉住它。
         return CharacterBackground(
             summary=_clip(background.summary, _SUMMARY_MAX_CHARS),
             **{k: _clip(getattr(background, k), _FIELD_MAX_CHARS) for k in _DETAIL_KEYS},
+            equipment=list(background.equipment),
         )
 
 

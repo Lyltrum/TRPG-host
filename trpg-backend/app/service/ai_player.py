@@ -142,7 +142,7 @@ async def create_ai_player(
         age=_AI_AGE,
         skills=skills,
     )
-    background, background_detail = written if written is not None else (None, None)
+    background, background_detail, equipment = written if written is not None else (None, None, [])
     db.add(
         Character(
             room_id=room_id,
@@ -161,6 +161,8 @@ async def create_ai_player(
             generation_method=GENERATION_POINT_BUY,
             background=background,
             background_detail=background_detail,
+            # AI 队友跟真人一键生成同一条路：它身上也该有东西（`exec/46` B8）。
+            equipment=equipment,
         )
     )
     await db.commit()

@@ -277,7 +277,11 @@ async def quick_build_character(
         skills=sheet.skills,
     )
     if written is not None:
-        character.background, character.background_detail = written
+        # 🔴 装备跟着背景一起来（`exec/46` B8）。此前这条路径**一件装备都不给**，
+        # 于是刚做完的那整条装备合理性校验链在这里结构上跑不到。
+        character.background, character.background_detail, equipment = written
+        if equipment:
+            character.equipment = equipment
     if existing is None:
         db.add(character)
     player.has_character = True
@@ -615,7 +619,9 @@ async def regenerate_background(
     )
     if written is None:
         raise BackgroundUnavailableError("背景生成失败")
-    character.background, character.background_detail = written
+    # 🔴 **装备那一项刻意丢掉**：玩家想换的是这个人的过去，不是他身上的东西
+    #    ——他可能已经手改过装备了，重摇背景不该把那些抹掉。
+    character.background, character.background_detail, _ = written
     await db.commit()
     return await get_character(db, room_id, character_id, reconnect_token)
 

@@ -27,9 +27,12 @@ from app.core.keeper.contract.module_loader import (
     iter_all_nodes,
     merged_graph,
     render_index,
+    render_node,
     render_node_index,
     render_npc_index,
 )
+from app.core.keeper.runtime.focus import focus_set, isolated_node_ids
+from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
 
 _BACKEND = Path(__file__).resolve().parents[1]
 _CORPUS = _BACKEND.parent / "模组资料"
@@ -205,3 +208,69 @@ def test_no_real_module_leaks_kp_text_into_its_index() -> None:
             if len(body) < 12:  # 太短的正文可能整段就是个标题，不构成泄露判据
                 continue
             assert body not in index, f"{label} 的 {node.id} 把 kp_text 漏进了索引"
+
+
+# ═══ 关注集：八份真模组，每个节点各当一次起点（exec/47 P1a）═══
+
+#: 🔴 **一次召回最多能拉进多大一片正文**（字符）。
+#:
+#: 八份模组每个节点各当一次起点，**实测最大 7,921**（死者的顿足舞的
+#: `funeral-scene`，13 个节点——正是那份模组里度数最高的那个）。其余七份的
+#: 最大值都在 4,386 以下，顿足舞是离群点：它只有 10 个顶层节点却挂了 21 个
+#: 子节点，节点中位长度是别人的两到三倍。
+#:
+#: 🔴 **它抓不到"邻居扩散变两跳"，别指望它守这个。** 实测扩到两跳只涨
+#: **1.3–2.1 倍**（八份最大 11,087，仍在这条线以下）——我原本在这里写的
+#: 「两跳会翻几倍、顿足舞上是几万」是**推理出来的，量完是错的**。守一跳的
+#: 是 `test_neighbours_are_one_hop_only`（单元，扩两跳当场红）。
+#:
+#: 这条线抓的是**量级失控**：哪个来源开始无脑全塞、或者过滤失效把整张图拉进来。
+#: 真越线时该看的是"谁把它撑大了"，不是把这个数调大。
+#:
+#: （第一版按 p90 定成 5,500，当场被顿足舞打红——**p90 不是最大值**。）
+_RECALL_CEILING = 12000
+
+
+@pytest.mark.skipif(not _CORPUS.exists(), reason="第三方模组是 gitignored 的，CI 上没有")
+def test_no_single_beat_recalls_a_huge_slab_of_the_script() -> None:
+    """召回段不许悄悄长回整份注入的量级。
+
+    分层的全部意义在于这个数**不随模组变大**——真正随节点数涨的只有索引。
+    """
+    for label, module in _corpus():
+        by_id = {node.id: node for node in iter_all_nodes(module.nodes)}
+        for node_id in by_id:
+            focus = focus_set(module, {CURRENT_NODE_KEY: node_id})
+            chars = sum(len(render_node(by_id[k])) for k in focus.node_ids)
+            assert chars <= _RECALL_CEILING, (
+                f"{label} 站在 {node_id} 上时召回了 {chars} 字符"
+                f"（{len(focus.node_ids)} 个节点）——检查扩散是不是变成了两跳"
+            )
+
+
+@pytest.mark.skipif(not _CORPUS.exists(), reason="第三方模组是 gitignored 的，CI 上没有")
+def test_standing_on_a_node_always_recalls_that_node() -> None:
+    """最起码的一条：**人在哪儿，那儿的正文就得在**。
+
+    看着是废话，但它是整条链上唯一"漏了会毁掉这一拍"的来源——其余四个来源
+    漏掉只是少给一点上下文。
+    """
+    for label, module in _corpus():
+        for node in iter_all_nodes(module.nodes):
+            focus = focus_set(module, {CURRENT_NODE_KEY: node.id})
+            assert node.id in focus.node_ids, f"{label} 的 {node.id} 站上去都拿不到自己"
+
+
+@pytest.mark.skipif(not _CORPUS.exists(), reason="第三方模组是 gitignored 的，CI 上没有")
+def test_the_resident_slab_of_isolated_nodes_stays_small() -> None:
+    """孤立节点走常驻——**前提是它们真的很小**。
+
+    实测 0–2,043 字符（占 `render_full` 0–3.6%）。这条线一旦被越过，"直接常驻"
+    这个决定本身就要重新算账（那时才轮到运行时边或者别的办法）。
+    """
+    for label, module in _corpus():
+        by_id = {node.id: node for node in iter_all_nodes(module.nodes)}
+        chars = sum(len(render_node(by_id[k])) for k in isolated_node_ids(module))
+        ratio = chars / len(render_index(module))
+        assert chars <= 4000, f"{label} 的孤立节点正文有 {chars} 字符，常驻不划算了"
+        assert ratio < 1.0, f"{label} 的孤立节点正文比整份索引还大（{chars}）"

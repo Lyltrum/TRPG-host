@@ -87,7 +87,52 @@ MIN_TURNS_BETWEEN_CHAPTERS = 12
 CHAPTER_EVENT_CEILING = HISTORY_LIMIT // 2
 
 #: 一段摘要的字数上限——它要长期常驻上下文，不能自己变成新的上下文负担。
-CHAPTER_MAX_CHARS = 120
+#: 一段摘要的**目标**字数区间，与**目标压缩比**。
+#:
+#: 🔴 **管着长度的是 prompt 里那句"不超过 N 字"，不是下面的硬截断。**
+#: 实测 351 拍那一局的 11 段：48/61/49/68/74/83/89/49/48/48/55 字——
+#: **一段都没碰到硬上限**。动硬上限等于动一个从没生效过的东西。
+#:
+#: ## 为什么要跟段长挂钩
+#:
+#: 摘要有两条触发路径，覆盖的原文差一个数量级（实测同一局）：
+#:
+#: | 触发 | 覆盖 | 原文字符 | 压成 120 字 |
+#: |---|---:|---:|---:|
+#: | 换场景（≥12 拍） | 27–44 行 | 1,726–2,382 | 14–20:1 |
+#: | 兜底（200 条事件） | 198–200 行 | 10,308–11,370 | **86–95:1** |
+#:
+#: 两者共用同一个字数要求 ⇒ 兜底段的压缩比是场景段的 5 倍。而兜底段恰恰是
+#: **最该记住的那种**：它触发的条件是"玩家长时间待在一个场景"，那通常意味着
+#: 一场硬仗或一段长谈。
+#:
+#: 🔴 这**不是「调阈值」**（判据「隔着模型的量别调阈值」不适用）：字数上限是
+#: 我们自己定的输出约束，中间不隔任何不由我们决定的东西。
+#:
+#: ## 为什么要封顶
+#:
+#: L2 是**常驻段**，段数随对局长度无界增长。不封顶的话长局会把预算吃光。
+#: 200 字 × 外推 31 段（按这一局 351 拍 11 段的密度推到 1000 拍）≈ 6,200 字符，
+#: 约占 7 万预算的 9%。`test_chapter.py` 有一条守护钉住这个总量。
+CHAPTER_MIN_CHARS = 60
+CHAPTER_TARGET_MAX_CHARS = 200
+CHAPTER_COMPRESSION_RATIO = 30
+
+#: 硬截断：模型超了目标就砍。**留 1.5 倍余量**——它是兜底不是常规路径，
+#: 卡得太紧会把一句话从中间切断，那比长一点更糟。
+CHAPTER_MAX_CHARS = int(CHAPTER_TARGET_MAX_CHARS * 1.5)
+
+
+def chapter_budget(source_chars: int) -> int:
+    """这一段该摘成多少字——**按它覆盖的原文长度算**。
+
+    夹在 `[CHAPTER_MIN_CHARS, CHAPTER_TARGET_MAX_CHARS]` 之间：短段维持原来的
+    60 字（行为不变），长段按目标压缩比放宽，再长也不超过封顶。
+    """
+    return max(
+        CHAPTER_MIN_CHARS,
+        min(CHAPTER_TARGET_MAX_CHARS, source_chars // CHAPTER_COMPRESSION_RATIO),
+    )
 
 
 def should_summarize(*, scene_changed: bool, turns_since_last: int, events_since_last: int) -> bool:
@@ -173,7 +218,12 @@ async def events_since_last_chapter(db: AsyncSession, *, room_id: str) -> int:
 
 
 async def record_chapter(
-    db: AsyncSession, *, room_id: str, text: str, audience: frozenset[str] | None = None
+    db: AsyncSession,
+    *,
+    room_id: str,
+    text: str,
+    audience: frozenset[str] | None = None,
+    max_chars: int = CHAPTER_MAX_CHARS,
 ) -> None:
     """落一段摘要。调用方负责 commit。
 
@@ -183,7 +233,7 @@ async def record_chapter(
     clean = text.strip()
     if not clean:
         return
-    payload: dict = {"text": clean[:CHAPTER_MAX_CHARS]}
+    payload: dict = {"text": clean[:max_chars]}
     if audience:
         payload["audience"] = sorted(audience)
     db.add(

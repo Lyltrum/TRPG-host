@@ -16,10 +16,13 @@ from app.core.db import Base
 from app.core.keeper.memory.chapter import (
     CHAPTER_EVENT_CEILING,
     CHAPTER_MAX_CHARS,
+    CHAPTER_MIN_CHARS,
+    CHAPTER_TARGET_MAX_CHARS,
     MIN_LINES_PER_CHAPTER,
     MIN_TURNS_BETWEEN_CHAPTERS,
     Chapter,
     build_recap,
+    chapter_budget,
     events_since_last_chapter,
     load_chapters,
     record_chapter,
@@ -722,9 +725,11 @@ async def test_only_the_new_stretch_gets_summarised(room, monkeypatch) -> None:
     await _add_actions(factory, room_id, player_id, 14)
 
     seen: list[list[str]] = []
+    budgets: list[int] = []
 
-    async def _fake_summarize(_client, lines):
+    async def _fake_summarize(_client, lines, *, budget_chars):
         seen.append(list(lines))
+        budgets.append(budget_chars)
         return "梗概"
 
     monkeypatch.setattr("app.core.keeper.runtime.agent.summarize_chapter", _fake_summarize)
@@ -740,3 +745,92 @@ async def test_only_the_new_stretch_gets_summarised(room, monkeypatch) -> None:
     assert len(fed) == 14, f"喂了 {len(fed)} 行 —— 应该只有新产生的那 14 行"
     assert fed[0] == "第 10 行", "从上一段摘要之后那一行开始，不是从窗口开头"
     assert fed[-1] == "第 23 行"
+
+
+# ── 摘要字数跟段长挂钩（A2，2026-08-23）──────────────
+
+
+def test_a_short_stretch_keeps_the_old_budget() -> None:
+    """短段维持 60 字——**行为不变**是这条改动的前提。"""
+    assert chapter_budget(1_800) == CHAPTER_MIN_CHARS
+
+
+def test_a_long_stretch_gets_more_room() -> None:
+    """🔴 兜底段覆盖的原文是场景段的 5 倍多，字数不能还是同一个。
+
+    实测（351 拍单人局）：场景段 1,726–2,382 字符，兜底段 10,308–11,370。
+    共用 120 字上限时后者的压缩比是 86–95:1，而它恰恰是最该记住的那种
+    ——触发条件是"玩家长时间待在一个场景"，通常是一场硬仗或一段长谈。
+    """
+    assert chapter_budget(10_000) > chapter_budget(2_000)
+    assert chapter_budget(10_000) <= CHAPTER_TARGET_MAX_CHARS
+
+
+def test_the_budget_is_capped() -> None:
+    """🔴 **对侧**：L2 是常驻段，段数随对局长度无界增长。
+
+    只验"长段给得更多"的话，`return source_chars` 这个退化实现照样全绿——
+    那会让一段 10,000 字符的历史原样进常驻上下文。
+    """
+    assert chapter_budget(10**6) == CHAPTER_TARGET_MAX_CHARS
+
+
+def test_the_resident_total_stays_affordable() -> None:
+    """按实测密度外推到 1000 拍，L2 常驻总量仍在预算里。
+
+    这一局 351 拍产生 11 段 ⇒ 1000 拍约 31 段。全部顶格也就
+    31 × 200 = 6,200 字符，约占 7 万预算的 9%。**这条是给未来的人看的**：
+    哪天有人把封顶调大，先在这里看一眼总量。
+    """
+    segments_per_1000_beats = 31
+    assert segments_per_1000_beats * CHAPTER_TARGET_MAX_CHARS <= 7_000
+
+
+async def test_the_budget_follows_what_this_group_actually_got(room, monkeypatch) -> None:
+    """🔴 **守接线**：预算按**这一组实际拿到的行**算，不是按房间算。
+
+    分头时每组看到的行数可以差很多，共用一个预算会让短的那组被迫注水、
+    长的那组被压扁。只测 `chapter_budget` 这个纯函数是不够的——它返回什么，
+    不代表 `agent` 会拿对的参数去调它。
+    """
+    from app.core.keeper.runtime.agent import KeeperAgent
+
+    factory, (room_id, player_id) = room
+    await _add_actions(factory, room_id, player_id, 14)
+
+    budgets: list[int] = []
+
+    async def _fake_summarize(_client, lines, *, budget_chars):
+        budgets.append(budget_chars)
+        return "梗概"
+
+    monkeypatch.setattr("app.core.keeper.runtime.agent.summarize_chapter", _fake_summarize)
+    agent = KeeperAgent.__new__(KeeperAgent)
+    agent._session_factory = factory
+    agent._client = None
+    # 一段很长的历史：每行 500 字符 × 14 行 = 7,000 ⇒ 预算该显著大于下限
+    history = [HistoryLine(text="很长的一行。" * 100) for _ in range(14)]
+    await agent._summarize_chapter(room_id, history, frozenset(), scene_changed=True)
+
+    assert budgets, "装置自证：摘要没被触发"
+    assert budgets[0] > CHAPTER_MIN_CHARS, (
+        f"这一组拿到 7,000 字符的原文，预算却还是下限 {budgets[0]} —— 接线没通"
+    )
+
+
+def test_the_prompt_actually_carries_the_budget() -> None:
+    """🔴 **管着长度的是这句话，不是硬截断。**
+
+    实测 351 拍那局的 11 段全部落在 48–89 字，一段都没碰到 `CHAPTER_MAX_CHARS`
+    ——所以 `chapter_budget` 算得再对，只要它没进 prompt 就等于没算。
+
+    **变异检验**：把 prompt 里的 `{budget_chars}` 写回固定的 60，这条当场红。
+    （写这个文件时正是这一条第一次没红——判据只写在注释里，没有守门人。）
+    """
+    from app.core.keeper.narration.prompts import chapter_summary_instructions
+
+    short = chapter_summary_instructions(CHAPTER_MIN_CHARS)
+    long = chapter_summary_instructions(CHAPTER_TARGET_MAX_CHARS)
+    assert f"不超过 {CHAPTER_MIN_CHARS} 字" in short
+    assert f"不超过 {CHAPTER_TARGET_MAX_CHARS} 字" in long
+    assert short != long, "两种预算给出同一段 prompt —— 那个数根本没进去"

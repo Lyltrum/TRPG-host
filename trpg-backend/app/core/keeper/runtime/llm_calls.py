@@ -28,7 +28,7 @@ from pydantic import ValidationError
 from app.core.config import get_settings
 from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.narration.prompts import (
-    CHAPTER_SUMMARY_INSTRUCTIONS,
+    chapter_summary_instructions,
     format_chapter_input,
     format_narrator_input,
 )
@@ -256,10 +256,16 @@ async def narrate_prose(
     return clipped
 
 
-async def summarize_chapter(client: TapedClient, history_lines: list[str]) -> str:
+async def summarize_chapter(
+    client: TapedClient, history_lines: list[str], *, budget_chars: int
+) -> str:
     """第三次调用：把一段游戏历史压成一句话梗概（L2 分段摘要）。
 
     温度更低（0.2）：要的是"发生了什么"的忠实压缩，不是再创作。
+
+    `budget_chars` **必传**：一段摘要该多长取决于它覆盖了多少原文，而两条触发
+    路径覆盖的原文差一个数量级（换场景 ~1,800 字符 / 兜底 ~10,000）。给默认值
+    就等于让"忘了传"退化成"按短段处理"，那正是这个仓库禁止的静默兜底。
 
     ⚠️ 它是**后台**调用——玩家等的是叙事，不该为"整理笔记"多等几秒。失败由
     调用方吞掉只记日志：它是记忆的锦上添花，不是主路径。
@@ -272,7 +278,7 @@ async def summarize_chapter(client: TapedClient, history_lines: list[str]) -> st
         tape_kind="chapter",
         model=deepseek_model(),
         messages=[
-            {"role": "system", "content": CHAPTER_SUMMARY_INSTRUCTIONS},
+            {"role": "system", "content": chapter_summary_instructions(budget_chars)},
             {"role": "user", "content": format_chapter_input(history_lines)},
         ],
         temperature=0.2,

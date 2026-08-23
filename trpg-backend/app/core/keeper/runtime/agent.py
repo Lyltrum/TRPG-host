@@ -49,6 +49,7 @@ from app.core.keeper.contract.decision import KeeperDecision
 from app.core.keeper.contract.module_loader import ScenarioModule
 from app.core.keeper.contract.registry import Capability
 from app.core.keeper.memory.chapter import (
+    chapter_budget,
     events_since_last_chapter,
     record_chapter,
     should_summarize,
@@ -1327,9 +1328,19 @@ class KeeperAgent(Narrator):
             for audience, lines in split_history_for_chapters(recent, everyone):
                 if not lines:
                     continue
-                text = await summarize_chapter(self._client, lines)
+                # 🔴 摘多少字，按**这一组实际拿到多少原文**算，不按房间算——
+                # 分头时每组看到的行数可以差很多，共用一个预算会让短的那组
+                # 被迫注水、长的那组被压扁。
+                budget = chapter_budget(sum(len(line) for line in lines))
+                text = await summarize_chapter(self._client, lines, budget_chars=budget)
                 async with self._session_factory() as db:
-                    await record_chapter(db, room_id=room_id, text=text, audience=audience)
+                    await record_chapter(
+                        db,
+                        room_id=room_id,
+                        text=text,
+                        audience=audience,
+                        max_chars=int(budget * 1.5),
+                    )
                     await db.commit()
         except Exception:
             logger.warning("keeper_chapter_summary_failed", room_id=room_id, exc_info=True)

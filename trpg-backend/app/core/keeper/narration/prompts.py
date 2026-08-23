@@ -382,13 +382,20 @@ def format_narrator_input(
     return "\n".join(parts)
 
 
-CHAPTER_SUMMARY_INSTRUCTIONS = (
-    "你是跑团记录员。把下面这段游戏历史压缩成一句话梗概，供守秘人以后回顾。\n"
-    "只写**发生了什么**：去了哪、跟谁谈了什么、达成或搞砸了什么。\n"
-    "不写：分析、推测、评价、对玩家的建议、任何检定数值。\n"
-    "不超过 60 字，一句话，不分行。"
-)
+def chapter_summary_instructions(budget_chars: int) -> str:
+    """L2 摘要的 system prompt。**字数跟着这一段有多长走**。
+
+    🔴 **这里的字数才是真正生效的那个**，不是 `CHAPTER_MAX_CHARS`（硬截断）。
+    实测 351 拍那局的 11 段全部落在 48–89 字，一段都没碰到硬上限——管着长度的
+    一直是下面这句话。判据与实测表见 `chapter.chapter_budget`。
+    """
+    return (
+        "你是跑团记录员。把下面这段游戏历史压缩成梗概，供守秘人以后回顾。\n"
+        "只写**发生了什么**：去了哪、跟谁谈了什么、达成或搞砸了什么。\n"
+        "不写：分析、推测、评价、对玩家的建议、任何检定数值。\n"
+        f"不超过 {budget_chars} 字，不分行。"
+    )
 
 
 def format_chapter_input(history_lines: list[str]) -> str:
-    return "以下是这一段的游戏历史：\n" + "\n".join(history_lines) + "\n\n请输出一句话梗概。"
+    return "以下是这一段的游戏历史：\n" + "\n".join(history_lines) + "\n\n请输出梗概。"

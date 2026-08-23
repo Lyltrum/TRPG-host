@@ -58,6 +58,18 @@ export async function updateProfile(nickname: string): Promise<MeResult> {
 }
 
 /**
+ * 改密码。要旧密码，成功后这个账号的**其它**会话失效、当前这条保留
+ * ——所以调用方不需要重新登录。
+ *
+ * ⚠️ 这不是"找回密码"：忘了密码那条路要一个能收验证码的渠道，后端没有。
+ */
+export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
+  const token = getAuthToken();
+  if (!token) throw new Error('未登录');
+  await sdk.auth.changePassword({ oldPassword, newPassword }, token);
+}
+
+/**
  * 受邀入房用的「只报个名字」注册：账号密码由前端随机生成，玩家只输昵称。
  *
  * 🔴 **不是游客模式**：账号仍然真实存在，`join` 的幂等键（issue #106：掉线

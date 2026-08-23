@@ -35,6 +35,17 @@ class UpdateNicknameBody(CamelModel):
     nickname: NicknameStr
 
 
+class ChangePasswordBody(CamelModel):
+    """POST /api/v1/auth/password 请求体。
+
+    要旧密码：改密码这个动作的意义就在于"只有本人能改"，而 token 可能是从一台
+    没锁屏的机器上拿到的。
+    """
+
+    old_password: PasswordStr
+    new_password: PasswordStr
+
+
 class AuthResult(CamelModel):
     """注册 / 登录成功后的返回：登录凭证 + 用户信息。"""
 

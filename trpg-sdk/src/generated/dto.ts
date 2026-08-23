@@ -161,6 +161,17 @@ export interface AuthResult {
 }
 
 /**
+ * POST /api/v1/auth/password 请求体。
+ *
+ * 要旧密码：改密码这个动作的意义就在于"只有本人能改"，而 token 可能是从一台
+ * 没锁屏的机器上拿到的。
+ */
+export interface ChangePasswordBody {
+  oldPassword: string;
+  newPassword: string;
+}
+
+/**
  * POST /rooms/{roomId}/characters/{characterId}/complete 请求体（可选）。
  *
  * `equipment_notes`：物品名 → 玩家对它的说明（「我父亲留下的，他是一战老兵」）。

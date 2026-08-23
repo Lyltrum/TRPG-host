@@ -18,6 +18,7 @@ export type {
   RegisterBody as RegisterInput,
   LoginBody as LoginInput,
   UpdateNicknameBody as UpdateNicknameInput,
+  ChangePasswordBody as ChangePasswordInput,
   AuthResult,
   MeRead as Me,
   // 房间（Room）模块 —— 对应后端 dto/room.py

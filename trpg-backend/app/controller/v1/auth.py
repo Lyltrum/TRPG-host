@@ -12,7 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.controller.dependencies import extract_bearer_token
 from app.core.db import get_db
 from app.core.errors import AppException, ErrorCode
-from app.dto.auth import AuthResult, LoginBody, MeRead, RegisterBody, UpdateNicknameBody
+from app.dto.auth import (
+    AuthResult,
+    ChangePasswordBody,
+    LoginBody,
+    MeRead,
+    RegisterBody,
+    UpdateNicknameBody,
+)
 from app.dto.common import ApiResponse
 from app.service import auth as auth_service
 
@@ -51,6 +58,35 @@ async def logout(
 ) -> ApiResponse[None]:
     """POST /api/v1/auth/logout —— 退出登录，使当前 token 失效。"""
     await auth_service.logout(db, extract_bearer_token(authorization))
+    return ApiResponse.ok(None)
+
+
+@router.post("/password", response_model=ApiResponse[None])
+async def change_password(
+    payload: ChangePasswordBody,
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[None]:
+    """POST /api/v1/auth/password —— 改密码。
+
+    要旧密码（token 可能来自一台没锁屏的机器）；成功后**这个账号的其它会话
+    全部失效，当前这条保留**——改完当场把做对事的人踢回登录页没有道理。
+
+    ⚠️ 这**不是**"找回密码"。忘了密码那条路要一个能收验证码的渠道，
+    这个项目一样都没有（`exec/46` B6 留着那一半）。
+    """
+    try:
+        await auth_service.change_password(
+            db, extract_bearer_token(authorization), payload.old_password, payload.new_password
+        )
+    except (auth_service.AuthenticationError, auth_service.InvalidCredentialsError) as exc:
+        # 两种都是 401：没带凭证 / 旧密码不对。**分开列不合并成 PermissionError**
+        # ——那个基类以后可能被别的东西继承，而"什么该返回 401"是显式清单。
+        raise AppException(ErrorCode.UNAUTHORIZED, str(exc), status.HTTP_401_UNAUTHORIZED) from exc
+    except auth_service.SamePasswordError as exc:
+        raise AppException(
+            ErrorCode.VALIDATION_ERROR, str(exc), status.HTTP_400_BAD_REQUEST
+        ) from exc
     return ApiResponse.ok(None)
 
 

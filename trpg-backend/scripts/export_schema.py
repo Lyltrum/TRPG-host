@@ -37,6 +37,7 @@ _MODELS: list[type[BaseModel]] = [
     auth.RegisterBody,
     auth.LoginBody,
     auth.UpdateNicknameBody,
+    auth.ChangePasswordBody,
     auth.AuthResult,
     auth.MeRead,
     # room（issue #39）

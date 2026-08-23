@@ -11,7 +11,7 @@ import hashlib
 import uuid
 
 import bcrypt
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dto.auth import AuthResult, MeRead
@@ -28,6 +28,15 @@ class InvalidCredentialsError(PermissionError):
 
 class AuthenticationError(PermissionError):
     """未提供有效的登录凭证。"""
+
+
+class SamePasswordError(ValueError):
+    """新密码跟原密码一样。
+
+    单独一个类而不是复用 `InvalidCredentialsError`：那条会被 controller 映射成
+    401，而这件事是"你填的内容不合要求"（400），两者对用户意味着完全不同的
+    下一步。
+    """
 
 
 def _prehash(password: str) -> bytes:
@@ -90,6 +99,43 @@ async def logout(db: AsyncSession, token: str | None) -> None:
     if session is not None:
         await db.delete(session)
         await db.commit()
+
+
+async def change_password(
+    db: AsyncSession, token: str | None, old_password: str, new_password: str
+) -> None:
+    """改密码。**要旧密码，且会把这个账号的其它会话全部踢掉。**
+
+    ## 为什么要旧密码
+
+    改密码这个动作的意义就在于"只有本人能改"。光凭 token 就能改的话，一台没
+    锁屏的机器 = 账号永久易主——那正是改密码本该解决的场景。
+
+    ## 🔴 为什么要踢掉其它会话
+
+    改密码的常见理由是"我怀疑别人登进去了"。只改哈希不动会话的话，**那个人
+    手上的 token 照样有效**，改了等于没改。
+
+    **当前这条会话保留**：让用户改完密码当场被踢回登录页，是拿一次安全动作
+    去惩罚做对事的人。
+
+    ## 不做的
+
+    - **找回密码**（忘了密码的那条路）需要一个能收验证码的渠道（邮箱/短信），
+      这个项目一样都没有。**这条留着，别用"改密码"假装覆盖了它。**
+    """
+    user = await _get_user_by_token(db, token)
+    verified = await asyncio.to_thread(_verify_password, old_password, user.password_hash)
+    if not verified:
+        raise InvalidCredentialsError("原密码不正确")
+    if old_password == new_password:
+        raise SamePasswordError("新密码不能和原密码一样")
+
+    user.password_hash = await asyncio.to_thread(_hash_password, new_password)
+    await db.execute(
+        delete(UserSession).where(UserSession.user_id == user.id, UserSession.token != token)
+    )
+    await db.commit()
 
 
 async def resolve_user(db: AsyncSession, token: str | None) -> User | None:

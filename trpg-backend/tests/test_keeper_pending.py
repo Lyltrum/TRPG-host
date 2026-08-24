@@ -847,3 +847,97 @@ async def test_the_others_get_told_why_nothing_happened() -> None:
     assert nickname in said, "得说清楚在等谁"
     assert "侦察" not in said and "搜索书房" not in said, "技能名/理由只在卡片上"
     assert ROLL_PENDING_NOTICE not in said
+
+
+# ── 玩家用桌上的实体骰掷（`exec/46` B5）──────────────
+
+
+async def test_the_reported_roll_is_the_one_that_counts() -> None:
+    """🔴 报了出目就用他报的那个，**不再另外掷一次**。
+
+    这是这条功能的全部意义：线下掷骰子是最有仪式感的动作，而此前玩家掷完只能
+    无视桌上那颗、照着系统给的数字玩——骰子成了摆设。
+
+    **规则权威没有让出去**：要不要检定、目标值多少、算不算成功，仍然全由后端判。
+    让出的只有随机数。
+    """
+    room_id, player_id, nickname = await _seed_room()
+    check_request_id = "chk-manual"
+    await _enqueue(
+        room_id,
+        [
+            _check(
+                room_id=room_id,
+                check_request_id=check_request_id,
+                player_id=player_id,
+                player_nickname=nickname,
+                skill="侦察",
+            )
+        ],
+    )
+
+    notices: list = []
+
+    async def _capture(notice) -> None:
+        notices.append(notice)
+
+    # 队列清空后会走结算叙事（一次真 LLM 往返）——用 stub 桩掉，同本文件既有
+    # 那几条。**本地有 key 时不桩会真发请求**，那是这个仓库记了五次的环境泄漏。
+    agent = _stub_agent(NarrationOutcome(text="尘埃落定。"))
+    await agent.resolve_check(room_id, player_id, check_request_id, _capture, roll_value=7)
+
+    assert notices, "装置自证：结算结果一次都没推出来"
+    assert notices[0].rolled == 7, f"用的是 {notices[0].rolled}，不是玩家报的 7"
+    # 成功等级仍然由后端按目标值判——那才是"规则权威在后端"
+    assert notices[0].level, "成功等级没算"
+
+
+async def test_without_a_reported_roll_the_server_still_rolls() -> None:
+    """不报就是系统掷——**默认行为逐字不变**。
+
+    只验"报了能用"的话，一个无条件读 `manual_roll` 的实现（None 时崩掉或恒为
+    某个值）也可能溜过去。
+    """
+    room_id, player_id, nickname = await _seed_room()
+    check_request_id = "chk-auto"
+    await _enqueue(
+        room_id,
+        [
+            _check(
+                room_id=room_id,
+                check_request_id=check_request_id,
+                player_id=player_id,
+                player_nickname=nickname,
+                skill="侦察",
+            )
+        ],
+    )
+    notices: list = []
+
+    async def _capture(notice) -> None:
+        notices.append(notice)
+
+    agent = _stub_agent(NarrationOutcome(text="尘埃落定。"))
+    await agent.resolve_check(room_id, player_id, check_request_id, _capture)
+    assert notices
+    assert 1 <= notices[0].rolled <= 100
+
+
+def test_the_payload_refuses_a_number_no_d100_can_roll() -> None:
+    """🔴 「不能随便报」的第一道：报 0 或 101 不是作弊，是**这不是一颗 d100
+    能掷出来的数**。范围校验在 DTO 层，够不到业务逻辑就先被挡掉。
+
+    真作弊（报一个对自己有利的**合法**数）在「私有部署、自己和朋友玩」的定位
+    下是社交问题不是技术问题——线下桌上报假数字比在软件里改数字容易得多。
+    """
+    import pydantic
+
+    from app.dto.ws import CheckRollPayload
+
+    assert CheckRollPayload.model_validate({"checkRequestId": "x", "rollValue": 1}).roll_value == 1
+    assert CheckRollPayload.model_validate({"checkRequestId": "x", "rollValue": 100})
+    # 不带 = 系统掷
+    assert CheckRollPayload.model_validate({"checkRequestId": "x"}).roll_value is None
+    for bad in (0, -1, 101, 999):
+        with pytest.raises(pydantic.ValidationError):
+            CheckRollPayload.model_validate({"checkRequestId": "x", "rollValue": bad})

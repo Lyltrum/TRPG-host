@@ -33,6 +33,9 @@ class DelayedNarrator(Narrator):
         player_id: str,
         check_request_id: str,
         on_result: CheckResultCallback | None = None,
+        roll_value: int | None = None,
     ) -> NarrationOutcome:
         await asyncio.sleep(self._delay_seconds)
-        return await self._inner.resolve_check(room_id, player_id, check_request_id, on_result)
+        return await self._inner.resolve_check(
+            room_id, player_id, check_request_id, on_result, roll_value=roll_value
+        )

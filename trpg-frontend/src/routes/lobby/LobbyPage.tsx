@@ -176,6 +176,29 @@ export default function LobbyPage() {
 
   // 人数上限。中途加入放开之后，最常撞上的就是"位置不够了"。
   const [seatBusy, setSeatBusy] = useState(false)
+  /**
+   * 「骰子在桌上」（`exec/46` B5）。
+   *
+   * 🔴 它记的不是一个偏好，是**这一局的物理事实**：大家围坐一桌、手边有实体
+   * 骰子。开着之后玩家可以在掷骰卡片上报自己掷出的出目，而**判定仍然全在
+   * 后端**（要不要检定、目标值、算不算成功、幸运能不能补）——让出的只有随机数。
+   *
+   * 放在大厅而不是牌桌里：它是开局前定下来的一件事，而 `RoomPage` 只在挂载时
+   * 读一次房间信息。中途改的话，别人要刷新才看得到。
+   */
+  const toggleManualRolls = async () => {
+    if (!roomId || !info || seatBusy) return
+    setSeatBusy(true)
+    try {
+      setError('')
+      // 不用手动刷新：`useRoomPlayers` 每 3 秒轮询一次房间信息。
+      await updateRoomSettings(roomId, info.maxPlayers, !info.allowManualRolls)
+    } catch (err) {
+      setError(friendlyErrorMessage(err, '改不了掷骰方式'))
+    } finally {
+      setSeatBusy(false)
+    }
+  }
   const changeSeats = async (delta: number) => {
     if (!roomId || !info || seatBusy) return
     setSeatBusy(true)
@@ -276,6 +299,27 @@ export default function LobbyPage() {
           </>
         )}
       </p>
+
+      {/* 「骰子在桌上」（`exec/46` B5）。只有房主能改，而且只在开局前——
+          它是这一局的物理事实（大家手边有没有实体骰子），不是一个随时切换的
+          偏好。**默认关着**：不开的房间，掷骰这条路一个字节都没变。 */}
+      {isHost && info && (
+        <button
+          type="button"
+          onClick={toggleManualRolls}
+          disabled={seatBusy}
+          className="leaf relative z-10 w-full text-left px-3.5 py-2.5 mb-3 disabled:opacity-50"
+        >
+          <span className="text-[12.5px] font-semibold text-ink">
+            {info.allowManualRolls ? '🎲 用桌上的骰子' : '🎲 由系统掷骰'}
+          </span>
+          <span className="block text-[10.5px] text-ink-soft mt-0.5 leading-relaxed">
+            {info.allowManualRolls
+              ? '大家可以掷自己的骰子、把点数报进来。成功与否仍由系统判。'
+              : '点一下改成「用桌上的骰子」——线下聚会时，让大家掷自己手边那颗。'}
+          </span>
+        </button>
+      )}
 
       {/* 对某个成员的操作。同 `leaf`：压在桌上的一张便条，不是页面里的卡片 */}
       {acting && (

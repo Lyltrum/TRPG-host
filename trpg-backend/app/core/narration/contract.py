@@ -253,8 +253,13 @@ class Narrator(ABC):
         player_id: str,
         check_request_id: str,
         on_result: CheckResultCallback | None = None,
+        roll_value: int | None = None,
     ) -> NarrationOutcome:
         """结算一次玩家确认的掷骰（两段式玩家掷骰）。
+
+        `roll_value`：玩家用桌上实体骰掷出来的出目（`exec/46` B5）。
+        **None = 服务端掷**，那是默认行为。"这个房间准不准报数"由 WS 层判——
+        它才看得到房间那一行。
 
         `on_result`：**骰子一落地就回调**，不等结算叙事。骰值本身是纯代码、
         毫秒级，而它后面那次结算叙事是 10 秒级的 LLM 往返——两件事一起等完再

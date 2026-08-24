@@ -724,8 +724,13 @@ class KeeperAgent(Narrator):
         player_id: str,
         check_request_id: str,
         on_result: CheckResultCallback | None = None,
+        roll_value: int | None = None,
     ) -> NarrationOutcome:
         """结算一次玩家确认的掷骰（两段式玩家掷骰）。
+
+        `roll_value` 是玩家用桌上实体骰掷出来的出目（`exec/46` B5）。
+        **None = 服务端掷**，那是默认行为。这一层只负责把它带下去，
+        "这个房间准不准报数"由调用方（`ws.py`）判——它才有房间那行。
 
         队列还没清空：只广播这次的结果，不叙事——等玩家把本轮所有待掷检定
         都掷完。队列清空：复用 `narrate()` 触发一轮"结算叙事"——裁决器能
@@ -752,6 +757,7 @@ class KeeperAgent(Narrator):
             ruleset=self._ruleset,
             reserved_state_keys=reserved_state_keys(),
             rng=self._rng,
+            manual_roll=roll_value,
         )
         # 🔴 结算走注册表（exec/27 阶段 4·第八个钩子）：哪一片能力认领哪一种
         # 待掷记录由它自己声明。此前这里是一条按 kind 写死的 if/else——而"发起"

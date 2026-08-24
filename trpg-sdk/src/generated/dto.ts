@@ -500,9 +500,23 @@ export interface CheckResultPayload {
  * 检定"后随叙事一起广播的 `check.request` 事件带的那个 id）。骰值由服务端
  * 权威生成——这条消息本身不带任何"掷什么/掷多少"的信息，纯粹是"我确认
  * 掷这一个"。
+ *
+ * ## `roll_value`：玩家自己掷的那颗实体骰（`exec/46` B5）
+ *
+ * **默认不带 = 服务端权威掷**，与本字段上线前逐字一致。
+ *
+ * 带了它表示"我用桌上的骰子掷了，出目是这个"——**只有开了
+ * `rooms.allow_manual_rolls` 的房间才收**，没开的房间收到会被**明确拒绝**，
+ * 不静默忽略（静默忽略等于玩家报了个数、系统偷偷用了别的数）。
+ *
+ * 🔴 **1–100 的范围校验放在这里**：它是 d100，报 0 或 101 不是"作弊"而是
+ * "这不是一颗 d100 能掷出来的数"。真作弊（报一个对自己有利的合法数）在
+ * 「私有部署、自己和朋友玩」的定位下是社交问题不是技术问题——线下桌上报假
+ * 数字比在软件里改数字容易得多。
  */
 export interface CheckRollPayload {
   checkRequestId: string;
+  rollValue?: number | null;
 }
 
 /**
@@ -1219,19 +1233,25 @@ export interface RoomPreview {
   moduleTitle?: string | null;
   playerCount: number;
   maxPlayers: number;
+  allowManualRolls: boolean;
   players: RoomPlayerRead[];
 }
 
 /**
  * PATCH /api/v1/rooms/{roomId} 请求体。
  *
- * 只有人数上限一项。房间名不在这里：改名是纯展示需求，而这条接口的存在
- * 理由是"位置不够了"这个会卡住桌子的问题——两件事没必要绑在一起。
+ * 人数上限 + 「骰子在桌上」。房间名不在这里：改名是纯展示需求，而这条接口
+ * 的存在理由是"位置不够了"这个会卡住桌子的问题——两件事没必要绑在一起。
  * 区间跟建房时一致（`RoomCreate.max_players`），下界由服务层再按当前人数
  * 收紧一次（不能调到比在座的人还少）。
+ *
+ * 🔴 `allow_manual_rolls` **可选**：不传 = 不动它。这条接口原本只改人数，
+ * 把它做成必填会让所有既有调用方（前端那一处、e2e）在不知情的情况下把开关
+ * 重置成 False——**加字段时给已有调用方留原样不动的那条路**。
  */
 export interface RoomSettingsBody {
   maxPlayers: number;
+  allowManualRolls?: boolean | null;
 }
 
 /**

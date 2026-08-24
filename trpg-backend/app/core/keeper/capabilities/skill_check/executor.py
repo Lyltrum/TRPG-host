@@ -167,7 +167,11 @@ async def roll_check_only(
     async with deps.session_factory() as db:
         player, character = await resolve_character(db, deps, player_name)
         display_name, target = resolve_skill_target(deps, character, skill_name)
-    outcome = dice.evaluate_check(dice.roll_d100(deps.rng), target)
+    # 🔴 玩家自己用桌上的实体骰掷时用他报的出目（`exec/46` B5）。
+    #    **对手那颗永远由系统掷**——对手是 NPC，桌边没人替它掷。
+    #    `deps.manual_roll` 恒为 None 时这一行与改动前逐字等价。
+    rolled = deps.manual_roll if deps.manual_roll is not None else dice.roll_d100(deps.rng)
+    outcome = dice.evaluate_check(rolled, target)
     opponent_outcome = (
         dice.evaluate_check(dice.roll_d100(deps.rng), opposed_value)
         if is_opposed and opposed_value is not None

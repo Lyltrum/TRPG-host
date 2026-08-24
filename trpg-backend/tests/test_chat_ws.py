@@ -336,13 +336,16 @@ class _FakeCheckNarrator(Narrator):
         player_id: str,
         check_request_id: str,
         on_result: CheckResultCallback | None = None,
+        roll_value: int | None = None,
     ) -> NarrationOutcome:
+        # 玩家报了出目就用他那个，没报用桩死的 42 —— 让用例能断言"报的那个
+        # 数真的一路走到了结果里"（`exec/46` B5）。
         notice = CheckResultNotice(
             check_request_id=check_request_id,
             kind="skill",
             player_id=player_id,
             skill="侦查",
-            rolled=42,
+            rolled=roll_value if roll_value is not None else 42,
             target=60,
             level="成功",
         )
@@ -359,6 +362,7 @@ class _RejectingCheckNarrator(Narrator):
         player_id: str,
         check_request_id: str,
         on_result: CheckResultCallback | None = None,
+        roll_value: int | None = None,
     ) -> NarrationOutcome:
         raise ValueError("没有这个待掷的检定（可能已被结算）")
 
@@ -1039,3 +1043,129 @@ def test_reconnect_resends_the_keeper_phase(sync_client: TestClient) -> None:
     phases = [e for e in before_second_handshake if e["type"] == "keeper.phase"]
     assert phases, f"重连没有补发对局阶段，只收到 {[e['type'] for e in before_second_handshake]}"
     assert phases[0]["payload"]["phase"] == PHASE_FINISHED
+
+
+# ── 「骰子在桌上」的门（`exec/46` B5）───────────────
+
+
+def test_reporting_a_roll_is_refused_when_the_room_did_not_turn_it_on(
+    sync_client: TestClient,
+) -> None:
+    """🔴 **默认关着，而且拒绝要说出口。**
+
+    静默忽略是这条功能最坏的坏法：玩家报了个数、系统偷偷用了另一个数，
+    而他会以为桌上那颗骰子算数——那比直接拒绝糟得多。
+
+    错误消息里带着**怎么打开**（「加一道门必须同时给它配一条走得通的修法」）。
+    """
+    app.state.narrator = _FakeCheckNarrator()
+    token = register_and_login(sync_client, "manual_roll_off")
+    room = create_room(sync_client, token)
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+        ws.send_json(
+            {
+                "type": "check.roll",
+                "playerId": room["playerId"],
+                "payload": {"checkRequestId": "chk-1", "rollValue": 7},
+            }
+        )
+        envelope = next_game_event(ws)
+
+    assert envelope["type"] == "error"
+    assert envelope["payload"]["code"] == "MANUAL_ROLL_NOT_ALLOWED"
+    assert "房主" in envelope["payload"]["message"], "拒绝了却没告诉他怎么打开"
+
+
+def test_the_reported_roll_goes_through_once_the_room_turns_it_on(
+    sync_client: TestClient,
+) -> None:
+    """开了之后，玩家报的那个数**一路走到结果里**。
+
+    这条走完整路径（WS → handler → narrator），不是只测那个 if——
+    「只测函数不测接线」在这个仓库里栽过两次。
+    """
+    app.state.narrator = _FakeCheckNarrator()
+    token = register_and_login(sync_client, "manual_roll_on")
+    room = create_room(sync_client, token)
+    turned_on = sync_client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}",
+        json={"maxPlayers": 4, "allowManualRolls": True},
+        headers={"X-Reconnect-Token": room["reconnectToken"]},
+    )
+    assert turned_on.status_code == 200, turned_on.text
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+        ws.send_json(
+            {
+                "type": "check.roll",
+                "playerId": room["playerId"],
+                "payload": {"checkRequestId": "chk-1", "rollValue": 7},
+            }
+        )
+        result_envelope = next_game_event(ws)
+
+    assert result_envelope["type"] == "check.result"
+    assert result_envelope["payload"]["rollValue"] == 7, "报的数没被用上"
+
+
+def test_the_room_still_rolls_for_you_when_you_do_not_report(sync_client: TestClient) -> None:
+    """开了开关也只是**允许报**，不是必须报——不报照旧由系统掷。"""
+    app.state.narrator = _FakeCheckNarrator()
+    token = register_and_login(sync_client, "manual_roll_optional")
+    room = create_room(sync_client, token)
+    sync_client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}",
+        json={"maxPlayers": 4, "allowManualRolls": True},
+        headers={"X-Reconnect-Token": room["reconnectToken"]},
+    )
+
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+        ws.send_json(
+            {
+                "type": "check.roll",
+                "playerId": room["playerId"],
+                "payload": {"checkRequestId": "chk-1"},
+            }
+        )
+        result_envelope = next_game_event(ws)
+
+    # 42 是 `_FakeCheckNarrator` 在"没报数"时给的桩值
+    assert result_envelope["payload"]["rollValue"] == 42
+
+
+def test_changing_only_the_player_cap_does_not_reset_the_switch(sync_client: TestClient) -> None:
+    """🔴 **加字段时要给已有调用方留原样不动的那条路。**
+
+    这条接口原本只改人数上限，前端那一处至今只传 `maxPlayers`。把开关做成
+    必填、或者无条件赋值，都会让"调一下人数"顺手把开关关掉——而那不是任何人
+    的本意，且不会有任何东西变红。
+    """
+    token = register_and_login(sync_client, "manual_roll_keep")
+    room = create_room(sync_client, token)
+    headers = {"X-Reconnect-Token": room["reconnectToken"]}
+    sync_client.patch(
+        f"{ROOMS_BASE}/{room['roomId']}",
+        json={"maxPlayers": 4, "allowManualRolls": True},
+        headers=headers,
+    )
+    # 只改人数，不提开关
+    sync_client.patch(f"{ROOMS_BASE}/{room['roomId']}", json={"maxPlayers": 6}, headers=headers)
+
+    app.state.narrator = _FakeCheckNarrator()
+    with sync_client.websocket_connect(f"/ws/{room['roomId']}?token={token}") as ws:
+        _join_ws(ws, room)
+        ws.send_json(
+            {
+                "type": "check.roll",
+                "playerId": room["playerId"],
+                "payload": {"checkRequestId": "chk-1", "rollValue": 7},
+            }
+        )
+        envelope = next_game_event(ws)
+
+    assert envelope["type"] == "check.result", "改人数把开关重置了"
+    assert envelope["payload"]["rollValue"] == 7

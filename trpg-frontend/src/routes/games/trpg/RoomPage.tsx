@@ -12,6 +12,7 @@ import { endGame, setPlayerAway } from '@/services/room'
 import { fetchCharacter } from '@/services/character/character-api'
 import { toCompletedCharacter } from '@/services/character/character-view'
 import { useRoomPlayers } from '@/hooks/useRoomPlayers'
+import { canReportRoll as canReportRollFor, isValidD100 } from './manual-roll'
 import { useRuleset } from '@/hooks/useRuleset'
 import { useSpeechInput } from '@/hooks/useSpeechInput'
 import TypedNarration from './TypedNarration'
@@ -1269,16 +1270,34 @@ export default function RoomPage() {
   // 掷骰确认（两段式玩家掷骰）：骰值由服务端权威生成，这里只发 checkRequestId
   // 表明"确认掷这一个"。置 rolling 防连点；结果广播回来后卡片会被收起
   // （见上面 check.result/san.check.result 的处理），rolling 状态随卡片一起消失。
-  const handleRollCheck = () => {
+  const handleRollCheck = (rollValue?: number) => {
     if (!pendingCheck || !playerId || pendingCheck.rolling) return
     setPendingCheck(prev => (prev ? { ...prev, rolling: true } : prev))
     setTyping(true)
     if (pendingCheck.kind === 'san') {
+      // 🔴 理智检定**没有**报数这条路：目标值玩家自己看不见（那是它的设计），
+      //    报一个数却不知道自己在赌什么，体验比系统掷更差。后端也没接这一半。
       sdk.roomSocket.rollSanCheck(playerId, { checkRequestId: pendingCheck.id })
     } else {
-      sdk.roomSocket.rollCheck(playerId, { checkRequestId: pendingCheck.id })
+      sdk.roomSocket.rollCheck(playerId, {
+        checkRequestId: pendingCheck.id,
+        // 不传 = 由服务端掷，那是默认行为（`exec/46` B5）。
+        ...(rollValue !== undefined ? { rollValue } : {}),
+      })
     }
   }
+
+  /**
+   * 「我自己掷的」那颗骰（`exec/46` B5）。
+   *
+   * 只在**房间开了开关**且**不是理智检定**时出现。输入框空着或填了非法值时
+   * 按钮禁用——`1–100` 是一颗 d100 的全部可能，后端 DTO 也会再挡一次。
+   */
+  const [manualRoll, setManualRoll] = useState('')
+  const manualRollNumber = Number.parseInt(manualRoll, 10)
+  const manualRollValid = isValidD100(manualRoll)
+  const canReportRoll =
+    pendingCheck !== null && canReportRollFor(roomInfo?.allowManualRolls, pendingCheck.kind)
 
   // 幸运消费（exec/26 #66）：花，或者不花。
   // 🔴 **两个按钮都要给**——跟会合确认不同，那边不点就是维持分离（安全方向
@@ -1994,9 +2013,37 @@ export default function RoomPage() {
               disabled={pendingCheck.rolling}
               className="typed px-3.5 py-2 bg-ink text-book text-[10px] flex-shrink-0 active:bg-rust disabled:opacity-50 transition-colors"
             >
-              {pendingCheck.rolling ? '掷骰中…' : '掷骰'}
+              {pendingCheck.rolling ? '掷骰中…' : canReportRoll ? '让系统掷' : '掷骰'}
             </button>
           </div>
+
+          {/* 「我自己掷的」（`exec/46` B5）。只在房主开了「用桌上的骰子」时出现。
+              🔴 **它是并排的第二个选项，不是替代**：开着开关也只是"允许报"，
+              上面那个「让系统掷」照常可用——线下也有人懒得自己掷。 */}
+          {canReportRoll && !pendingCheck.rolling && (
+            <div className="paper-grain relative flex items-center gap-2 bg-book text-ink border-l-[3px] border-brass px-3 py-2">
+              <span className="text-[11.5px] font-semibold flex-shrink-0">我自己掷的</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={manualRoll}
+                onChange={(e) => setManualRoll(e.target.value.replace(/\D/g, '').slice(0, 3))}
+                placeholder="1-100"
+                className="typed w-[62px] px-2 py-1 text-[12px] bg-page border border-ink/30 text-ink flex-shrink-0"
+              />
+              <button
+                onClick={() => {
+                  handleRollCheck(manualRollNumber)
+                  setManualRoll('')
+                }}
+                disabled={!manualRollValid}
+                className="typed px-3 py-1.5 bg-rust text-book text-[10px] flex-shrink-0 disabled:opacity-40 transition-colors"
+              >
+                报上去
+              </button>
+              <span className="text-[10px] text-ink-soft leading-tight">成功与否仍由系统判</span>
+            </div>
+          )}
         </div>
       )}
 

@@ -170,6 +170,7 @@ async def _to_room_preview(db: AsyncSession, room: Room) -> RoomPreview:
         module_title=await _module_title(db, room.scenario_id),
         player_count=len(room_players),
         max_players=room.max_players,
+        allow_manual_rolls=room.allow_manual_rolls,
         # 显式映射而不是 model_validate(p)：DTO 字段是 player_id，但 ORM Player
         # 的主键属性叫 id，from_attributes 按字段名找 p.player_id 会 missing。
         players=[
@@ -597,9 +598,13 @@ async def transfer_host(
 
 
 async def update_room_settings(
-    db: AsyncSession, room_id: str, max_players: int, reconnect_token: str | None
+    db: AsyncSession,
+    room_id: str,
+    max_players: int,
+    reconnect_token: str | None,
+    allow_manual_rolls: bool | None = None,
 ) -> None:
-    """改人数上限。
+    """改人数上限 / 「骰子在桌上」。
 
     不限阶段：中途加入（放开之后）最常撞上的就是"位置不够了"，而那时候房间
     已经在 InGame。**下界是当前人数**，不是 1——调到比在座的人还少，等于让
@@ -611,6 +616,10 @@ async def update_room_settings(
     if max_players < current:
         raise RoomConflictError(f"房间里已经有 {current} 个人，人数上限不能小于它")
     room.max_players = max_players
+    # 🔴 `None` = 不动它。这条接口原本只改人数，无条件赋值会让既有调用方
+    #    （前端改人数那一处）顺手把开关重置成 False——而那不是任何人的本意。
+    if allow_manual_rolls is not None:
+        room.allow_manual_rolls = allow_manual_rolls
     await db.commit()
 
 

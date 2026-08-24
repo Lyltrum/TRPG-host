@@ -123,8 +123,15 @@ export async function transferHost(roomId: string, playerId: string): Promise<vo
 }
 
 // 改人数上限。下界是当前人数（后端裁定），中途加入撞上"位置不够"时用它。
-export async function updateRoomSettings(roomId: string, maxPlayers: number): Promise<void> {
-  await sdk.rooms.updateSettings(roomId, maxPlayers, requireReconnectToken());
+//
+// `allowManualRolls` 不传 = 不动它（`exec/46` B5）：调一下人数不该顺手把
+// 「骰子在桌上」关掉。
+export async function updateRoomSettings(
+  roomId: string,
+  maxPlayers: number,
+  allowManualRolls?: boolean
+): Promise<void> {
+  await sdk.rooms.updateSettings(roomId, maxPlayers, requireReconnectToken(), allowManualRolls);
 }
 
 // 房主解散房间。跟 endGame 的区别只有阶段：那条要求进行中，这条是"人没凑齐，

@@ -1623,6 +1623,7 @@ async def _handle_check_roll(
     room_id: str,
     player_id: str,
     check_request_id: str,
+    roll_value: int | None = None,
 ) -> None:
     """处理 check.roll/san.check.roll（issue #77 协议位，feat/keeper-agent
     落地两段式玩家掷骰）：玩家确认掷骰 → `Narrator.resolve_check` 服务端权威
@@ -1637,6 +1638,22 @@ async def _handle_check_roll(
     但**拿不到锁时是等，不是拒**（见 `_acquire_for_small_op`）：这是玩家已经
     点下去的按钮，拒绝就等于让他再点一次。
     """
+    # 🔴 「骰子在桌上」的门（`exec/46` B5）。**这一层是唯一看得到房间那行的
+    #    地方**，所以门开在这里而不是更下面。
+    #
+    #    没开开关却带了出目，**明确拒绝、不静默忽略**：静默忽略等于玩家报了个
+    #    数、系统偷偷用了另一个数，而他会以为自己那颗骰算数——那比拒绝糟得多。
+    #    1–100 的范围由 `CheckRollPayload` 挡在更前面。
+    if roll_value is not None:
+        room = await _fresh_room(db, room_id)
+        if room is None or not room.allow_manual_rolls:
+            await _send_error(
+                websocket,
+                "MANUAL_ROLL_NOT_ALLOWED",
+                "这一局的骰子由系统掷。房主可以在房间设置里打开「用桌上的骰子」。",
+            )
+            return
+
     lock_token = await _acquire_for_small_op(room_id)
     if lock_token is None:
         await _send_error(websocket, "ACTION_IN_PROGRESS", "守秘人正在处理其他玩家的行动，请稍候")
@@ -1659,7 +1676,7 @@ async def _handle_check_roll(
                     pushed.add(notice.check_request_id)
 
                 outcome = await narrator.resolve_check(
-                    room_id, player_id, check_request_id, _push_result
+                    room_id, player_id, check_request_id, _push_result, roll_value=roll_value
                 )
             except NotImplementedError:
                 # 非 keeper 模式（Fallback/DeepSeekNarrator）没有"待掷检定"这个
@@ -1911,6 +1928,7 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                             room_id,
                             bound_player_id,
                             check_roll_payload.check_request_id,
+                            check_roll_payload.roll_value,
                         )
                     elif event_type == "san.check.roll":
                         san_roll_payload = SanCheckRollPayload.model_validate(raw_payload)

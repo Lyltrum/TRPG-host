@@ -299,9 +299,15 @@ async def update_room_settings(
     reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[None]:
-    """PATCH /api/v1/rooms/{roomId} —— 改人数上限。"""
+    """PATCH /api/v1/rooms/{roomId} —— 改人数上限 / 「骰子在桌上」开关。"""
     try:
-        await room_service.update_room_settings(db, room_id, payload.max_players, reconnect_token)
+        await room_service.update_room_settings(
+            db,
+            room_id,
+            payload.max_players,
+            reconnect_token,
+            allow_manual_rolls=payload.allow_manual_rolls,
+        )
     except (
         room_service.RoomNotFoundError,
         room_service.RoomAuthenticationError,

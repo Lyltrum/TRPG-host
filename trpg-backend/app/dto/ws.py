@@ -108,9 +108,23 @@ class CheckRollPayload(CamelModel):
     检定"后随叙事一起广播的 `check.request` 事件带的那个 id）。骰值由服务端
     权威生成——这条消息本身不带任何"掷什么/掷多少"的信息，纯粹是"我确认
     掷这一个"。
+
+    ## `roll_value`：玩家自己掷的那颗实体骰（`exec/46` B5）
+
+    **默认不带 = 服务端权威掷**，与本字段上线前逐字一致。
+
+    带了它表示"我用桌上的骰子掷了，出目是这个"——**只有开了
+    `rooms.allow_manual_rolls` 的房间才收**，没开的房间收到会被**明确拒绝**，
+    不静默忽略（静默忽略等于玩家报了个数、系统偷偷用了别的数）。
+
+    🔴 **1–100 的范围校验放在这里**：它是 d100，报 0 或 101 不是"作弊"而是
+    "这不是一颗 d100 能掷出来的数"。真作弊（报一个对自己有利的合法数）在
+    「私有部署、自己和朋友玩」的定位下是社交问题不是技术问题——线下桌上报假
+    数字比在软件里改数字容易得多。
     """
 
     check_request_id: str = Field(..., min_length=1)
+    roll_value: int | None = Field(default=None, ge=1, le=100)
 
 
 class SanCheckRollPayload(CamelModel):

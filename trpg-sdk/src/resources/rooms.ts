@@ -164,12 +164,18 @@ export class RoomsResource {
    * 下界是**当前人数**，不是 1：调到比在座的人还少，等于让已经在玩的人凭空
    * 超员，而没有任何地方会去踢掉多出来的。
    */
-  updateSettings(roomId: string, maxPlayers: number, reconnectToken: string): Promise<null> {
-    return this.client.patch<null>(
-      `/rooms/${roomId}`,
-      { maxPlayers },
-      this.roomAuth(reconnectToken)
-    );
+  updateSettings(
+    roomId: string,
+    maxPlayers: number,
+    reconnectToken: string,
+    allowManualRolls?: boolean
+  ): Promise<null> {
+    // 🔴 `allowManualRolls` 不传就**不传给后端**，后端见 `undefined` 就不动它。
+    //    这条接口原本只改人数，无条件带上一个 false 会让"调一下人数"顺手把
+    //    「骰子在桌上」关掉——而那不是任何人的本意。
+    const body: { maxPlayers: number; allowManualRolls?: boolean } = { maxPlayers };
+    if (allowManualRolls !== undefined) body.allowManualRolls = allowManualRolls;
+    return this.client.patch<null>(`/rooms/${roomId}`, body, this.roomAuth(reconnectToken));
   }
 
   /**

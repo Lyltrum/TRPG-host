@@ -242,10 +242,17 @@ export class RoomSocket {
     this.send('player.typing', playerId, { typing });
   }
 
-  /** check.roll —— 玩家确认并结算一次守秘人已发起的待掷技能检定（两段式
-   * 玩家掷骰，feat/keeper-agent）：骰值由服务端权威生成，这里只带
-   * `checkRequestId` 表明"确认掷这一个"。非 keeper 模式下后端回
-   * NOT_IMPLEMENTED 的 error 事件。 */
+  /**
+   * check.roll —— 玩家确认并结算一次守秘人已发起的待掷技能检定（两段式玩家
+   * 掷骰）。只带 `checkRequestId` = **由服务端权威掷**，那是默认行为。
+   *
+   * `rollValue` 是玩家用桌上实体骰掷出来的出目（`exec/46` B5）：
+   * **只有开了「骰子在桌上」的房间才收**（`RoomPreview.allowManualRolls`），
+   * 没开的房间回 `MANUAL_ROLL_NOT_ALLOWED` 的 error 事件——**不会静默忽略**。
+   * 范围 1–100，越界在后端 DTO 层就被挡掉。
+   *
+   * 非 keeper 模式下后端回 NOT_IMPLEMENTED 的 error 事件。
+   */
   rollCheck(playerId: string, payload: CheckRollPayload): void {
     this.send('check.roll', playerId, payload);
   }

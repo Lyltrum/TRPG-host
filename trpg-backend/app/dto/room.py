@@ -123,13 +123,19 @@ class PlayerAwayBody(CamelModel):
 class RoomSettingsBody(CamelModel):
     """PATCH /api/v1/rooms/{roomId} 请求体。
 
-    只有人数上限一项。房间名不在这里：改名是纯展示需求，而这条接口的存在
-    理由是"位置不够了"这个会卡住桌子的问题——两件事没必要绑在一起。
+    人数上限 + 「骰子在桌上」。房间名不在这里：改名是纯展示需求，而这条接口
+    的存在理由是"位置不够了"这个会卡住桌子的问题——两件事没必要绑在一起。
     区间跟建房时一致（`RoomCreate.max_players`），下界由服务层再按当前人数
     收紧一次（不能调到比在座的人还少）。
+
+    🔴 `allow_manual_rolls` **可选**：不传 = 不动它。这条接口原本只改人数，
+    把它做成必填会让所有既有调用方（前端那一处、e2e）在不知情的情况下把开关
+    重置成 False——**加字段时给已有调用方留原样不动的那条路**。
     """
 
     max_players: int = Field(..., ge=1, le=20)
+    #: 「骰子在桌上」（`exec/46` B5）。`None` = 保持不变。
+    allow_manual_rolls: bool | None = None
 
 
 class AiPlayerCreateBody(CamelModel):
@@ -175,6 +181,10 @@ class RoomPreview(CamelModel):
     module_title: str | None = None
     player_count: int
     max_players: int
+    #: 「骰子在桌上」（`exec/46` B5）。前端靠它决定掷骰卡片给不给"我自己掷的"
+    #: 那个入口。**不给默认值**：服务端每次都送得出，契约就该说它一定在
+    #: （给了默认值 = 生成的 TS 可选 = 前端只能 `?? false`，这个仓库一天踩过两次）。
+    allow_manual_rolls: bool
     players: list[RoomPlayerRead]
 
 

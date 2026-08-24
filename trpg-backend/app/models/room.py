@@ -77,6 +77,19 @@ class Room(Base):
     # 休息时聊天正是它的用途。
     paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
+    # 「骰子在桌上」（`exec/46` B5）。**默认 False = 现状逐字不变。**
+    #
+    # 🔴 它记的不是一个偏好，是**这一局的物理事实**：大家围坐一桌、手边有实体
+    # 骰子。线下聚会里掷骰子是最有仪式感的动作，而此前玩家掷完只能无视它、
+    # 照着系统给的数字玩——骰子成了摆设。
+    #
+    # 🔴 **它不破坏「规则权威在后端」**：要不要检定、目标值多少、算不算成功、
+    # 大成功还是大失败、幸运能不能补，仍然全部由后端判。开着它之后后端让出的
+    # 只有**随机数**这一件事。规则权威 ≠ 随机数权威，这两件事此前被绑在一起。
+    #
+    # 🔴 **开着也只是"允许报"，不是"必须报"**：玩家照样可以让系统掷。
+    allow_manual_rolls: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
     # 玩家纠错通道（`exec/35`）的回滚点：上一轮**开始之前**的世界指针 +
     # 那一轮的原话。形状 `{"keeper_state": {...}, "utterances": [...]}`。
     #

@@ -53,6 +53,15 @@ class KeeperDeps:
     # 里那次真人实测打脸（exec/19 #37）。
     turn_player_ids: tuple[str, ...] = ()
     rng: random.Random = field(default_factory=random.Random)
+    #: 玩家自己用实体骰掷出来的出目（`exec/46` B5）。**None = 系统掷**，
+    #: 那是默认行为，与本字段上线前逐字一致。
+    #:
+    #: 🔴 只作用于**这一次结算里属于那个玩家的那一颗骰**——对抗检定里对手那颗
+    #: 仍然由系统掷（对手是 NPC，桌上没人替它掷）。
+    #:
+    #: 放在 deps 而不是改 `SettleHook.run` 的签名：那是「逐个列出的地方」，
+    #: 改签名要动每一个 settler，而其中只有技能检定用得上它。
+    manual_roll: int | None = None
     # 「读-改-写」操作（update_state/adjust_hp/san_check）的串行锁。v2 的
     # 执行器本身是顺序执行、用不上它，但保留：v1 实测过 openai-agents 会并发
     # 执行同轮工具（三次 update_state 只留最后一个键的 lost update），`*_impl`

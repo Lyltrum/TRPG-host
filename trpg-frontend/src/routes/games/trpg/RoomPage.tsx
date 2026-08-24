@@ -2538,9 +2538,18 @@ export default function RoomPage() {
               </div>
             ) : (
               <>
-                {/* 🔴 休息跟结束游戏放在一起：它们回答的是同一个问题——"我们
-                    不打算继续了"分成「先停一下」和「今天到此为止」两档。
-                    任何人都能按，也任何人都能恢复。 */}
+                {/* 🔴 这一组按钮回答的是同一个问题——"我们不打算继续了"，
+                    按停多久分三档（`exec/46` B3 之后）：
+                      ① 先休息一下：几分钟，世界原地冻住；
+                      ② 今晚到此为止：几天，留下「上次讲到哪」，下次接着跑；
+                      ③ 结束游戏：这一局玩完了，不可撤回，出复盘。
+                    🔴 **别把 ② 和 ③ 的文案再写成"今天到此为止"**——这段注释
+                    以前就是这么写的，而它指的其实是 ③，两者撞名。
+
+                    🔴 **协议上①任何人都能按，但这里看不到**：整块 UI 关在
+                    `{isHost && ...}` 里（后端 `_handle_pause` 没有房主门，
+                    SDK 也没有）。要让非房主也能按，得把①②③拆开摆——②③ 归
+                    房主，① 不归。**这是已知缺口，不是设计**。 */}
                 <button
                   onClick={() => { if (playerId) sdk.roomSocket.setPaused(playerId, !paused) }}
                   className="w-full py-2 mb-2 rounded-sm bg-transparent text-text-body border border-border-light text-xs font-medium flex items-center justify-center gap-1.5 active:bg-border-light"

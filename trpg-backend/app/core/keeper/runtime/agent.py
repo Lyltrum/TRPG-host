@@ -67,6 +67,7 @@ from app.core.keeper.memory.history import (
     HistoryLine,
     history_lines_from_events,
 )
+from app.core.keeper.memory.recall import format_recall, recall_history
 from app.core.keeper.narration.narration_hints import (
     NO_PENDING_CHECK_HINT,
     UNRESOLVED_CONFLICT_HINT,
@@ -1077,8 +1078,28 @@ class KeeperAgent(Narrator):
             """这一段用第几人称（`exec/33 §10 #80`）。受众只有一个人 ⇒ 用「你」。"""
             return build_person_hint([nicknames[pid] for pid in audience if pid in nicknames])
 
+        async def _with_recall(text: str, audience: frozenset[str] | None) -> str:
+            """玩家在打听过去的事时，把原文查回来贴到局面块末尾（`exec/47` P2）。
+
+            🔴 **必须在这里做，不能做成 situation 钩子**：召回要查库（异步），
+            而 `SituationBlock.render` 是同步的；更要紧的是它**必须按这一段的
+            受众裁**——分头时门厅那段不许召回地下室的原文。这里是唯一同时握着
+            受众和一个 await 点的地方。
+
+            🔴 `recall_query` 为空（绝大多数拍）时**一次库都不查**，
+            拼出来的局面块与召回之前逐字节一致。
+            """
+            query = getattr(decision, "recall_query", None)
+            if not query:
+                return text
+            async with self._session_factory() as db:
+                hits = await recall_history(db, room_id=room_id, query=query, audience=audience)
+            block = format_recall(hits)
+            return f"{text}\n\n{block}" if block else text
+
         if len(groups) <= 1 and not covert_speakers:
             suffix = extra_suffix + _person(tuple(all_ids)) + _bystanders(tuple(all_ids))
+            situation = await _with_recall(situation, frozenset(all_ids))
             # 🔴 流式只走这条**全房间**路径（`exec/28` 第 3 步）。分头那条暂时
             # 保持非流式：它的延迟大头是**多段串行生成**（第 N 组要等前面 N-1 段
             # 全部写完），流式压不掉那部分——见 exec/28 的 3.4。
@@ -1157,6 +1178,7 @@ class KeeperAgent(Narrator):
                 # keeper_state，新落点此刻只存在于 decision 里（`exec/47` P1b）。
                 decision=decision,
             )
+            scoped_situation = await _with_recall(scoped_situation, frozenset(audience))
             suffix = extra_suffix + hint + _person(audience) + _bystanders(audience)
             # 🔴 磁带子键（`exec/33 §4` 拦路石 1）：并行之后这几次调用的**完成
             # 顺序不确定**，按全局序号回放必然错位。`turn_ordinal` 由分头轮次

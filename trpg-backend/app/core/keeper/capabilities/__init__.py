@@ -28,6 +28,7 @@ from app.core.keeper.capabilities.movement import CAPABILITY as MOVEMENT
 from app.core.keeper.capabilities.open_threads import CAPABILITY as OPEN_THREADS
 from app.core.keeper.capabilities.presence import CAPABILITY as PRESENCE
 from app.core.keeper.capabilities.progression import CAPABILITY as PROGRESSION
+from app.core.keeper.capabilities.recall import CAPABILITY as RECALL
 from app.core.keeper.capabilities.san_check import CAPABILITY as SAN_CHECK
 from app.core.keeper.capabilities.skill_check import CAPABILITY as SKILL_CHECK
 from app.core.keeper.capabilities.world_state import CAPABILITY as WORLD_STATE
@@ -63,6 +64,7 @@ CAPABILITIES: tuple[KeeperCapability, ...] = (
     PRESENCE,
     CAST,
     INVENTORY,
+    RECALL,
 )
 
 

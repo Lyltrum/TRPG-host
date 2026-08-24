@@ -39,6 +39,7 @@ from app.core.keeper.capabilities.madness.schema import MadnessDecisionFields
 from app.core.keeper.capabilities.movement.schema import MovementDecisionFields
 from app.core.keeper.capabilities.open_threads.schema import OpenThreadsDecisionFields
 from app.core.keeper.capabilities.progression.schema import ProgressionDecisionFields
+from app.core.keeper.capabilities.recall.schema import RecallDecisionFields
 from app.core.keeper.capabilities.san_check.schema import SanCheckDecisionFields
 from app.core.keeper.capabilities.skill_check.schema import SkillCheckDecisionFields
 from app.core.keeper.capabilities.world_state.schema import WorldStateDecisionFields
@@ -57,6 +58,7 @@ class KeeperDecision(
     OpenThreadsDecisionFields,
     EstablishedDecisionFields,
     ProgressionDecisionFields,
+    RecallDecisionFields,
     SanCheckDecisionFields,
     SkillCheckDecisionFields,
     WorldStateDecisionFields,

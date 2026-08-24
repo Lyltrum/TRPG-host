@@ -188,6 +188,23 @@ class RoomPreview(CamelModel):
     players: list[RoomPlayerRead]
 
 
+class LastSessionRead(CamelModel):
+    """GET /api/v1/rooms/{roomId}/last-session 返回：「上次讲到哪」（`exec/46` B3）。
+
+    🔴 `recap_text` **必填但可为 null**，不给默认值：服务端每次都送得出这个
+    字段，`null` 的含义是「这一局还没散过会 / 那一场什么都没发生 / 没配 key」
+    ——三种都是如实降级。给了默认值生成的 TS 就是可选的，前端只能 `?? ''`，
+    而那正好把「没有」和「没送」混成一件事（这个仓库一天踩过两次）。
+    """
+
+    #: 这一局到现在聚过几次。第一次开局就是 1。
+    session_count: int
+    #: 上一场的「上次讲到哪」。没有就是 null，**别拿占位文案填**。
+    recap_text: str | None
+    #: 现在是不是收工状态（房主按了「今晚到此为止」）。
+    adjourned: bool
+
+
 class MyRoomSummary(CamelModel):
     """GET /api/v1/me/rooms 返回项"""
 

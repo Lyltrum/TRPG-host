@@ -54,6 +54,7 @@ _MODELS: list[type[BaseModel]] = [
     room.ModuleRead,
     room.RoomPreview,
     room.MyRoomSummary,
+    room.LastSessionRead,
     # character（issue #59 + issue #77 卡库）
     character.EquipmentItem,
     character.CharacterUpdateBody,
@@ -145,6 +146,8 @@ _MODELS: list[type[BaseModel]] = [
     # exec/35：休息 / 纠错 / 重试
     ws.RoomPausePayload,
     ws.RoomPausedPayload,
+    ws.RoomAdjournPayload,
+    ws.RoomAdjournedPayload,
     ws.TurnClarifyPayload,
 ]
 

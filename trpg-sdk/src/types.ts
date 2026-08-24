@@ -76,6 +76,8 @@ export type {
   // 复盘 / 回放（issue #77）—— 对应后端 dto/replay.py
   RoomSummaryRead as RoomSummary,
   ReplayEventRead as ReplayEvent,
+  // 一局分多个晚上跑完（`exec/46` B3）——「上次讲到哪」
+  LastSessionRead,
   // WebSocket 现有 6 个事件（issue #60）—— 对应后端 dto/ws.py
   RoomJoinPayload,
   PlayerReadyPayload,
@@ -164,6 +166,7 @@ import type {
   NarrationPushPayload,
   PartyUpdatePayload,
   PlayerJoinedPayload,
+  RoomAdjournedPayload,
   RoomPausedPayload,
   RoomStatePayload,
   SanCheckRequestPayload,
@@ -231,4 +234,5 @@ export type ServerToClientEvent =
   | { type: 'game.end.status'; payload: EndGameStatusPayload }
   // exec/35：大家在休息。元层信息（谁按的、现在停没停），不含虚构内容 → 全房间。
   | { type: 'room.paused'; payload: RoomPausedPayload }
+  | { type: 'room.adjourned'; payload: RoomAdjournedPayload }
   | { type: 'error'; payload: ErrorPayload };

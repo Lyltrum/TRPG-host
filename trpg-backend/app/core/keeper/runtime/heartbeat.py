@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.keeper.runtime.pending import ROLL_KINDS, pending_decision_manager
 from app.core.llm_quota import quota_subject
 from app.core.narration.contract import NarrationContext, Narrator
+from app.core.table_state import table_is_open
 from app.models.event import Event
 from app.models.room import Player, Room
 from app.service.action_lock import action_lock_manager
@@ -210,10 +211,10 @@ async def maybe_fire_room(
         room = await db.get(Room, room_id)
         if room is None or room.phase != "InGame":
             return False
-        # 🔴 大家在休息（`exec/35`）：暂停期间世界不该自己往前走。心跳是唯一
-        # 一条**不需要玩家动手**就能推进世界的路径，所以暂停必须在这里也挡一道
-        # ——只挡玩家提交是挡不住它的。
-        if room.paused:
+        # 🔴 桌子没开着：暂停期间世界不该自己往前走。心跳是唯一一条**不需要
+        # 玩家动手**就能推进世界的路径，所以停必须在这里也挡一道——只挡玩家
+        # 提交是挡不住它的。两种停（休息 / 散会）都走 `table_is_open`。
+        if not table_is_open(room):
             return False
 
     player = await _pick_player(session_factory, room_id, spotlight_seconds)

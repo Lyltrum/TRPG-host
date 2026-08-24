@@ -753,6 +753,20 @@ export interface KeeperPhasePayload {
 }
 
 /**
+ * GET /api/v1/rooms/{roomId}/last-session 返回：「上次讲到哪」（`exec/46` B3）。
+ *
+ * 🔴 `recap_text` **必填但可为 null**，不给默认值：服务端每次都送得出这个
+ * 字段，`null` 的含义是「这一局还没散过会 / 那一场什么都没发生 / 没配 key」
+ * ——三种都是如实降级。给了默认值生成的 TS 就是可选的，前端只能 `?? ''`，
+ * 而那正好把「没有」和「没送」混成一件事（这个仓库一天踩过两次）。
+ */
+export interface LastSessionRead {
+  sessionCount: number;
+  recapText: string | null;
+  adjourned: boolean;
+}
+
+/**
  * POST /api/v1/auth/login 请求体
  */
 export interface LoginBody {
@@ -1141,6 +1155,30 @@ export interface RollLuckResult {
   kind: string;
   dice: number[];
   value: number;
+}
+
+/**
+ * `room.adjourn` 客户端事件：今晚到此为止 / 下次接着跑（`exec/46` B3）。
+ *
+ * 🔴 跟 `room.pause` **是两档粒度，不是一件事**：休息是几分钟、任何人都能
+ * 按、什么都不生成；散会是几天、只有房主能按、要留下「上次讲到哪」。
+ * 一个 bool 的理由同 `RoomPausePayload`。
+ */
+export interface RoomAdjournPayload {
+  adjourned: boolean;
+}
+
+/**
+ * `room.adjourned` 推送：今晚收工了 / 又开始了。
+ *
+ * `session_count` 是「这一局聚过几次」——收工那一刻正好是它 +1 的时候，
+ * 顺手带上省一次查询。
+ */
+export interface RoomAdjournedPayload {
+  adjourned: boolean;
+  byNickname: string;
+  sessionCount: number;
+  recapText: string | null;
 }
 
 /**

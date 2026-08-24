@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import table_state
 from app.core.db import Base
 from app.core.errors import AppException, ErrorCode
 from app.core.keeper.capabilities.presence import state as presence_state
@@ -24,6 +25,7 @@ from app.dto.module import ModuleDetailRead
 from app.dto.replay import ReplayEventRead, RoomSummaryRead
 from app.dto.room import (
     JoinRoomBody,
+    LastSessionRead,
     ModuleRead,
     MyRoomSummary,
     RoomCreate,
@@ -39,6 +41,7 @@ from app.models.room import Character, Player, Room
 from app.models.user import User
 from app.service import chat as chat_service
 from app.service import recap as recap_service
+from app.service import session_recap, table_session
 
 
 class RoomNotFoundError(ValueError):
@@ -450,6 +453,10 @@ async def begin_game(db: AsyncSession, room_id: str, player_id: str) -> str:
         raise CharacterIncompleteError("还有玩家未完成建卡")
     room.phase = "InGame"
     room.started_at = datetime.now(UTC)
+    # 第一次聚会。往后每次续跑各开一行，「这一局聚过几次」从此是可查的数
+    # （`exec/46` B3）。**同一笔事务**：场次开了而 phase 没变过去是个说不通的
+    # 中间态。
+    await table_session.open_session(db, room.id)
     await db.commit()
     return await opening_narration_for_scenario(db, room.scenario_id)
 
@@ -521,8 +528,12 @@ async def end_game(db: AsyncSession, room_id: str, reconnect_token: str | None) 
     """
     room = await find_room_by_id(db, room_id)
     await _require_host(db, room, reconnect_token)
-    if room.phase != "InGame":
+    # 🔴 散会态也能直接结束：上周打到一半收了工，这周决定不接着跑了——那时
+    # 房间停在 `Adjourned`，逼房主先「继续游戏」再「结束游戏」是没道理的。
+    # 加第四态时**这一处是逐个列出的地方**，只判 `!= "InGame"` 会把它锁死。
+    if room.phase not in ("InGame", table_state.PHASE_ADJOURNED):
         raise RoomConflictError("只有进行中的游戏可以结束")
+    await table_session.close_session(db, room.id)
     room.phase = "Completed"
     room.ended_at = datetime.now(UTC)
     await chat_service.clear_room_chat(db, room.id)
@@ -667,6 +678,71 @@ async def set_player_away(
     state[presence_state.PENDING_DEPARTURES_KEY] = presence_state.serialize_departures(pending)
     state[presence_state.ANNOUNCED_ARRIVALS_KEY] = ", ".join(announced)
     room.keeper_state = state
+    await db.commit()
+
+
+async def get_last_session(db: AsyncSession, room_id: str) -> LastSessionRead:
+    """「上次讲到哪」+ 聚过几次（`exec/46` B3）。
+
+    🔴 **没有鉴权**：跟 `/summary` 一样。它是这一局自己的事，而且按设计
+    一个字的谜底都不带（见 `session_recap._SYSTEM_PROMPT`）。
+    """
+    room = await find_room_by_id(db, room_id)
+    return LastSessionRead(
+        session_count=await table_session.session_count(db, room.id),
+        recap_text=await session_recap.build_session_recap(db, room.id),
+        adjourned=room.phase == table_state.PHASE_ADJOURNED,
+    )
+
+
+async def _require_host_player(db: AsyncSession, room: Room, player_id: str) -> Player:
+    """WS 侧的房主校验：认 `player_id`，不认重连凭证。
+
+    🔴 跟 `_require_host` 是**两套身份体系**，不是重复实现：REST 端点拿的是
+    `X-Reconnect-Token`（浏览器存着的凭证），WS 连上来之后身份已经绑定成
+    `bound_player_id`，手里根本没有那个 token。同 `start_game` 的做法。
+    """
+    player = await db.get(Player, player_id)
+    if player is None or player.room_id != room.id or player.id != room.host_player_id:
+        raise RoomAuthorizationError("仅房主可以做这件事")
+    return player
+
+
+async def adjourn_session(db: AsyncSession, room_id: str, player_id: str) -> None:
+    """房主：今晚到此为止（`exec/46` B3）。
+
+    🔴 **跟「先休息一下」是两档粒度**：休息是几分钟、任何玩家都能按、什么都
+    不生成；散会是几天、只有房主能按、要留下「上次讲到哪」。两者的共同点只有
+    「不开新的一轮」，那件事收在 `table_session.table_is_open`。
+
+    🔴 **可逆**，所以门开得松：房主一人决定，不走收工那套全体确认。用户
+    2026-08-24 的判断——判错的代价只是按一下继续。
+
+    小结**不在这里生成**：那是一次 LLM 往返，会让「今晚到此为止」卡住十几秒，
+    而散场那一刻大家正在收桌子。同 `recap` 的懒生成判据，第一次打开时算。
+    """
+    room = await find_room_by_id(db, room_id)
+    await _require_host_player(db, room, player_id)
+    if room.phase != "InGame":
+        raise RoomConflictError("只有进行中的游戏可以收工")
+    await table_session.close_session(db, room.id)
+    room.phase = table_state.PHASE_ADJOURNED
+    await db.commit()
+
+
+async def resume_session(db: AsyncSession, room_id: str, player_id: str) -> None:
+    """房主：下次聚会，接着跑。
+
+    开一行新的场次记录，房间回到 `InGame`。**世界状态一个字都不动**——
+    `keeper_state`、待掷队列、历史全都在库里躺着，续跑要做的只是把桌子重新
+    打开。这也是「不做角色带到下一场」的直接后果：角色压根没离开过。
+    """
+    room = await find_room_by_id(db, room_id)
+    await _require_host_player(db, room, player_id)
+    if room.phase != table_state.PHASE_ADJOURNED:
+        raise RoomConflictError("这一局没有收工，不需要继续")
+    await table_session.open_session(db, room.id)
+    room.phase = "InGame"
     await db.commit()
 
 

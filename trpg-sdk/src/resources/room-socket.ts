@@ -105,6 +105,13 @@ const PAYLOAD_VALIDATORS: {
   'character.may_have_changed': () => true,
   // exec/35：大家在休息
   'room.paused': (p) => typeof p.paused === 'boolean' && typeof p.byNickname === 'string',
+  // exec/46 B3：今晚到此为止（跟休息是两档粒度）
+  'room.adjourned': (p) =>
+    typeof p.adjourned === 'boolean' &&
+    typeof p.byNickname === 'string' &&
+    typeof p.sessionCount === 'number' &&
+    // 必填但可为 null——「没有这一段」跟「没送这个字段」是两回事
+    'recapText' in p,
   error: (p) => typeof p.code === 'string' && typeof p.message === 'string',
 };
 
@@ -274,6 +281,17 @@ export class RoomSocket {
    * ⚠️ 已经在跑的那一轮不会被打断——叙事已经调出去了，收不回来。 */
   setPaused(playerId: string, paused: boolean): void {
     this.send('room.pause', playerId, { paused });
+  }
+
+  /** room.adjourn —— 「今晚到此为止」/「下次接着跑」（`exec/46` B3）。
+   *
+   * 🔴 跟 `setPaused` **是两档粒度，不是同一件事**：休息是几分钟、任何人都能
+   * 按、什么都不生成；散会是几天、**只有房主能按**、会留下一段「上次讲到哪」
+   * （续跑时用 `rooms.getLastSession` 取）。
+   *
+   * 世界状态一个字都不动——续跑要做的只是把桌子重新打开。 */
+  adjourn(playerId: string, adjourned: boolean): void {
+    this.send('room.adjourn', playerId, { adjourned });
   }
 
   /** turn.retry —— 守秘人这一拍失败了，用同一批原话再跑一次（`exec/35`）。

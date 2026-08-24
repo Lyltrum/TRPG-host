@@ -133,7 +133,7 @@ def build_highlights(room: Room, events: list[Event]) -> list[str]:
     return lines
 
 
-def _story_lines(events: list[Event]) -> list[str]:
+def story_lines(events: list[Event]) -> list[str]:
     """喂给模型的事件流：玩家原话 + 守秘人叙事，按时间正序。
 
     只喂这两类。检定明细、状态记账那些是**给系统看的**，塞进去只会让它去写
@@ -226,7 +226,7 @@ async def build_summary(db: AsyncSession, room_id: str) -> RoomSummaryRead:
     )
 
     highlights = build_highlights(room, events)
-    summary_text = await _write_recap(_story_lines(events))
+    summary_text = await _write_recap(story_lines(events))
 
     missed = await _missed_truths_if_finished(db, room)
 

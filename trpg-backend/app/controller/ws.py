@@ -55,6 +55,7 @@ from app.core.narration.contract import (
     SegmentDeltaSinkFactory,
     StatChangeNotice,
 )
+from app.core.table_state import PHASE_ADJOURNED, table_is_open
 from app.dto.ws import (
     ActionBroadcastPayload,
     ActionSubmitPayload,
@@ -79,6 +80,8 @@ from app.dto.ws import (
     PartyMergeConfirmPayload,
     PartyUpdatePayload,
     PlayerReadyPayload,
+    RoomAdjournedPayload,
+    RoomAdjournPayload,
     RoomJoinPayload,
     RoomPausedPayload,
     RoomPausePayload,
@@ -92,6 +95,7 @@ from app.dto.ws import (
 from app.service import auth as auth_service
 from app.service import chat as chat_service
 from app.service import room as room_service
+from app.service import session_recap, table_session
 from app.service.action_lock import action_lock_manager
 from app.service.turn_window import Submission, merge_utterances, turn_window_manager
 from app.service.ws_manager import manager
@@ -1231,6 +1235,57 @@ async def _handle_pause(
     )
 
 
+async def _handle_adjourn(
+    db: AsyncSession,
+    websocket: WebSocket,
+    room_id: str,
+    player_id: str,
+    adjourned: bool,
+) -> None:
+    """今晚到此为止 / 下次接着跑（`exec/46` B3）。
+
+    🔴 **只有房主能按**，跟 `_handle_pause` 相反。理由是两者的代价不同：休息
+    随手就能恢复，散会要留下一段「上次讲到哪」、要开一行新的场次记录，是这一
+    局的节拍。用户 2026-08-24 定的。
+
+    世界状态一个字都不动——续跑要做的只是把桌子重新打开（`keeper_state`、
+    待掷队列、历史全都在库里躺着）。
+    """
+    try:
+        if adjourned:
+            await room_service.adjourn_session(db, room_id, player_id)
+        else:
+            await room_service.resume_session(db, room_id, player_id)
+    except room_service.RoomAuthorizationError:
+        await _send_error(websocket, "FORBIDDEN", "只有房主可以收工或继续")
+        return
+    except room_service.RoomConflictError as exc:
+        await _send_error(websocket, "CONFLICT", str(exc))
+        return
+    except room_service.RoomNotFoundError:
+        return
+
+    player = await room_service.get_player(db, player_id)
+    nickname = player.nickname if player is not None else "房主"
+    # 🔴 「上次讲到哪」在**续跑这一下**生成并随推送发出去，收工那下不生成。
+    #    理由见 `RoomAdjournedPayload.recap_text`：它是念给全桌听的开场白。
+    #    房主按下「继续」要等一次 LLM 往返（约几秒）——而那正是念开场白的时刻。
+    recap = None if adjourned else await session_recap.build_session_recap(db, room_id)
+    # 元层信息（谁收的工），不含虚构内容 → 全房间，同 `_handle_pause`。
+    await manager.broadcast(
+        room_id,
+        ServerEnvelope(
+            type="room.adjourned",
+            payload=RoomAdjournedPayload(
+                adjourned=adjourned,
+                by_nickname=nickname,
+                session_count=await table_session.session_count(db, room_id),
+                recap_text=recap,
+            ).model_dump(by_alias=True),
+        ).model_dump(by_alias=True),
+    )
+
+
 async def _handle_action_submit(
     db: AsyncSession,
     websocket: WebSocket,
@@ -1258,12 +1313,18 @@ async def _handle_action_submit(
     - Narrator 失败（超时/网络/API 错）：只告诉发起者（error 不广播），
       其他人看到了原话但等不到回复，发起者重试即可。
     """
-    # 🔴 大家在休息（`exec/35`）：暂停期间不开新的一轮。
+    # 🔴 桌子没开着就不开新的一轮。**两种停**：大家在休息（`exec/35`）与
+    # 今晚散会（`exec/46` B3），判断收在 `table_is_open` 一处。
     # 挡在 `_ingest_utterance` **之前**——它会广播原话并入窗口，走过去就等于
     # 这句话已经排进队里了，恢复时会突然一起涌进来。
     room = await room_service.find_room_by_id(db, room_id)
-    if room is not None and room.paused:
-        await _send_error(websocket, "CONFLICT", "大家在休息，恢复之后再说")
+    if room is not None and not table_is_open(room):
+        message = (
+            "今晚已经收工了，等房主说继续"
+            if room.phase == PHASE_ADJOURNED
+            else "大家在休息，恢复之后再说"
+        )
+        await _send_error(websocket, "CONFLICT", message)
         return
 
     player = await room_service.get_player(db, player_id)
@@ -1948,6 +2009,11 @@ async def room_socket(websocket: WebSocket, room_id: str, token: str | None = No
                         pause_payload = RoomPausePayload.model_validate(raw_payload)
                         await _handle_pause(
                             db, websocket, room_id, bound_player_id, pause_payload.paused
+                        )
+                    elif event_type == "room.adjourn":
+                        adjourn_payload = RoomAdjournPayload.model_validate(raw_payload)
+                        await _handle_adjourn(
+                            db, websocket, room_id, bound_player_id, adjourn_payload.adjourned
                         )
                     elif event_type == "turn.retry":
                         # 🔴 重试 = **不带澄清的纠错**：同样回滚指针、清掉没掷的

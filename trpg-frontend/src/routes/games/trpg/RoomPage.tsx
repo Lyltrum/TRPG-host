@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Users, Map, MapPin, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll, EyeOff, Coffee, DoorOpen } from 'lucide-react'
+import { ArrowLeft, Users, Map, MapPin, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll, EyeOff, Coffee, DoorOpen, Moon } from 'lucide-react'
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react'
 import type { ChatMessage, PartyCharacter, PartyUpdatePayload } from 'trpg-sdk'
 import { useRoomStore } from '@/stores/room-store'
@@ -668,6 +668,9 @@ export default function RoomPage() {
   // 大家在休息（exec/35）。服务端广播的房间级状态，不是本地开关——
   // 谁按的所有人都看得见，恢复也是任何人都能点。
   const [paused, setPaused] = useState(false)
+  // 今晚到此为止（exec/46 B3）。跟 `paused` 是两档粒度：休息是几分钟、任何人
+  // 都能按；收工是几天、只有房主能按，下次续跑时会念一段「上次讲到哪」。
+  const [adjourned, setAdjourned] = useState(false)
   // 守秘人这一拍失败了：给一个「再试一次」，而不是让玩家自己重打一遍
   const [canRetry, setCanRetry] = useState(false)
   // 我自己的空间处境（我在哪 · 谁跟我在一处 · 别处还有几组）。逐人裁过再发，
@@ -784,6 +787,20 @@ export default function RoomPage() {
         time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
       }]
       try {
+        // 🔴 刷新页面之后「今晚已收工」要还在（`exec/46` B3）。
+        //    这条**不能只靠 WS 推送**：收工到下次聚会隔的是几天，中间每个人都
+        //    会重进一次房间，而推送只发给按下那一刻在线的人。同族的坑这个仓库
+        //    踩过——「重连不补发 keeper.phase」。
+        const lastSession = await sdk.rooms.getLastSession(roomId)
+        if (cancelled) return
+        setAdjourned(lastSession.adjourned)
+        if (lastSession.adjourned && lastSession.recapText) {
+          boot.push({
+            type: 'system',
+            content: `上次讲到哪：${lastSession.recapText}`,
+            time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+          })
+        }
         // game.start 的开场可能仍在生成：短轮询 replay，只认服务端 narration.push
         // （禁止前端再垫 openingScript，否则会与权威开场叠成两段）
         let events: Awaited<ReturnType<typeof sdk.rooms.getReplay>> = []
@@ -1151,6 +1168,24 @@ export default function RoomPage() {
       } else if (envelope.type === 'keeper.busy') {
         // 守秘人开始/结束这一轮。没发言的人靠它知道"他在忙"，而不是盯着黑屏。
         setKeeperBusy(envelope.payload.busy)
+      } else if (envelope.type === 'room.adjourned') {
+        const p = envelope.payload
+        setAdjourned(p.adjourned)
+        setMessages(prev => {
+          const next = [...prev, {
+            type: 'system' as const,
+            content: p.adjourned
+              ? `${p.byNickname} 说今晚就到这里，下次接着跑（第 ${p.sessionCount} 次聚会）`
+              : `${p.byNickname} 说继续吧`,
+            time: now,
+          }]
+          // 🔴 「上次讲到哪」只有续跑那一下带内容。它是**开场白**——服务端念一遍
+          //    发给全桌，不是各自去拉（那会四个人拿到四段不一样的文字）。
+          if (p.recapText) {
+            next.push({ type: 'system' as const, content: `上次讲到哪：${p.recapText}`, time: now })
+          }
+          return next
+        })
       } else if (envelope.type === 'room.paused') {
         const p = envelope.payload as { paused: boolean; byNickname: string }
         setPaused(p.paused)
@@ -1236,7 +1271,7 @@ export default function RoomPage() {
   const myPendingRoll = pendingCheck !== null
   // 暂停时对守秘人的输入也停下——后端会挡回，前端提前禁用免得"点了没反应"
   // （「按钮没有缓冲区」）。讨论区不受影响：休息时聊天正是它的用途。
-  const dmBusy = channel === 'dm' && (typing || myPendingRoll || paused)
+  const dmBusy = channel === 'dm' && (typing || myPendingRoll || paused || adjourned)
 
   const sendMessage = (e?: FormEvent) => {
     e?.preventDefault()
@@ -2095,7 +2130,9 @@ export default function RoomPage() {
             placeholder={
               channel === 'chat'
                 ? '和队友讨论…'
-                : paused
+                : adjourned
+                  ? '今晚已经收工了…'
+                  : paused
                   ? '大家在休息…'
                   : dmBusy
                   ? (myPendingRoll ? '先掷骰吧…' : '守秘人正在回应…')
@@ -2520,6 +2557,16 @@ export default function RoomPage() {
                 >
                   <DoorOpen className="w-3.5 h-3.5" />
                   {awayBusy ? '处理中…' : away ? '我回来了' : '我先离开一会（角色暂时退场）'}
+                </button>
+                {/* 🔴 三档，粒度从小到大：休息几分钟 / 今晚收工下次接着跑 /
+                    这一局玩完了。中间这档是「一局分多个晚上跑完」的入口
+                    （`exec/46` B3）——按下去不动世界状态一个字，续跑时守秘人
+                    会先念一段「上次讲到哪」。 */}
+                <button
+                  onClick={() => { if (playerId) sdk.roomSocket.adjourn(playerId, !adjourned) }}
+                  className="w-full py-2 mb-2 rounded-sm bg-transparent text-text-body border border-border-light text-xs font-medium flex items-center justify-center gap-1.5 active:bg-border-light"
+                >
+                  <Moon className="w-3.5 h-3.5" /> {adjourned ? '继续这一局（下次聚会）' : '今晚到此为止'}
                 </button>
                 <button onClick={() => setConfirmEnd(true)}
                   className="w-full py-2 rounded-sm bg-transparent text-[#c04040] border border-[#c04040]/40 text-xs font-medium flex items-center justify-center gap-1.5 active:bg-[#c04040]/5">

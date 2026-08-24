@@ -249,6 +249,37 @@ class RoomPausedPayload(CamelModel):
     by_nickname: str
 
 
+class RoomAdjournPayload(CamelModel):
+    """`room.adjourn` 客户端事件：今晚到此为止 / 下次接着跑（`exec/46` B3）。
+
+    🔴 跟 `room.pause` **是两档粒度，不是一件事**：休息是几分钟、任何人都能
+    按、什么都不生成；散会是几天、只有房主能按、要留下「上次讲到哪」。
+    一个 bool 的理由同 `RoomPausePayload`。
+    """
+
+    adjourned: bool
+
+
+class RoomAdjournedPayload(CamelModel):
+    """`room.adjourned` 推送：今晚收工了 / 又开始了。
+
+    `session_count` 是「这一局聚过几次」——收工那一刻正好是它 +1 的时候，
+    顺手带上省一次查询。
+    """
+
+    adjourned: bool
+    by_nickname: str
+    session_count: int
+    #: 「上次讲到哪」。**只有续跑那一下带内容**，收工时恒为 `None`。
+    #:
+    #: 🔴 它随推送走而不是让各客户端自己去 GET：这段话是**开场白**，开场白是
+    #: 念出来给全桌听的——各自去拉的话，四个人会各自触发一次生成，拿到四段
+    #: 不一样的文字，还白烧三次 LLM 调用。
+    #:
+    #: 必填但可为 null（三种含义：还没散过会 / 那一场什么都没发生 / 没配 key）。
+    recap_text: str | None
+
+
 class TurnClarifyPayload(CamelModel):
     """`turn.clarify` 客户端事件：「你把我的话理解错了」（`exec/35`）。
 

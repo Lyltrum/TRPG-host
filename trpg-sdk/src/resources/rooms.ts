@@ -9,6 +9,7 @@ import type {
   RoomPreview,
   MyRoomSummary,
   RoomSummary,
+  LastSessionRead,
   ReplayEvent,
   PartyCharacter,
   RoomPlayerSummary,
@@ -243,6 +244,19 @@ export class RoomsResource {
       `/rooms/${roomId}/summary`,
       this.roomAuth(reconnectToken)
     );
+  }
+
+  /**
+   * GET /api/v1/rooms/{roomId}/last-session — 「上次讲到哪」（`exec/46` B3）
+   *
+   * 🔴 跟 `getSummary` **是两件事**：那个是散场后的复盘（`finished` 之后还带
+   * 没揭开的谜底），这个是续跑时的开场白，**一个字的谜底都不带**。
+   *
+   * `recapText` 为 null 有三种含义（还没散过会 / 那一场什么都没发生 / 没配
+   * key），三种都是如实降级——**别拿占位文案填上去**。
+   */
+  getLastSession(roomId: string): Promise<LastSessionRead> {
+    return this.client.get<LastSessionRead>(`/rooms/${roomId}/last-session`);
   }
 
   /** GET /api/v1/rooms/{roomId}/replay — 逐条事件回放（issue #77 新增） */

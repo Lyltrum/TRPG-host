@@ -36,6 +36,7 @@ from app.dto.replay import ReplayEventRead, RoomSummaryRead
 from app.dto.room import (
     AiPlayerCreateBody,
     JoinRoomBody,
+    LastSessionRead,
     PlayerAwayBody,
     RoomCreate,
     RoomCreateResult,
@@ -397,6 +398,22 @@ async def get_room_summary(
     except room_service.RoomNotFoundError as exc:
         _raise_service_error(exc)
     return ApiResponse.ok(summary)
+
+
+@router.get("/{room_id}/last-session", response_model=ApiResponse[LastSessionRead])
+async def get_last_session(
+    room_id: str, db: AsyncSession = Depends(get_db)
+) -> ApiResponse[LastSessionRead]:
+    """GET /api/v1/rooms/{roomId}/last-session —— 「上次讲到哪」（`exec/46` B3）。
+
+    跟 `/summary` 是两件事：那个是散场后的复盘（还会带没揭开的谜底），这个是
+    续跑时的开场白，**一个字的谜底都不带**。第一次打开时现算一次并落库。
+    """
+    try:
+        result = await room_service.get_last_session(db, room_id)
+    except room_service.RoomNotFoundError as exc:
+        _raise_service_error(exc)
+    return ApiResponse.ok(result)
 
 
 @router.get("/{room_id}/replay", response_model=ApiResponse[list[ReplayEventRead]])

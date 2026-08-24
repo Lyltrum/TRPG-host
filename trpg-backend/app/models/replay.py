@@ -45,6 +45,16 @@ class RoomSession(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 「上次讲到哪」（`exec/46` B3）。散会之后懒生成一次、落在这里，下次续跑
+    # 时播给大家。
+    #
+    # 🔴 跟 `room_summaries` 的局末复盘**不是一回事**，别合并：复盘是散场后的
+    # 回顾（受众是已经玩完的人，`finished` 之后还带谜底），这一段是**开场白**
+    # ——它要让人接得上，所以重点在还悬着什么、下一步能往哪走。
+    #
+    # `None` 有两种含义（还没生成 / 生成失败），两种的处理一样（现算一次），
+    # 所以不额外记一个状态位。
+    recap_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

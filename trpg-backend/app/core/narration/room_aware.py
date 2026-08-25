@@ -92,6 +92,45 @@ class RoomAwareKeeperNarrator(Narrator):
             return location_id
         return resolve_location(resolved.module, keeper_state, location_id) or location_id
 
+    async def scene_labels(
+        self,
+        room_id: str,
+        keeper_state: dict | None,
+        *,
+        npc_ids: list[str],
+        node_ids: list[str],
+        fact_ids: set[str],
+    ) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+        """「现场」抽屉要的三份 id → 文本（`exec/46` B4）。
+
+        跟 `location_label` 同一个理由放在这一层：**剧本是按房间加载的，只有
+        这一层知道该用哪一份**。也跟它同一个做法——**不进 `Narrator` 契约**，
+        调用方 `getattr` 软取。进契约就是又一处「逐个列出的地方」：四个实现
+        （contract / room_aware / delayed / agent）全都要跟上，漏一个的表现
+        是运行时 TypeError 被上游宽捕获，变成一句 INTERNAL_ERROR。
+
+        解析不出模组时返回三个空 dict，调用方**原样用 id、不编造名字**。
+
+        线索只给 `tier == "diegetic"` 的：元层（`meta`）是给 KP 的调度信息，
+        它本来也不可能被"揭开"，同 `render_ledger` 的口径。
+        """
+        from app.core.keeper.primitives.npcs import npc_display_name
+        from app.core.keeper.runtime.location_state import resolve_location
+
+        try:
+            resolved = await self._resolve(room_id)
+        except FileNotFoundError:
+            return {}, {}, {}
+        module = resolved.module
+        npcs = {i: npc_display_name(module, i) for i in npc_ids}
+        places = {i: (resolve_location(module, keeper_state, i) or i) for i in node_ids}
+        clues = {
+            f.id: f.text
+            for f in module.facts
+            if f.id in fact_ids and f.tier == "diegetic" and f.text.strip()
+        }
+        return npcs, places, clues
+
     async def narrate(self, context: NarrationContext) -> NarrationOutcome:
         resolved = await self._resolve(context.room_id)
         return await self._agent_for(resolved).narrate(context)

@@ -46,6 +46,7 @@ from app.dto.room import (
     SelectModuleBody,
     TransferHostBody,
 )
+from app.dto.scene import SceneRead
 from app.models.user import User
 from app.service import ai_player as ai_player_service
 from app.service import character as character_service
@@ -382,6 +383,34 @@ async def disband_room(
     ) as exc:
         _raise_service_error(exc)
     return ApiResponse.ok(None)
+
+
+@router.get("/{room_id}/scene", response_model=ApiResponse[SceneRead])
+async def get_room_scene(
+    room_id: str,
+    request: Request,
+    reconnect_token: str | None = Header(default=None, alias="X-Reconnect-Token"),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[SceneRead]:
+    """GET /api/v1/rooms/{roomId}/scene —— 「现场」抽屉要的三样（`exec/46` B4）。
+
+    🔴 **必须认人**：线索按 `audience` 逐人裁，而"是谁在问"只能由
+    `X-Reconnect-Token` 回答。走 `require_room_member` 这条现成的门——同
+    `/replay` 与 `/summary` 那批"只有参与者能看"的接口。
+
+    位置那一半**不在这里**：`party.update` 每轮推过了，不给第二份。
+    """
+    from app.service import scene as scene_service
+
+    try:
+        player = await room_service.require_room_member(db, room_id, reconnect_token)
+    except (
+        room_service.RoomAuthenticationError,
+        room_service.RoomAuthorizationError,
+    ) as exc:
+        _raise_service_error(exc)
+    narrator = getattr(request.app.state, "narrator", None)
+    return ApiResponse.ok(await scene_service.get_scene(db, room_id, player, narrator=narrator))
 
 
 @router.get("/{room_id}/summary", response_model=ApiResponse[RoomSummaryRead])

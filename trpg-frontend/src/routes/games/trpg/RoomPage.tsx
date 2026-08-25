@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Users, Map, MapPin, BookOpen, ScrollText, Star, X, SendHorizontal, Plus, Save, FlagOff, Heart, Mic, MessagesSquare, Scroll, EyeOff, Coffee, DoorOpen, Moon } from 'lucide-react'
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react'
-import type { ChatMessage, PartyCharacter, PartyUpdatePayload } from 'trpg-sdk'
+import type { ChatMessage, PartyCharacter, PartyUpdatePayload, SceneRead } from 'trpg-sdk'
 import { useRoomStore } from '@/stores/room-store'
 import { useGameStore } from '@/stores/game-store'
 import { useAuthStore } from '@/stores/auth-store'
@@ -235,6 +235,51 @@ function Section({
         {label}
       </span>
       {children}
+    </div>
+  )
+}
+
+/** 「现场」里的小节标题：一条横线拖到底，跟卷宗里的分栏同源。 */
+function SceneLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="typed flex items-center gap-2 text-[9.5px] text-ink-soft mb-1.5">
+      {children}
+      <span className="flex-1 h-px bg-ink/20" />
+    </div>
+  )
+}
+
+/**
+ * 「现场」里的折叠区（B 档：处境常驻、其余折叠）。
+ *
+ * `count` 为 null = 这一段这次不给数（分头期间的足迹），标题右边显示 `—`
+ * 而不是 `0`——**"不给"和"没有"是两件事**，显示成 0 就是在说"你哪儿都没去过"。
+ */
+function SceneFold({
+  title,
+  count,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string
+  count: number | null
+  open: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div className="border border-ink/28">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-3 py-2.5 text-[12px] text-ink bg-ink/[0.055] active:bg-ink/10"
+      >
+        <span>{title}</span>
+        <span className="typed text-[10px] text-ink-soft">
+          {count === null ? '—' : count} {open ? '▾' : '▸'}
+        </span>
+      </button>
+      {open && <div className="px-3 pb-2.5 pt-0.5">{children}</div>}
     </div>
   )
 }
@@ -676,6 +721,11 @@ export default function RoomPage() {
   // 我自己的空间处境（我在哪 · 谁跟我在一处 · 别处还有几组）。逐人裁过再发，
   // 不是全房间的分组表。它存在的理由：系统把位置认错时此前没人看得见。
   const [party, setParty] = useState<PartyUpdatePayload | null>(null)
+  // 「现场」抽屉的三样（`exec/46` B4）。打开抽屉时拉一次，关掉再开重拉——
+  // 线索/在场 NPC 每轮都可能变，缓存住会展示过期的现场。
+  const [scene, setScene] = useState<SceneRead | null>(null)
+  // 一次只展开一个折叠区（B 档：第一眼永远是"我在哪、旁边有谁"）。
+  const [sceneFold, setSceneFold] = useState<'clues' | 'places' | null>(null)
   const [openPanel, setOpenPanel] = useState<string | null>(null)
   const [sheetPage, setSheetPage] = useState<'info' | 'background'>('info')
   // 队友角色卡（exec/14 P5.3）：真人桌上卡是互相传阅的，此前系统只能读回
@@ -1238,6 +1288,25 @@ export default function RoomPage() {
       })
       .catch(() => {}) // 历史拉不到不阻塞进房，聊天区从空开始
   }, [roomId, reconnectToken])
+
+  // 现场：只在「现场」抽屉打开时拉一次（`exec/46` B4）。每次打开都重拉，
+  // 理由同队友角色卡——线索刚挣到、NPC 刚上台，缓存住就是过期的现场。
+  useEffect(() => {
+    if (openPanel !== 'map' || !roomId || !reconnectToken) return
+    let cancelled = false
+    sdk.rooms
+      .getScene(roomId, reconnectToken)
+      .then((data) => {
+        if (!cancelled) setScene(data)
+      })
+      .catch(() => {
+        // 拉不到就不显示这三段，位置那一段照常（它走 WS，不依赖这个请求）。
+        if (!cancelled) setScene(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [openPanel, roomId, reconnectToken])
 
   // 队友角色卡：只在成员面板打开时拉一次。每次打开都重拉——队友可能刚建完卡、
   // HP 也可能刚被扣过，缓存住会展示过期数值。
@@ -1810,7 +1879,9 @@ export default function RoomPage() {
           // 读起来像"看看谁在线"）——真人实测直接找不到，以为功能没做。
           // 底部这排带文字的 tab 才是玩家找"卡"的心智位置，跟自己的角色卡并列。
           { icon: Users, label: '队友', key: 'members' },
-          { icon: Map, label: '地图', key: 'map' },
+          // 🔴 名字从「地图」改成「现场」：它答不了"怎么走"（exits 覆盖率 0–24%），
+          // 答的是"我在哪、旁边有谁、走过哪儿、挣到过什么"。
+          { icon: MapPin, label: '现场', key: 'map' },
           { icon: BookOpen, label: '速记', key: 'notes' },
         ].map((item) => (
           <button
@@ -2362,17 +2433,25 @@ export default function RoomPage() {
         )}
       </BottomPanel>
 
-      {/* Panel: 地图。🔴 2026-08-14：这里原本整块是"结构化地图尚未接入"的占位，
-          文案写着「有『当前场景』状态后这里再显示真地点」——而那个状态早就有了
-          （后端推 party.update 带 locationName），只是没人回来接。**节点之间的
-          连接关系（exits 图）仍然没接**，所以这里只答"你在哪、跟谁一起"，
-          不画地图；余下那半仍然照实说。 */}
-      <BottomPanel accent="#8f3628" paper="#cfc3a2" open={openPanel === 'map'} onClose={() => setOpenPanel(null)} title="地图">
+      {/* Panel: 现场（`exec/46` B4）。🔴 这个抽屉原来叫「地图」，而它答不了
+          "怎么走"——`exits` 在五份内置模组里覆盖率 0–24%（有一份是 0），
+          `module_loader.py` 明令禁止拿它算「从这儿能去哪」，连出来的线大半是编的。
+          所以它改名叫「现场」：答"我在哪、旁边有谁、走过哪儿、挣到过什么"。
+          位置那一半走 party.update（每轮推、后端逐人裁过），其余三样走
+          GET /rooms/{id}/scene（打开时拉一次）。 */}
+      <BottomPanel accent="#8f3628" paper="#cfc3a2" open={openPanel === 'map'} onClose={() => setOpenPanel(null)} title="现场">
         {party?.locationName ? (
           <div className="flex flex-col gap-3">
+            {/* 常驻：这个抽屉最初存在的理由——系统把位置认错时，此前没有任何
+                人会发现。所以它永远是打开后的第一眼，不折叠。 */}
             <div className="survey border border-ink/30 px-4 py-4">
               <div className="typed text-[10px] text-ink-soft mb-1.5">当前所在</div>
               <div className="font-display text-lg text-ink leading-tight">{party.locationName}</div>
+              {party.locationId && (
+                // 🔴 节点 id 露出来：它是唯一能治「系统把人放错地方而没人发现」
+                // 的东西（`exec/46` A1）。玩家看得见指针，才报得出指针错。
+                <div className="typed text-[9.5px] text-ink-soft/80 mt-1">{party.locationId}</div>
+              )}
               {party.companions.length > 1 && (
                 <div className="text-[11.5px] text-ink-soft mt-2 leading-[1.7]">
                   同处：{party.companions.join('、')}
@@ -2384,6 +2463,85 @@ export default function RoomPage() {
                 </div>
               )}
             </div>
+
+            {/* 常驻：眼前站着谁。分头时服务端按设计不给（见 splitNow 那段注释）。 */}
+            {scene && !scene.splitNow && scene.npcsOnStage.length > 0 && (
+              <div>
+                <SceneLabel>此刻在场</SceneLabel>
+                <div className="border border-ink/30 px-3 py-1.5">
+                  {scene.npcsOnStage.map((npc) => (
+                    <div key={npc.id} className="flex items-start gap-2 py-1.5 text-[12.5px] text-ink leading-[1.6] border-b border-dashed border-ink/20 last:border-b-0">
+                      <span className="w-1.5 h-1.5 mt-[7px] shrink-0 bg-rust" />
+                      <span>{npc.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {scene && (
+              <>
+                {/* 线索**不受分头影响**：事实账本自带 audience，本来就是逐人裁的。 */}
+                <SceneFold
+                  title="已揭开的线索"
+                  count={scene.clues.length}
+                  open={sceneFold === 'clues'}
+                  onToggle={() => setSceneFold(sceneFold === 'clues' ? null : 'clues')}
+                >
+                  {scene.clues.length === 0 ? (
+                    <p className="text-[11.5px] text-ink-soft py-2 leading-[1.7]">还没有挣到线索。</p>
+                  ) : (
+                    scene.clues.map((clue) => (
+                      <div key={clue.id} className="flex items-start gap-2 py-1.5 text-[12.5px] text-ink leading-[1.6] border-b border-dashed border-ink/20 last:border-b-0">
+                        <span className="w-1.5 h-1.5 mt-[7px] shrink-0 bg-ink-blue" />
+                        <span>{clue.text}</span>
+                      </div>
+                    ))
+                  )}
+                </SceneFold>
+
+                <SceneFold
+                  title="去过的地方"
+                  count={scene.splitNow ? null : scene.visitedPlaces.length}
+                  open={sceneFold === 'places'}
+                  onToggle={() => setSceneFold(sceneFold === 'places' ? null : 'places')}
+                >
+                  {scene.splitNow ? (
+                    // 🔴 如实说明为什么是空的，不要显示成"哪儿都没去过"。
+                    <p className="text-[11.5px] text-ink-soft py-2 leading-[1.7]">
+                      分头行动期间不显示——足迹是全队合记的，给你就等于把别处那一组走过哪儿也告诉你了。
+                    </p>
+                  ) : scene.visitedPlaces.length === 0 ? (
+                    <p className="text-[11.5px] text-ink-soft py-2 leading-[1.7]">还没有去过别的地方。</p>
+                  ) : (
+                    <div className="relative pl-[19px] py-1">
+                      <span className="absolute left-[5px] top-[10px] bottom-[14px] w-px bg-ink/30" />
+                      {scene.visitedPlaces.map((place) => {
+                        const here = place.id === party.locationId
+                        return (
+                          <div key={place.id} className={`relative py-1 text-[12.5px] leading-[1.55] ${here ? 'text-ink font-semibold' : 'text-ink-soft'}`}>
+                            <span className={`absolute -left-[17px] top-[9px] w-[7px] h-[7px] rounded-full border ${here ? 'bg-rust border-rust' : 'bg-transparent border-ink/50'}`} />
+                            {place.name}
+                            <span className="typed text-[9.5px] text-ink-soft/80 ml-1.5">{place.id}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </SceneFold>
+              </>
+            )}
+
+            {/* 随身**不重复放**：它已经在「角色卡→背景装备」里（inventory 那一片
+                每轮增删的正是同一个字段）。这里只给一个入口，不做第二份账。 */}
+            <button
+              onClick={() => setOpenPanel('sheet')}
+              className="cut-corner flex items-center justify-between border border-dashed border-ink/40 px-3 py-2.5 text-[11.5px] text-ink-soft active:bg-ink/10"
+            >
+              <span>随身物品</span>
+              <span className="typed text-[10px] text-brass">角色卡 →</span>
+            </button>
+
             <p className="text-[11px] text-text-muted leading-relaxed px-1">
               地点之间的路线尚未接入，通往何处以主持人的场景描写为准。
             </p>

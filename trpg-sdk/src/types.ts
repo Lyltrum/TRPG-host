@@ -78,6 +78,11 @@ export type {
   ReplayEventRead as ReplayEvent,
   // 一局分多个晚上跑完（`exec/46` B3）——「上次讲到哪」
   LastSessionRead,
+  // 「现场」抽屉（`exec/46` B4）—— 对应后端 dto/scene.py
+  SceneRead,
+  SceneNpcRead,
+  ScenePlaceRead,
+  SceneClueRead,
   // WebSocket 现有 6 个事件（issue #60）—— 对应后端 dto/ws.py
   RoomJoinPayload,
   PlayerReadyPayload,

@@ -1362,6 +1362,43 @@ export interface SanCheckRollPayload {
 }
 
 /**
+ * 一条已经揭开、并且**这个玩家知道**的线索。
+ */
+export interface SceneClueRead {
+  id: string;
+  text: string;
+}
+
+/**
+ * 此刻在台上的一个 NPC。
+ */
+export interface SceneNpcRead {
+  id: string;
+  name: string;
+}
+
+/**
+ * 去过的一个地方。
+ */
+export interface ScenePlaceRead {
+  id: string;
+  name: string;
+}
+
+/**
+ * GET /api/v1/rooms/{roomId}/scene 返回。
+ *
+ * 🔴 **四个字段一个默认值都不给**：服务端每次都送得出，契约就该说它一定在。
+ * 给了默认值 = 生成的 TS 是可选的 = 前端只能 `?? []`（2026-08-19 一天踩两次）。
+ */
+export interface SceneRead {
+  npcsOnStage: SceneNpcRead[];
+  visitedPlaces: ScenePlaceRead[];
+  clues: SceneClueRead[];
+  splitNow: boolean;
+}
+
+/**
  * POST /api/v1/rooms/{roomId}/module 请求体
  */
 export interface SelectModuleBody {

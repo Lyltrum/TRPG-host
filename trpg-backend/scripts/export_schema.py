@@ -23,7 +23,7 @@ from pathlib import Path
 from pydantic import BaseModel
 from pydantic.json_schema import GenerateJsonSchema, models_json_schema
 
-from app.dto import auth, character, chat, common, game, module, replay, room, ws
+from app.dto import auth, character, chat, common, game, module, replay, room, scene, ws
 
 # 需要导出的模型清单：REST 请求/响应体 + WS 事件 payload。
 #
@@ -97,6 +97,7 @@ _MODELS: list[type[BaseModel]] = [
     module.ModuleImportJobRead,
     # 复盘 / 回放（issue #77 新增）
     replay.RoomSummaryRead,
+    scene.SceneRead,
     replay.ReplayEventRead,
     # 通用响应信封里的错误详情（ApiResponse 本身手写，见上面的说明）
     common.ErrorDetail,

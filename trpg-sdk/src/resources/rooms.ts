@@ -10,6 +10,7 @@ import type {
   MyRoomSummary,
   RoomSummary,
   LastSessionRead,
+  SceneRead,
   ReplayEvent,
   PartyCharacter,
   RoomPlayerSummary,
@@ -257,6 +258,24 @@ export class RoomsResource {
    */
   getLastSession(roomId: string): Promise<LastSessionRead> {
     return this.client.get<LastSessionRead>(`/rooms/${roomId}/last-session`);
+  }
+
+  /**
+   * GET /api/v1/rooms/{roomId}/scene — 「现场」抽屉要的三样（`exec/46` B4）
+   *
+   * 此刻在场的 NPC · 去过的地方 · 已揭开的线索。**位置那一半不在这里**——
+   * `party.update` 每轮推的「当前所在 · 同处的人 · 另有几组」已经解决了它，
+   * 这个接口不给第二份。
+   *
+   * 🔴 `splitNow` 为 true 时，前两项**按设计为空**：它们在服务端是房间级状态
+   * （没有字段记着"这个 NPC 站在哪一组面前"），分头期间照给就是把别处那一组
+   * 的处境泄露给你。空数组要显示成"分头期间不显示"，不是"这里没有人"。
+   */
+  getScene(roomId: string, reconnectToken: string): Promise<SceneRead> {
+    return this.client.get<SceneRead>(
+      `/rooms/${roomId}/scene`,
+      this.roomAuth(reconnectToken)
+    );
   }
 
   /** GET /api/v1/rooms/{roomId}/replay — 逐条事件回放（issue #77 新增） */

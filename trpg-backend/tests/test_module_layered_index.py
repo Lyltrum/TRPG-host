@@ -31,7 +31,7 @@ from app.core.keeper.contract.module_loader import (
     render_node_index,
     render_npc_index,
 )
-from app.core.keeper.runtime.focus import focus_set, isolated_node_ids
+from app.core.keeper.runtime.focus import focus_set, isolated_node_ids, should_layer
 from app.core.keeper.runtime.scene_state import CURRENT_NODE_KEY
 
 _BACKEND = Path(__file__).resolve().parents[1]
@@ -185,13 +185,31 @@ def _corpus() -> list[tuple[str, ScenarioModule]]:
 
 @pytest.mark.skipif(not _CORPUS.exists(), reason="第三方模组是 gitignored 的，CI 上没有")
 def test_every_real_module_has_a_dense_enough_graph() -> None:
-    """整个分层方案压在这个前提上：合并图够密。**它不成立就别写注入。**"""
+    """整个分层方案压在这个前提上：合并图够密。**它不成立就别写注入。**
+
+    🔴 **只对真正会走分层的模组断言**（2026-08-25 收窄）。退化路径上的模组
+    整份注入，**根本没有"关注集"这回事**——原来那句失败信息（"它们进不了任何
+    关注集"）对它们本身就不成立。一份 9,508 字符的模组孤立率 18%，实际危害是
+    **零**，因为那 4 个节点照样一字不落地进 prompt。
+
+    全量的孤立率仍然**打印出来**当探针：导入管线确实能产出 18% 这种模组，
+    今天无害只因为那一份小；哪天一份大模组也这样，这条断言就会拦住它。
+    **能确定的那一半拦，判不准的只记不断**——同 `_entity_name_in_key` 的先例。
+    """
     corpus = _corpus()
     assert len(corpus) >= 5, f"样本太少（{len(corpus)} 份），量出来的比例不作数"
+
     for label, module in corpus:
         graph = merged_graph(module)
         isolated = [node_id for node_id, peers in graph.items() if not peers]
         ratio = len(isolated) / len(graph)
+        layered = should_layer(module)
+        print(
+            f"[孤立率] {label}: {ratio:.0%}（{len(isolated)}/{len(graph)}）"
+            f" {'· 走分层' if layered else '· 退化路径，本条不拦'}"
+        )
+        if not layered:
+            continue
         assert ratio <= _ISOLATED_CEILING, (
             f"{label}：{len(isolated)}/{len(graph)} 个节点在合并图上孤立"
             f"（{ratio:.0%}），它们进不了任何关注集 ⇒ 回 exec/47 重新设计召回"
@@ -269,6 +287,10 @@ def test_the_resident_slab_of_isolated_nodes_stays_small() -> None:
     这个决定本身就要重新算账（那时才轮到运行时边或者别的办法）。
     """
     for label, module in _corpus():
+        # 🔴 同上条：**常驻孤立节点这件事只发生在分层路径上**。退化路径整份注入，
+        # 没有"常驻块"也就无所谓划不划算。
+        if not should_layer(module):
+            continue
         by_id = {node.id: node for node in iter_all_nodes(module.nodes)}
         chars = sum(len(render_node(by_id[k])) for k in isolated_node_ids(module))
         ratio = chars / len(render_index(module))

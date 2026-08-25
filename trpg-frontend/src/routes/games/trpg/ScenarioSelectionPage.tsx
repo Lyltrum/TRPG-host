@@ -152,6 +152,15 @@ export default function ScenarioSelectionPage() {
                   </div>
                   <p className="text-[11px] text-text-muted mt-0.5">
                     {module.createdAt ? `${formatImportedAt(module.createdAt)}导入` : '导入的模组'}
+                    {/* 🔴 同一份源文件转过不止一次时才标（2026-08-25）：那时列表里会有
+                        **两份同名**的模组，只靠标题分不出谁是谁。判据在后端按
+                        source_sha256 算——同一个文件的两次转换是同一份模组的两个版本。
+                        两份都留着都能选：新的有可能转坏，藏掉旧版就等于拿走回退能力。 */}
+                    {module.conversionTotal !== null && module.conversionTotal > 1 && (
+                      <span className="ml-1.5 text-ink-blue font-semibold">
+                        · 第 {module.conversionIndex} 次转换（共 {module.conversionTotal} 次）
+                      </span>
+                    )}
                   </p>
                 </div>
                 <div className="text-text-muted flex-shrink-0 mt-1">

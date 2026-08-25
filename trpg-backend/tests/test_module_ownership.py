@@ -398,3 +398,121 @@ async def test_every_table_hanging_off_a_scenario_gets_cleaned(world, ids) -> No
                 select(func.count()).select_from(table).where(table.c[column] == module_id)
             )
             assert left == 0, f"{table.name} 没被清干净，留下 {left} 行孤儿"
+
+
+# ── 同名模组：排序与「第 N 次转换」（2026-08-25） ──────────────
+
+
+async def _seed_two_conversions_of_one_file(user_id: str) -> tuple[str, str, str]:
+    """同一份源文件（同 sha256）转过两次 + 另一份不同文件恰好同名。
+
+    造出**两种同名**：一种是同一份模组的两个版本（代码分得清），一种是真的
+    两份不同模组（代码分不清，只能靠日期）。
+    """
+    from datetime import UTC, datetime, timedelta
+
+    async with _session_factory() as db:
+        system_id = (await db.scalars(select(GameSystem.id))).first()
+        base = datetime(2026, 8, 10, tzinfo=UTC).replace(tzinfo=None)
+        old_id, new_id, other_id = (str(uuid.uuid4()) for _ in range(3))
+        db.add_all(
+            [
+                Scenario(
+                    id=old_id,
+                    game_system_id=system_id,
+                    title="林中屋",
+                    owner_user_id=user_id,
+                    created_at=base,
+                    updated_at=base,
+                ),
+                Scenario(
+                    id=new_id,
+                    game_system_id=system_id,
+                    title="林中屋",
+                    owner_user_id=user_id,
+                    created_at=base + timedelta(days=15),
+                    updated_at=base + timedelta(days=15),
+                ),
+                # 🔴 **不同文件、恰好同名**：它不该被算成"第 3 次转换"
+                Scenario(
+                    id=other_id,
+                    game_system_id=system_id,
+                    title="林中屋",
+                    owner_user_id=user_id,
+                    created_at=base + timedelta(days=20),
+                    updated_at=base + timedelta(days=20),
+                ),
+            ]
+        )
+        for scenario_id, digest, offset, status in (
+            (old_id, "aaa", 0, "succeeded"),
+            # 🔴 中间夹一次**失败**的：它没有产物，不该占掉一个次序号
+            # （否则新的那份会被标成"第 3 次"，而列表里只有两份）。
+            (None, "aaa", 7, "failed"),
+            (new_id, "aaa", 15, "succeeded"),
+            (other_id, "bbb", 20, "succeeded"),
+        ):
+            db.add(
+                ModuleImportJob(
+                    id=str(uuid.uuid4()),
+                    owner_user_id=user_id,
+                    status=status,
+                    stage="registering",
+                    source_sha256=digest,
+                    result_scenario_id=scenario_id,
+                    created_at=base + timedelta(days=offset),
+                    updated_at=base + timedelta(days=offset),
+                )
+            )
+        await db.commit()
+        return old_id, new_id, other_id
+
+
+async def test_the_newest_import_comes_first(world) -> None:
+    """🔴 列表必须有确定的顺序：两份同名时，刚导进来的那份在最上面。
+
+    此前 `list_modules` 一个 `order_by` 都没有——顺序由数据库随便挑，而
+    "随便挑"意味着两份同名的模组每次刷新都可能换位置，选错就是一局零线索。
+    变异检验：删掉 `order_by`，SQLite 会按插入序返回，这条红。
+    """
+    alice_id, _ = world
+    old_id, new_id, other_id = await _seed_two_conversions_of_one_file(alice_id)
+
+    async with _session_factory() as db:
+        modules = await list_modules(db, user_id=alice_id)
+
+    # 内置在最前（它们是首选）
+    assert modules[0].is_imported is False
+    imported = [m.id for m in modules if m.is_imported]
+    # 导入的按时间倒序：最新那份紧跟在内置之后
+    assert imported.index(other_id) < imported.index(new_id) < imported.index(old_id)
+
+
+async def test_two_conversions_of_the_same_file_are_numbered(world) -> None:
+    """🔴 同一份源文件的两次转换标成「第 N 次 / 共 M 次」，**不同文件不算进来**。
+
+    变异检验：把分组键从 `source_sha256` 换成 `title`，那份"不同文件恰好同名"
+    的会被算成第 3 次，这条当场红。
+    """
+    alice_id, _ = world
+    old_id, new_id, other_id = await _seed_two_conversions_of_one_file(alice_id)
+
+    async with _session_factory() as db:
+        by_id = {m.id: m for m in await list_modules(db, user_id=alice_id)}
+
+    assert (by_id[old_id].conversion_index, by_id[old_id].conversion_total) == (1, 2)
+    assert (by_id[new_id].conversion_index, by_id[new_id].conversion_total) == (2, 2)
+    # 🔴 另一份文件恰好同名 ⇒ 它自己是"第 1 次 / 共 1 次"，前端据此不显示标记
+    assert (by_id[other_id].conversion_index, by_id[other_id].conversion_total) == (1, 1)
+
+
+async def test_builtin_modules_have_no_conversion_numbers(world) -> None:
+    """内置模组不是转换出来的 ⇒ 两个字段都是 null（而不是 1/1）。
+
+    🔴 "不适用"与"转过一次"是两件事，压成同一个值前端就没法区分该不该显示标记。
+    """
+    alice_id, _ = world
+    async with _session_factory() as db:
+        builtin = next(m for m in await list_modules(db, user_id=alice_id) if not m.is_imported)
+    assert builtin.conversion_index is None
+    assert builtin.conversion_total is None

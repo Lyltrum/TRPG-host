@@ -32,6 +32,7 @@ from app.dto.room import (
     RoomCreateResult,
     RoomPlayerRead,
     RoomPreview,
+    ScenarioFields,
     SelectModuleBody,
 )
 from app.models.content import Game, GameSystem, Scenario
@@ -875,16 +876,65 @@ async def list_modules(db: AsyncSession, *, user_id: str | None = None) -> list[
         stmt = select(Scenario).where(
             or_(Scenario.owner_user_id.is_(None), Scenario.owner_user_id == user_id)
         )
-    result = await db.scalars(stmt)
-    return [_to_module_read(s) for s in result]
+    # 🔴 **必须显式排序**（2026-08-25）：此前一个 `order_by` 都没有，顺序由数据库
+    # 随便挑——而同一份源文件重导之后列表里会有**两份同名**的模组，谁前谁后不确定，
+    # 选错了就是一局零线索。内置在前（它们是首选），导入的按时间**倒序**：
+    # 刚导进来的那份就在最上面，那正是你要找的。
+    stmt = stmt.order_by(
+        Scenario.owner_user_id.is_(None).desc(),
+        Scenario.created_at.desc(),
+    )
+    result = list(await db.scalars(stmt))
+    conversions = await _conversion_ordinals(db)
+    return [_to_module_read(s, conversions.get(s.id)) for s in result]
 
 
-def _to_module_read(scenario: Scenario) -> ModuleRead:
+async def _conversion_ordinals(db: AsyncSession) -> dict[str, tuple[int, int]]:
+    """scenario_id → (这是同一份源文件的第几次转换, 一共转过几次)。
+
+    判据是 `source_sha256`：**同一个文件的两次成功转换 = 同一份模组的两个版本**。
+    只数 `succeeded` 的——失败那几次没有产物，不占次序。
+
+    🔴 **两份都留着、都能选**，不在这里过滤掉旧的：新的有可能转坏（粒度波动
+    实测 2.7 倍），藏掉旧版就等于拿走回退能力。这个函数只负责**说清楚**，
+    不替用户做决定。
+    """
+    rows = await db.execute(
+        select(
+            ModuleImportJob.result_scenario_id,
+            ModuleImportJob.source_sha256,
+            ModuleImportJob.created_at,
+        )
+        .where(
+            ModuleImportJob.status == "succeeded",
+            ModuleImportJob.result_scenario_id.is_not(None),
+        )
+        .order_by(ModuleImportJob.created_at)
+    )
+    by_digest: dict[str, list[str]] = {}
+    for scenario_id, digest, _created in rows.all():
+        by_digest.setdefault(str(digest), []).append(str(scenario_id))
+    out: dict[str, tuple[int, int]] = {}
+    for scenario_ids in by_digest.values():
+        total = len(scenario_ids)
+        for index, scenario_id in enumerate(scenario_ids, start=1):
+            out[scenario_id] = (index, total)
+    return out
+
+
+def _to_module_read(scenario: Scenario, conversion: tuple[int, int] | None = None) -> ModuleRead:
     """`is_imported` 由 `owner_user_id` 推出，不另存一份状态。"""
-    dto = ModuleRead.model_validate(scenario)
-    dto.is_imported = scenario.owner_user_id is not None
-    dto.created_at = scenario.created_at
-    return dto
+    # 表里读得出的那些走 `ScenarioFields`，两个算出来的显式传——这样
+    # `conversion_*` 能在契约里保持**必填**，而又不必逐个列出全部列
+    # （那就成了「逐个列出的地方，加一项就漏一项」）。
+    index, total = conversion or (None, None)
+    return ModuleRead(
+        **ScenarioFields.model_validate(scenario).model_dump(),
+        is_imported=scenario.owner_user_id is not None,
+        created_at=scenario.created_at,
+        conversion_index=index,
+        conversion_total=total,
+    )
 
 
 async def _load_public_story(
@@ -1034,7 +1084,19 @@ async def get_module_detail(
         return None
     if not await _may_read_module(db, scenario, user_id):
         return None
-    detail = ModuleDetailRead.model_validate(scenario)
+    # 转换次序在详情页也要有：同名的两份摆在一起时，它是唯一分得清谁是谁的东西。
+    # （`ModuleDetailRead` 继承 `ModuleRead` ⇒ 那两个字段在这里同样是必填。
+    # 忘了设会当场 ValidationError——三条既有用例就是这么把这个调用点揪出来的。）
+    conversions = await _conversion_ordinals(db)
+    index, total = conversions.get(module_id, (None, None))
+    detail = ModuleDetailRead(
+        **ScenarioFields.model_validate(scenario).model_dump(),
+        is_imported=scenario.owner_user_id is not None,
+        created_at=scenario.created_at,
+        conversion_index=index,
+        conversion_total=total,
+        synopsis=scenario.synopsis,
+    )
     intro, opening, pages = await _load_public_story(db, module_id)
     if not pages and detail.synopsis:
         pages = [detail.synopsis]

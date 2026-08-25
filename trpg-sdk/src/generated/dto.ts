@@ -849,6 +849,8 @@ export interface ModuleDetailRead {
   estimatedDuration?: string | null;
   isImported?: boolean;
   createdAt?: string | null;
+  conversionIndex: number | null;
+  conversionTotal: number | null;
   synopsis?: string | null;
   playerIntro?: string | null;
   openingScript?: string | null;
@@ -896,8 +898,7 @@ export interface ModuleImportJobRead {
 }
 
 /**
- * 模组信息（对应内容库 `Scenario` 表，`from_attributes=True` 支持直接从
- * ORM 对象构造）。
+ * 模组信息 = 表里读得出的那些 + 两个算出来的。
  */
 export interface ModuleRead {
   id: string;
@@ -910,6 +911,8 @@ export interface ModuleRead {
   estimatedDuration?: string | null;
   isImported?: boolean;
   createdAt?: string | null;
+  conversionIndex: number | null;
+  conversionTotal: number | null;
 }
 
 /**

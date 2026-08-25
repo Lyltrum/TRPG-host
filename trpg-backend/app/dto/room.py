@@ -149,9 +149,17 @@ class AiPlayerCreateBody(CamelModel):
     seed: int | None = None
 
 
-class ModuleRead(CamelModel):
-    """模组信息（对应内容库 `Scenario` 表，`from_attributes=True` 支持直接从
-    ORM 对象构造）。"""
+class ScenarioFields(CamelModel):
+    """`Scenario` 表**直接读得出**的那些字段。
+
+    🔴 单独分出来，是为了让 `ModuleRead` 能有**必填**的计算字段
+    （`conversion_*`）而不必逐个列出全部列去显式构造：
+    `ModuleRead(**ScenarioFields.model_validate(scenario).model_dump(), ...)`。
+
+    另外两条路都走不通：给 ORM 实例挂临时属性——`ty` 当场报
+    `unresolved-attribute`（类型检查是守门人，不压它）；给计算字段一个默认值
+    ——生成的 TS 就变成 `conversionIndex?:`，而那正是这个项目踩过三次的那条。
+    """
 
     model_config = {"from_attributes": True}
     id: str
@@ -162,11 +170,29 @@ class ModuleRead(CamelModel):
     players_max: int
     difficulty: int
     estimated_duration: str | None = None
+
+
+class ModuleRead(ScenarioFields):
+    """模组信息 = 表里读得出的那些 + 两个算出来的。"""
+
     #: 这个模组是不是导入进来的。前端靠它区分「内置」与「我导入的」——两者能给的
     #: 信息不一样：内置有人工填的难度与简介，导入的只有导入日期与规模。
     #: 由 `owner_user_id` 推出（内置无主），不是另一份状态。
     is_imported: bool = False
     created_at: UtcDatetime | None = None
+    #: 这是**同一份源文件**的第几次转换 / 一共转过几次（2026-08-25）。
+    #:
+    #: 判据是 `source_sha256`——**同一个文件的两次转换是同一份模组的两个版本**，
+    #: 而两份不同文件恰好同名则是真的两份模组。这一条代码分得清，所以由代码标，
+    #: 不推给用户去改名（跟卡库那次「血统≠同一性」不同，那次代码是真的答不了）。
+    #:
+    #: `None` = 不是导入的（内置模组）。导入的**一定有值**，最少是 1/1。
+    #:
+    #: 🔴 **没有塞进 `version`**：那个字段的语义是"模组的版本"，跟"第几次转换"
+    #: 是两件事，合用一个字段就是「一份数据扮演两个角色」——这个项目已经为它
+    #: 付过好几次账了。（`version` 现在恒为 `1.0.0`，是个装饰字段，本条不动它。）
+    conversion_index: int | None
+    conversion_total: int | None
 
 
 class RoomPreview(CamelModel):

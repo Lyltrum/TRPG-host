@@ -135,15 +135,18 @@ async def delete_import_job(
 async def retry_import_job(
     job_id: str,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> ApiResponse[ModuleImportJobRead]:
     """POST /api/v1/modules/import/{jobId}/retry —— 重跑一次。
 
     🔴 **新建一个 job，不复活旧的**：旧 job 的失败理由要留着，否则用户点三次
     就再也不知道前两次为什么失败（`exec/29 §7.2 ②`）。重跑由用户点，**不自动**
     ——那等于默默再花一次钱。
+
+    🔴 鉴权在 service 层（看不到就当不存在），理由见那里。**这个参数此前叫
+    `_user`——拿到了却没往下传**，于是任何登录用户都能烧别人的钱。
     """
     job = await module_import_service.retry_import(
-        db, job_id, session_factory=async_session_factory
+        db, job_id, user.id, session_factory=async_session_factory
     )
     return ApiResponse.ok(job)

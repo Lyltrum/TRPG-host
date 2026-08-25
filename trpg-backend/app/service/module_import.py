@@ -313,6 +313,7 @@ async def delete_import_job(db: AsyncSession, job_id: str, user_id: str) -> None
 async def retry_import(
     db: AsyncSession,
     job_id: str,
+    user_id: str,
     *,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> ModuleImportJobRead:
@@ -321,14 +322,27 @@ async def retry_import(
     组装输出高度不稳定——同一批中间产物跑两次问题类别完全不同——所以重跑确实
     有用；但**不自动**（那等于默默再花一次钱），由用户点。旧 job 原样留着，
     否则点三次就再也不知道前两次为什么失败。
+
+    🔴 **成功的 job 也允许重跑**（2026-08-25 放开）：原来这里硬拒
+    「已经导入成功了，不用重试」，而**管线自己会升级**——2026-08-10 那版不产
+    `facts`，08-25 的产。撞上这件事的人在界面上**没有任何办法**让同一份文件
+    再跑一次：上传原文件会被 `create_import_job` 的 sha256 去重挡回来（那道门
+    是对的，省的是"不小心传重了"那次钱），点重试又被这里挡回来。两道门都对，
+    合起来就是一条死路——「**加一道门，必须同时给它配一条走得通的修法**」。
+
+    区别在**谁按的**：去重挡的是"你可能不小心传重了"，这里是"我明确要再来一次"。
+    所以放开的同时，界面上那颗按钮必须明说这会再花一次钱（前端二次确认）。
+
+    🔴 **顺带补上鉴权**：这个端点此前**没有任何 owner 检查**——controller 拿了
+    `_user` 却没往下传。任何登录用户拿到别人的 job_id 就能让别人的模组重跑一次，
+    **花的是别人的钱**。跟 `get_import_job` 那次（`exec/46` A5）同族，
+    「一份数据有几个出口，规则就要落几处」——那次修了读，这一头漏了写。
+    放开成功态之后它的危害还会变大（以前只能重跑别人失败的），所以必须一起修。
     """
     old = await db.get(ModuleImportJob, job_id)
-    if old is None:
+    # 看不到的一律当**不存在**（不是 403），跟 `get_import_job` 同口径。
+    if old is None or old.owner_user_id != user_id:
         raise AppException(ErrorCode.NOT_FOUND, "导入任务不存在", status.HTTP_404_NOT_FOUND)
-    if old.status == STATUS_SUCCEEDED:
-        raise AppException(
-            ErrorCode.CONFLICT, "这个模组已经导入成功了，不用重试。", status.HTTP_409_CONFLICT
-        )
     if old.status in (STATUS_PENDING, STATUS_RUNNING):
         raise AppException(
             ErrorCode.CONFLICT, "这个任务还在跑，等它结束再说。", status.HTTP_409_CONFLICT

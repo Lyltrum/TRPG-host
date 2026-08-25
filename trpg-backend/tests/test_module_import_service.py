@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.db import Base
-from app.core.errors import AppException
+from app.core.errors import AppException, ErrorCode
 from app.core.module_import.job_state import (
     STATUS_FAILED,
     STATUS_INTERRUPTED,
@@ -121,7 +121,16 @@ async def test_dto_never_carries_the_stored_file_path() -> None:
 # ── 去重 ──────────────────────────────────────────────
 
 
+#: 这些用例里"我"是谁。🔴 **job 必须有主人**：`retry_import` 按 owner 鉴权，
+#: 主人是 None 的样本走不到那条分支，等于没测（同 `exec/40` 那条瞎掉的守护）。
+#: 复用文件下半部分早就有的 `_OWNER`，不另造一个——两个"我"迟早会分叉。
+_OWNER = str(uuid.uuid4())
+_ME = _OWNER
+_SOMEONE_ELSE = str(uuid.uuid4())
+
+
 async def _job(db, **kw) -> ModuleImportJob:
+    kw.setdefault("owner_user_id", _ME)
     row = ModuleImportJob(
         id=str(uuid.uuid4()),
         created_at=datetime.now(UTC),
@@ -199,7 +208,7 @@ async def test_retry_creates_a_new_job_and_keeps_the_old_one(tmp_path) -> None:
             error_message="校验未通过：3 处问题（numeric、skill）",
         )
 
-        dto = await svc.retry_import(db, old.id, session_factory=_session_factory)
+        dto = await svc.retry_import(db, old.id, _ME, session_factory=_session_factory)
 
         assert dto.job_id != old.id
         assert dto.retried_from_job_id == old.id
@@ -219,22 +228,59 @@ async def test_interrupted_jobs_can_be_retried(tmp_path) -> None:
             db, status=STATUS_INTERRUPTED, source_path=str(src), source_filename="m.txt"
         )
 
-        dto = await svc.retry_import(db, old.id, session_factory=_session_factory)
+        dto = await svc.retry_import(db, old.id, _ME, session_factory=_session_factory)
 
         assert dto.retried_from_job_id == old.id
 
 
-async def test_retrying_a_succeeded_job_is_refused(tmp_path) -> None:
+async def test_a_succeeded_job_can_be_converted_again(tmp_path) -> None:
+    """🔴 **行为变更（2026-08-25）**：成功的 job 也允许再转一次。
+
+    这条原来叫 `test_retrying_a_succeeded_job_is_refused`，守的是
+    「已经导入成功了，不用重试」。**那条判据被管线自己的升级推翻了**：
+    08-10 那版不产 `facts`，08-25 的产；而撞上这件事的人在界面上没有任何办法
+    让同一份文件再跑一次——上传原文件被 sha256 去重挡回来，点重试被这里挡回来，
+    两道门都对，合起来是死路。
+
+    放开的同时，"别默默花钱"这件事由**前端的二次确认**承担（那颗按钮明说
+    这会再花一次钱），不再由后端硬拒。
+    """
     src = tmp_path / "m.txt"
     src.write_text("x")
 
     async with _session_factory() as db:
         old = await _job(db, status=STATUS_SUCCEEDED, source_path=str(src))
 
-        with pytest.raises(AppException) as exc:
-            await svc.retry_import(db, old.id, session_factory=_session_factory)
+        dto = await svc.retry_import(db, old.id, _ME, session_factory=_session_factory)
 
-    assert "已经导入成功" in exc.value.message
+        assert dto.job_id != old.id, "必须是新 job，不复活旧的"
+        assert dto.retried_from_job_id == old.id
+        # 旧的原样留着：它的产物还被房间绑着
+        refreshed = await db.get(ModuleImportJob, old.id)
+        assert refreshed is not None and refreshed.status == STATUS_SUCCEEDED
+
+
+async def test_i_cannot_burn_someone_elses_money(tmp_path) -> None:
+    """🔴 别人的 job 我重跑不了——**跑一次是要花钱的**。
+
+    此前这个端点**没有任何 owner 检查**：controller 拿了 `_user` 却没往下传，
+    任何登录用户拿到别人的 job_id 就能让别人的模组重跑一次。跟
+    `get_import_job`（`exec/46` A5）同族——那次修了读，这一头漏了写。
+    放开成功态之后危害还会变大，所以一起修。
+
+    看不到当**不存在**（不是 403），同 `get_import_job` 的口径。
+    """
+    src = tmp_path / "m.txt"
+    src.write_text("x")
+
+    async with _session_factory() as db:
+        mine = await _job(db, status=STATUS_FAILED, source_path=str(src), source_filename="m.txt")
+
+        with pytest.raises(AppException) as exc:
+            await svc.retry_import(db, mine.id, _SOMEONE_ELSE, session_factory=_session_factory)
+
+    assert exc.value.code is ErrorCode.NOT_FOUND
+    assert "不存在" in exc.value.message
 
 
 async def test_retrying_a_running_job_is_refused(tmp_path) -> None:
@@ -246,7 +292,7 @@ async def test_retrying_a_running_job_is_refused(tmp_path) -> None:
         old = await _job(db, status=STATUS_RUNNING, source_path=str(src))
 
         with pytest.raises(AppException) as exc:
-            await svc.retry_import(db, old.id, session_factory=_session_factory)
+            await svc.retry_import(db, old.id, _ME, session_factory=_session_factory)
 
     assert "还在跑" in exc.value.message
 
@@ -257,7 +303,7 @@ async def test_retry_without_the_original_file_says_so(tmp_path) -> None:
         old = await _job(db, status=STATUS_FAILED, source_path=str(tmp_path / "没了.txt"))
 
         with pytest.raises(AppException) as exc:
-            await svc.retry_import(db, old.id, session_factory=_session_factory)
+            await svc.retry_import(db, old.id, _ME, session_factory=_session_factory)
 
     assert "重新上传" in exc.value.message
 
@@ -286,7 +332,6 @@ async def test_concurrency_is_capped(tmp_path, monkeypatch) -> None:
 
 # ── 删掉一条导入记录 ──────────────────────────────────
 
-_OWNER = str(uuid.uuid4())
 _OTHER = str(uuid.uuid4())
 
 

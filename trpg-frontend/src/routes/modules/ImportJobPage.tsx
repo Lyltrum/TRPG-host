@@ -93,7 +93,9 @@ export default function ImportJobPage() {
               </p>
             )}
 
-            {job.status === 'succeeded' && <Succeeded job={job} navigate={navigate} />}
+            {job.status === 'succeeded' && (
+              <Succeeded job={job} navigate={navigate} onReconvert={retry} busy={busy} />
+            )}
             {job.status === 'failed' && <Failed job={job} onRetry={retry} busy={busy} navigate={navigate} />}
             {job.status === 'interrupted' && (
               <Interrupted job={job} onRetry={retry} busy={busy} navigate={navigate} />
@@ -107,8 +109,19 @@ export default function ImportJobPage() {
 
 type Nav = ReturnType<typeof useNavigate>
 
-function Succeeded({ job, navigate }: { job: ModuleImportJob; navigate: Nav }) {
+function Succeeded({
+  job,
+  navigate,
+  onReconvert,
+  busy,
+}: {
+  job: ModuleImportJob
+  navigate: Nav
+  onReconvert: () => void
+  busy: boolean
+}) {
   const setScene = useGameStore((s) => s.setScene)
+  const [confirming, setConfirming] = useState(false)
 
   const play = () => {
     if (!job.resultScenarioId) return
@@ -148,6 +161,47 @@ function Succeeded({ job, navigate }: { job: ModuleImportJob; navigate: Nav }) {
       >
         回到模组列表
       </button>
+
+      {/* 🔴 「重新转换」（2026-08-25）：转换管线自己会升级——2026-08-10 那版
+          不产线索条目，后来的产。撞上这件事的人此前**没有任何办法**让同一份
+          文件再跑一次：重新上传会被"这份文件转过了"挡回来，而这条路以前只对
+          失败的 job 开放。两道门都对，合起来是死路。
+          🔴 放开之后，"别默默花钱"这件事就落在这颗按钮身上：**必须二次确认，
+          而且要说出后果**——它跑的是完整管线，十几二十分钟、一次真金白银。 */}
+      {!confirming ? (
+        <button
+          onClick={() => setConfirming(true)}
+          className="w-full py-2.5 mt-4 border border-dashed border-text-primary/40 text-text-muted text-[12px] active:bg-card"
+        >
+          重新转换一次
+        </button>
+      ) : (
+        <div className="mt-4 border border-rust/60 p-3">
+          <p className="text-[11.5px] text-text-primary leading-[1.85]">
+            会用同一份原文件<b>再跑一遍完整转换</b>：十几到二十分钟，
+            <b className="text-rust">要再花一次钱</b>。
+          </p>
+          <p className="text-[10.5px] text-text-dim leading-[1.8] mt-1.5">
+            转出来的是<b>另一份</b>模组，这一份原样留着——已经在用它的房间不受影响，
+            列表里会标出「第几次转换」。
+          </p>
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={() => setConfirming(false)}
+              className="press flex-1 py-2 bg-card text-text-primary text-[12.5px] font-bold"
+            >
+              先不了
+            </button>
+            <button
+              onClick={onReconvert}
+              disabled={busy}
+              className="press flex-1 py-2 bg-rust text-[#fff5ea] text-[12.5px] font-bold disabled:opacity-50"
+            >
+              {busy ? '提交中…' : '确定，再跑一次'}
+            </button>
+          </div>
+        </div>
+      )}
     </>
   )
 }

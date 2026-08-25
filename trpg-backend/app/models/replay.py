@@ -122,6 +122,19 @@ class ModuleImportJob(Base):
     ending_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     agenda_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     hard_failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 🔴 线索账本那两个数（2026-08-25）。起点是一次实测：265 拍一整局
+    # `keeper.fact_revealed` 零条，逐层量下来根因是**这份模组本身 facts=0**
+    # ——而报告里那 9 个数一个都答不出这件事，导入者、开局的人、跑完 265 拍的人
+    # 都看不见。它们是纯计数，一个字的剧透都没有（`exec/46` B1）。
+    #
+    # 🔴 **可空，跟上面那些不一样**：`None` = **这次导入没有量过这两个数**
+    # （本次改动之前的所有 job 都是），`0` = 量过，确实是零。两者含义相反——
+    # 前者该显示"—"，后者该弹警示。给个 default=0 就把它们压成同一个值了，
+    # 那正是这个项目反复禁止的静默兜底。
+    fact_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: 标了 `reveals` 的检定点数（遍历**全部**节点，含子节点）。
+    #: 它跟 `fact_count` 要一起看：facts 有但没有一个 check 指向它们，账本一样是死的。
+    revealing_check_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # 🔴 这里没有 `llm_call_count`：整条链的调用分散在 probe / relation_probe /
     # assemble 三个脚本里，只有 assemble 会往报告里写 `stats.calls`。填一个只覆盖
     # 三分之一的数、却叫"调用次数"，正是这个项目反复被咬的那种半真值。要它就得

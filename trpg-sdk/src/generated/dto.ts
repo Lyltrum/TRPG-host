@@ -887,6 +887,8 @@ export interface ModuleImportJobRead {
   endingCount: number;
   agendaCount: number;
   hardFailureCount: number;
+  factCount: number | null;
+  revealingCheckCount: number | null;
   retriedFromJobId?: string | null;
   createdAt: string;
   updatedAt: string;

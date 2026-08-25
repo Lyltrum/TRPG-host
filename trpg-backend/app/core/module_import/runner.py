@@ -32,7 +32,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
-from app.core.keeper.contract.module_loader import ScenarioModule
+from app.core.keeper.contract.module_loader import ScenarioModule, iter_all_nodes
 from app.core.module_import.job_state import (
     STATUS_FAILED,
     STATUS_RUNNING,
@@ -194,6 +194,26 @@ async def _finish_failed(
     return ImportOutcome(ok=False, failure_reason=reason, failure_kinds=kinds)
 
 
+def ledger_counts(module: ScenarioModule) -> tuple[int, int]:
+    """线索账本的两个数：`facts` 条数、**标了 `reveals` 的检定点**数。
+
+    起点是 2026-08-25 的实测：265 拍一整局 `keeper.fact_revealed` 零条，根因是
+    那份模组 `facts=0`——而报告里原有的 9 个数一个都答不出这件事（`exec/46` B1）。
+    这两个是**纯计数**，一个字的剧透都没有，所以它落在剧透约束允许的那一半里。
+
+    🔴 **遍历全部节点，不是只数顶层**：检定点大多挂在子节点上（`sub_nodes`），
+    只数顶层会报出一个偏小的数——而这个数的全部意义就是回答"账本活不活得起来"，
+    报小了等于白报。这正是「报少了多少之前先确认两边同一个单位」那条判据。
+
+    🔴 **两个数要一起看**：facts 有一堆、却没有一个 check 指向它们，账本照样是
+    死的（玩家永远挣不到），跟 `facts=0` 的后果一样。
+    """
+    revealing = sum(
+        1 for node in iter_all_nodes(module.nodes) for check in node.checks if check.reveals
+    )
+    return len(module.facts), revealing
+
+
 def _copy_counts(job: ModuleImportJob, result: Any) -> None:
     """把管线量到的数字抄进 job。**只有数量，没有内容。**"""
     if result is None:
@@ -254,6 +274,7 @@ async def _register(
         job.npc_count = len(module.npcs)
         job.ending_count = len(module.endings)
         job.agenda_count = len(module.agenda)
+        job.fact_count, job.revealing_check_count = ledger_counts(module)
         _copy_counts(job, result)
         await db.commit()
 

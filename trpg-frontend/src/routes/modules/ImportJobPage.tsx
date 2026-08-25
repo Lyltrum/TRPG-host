@@ -286,12 +286,21 @@ function Caveats({ kinds }: { kinds: string[] }) {
 }
 
 function Counts({ job }: { job: ModuleImportJob }) {
-  const rows: [string, number][] = [
+  // 🔴 `number | null` 而不是 `number`：null = **这次导入没有量过这个数**
+  // （本次改动之前的所有 job），0 = 量过、确实是零。两者含义相反，
+  // 压成一个值就是在骗人（`exec/46` B1）。
+  const rows: [string, number | null][] = [
     ['场景', job.nodeCount],
     ['登场人物', job.npcCount],
     ['结局', job.endingCount],
     ['时间线事件', job.agendaCount],
+    ['线索条目', job.factCount],
+    ['能挣到线索的检定点', job.revealingCheckCount],
   ]
+  // 账本是死的：有线索却没有一个检定点指向它们，跟压根没有线索一样——
+  // 玩家永远挣不到任何一条。两种都要说出口。
+  const ledgerDead =
+    job.factCount === 0 || (job.factCount !== null && job.revealingCheckCount === 0)
   return (
     <div className="flex flex-col">
       {rows.map(([k, v]) => (
@@ -300,9 +309,20 @@ function Counts({ job }: { job: ModuleImportJob }) {
           className="flex items-center justify-between py-1 border-b border-dotted border-text-primary/25 last:border-b-0"
         >
           <span className="text-[12.5px] text-text-muted">{k}</span>
-          <span className="text-[12.5px] font-extrabold font-mono text-text-primary">{v}</span>
+          <span className="text-[12.5px] font-extrabold font-mono text-text-primary">
+            {v === null ? '—' : v}
+          </span>
         </div>
       ))}
+      {ledgerDead && (
+        // 🔴 说出后果，不只说数字。真机撞到过：一份 facts=0 的模组跑了 265 拍，
+        // 线索账本零记账，而在此之前没有任何地方看得出来。
+        <p className="text-[10.5px] text-rust mt-2.5 leading-[1.8] border-l-2 border-rust pl-2">
+          这份模组<b>没有能被挣到的线索</b>：对局里「现场」抽屉的线索会一直是空的，
+          收尾时的「没查到什么」也统计不出东西。故事照样能跑，但线索这条线是断的
+          —— 换一份文件重导可能会好。
+        </p>
+      )}
     </div>
   )
 }

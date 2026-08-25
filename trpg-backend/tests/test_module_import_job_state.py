@@ -264,16 +264,95 @@ def test_every_report_column_has_a_writer() -> None:
     ).read_text(encoding="utf-8")
 
     written: set[str] = set()
+
+    def _collect(target: ast.expr) -> None:
+        # 🔴 **要认元组解包**（2026-08-25 补）：写成
+        # `job.a_count, job.b_count = f(...)` 时 target 是 `ast.Tuple`，
+        # 只认 `ast.Attribute` 的话这两列会被报成"没有写入方"——**而它们明明有**。
+        # 这条守护自己的盲区，是被一次真实的假红当场撞出来的。
+        if isinstance(target, ast.Tuple):
+            for element in target.elts:
+                _collect(element)
+        elif isinstance(target, ast.Attribute) and target.attr.endswith("_count"):
+            written.add(target.attr)
+
     for node in ast.walk(ast.parse(source)):
         if not isinstance(node, ast.Assign):
             continue
         for target in node.targets:
-            # 只认 `job.xxx_count = ...` 这个形状
-            if isinstance(target, ast.Attribute) and target.attr.endswith("_count"):
-                written.add(target.attr)
+            _collect(target)
 
     missing = columns - written
     assert not missing, f"这些报告列没有任何写入方，会永远停在 0：{sorted(missing)}"
+
+
+def test_ledger_counts_walk_into_sub_nodes() -> None:
+    """🔴 线索账本那两个数要**遍历全部节点**（`exec/46` B1，2026-08-25）。
+
+    样本刻意造成**顶层与全部的答案不同**：带 `reveals` 的那条 check 挂在
+    **子节点**上，顶层那个节点自己一条都没有 ⇒ 只数顶层得 0、数全部得 1。
+    变异体「`iter_all_nodes(module.nodes)` 换成 `module.nodes`」当场红。
+
+    （造样本时的老坑：样本里每个字段都不许等于默认值，否则漏算恰好"猜对"。）
+    """
+    from app.core.keeper.contract.module_loader import ScenarioModule
+    from app.core.module_import.runner import ledger_counts
+
+    module = ScenarioModule.model_validate(
+        {
+            "meta": {"id": "m", "title": "t"},
+            "kp_truth": {"summary": "真相"},
+            "player_intro": "开场",
+            "facts": [
+                {"id": "f-1", "text": "一"},
+                {"id": "f-2", "text": "二"},
+                {"id": "f-3", "text": "三"},
+            ],
+            "nodes": [
+                {
+                    "id": "top",
+                    "title": "顶层",
+                    "kp_text": "顶层正文",
+                    # 顶层这条**故意不标 reveals**：只数顶层就会得 0
+                    "checks": [{"skill_ids": ["spot-hidden"], "difficulty": "normal"}],
+                    "sub_nodes": [
+                        {
+                            "id": "sub",
+                            "title": "子节点",
+                            "kp_text": "子节点正文",
+                            "checks": [
+                                {
+                                    "skill_ids": ["library-use"],
+                                    "difficulty": "normal",
+                                    "reveals": ["f-1"],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    facts, revealing = ledger_counts(module)
+    assert facts == 3
+    assert revealing == 1, "带 reveals 的检定点挂在子节点上，只数顶层会漏掉它"
+
+
+def test_the_ledger_columns_can_tell_never_measured_from_really_zero() -> None:
+    """🔴 `None`（这次没量过）与 `0`（量过、确实是零）**含义相反，不许压成一个值**。
+
+    契约层面：两列可空、DTO 是 `int | None` 且**必填**——"必填但可为 null"
+    跟"可以不发"是两回事（2026-08-19 那条判据）。给个 `default=0` 的话，
+    改动之前那些从没量过的旧 job 会在界面上显示成"这份模组没有线索"，
+    那是**编出来的结论**。
+    """
+    from app.dto.module import ModuleImportJobRead
+
+    columns = {c.key: c for c in inspect(ModuleImportJob).columns}
+    for col in ("fact_count", "revealing_check_count"):
+        assert columns[col].nullable, f"{col} 必须可空，否则 None 与 0 分不开"
+        field = ModuleImportJobRead.model_fields[col]
+        assert field.is_required(), f"{col} 在 DTO 里必须是必填（可为 null，但一定要发）"
 
 
 def test_the_five_pipeline_counts_are_copied_verbatim() -> None:

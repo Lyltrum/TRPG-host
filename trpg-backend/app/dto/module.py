@@ -78,6 +78,12 @@ class ModuleImportJobRead(CamelModel):
     ending_count: int
     agenda_count: int
     hard_failure_count: int
+    #: 线索账本那两个数（2026-08-25）。🔴 **可为 null 但必填**：`None` = 这次
+    #: 导入没有量过（本次改动之前的所有 job），`0` = 量过、确实是零。两者含义
+    #: 相反，前者该显示"—"，后者该弹警示——**"必填但可为 null"跟"可以不发"
+    #: 是两回事**（2026-08-19 那条判据）。
+    fact_count: int | None
+    revealing_check_count: int | None
 
     retried_from_job_id: str | None = None
     created_at: UtcDatetime

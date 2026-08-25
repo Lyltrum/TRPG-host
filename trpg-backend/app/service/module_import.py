@@ -93,6 +93,8 @@ def _to_dto(job: ModuleImportJob) -> ModuleImportJobRead:
         ending_count=job.ending_count,
         agenda_count=job.agenda_count,
         hard_failure_count=job.hard_failure_count,
+        fact_count=job.fact_count,
+        revealing_check_count=job.revealing_check_count,
         retried_from_job_id=job.retried_from_job_id,
         created_at=job.created_at,
         updated_at=job.updated_at,

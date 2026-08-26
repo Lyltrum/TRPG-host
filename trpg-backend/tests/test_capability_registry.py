@@ -165,3 +165,30 @@ def test_an_unclaimed_kind_raises_instead_of_falling_through() -> None:
 
     with pytest.raises(KeyError):
         registry_pkg.settle_hook_for("no-such-kind")
+
+
+def test_a_capability_that_keeps_a_ledger_also_shows_it_to_the_model() -> None:
+    """🔴 记了账就得让模型看得见——`reserved_state_keys` 与 `situations` 是一对。
+
+    `reserved_state_keys` 同时管两件事：`state_updates` 不许写，**也不原样喂给
+    模型**。后半句能成立的前提写在 `visible_keeper_state` 的 docstring 里——
+    「要么是机器格式，要么**已经由 situation 钩子渲染成人话摆在局面块里**」。
+
+    🔴 **那句话此前只是一句注释，没有守门人。** 新切一片能力、声明了保留键、
+    忘了写 situation 钩子，后果是这片能力的账**模型一个字都看不到**：它不报错、
+    不掉数据、也不会让任何别的测试变红，只会让下一轮裁决重新从上一段散文里猜
+    ——正是 `exec/19 #39` 的原始症状，而 `SituationBlock` 这个钩子当初就是切
+    health 时**在真代码里发现漏掉的**。
+
+    粒度是**能力级**（有账就得有块），不是键级。键级要一张「这个键刻意不渲染」
+    的豁免表（`既成事实序号` 那种内部计数器就该豁免），而豁免表正是「逐个列出
+    的地方，加一项就漏一项」。能力级零豁免、零误报，挡的正是最可能的坏法。
+    """
+    for capability in registry_pkg.CAPABILITIES:
+        if not capability.reserved_state_keys:
+            continue
+        assert capability.situations, (
+            f"{capability.name} 在 keeper_state 里记了 "
+            f"{list(capability.reserved_state_keys)}，却没有任何 situation 钩子"
+            "——这份账被滤掉了不喂给模型，而没有任何东西把它渲染出来。"
+        )
